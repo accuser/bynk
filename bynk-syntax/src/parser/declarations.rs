@@ -137,7 +137,7 @@ impl<'a> Parser<'a> {
         &mut self,
         start: Span,
         name: QualifiedName,
-        documentation: Option<String>,
+        documentation: Option<Doc>,
         brace: bool,
     ) -> Result<Commons, CompileError> {
         if brace {
@@ -527,7 +527,7 @@ impl<'a> Parser<'a> {
         &mut self,
         start: Span,
         target: QualifiedName,
-        documentation: Option<String>,
+        documentation: Option<Doc>,
         tier: Option<TestTier>,
         brace: bool,
     ) -> Result<SuiteDecl, CompileError> {
@@ -965,7 +965,7 @@ impl<'a> Parser<'a> {
         &mut self,
         start: Span,
         name: QualifiedName,
-        documentation: Option<String>,
+        documentation: Option<Doc>,
         brace: bool,
     ) -> Result<Context, CompileError> {
         if brace {
@@ -1330,7 +1330,7 @@ impl<'a> Parser<'a> {
         &mut self,
         start: Span,
         name: QualifiedName,
-        documentation: Option<String>,
+        documentation: Option<Doc>,
         brace: bool,
     ) -> Result<AdapterDecl, CompileError> {
         if brace {
@@ -3189,7 +3189,16 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace, "to open the messages body")?;
         let mut entries = Vec::new();
         while self.peek_kind() != Some(TokenKind::RBrace) {
-            entries.push(self.parse_message_entry()?);
+            // #1888: an entry may carry a doc above it. Entries keep no
+            // comments, so an orphaned doc before the `}` is dropped here; the
+            // build warns about it and `bynk fmt`'s doc-loss guard refuses.
+            let (_, documentation) = self.collect_member_lead(TokenKind::RBrace);
+            if self.peek_kind() == Some(TokenKind::RBrace) {
+                break;
+            }
+            let mut entry = self.parse_message_entry()?;
+            entry.documentation = documentation;
+            entries.push(entry);
             let _ = self.eat(TokenKind::Comma);
         }
         let close = self.expect(TokenKind::RBrace, "to close the messages body")?;
@@ -3218,6 +3227,7 @@ impl<'a> Parser<'a> {
             template,
             template_span,
             span: code_span.merge(template_span),
+            documentation: None,
         })
     }
 

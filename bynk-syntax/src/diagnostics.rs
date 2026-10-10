@@ -1103,6 +1103,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.doc_block_contains_code",
         "A documentation block's content (outside Markdown code fences) parses as declarations, so a pair of dash dividers has turned code into documentation.",
     ),
+    d(
+        "bynk.parse.doc_forms_mixed",
+        "A declaration or member carries both a `---` doc block and `--|` doc lines; a doc is written in one form.",
+    ),
     dg(
         "bynk.parse.duplicate_cors",
         "A service declares more than one `cors { }` policy.",

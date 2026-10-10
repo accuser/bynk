@@ -225,9 +225,17 @@ pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
     //    capability op (`Clock.now`), a refined/opaque `of`/`unsafe`, or a type
     //    static — via the same path signature help uses, over the project and the
     //    embedded surface. Before the cross-file / first-party name scans.
+    //    #1888: a `Sum.Variant` callee hovers as the variant, with its doc.
     crate::symbols::qualified_callee_at(text, span)
-        .and_then(|callee| crate::signature_help::resolve_label(&callee, text, input.files))
-        .map(|sig| format!("```bynk\n{sig}\n```"))
+        .and_then(|callee| {
+            describe_variant_anywhere(text, input.files, |src| {
+                crate::symbols::describe_variant_key(src, &callee)
+            })
+            .or_else(|| {
+                crate::signature_help::resolve_label(&callee, text, input.files)
+                    .map(|sig| format!("```bynk\n{sig}\n```"))
+            })
+        })
         // 9. A project-wide scan (v1.1), then 10. the embedded first-party
         //    sources (slice 9) — so `uses`/`consumes` names resolve across
         //    file boundaries (§3.4) and stdlib/surface symbols surface too.
@@ -242,7 +250,35 @@ pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
                 })
                 .map(|(_other_uri, desc)| desc)
         })
+        // #1888: a bare variant name (`Circle(r)` in a pattern, `Dot` as a
+        // value) hovers as its variant, after every declaration rung, so a
+        // variant never shadows a type of the same name. Only a name exactly
+        // one sum declares answers.
+        .or_else(|| {
+            describe_variant_anywhere(text, input.files, |src| {
+                crate::symbols::describe_variant_named(src, &name)
+            })
+        })
         .or_else(|| crate::symbols::describe_firstparty_symbol(&name))
+}
+
+/// #1888: `describe` over the live buffer, then over each other project file
+/// (sorted, as the cross-file declaration scan is), first answer winning.
+fn describe_variant_anywhere(
+    text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+    describe: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    describe(text).or_else(|| {
+        let files = files?;
+        let mut paths: Vec<&PathBuf> = files.keys().collect();
+        paths.sort();
+        paths
+            .into_iter()
+            .map(|p| &files[p])
+            .filter(|src| src.as_str() != text)
+            .find_map(|src| describe(src))
+    })
 }
 
 /// The identifier-ish token covering `offset` — its text and span.

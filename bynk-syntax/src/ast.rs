@@ -30,12 +30,76 @@ pub enum Comment {
     /// A `--` line comment: the text after the marker, with its original
     /// inline whitespace preserved.
     Line(String),
-    /// #1756: a `---` doc block that attaches to no declaration (a blank line
-    /// separates it from the next one, or nothing follows it). The parser warns
+    /// #1756: a doc (a `---` block, or since #1888 a run of `--|` lines) that
+    /// attaches to no declaration (a blank line separates it from the next
+    /// one, or nothing follows it). The parser warns
     /// `bynk.parse.orphan_doc_block` and keeps the block here, so the formatter
     /// can print it where it was. Its content is normalised as an attached
     /// doc's is.
-    OrphanDoc(String),
+    OrphanDoc(Doc),
+}
+
+/// #1888: a documentation comment as written: its normalised text and the
+/// form it was written in. Every `documentation` field holds one. It derefs to
+/// its text, so a reader that only wants the Markdown treats it as a `str`;
+/// only the formatter reads [`Doc::form`], to print each doc in the form its
+/// author chose (DECISION F: it never converts between them).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Doc {
+    /// The Markdown text: a `---` block's content with its common indent
+    /// stripped, or the `--|` lines' text joined with newlines.
+    pub text: String,
+    pub form: DocForm,
+}
+
+/// #1888: which of the two doc forms a [`Doc`] was written in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum DocForm {
+    /// A `---` fenced block (ADR 0188; matched-length fences since #1885).
+    #[default]
+    Block,
+    /// One or more consecutive `--|` lines.
+    Lines,
+}
+
+impl Doc {
+    pub fn new(text: impl Into<String>, form: DocForm) -> Self {
+        Self {
+            text: text.into(),
+            form,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+}
+
+impl std::ops::Deref for Doc {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+
+/// A doc built from bare text is a `---` block, the form every doc had before
+/// #1888.
+impl From<String> for Doc {
+    fn from(text: String) -> Self {
+        Self::new(text, DocForm::Block)
+    }
+}
+
+impl From<&str> for Doc {
+    fn from(text: &str) -> Self {
+        Self::new(text, DocForm::Block)
+    }
+}
+
+impl std::fmt::Display for Doc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.text)
+    }
 }
 
 impl Trivia {
@@ -56,7 +120,7 @@ pub struct Commons {
     /// `uses` clauses declared in this file.
     pub uses: Vec<UsesDecl>,
     /// Optional documentation block attached to the commons declaration.
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     /// Surface form of the file: brace-delimited body or headerless fragment.
     pub form: CommonsForm,
     pub span: Span,
@@ -101,7 +165,7 @@ pub struct Context {
     /// `exports` clauses declared in this file.
     pub exports: Vec<ExportsDecl>,
     /// Optional documentation block attached to the context declaration.
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     /// Surface form of the file: brace-delimited body or headerless fragment.
     pub form: CommonsForm,
     pub span: Span,
@@ -192,7 +256,7 @@ pub struct AdapterDecl {
     /// The `binding "<module>" requires { … }` clause, if present. Required
     /// when the adapter declares any external provider (`bynk.adapter.no_binding`).
     pub binding: Option<BindingDecl>,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub form: CommonsForm,
     pub span: Span,
     pub trivia: Trivia,
@@ -290,7 +354,7 @@ pub struct SuiteDecl {
     /// Surface form: brace-delimited body or headerless fragment.
     pub form: CommonsForm,
     /// Optional documentation block attached to the test declaration.
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
     pub trailing_comments: Vec<Comment>,
@@ -332,7 +396,7 @@ pub struct StubClause {
     pub args: Vec<ArgPattern>,
     /// The provision: a value, a fault, or a per-call sequence.
     pub rhs: StubRhs,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -394,7 +458,7 @@ pub struct Case {
     /// tier default).
     pub stubs: Vec<StubClause>,
     pub body: Block,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -412,7 +476,7 @@ pub struct PropertyDecl {
     /// The `for all` binder: the generated bindings, an optional `where` filter,
     /// and the predicate body.
     pub forall: ForAll,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -571,7 +635,7 @@ pub struct MessagesDecl {
     /// item in the commons) is a checker concern, not a parse error.
     pub annotations: Vec<Annotation>,
     pub entries: Vec<MessageEntry>,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -586,6 +650,8 @@ pub struct MessageEntry {
     pub template: String,
     pub template_span: Span,
     pub span: Span,
+    /// #1888: the doc above the entry, in either form.
+    pub documentation: Option<Doc>,
 }
 
 /// A capability declaration (v0.5 §3.3). Capabilities are interface-like
@@ -595,7 +661,7 @@ pub struct MessageEntry {
 pub struct CapabilityDecl {
     pub name: Ident,
     pub ops: Vec<CapabilityOp>,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     /// #1756: comments before the closing `}`, an orphaned doc block among
     /// them, so the formatter keeps them.
@@ -613,7 +679,7 @@ pub struct CapabilityOp {
     pub type_params: Vec<TypeParam>,
     pub params: Vec<Param>,
     pub return_type: TypeRef,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -636,7 +702,7 @@ pub struct ProviderDecl {
     /// a Bynk body. When `true`, `ops` is empty and the emitter produces no
     /// class. The absence of the brace block (not an empty one) is the signal.
     pub external: bool,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -690,7 +756,7 @@ pub struct ServiceDecl {
     /// CORS posture, not the `security` default-on posture).
     pub limits: Option<LimitsPolicy>,
     pub handlers: Vec<Handler>,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     /// #1756: comments before the closing `}`, an orphaned doc block among
     /// them, so the formatter keeps them.
@@ -991,7 +1057,7 @@ pub struct AgentDecl {
     /// [`invariants`]: AgentDecl::invariants
     pub transitions: Vec<Transition>,
     pub handlers: Vec<Handler>,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     /// #1756: comments before the closing `}`, an orphaned doc block among
     /// them, so the formatter keeps them.
@@ -1022,7 +1088,7 @@ pub struct StoreField {
     /// The fresh-key initial value (`= expr`), if given — same disposition as a
     /// `state` field's initialiser (ADRs 0003/0004 carry forward).
     pub init: Option<Expr>,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -1077,7 +1143,7 @@ pub struct Invariant {
     /// state fields, plus `implies` and `is`. The parsed-predicate-on-a-
     /// declaration shape mirrors [`ActorRefinement::predicate`].
     pub predicate: Expr,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -1098,7 +1164,7 @@ pub struct Transition {
     /// `old` and `new` state records, with `implies`/`is` and pure methods,
     /// mirroring [`Invariant`].
     pub predicate: Expr,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -1147,7 +1213,7 @@ pub struct ActorDecl {
     /// actor-claim catalogue (`hasClaim`/`claimEquals` over a `Bearer` base;
     /// `bynk.actor.refinement_predicate_unsupported` / `…_base_unsupported`).
     pub refinement: Option<ActorRefinement>,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
     /// #1797: comments above the `auth` entry and at the end of its line. A
@@ -1281,7 +1347,7 @@ pub struct Handler {
     pub return_type: TypeRef,
     pub given: Vec<CapRef>,
     pub body: Block,
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -1617,7 +1683,7 @@ pub struct TypeDecl {
     pub type_params: Vec<TypeParam>,
     pub body: TypeBody,
     /// Documentation block attached to this declaration (v0.3).
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -1647,7 +1713,7 @@ pub struct EventDecl {
     pub annotations: Vec<Annotation>,
     pub body: RecordBody,
     /// Documentation block attached to this declaration.
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -1845,6 +1911,9 @@ pub struct RecordField {
     /// record-type fields by the checker.
     pub init: Option<Expr>,
     pub span: Span,
+    /// #1888: the doc above the field, in either form. Hover, completion and
+    /// the documentation page show it.
+    pub documentation: Option<Doc>,
     /// #1788: comments above the field and at the end of its line.
     pub trivia: Trivia,
 }
@@ -1882,6 +1951,8 @@ pub struct Variant {
     pub name: Ident,
     pub payload: Vec<VariantField>,
     pub span: Span,
+    /// #1888: the doc above the variant, in either form.
+    pub documentation: Option<Doc>,
     /// #1794: comments above the variant and at the end of its line. A comment
     /// on an `enum {` line leads the first variant, and so does one on the `=`
     /// line of a pipe-form sum. The last pipe-form variant's end-of-line
@@ -1897,6 +1968,8 @@ pub struct VariantField {
     pub name: Ident,
     pub type_ref: TypeRef,
     pub span: Span,
+    /// #1888: the doc above the payload field, in either form.
+    pub documentation: Option<Doc>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -2120,7 +2193,7 @@ pub struct FnDecl {
     /// valid for method declarations.
     pub has_self: bool,
     /// Documentation block attached to this declaration (v0.3).
-    pub documentation: Option<String>,
+    pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,
 }

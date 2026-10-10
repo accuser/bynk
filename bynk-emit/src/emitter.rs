@@ -3628,7 +3628,7 @@ pub(crate) const JSON_CODEC_RUNTIME_IMPORTS: &str =
 fn write_commons_doc(commons: &TypedCommons) -> Vec<bynk_ts::TsStmt> {
     let mut stmts = Vec::new();
     if let Some(doc) = &commons.commons.documentation {
-        stmts.push(bynk_ts::TsStmt::doc_comment(doc, None));
+        stmts.push(bynk_ts::TsStmt::doc_comment(doc.as_str(), None));
         // #1486: no explicit trailing blank stmt here — `DocComment` (unlike
         // `Comment`) is never exempted from the printer's automatic
         // top-level spacing policy, so the single blank before whatever

@@ -780,10 +780,17 @@ pub fn doc_link_spans(source: &str) -> Vec<(String, Span)> {
     };
     let mut out = Vec::new();
     for t in tokens {
-        if t.kind != bynk_syntax::lexer::TokenKind::DocBlock {
-            continue;
-        }
-        let Some(range) = bynk_syntax::lexer::doc_block_body_range(source, t.span) else {
+        // #1888: a `--|` doc line links too, one line at a time.
+        let range = match t.kind {
+            bynk_syntax::lexer::TokenKind::DocBlock => {
+                bynk_syntax::lexer::doc_block_body_range(source, t.span)
+            }
+            bynk_syntax::lexer::TokenKind::DocLine => {
+                Some(bynk_syntax::lexer::doc_line_text_range(source, t.span))
+            }
+            _ => None,
+        };
+        let Some(range) = range else {
             continue;
         };
         for cand in scan_doc_link_candidates(&source[range.clone()]) {
@@ -1058,6 +1065,9 @@ pub(crate) fn describe_service_handler(s: &ServiceDecl, h: &Handler) -> String {
 /// #611: a record field as declared — its type and any `where` refinement —
 /// attributed to the record that owns it. Mirrors how [`describe_type`] renders
 /// the same field within the record body.
+///
+/// #1888: a documented field shows its own doc in place of the generic
+/// "A field of `T`." line.
 pub(crate) fn describe_record_field(t: &TypeDecl, f: &RecordField) -> String {
     let mut sig = format!("{}: {}", f.name.name, type_ref_str(&f.type_ref));
     if let Some(r) = &f.refinement {
@@ -1069,7 +1079,115 @@ pub(crate) fn describe_record_field(t: &TypeDecl, f: &RecordField) -> String {
     if let Some(init) = &f.init {
         sig.push_str(&format!(" = {}", bynk_fmt::expr_to_string(init)));
     }
-    format!("```bynk\n{sig}\n```\n\nA field of `{}`.", t.name.name)
+    format!(
+        "```bynk\n{sig}\n```\n\n{}",
+        member_prose(&f.documentation, || format!(
+            "A field of `{}`.",
+            t.name.name
+        ))
+    )
+}
+
+/// #1888: a member's doc, trailing whitespace trimmed, or `fallback` when it
+/// has none.
+fn member_prose(doc: &Option<Doc>, fallback: impl FnOnce() -> String) -> String {
+    match doc {
+        Some(d) => d.trim_end().to_string(),
+        None => fallback(),
+    }
+}
+
+/// #1888: a sum variant as declared, `| Name(field: Type, …)`, attributed to
+/// its sum unless it carries its own doc, which shows in its place. A payload
+/// field's doc follows, one line of the list per documented field.
+pub(crate) fn describe_variant(t: &TypeDecl, v: &Variant) -> String {
+    let mut sig = format!("| {}", v.name.name);
+    if !v.payload.is_empty() {
+        let parts: Vec<String> = v
+            .payload
+            .iter()
+            .map(|p| format!("{}: {}", p.name.name, type_ref_str(&p.type_ref)))
+            .collect();
+        sig.push_str(&format!("({})", parts.join(", ")));
+    }
+    let mut out = format!(
+        "```bynk\n{sig}\n```\n\n{}",
+        member_prose(&v.documentation, || format!(
+            "A variant of `{}`.",
+            t.name.name
+        ))
+    );
+    for p in &v.payload {
+        if let Some(doc) = &p.documentation {
+            out.push_str(&format!("\n\n`{}`: {}", p.name.name, doc.trim_end()));
+        }
+    }
+    out
+}
+
+/// #1888: one payload field of a sum variant, attributed to its variant
+/// unless it carries its own doc.
+pub(crate) fn describe_variant_field(t: &TypeDecl, v: &Variant, p: &VariantField) -> String {
+    format!(
+        "```bynk\n{}: {}\n```\n\n{}",
+        p.name.name,
+        type_ref_str(&p.type_ref),
+        member_prose(&p.documentation, || format!(
+            "A field of `{}.{}`.",
+            t.name.name, v.name.name
+        ))
+    )
+}
+
+/// #1888: every sum variant declared in `source`'s unit, with its sum.
+fn with_sum_variants<R>(
+    source: &str,
+    mut f: impl FnMut(&TypeDecl, &Variant) -> Option<R>,
+) -> Option<R> {
+    let tokens = tokenize(source).ok()?;
+    let (unit, _errs) = parse_unit_with_recovery(&tokens, source);
+    let items: &[CommonsItem] = match unit.as_ref()? {
+        SourceUnit::Commons(c) => &c.items,
+        SourceUnit::Context(c) => &c.items,
+        SourceUnit::Adapter(a) => &a.items,
+        SourceUnit::Suite(_) => &[],
+    };
+    for item in items {
+        if let CommonsItem::Type(t) = item
+            && let TypeBody::Sum(s) = &t.body
+        {
+            for v in &s.variants {
+                if let Some(r) = f(t, v) {
+                    return Some(r);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// #1888: the hover for a sum variant named by a qualified key,
+/// `"Shape.Circle"`, declared in `source`; `None` when no sum there has it.
+pub fn describe_variant_key(source: &str, key: &str) -> Option<String> {
+    let (owner, name) = key.rsplit_once('.')?;
+    with_sum_variants(source, |t, v| {
+        (t.name.name == owner && v.name.name == name).then(|| describe_variant(t, v))
+    })
+}
+
+/// #1888: the hover for a sum variant named bare, as a pattern or a
+/// constructor names it (`Circle(r)`), when exactly one sum in `source`
+/// declares a variant of that name; `None` otherwise, so an ambiguous name
+/// answers nothing rather than the wrong variant.
+pub fn describe_variant_named(source: &str, name: &str) -> Option<String> {
+    let mut found: Vec<String> = Vec::new();
+    with_sum_variants::<()>(source, |t, v| {
+        if v.name.name == name {
+            found.push(describe_variant(t, v));
+        }
+        None
+    });
+    (found.len() == 1).then(|| found.remove(0))
 }
 
 pub(crate) fn describe_type(t: &TypeDecl) -> String {
@@ -1845,6 +1963,16 @@ mod tests {
         let (name, span) = &spans[0];
         assert_eq!(name, "Limiter");
         assert_eq!(&src[span.start..span.end], "[Limiter]");
+    }
+
+    /// #1888: a `--|` doc line links too, at its absolute offset.
+    #[test]
+    fn doc_link_spans_finds_links_in_doc_lines() {
+        let src = "--| Wraps a [Foo].\n--| And a [Bar].\ntype Baz = Int\n";
+        let spans = doc_link_spans(src);
+        let names: Vec<&str> = spans.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["Foo", "Bar"]);
+        assert_eq!(&src[spans[1].1.start..spans[1].1.end], "[Bar]");
     }
 
     #[test]

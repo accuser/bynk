@@ -41,7 +41,7 @@ module.exports = grammar({
 
   externals: ($) => [$.doc_block],
 
-  extras: ($) => [/\s+/, $.line_comment, $.doc_block],
+  extras: ($) => [/\s+/, $.doc_line, $.line_comment, $.doc_block],
 
   // The DSL allows reserved words to be referenced inside specific rules via
   // tokens; we declare keywords so they take precedence over `identifier`.
@@ -1692,6 +1692,13 @@ module.exports = grammar({
     // line_comment sees only `--` (or `-` chars followed by a non-third
     // dash sequence that's already been gobbled by the external scanner).
     line_comment: () => token(seq("--", /[^\n]*/)),
+
+    // #1888: a `--|` one-line doc. Both it and `line_comment` match a
+    // `--|` line to its end, so the higher lexical precedence makes it a
+    // doc. The compiler takes `--|` as a doc only when it is the first thing
+    // on its line; an extras token cannot see that, so a `--|` after code on
+    // the same line highlights as a doc here though it compiles as a comment.
+    doc_line: () => token(prec(1, seq("--|", /[^\n]*/))),
 
     // `doc_block` is provided by the external scanner — see src/scanner.c.
     // The grammar references it via the `externals` array above.

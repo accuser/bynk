@@ -158,10 +158,67 @@ fn helper() -> Int { 1 }
 fn f() -> Int { 2 }
 ```
 
+### §3.3.3 doc_line
+
+{{#grammar doc_line}}
+
+A **doc line** is the one-line documentation form (#1888): `--|`
+followed by text to the end of the line. A `--|` is a doc line only when it is
+the **first thing on its line**, after optional horizontal whitespace. Anywhere
+else, such as after a field on the same line (`repo: Repo, --| text`), it is an
+ordinary line comment ([§3.3.1](#331-line_comment)) whose text starts with `|`.
+There is no end-of-line doc.
+
+Doc lines on **consecutive lines** form one doc. Its text is each line's text
+after the `--|` marker and one separating space, joined with line breaks, so a
+bare `--|` line separates Markdown paragraphs. A blank line or a `--` comment
+line ends the run. A run of doc lines attaches to what follows it exactly as a
+doc-block does, and is trivia ([§3.4](#34-trivia)) in the same way. Unlike a
+doc-block, its content is not probed for code
+(`bynk.parse.doc_block_contains_code`): every line is marked as a doc on
+purpose, so no pair of dividers can turn code into one by accident.
+
+```bynk
+--| A full commit SHA.
+type Commit = String
+
+--| One canary result.
+--|
+--| A bare `--|` line starts a new paragraph.
+type Run = {
+	--| The repository, as `owner/name`.
+	repo: String,
+	-- A comment, not a doc.
+	passed: Int,
+}
+```
+
+**Where a doc may go.** A doc of either form documents the declaration that
+follows it and, since #1888, each of these members: a record field, a sum
+variant of either form (`| V` or an `enum { V }` tag), a variant's payload
+field, and a `messages` entry. A function's or handler's parameters are
+documented in the function's own doc. A doc separated from what follows by a
+blank line, or with nothing after it in its body, attaches to nothing
+(`bynk.parse.orphan_doc_block`, a warning).
+
+**One form per target.** A doc of one form directly followed by a doc of the
+other, with no blank line between, is the error `bynk.parse.doc_forms_mixed`:
+a declaration or member is documented in one form. `bynk fmt` prints each doc in
+the form it was written in and never converts between them.
+
+```bynk,fail=bynk.parse.doc_forms_mixed
+--| The answer.
+---
+The answer, again.
+---
+fn answer() -> Int { 42 }
+```
+
 ## §3.4 Trivia
 
 Between tokens the lexer discards **trivia**: whitespace (`/\s+/`), line comments
-([§3.3.1](#331-line_comment)), and doc-blocks ([§3.3.2](#332-doc-blocks)). Trivia
+([§3.3.1](#331-line_comment)), doc-blocks ([§3.3.2](#332-doc-blocks)), and doc
+lines ([§3.3.3](#333-doc_line)). Trivia
 does not appear in the productions of §4 — no production has a newline
 terminal — but it is not wholly insignificant: the parser consults whether a
 newline separates two tokens at three sites, each a narrow, documented

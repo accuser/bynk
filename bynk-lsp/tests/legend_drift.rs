@@ -31,8 +31,11 @@ const STANDARD_TYPES: &[&str] = &[
     "method",
     "property",
     "decorator",
+    // #1888: `--|` doc lines.
+    "comment",
 ];
-const STANDARD_MODIFIERS: &[&str] = &["declaration"];
+// #1888: `documentation` marks a `--|` doc line's `comment` token.
+const STANDARD_MODIFIERS: &[&str] = &["declaration", "documentation"];
 
 fn package_json() -> serde_json::Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../vscode-bynk/package.json");

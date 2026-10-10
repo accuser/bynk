@@ -83,6 +83,19 @@ describe("docDecorations — block scoping", () => {
   });
 });
 
+describe("docDecorations — `--|` doc lines (#1888)", () => {
+  it("decorates a doc line's text at its own columns", () => {
+    // `  --| ` is a 6-column prefix; `**hi**` follows it.
+    assert.deepStrictEqual(decos("  --| **hi** there"), ["strong@0:6-12"]);
+    assert.deepStrictEqual(decos("--| # Title"), ["heading@0:4-11"]);
+  });
+
+  it("leaves a `--` comment and a `--|` after code alone", () => {
+    assert.deepStrictEqual(decos("-- **not a doc**"), []);
+    assert.deepStrictEqual(decos("x: Int, --| **not a doc**"), []);
+  });
+});
+
 describe("docDecorations — headings", () => {
   it("colours from the first `#`, excluding leading indent", () => {
     assert.deepStrictEqual(decos(block("   ## Indented")), ["heading@1:3-14"]);

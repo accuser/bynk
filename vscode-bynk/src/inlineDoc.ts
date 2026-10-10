@@ -52,12 +52,19 @@ export interface DocDecorationRange {
 // is the dashes: a block closes only on a marker of its opener's length (#1885).
 const MARKER = /^[ \t]*(-{3,})[ \t]*\r?$/;
 
+// #1888: a `--|` doc line: the marker first on its line (after optional
+// horizontal whitespace), and one optional separating space. Group 1 is all of
+// that prefix; the rest of the line is the doc's Markdown. Mirrors the lexer's
+// `DocLine` rule (a `--|` after code is a comment, so it never matches here).
+const DOC_LINE = /^([ \t]*--\| ?)/;
+
 // An ATX heading line: optional leading whitespace, 1–6 `#`, then whitespace or
 // end-of-line. `#Heading` (no space) is not a heading, matching CommonMark.
 const HEADING = /^([ \t]*)(#{1,6})(?=[ \t]|\r?$)/;
 
 /**
- * Tokenize every `--- … ---` doc block in `text` into decoration ranges.
+ * Tokenize every `--- … ---` doc block, and every `--|` doc line (#1888), in
+ * `text` into decoration ranges.
  *
  * Blocks are paired by scanning lines top-to-bottom: a marker line opens a
  * block, the next marker line of the same length closes it, and scanning
@@ -89,7 +96,15 @@ export function docDecorations(text: string): DocDecorationRange[] {
       open = null;
       continue;
     }
-    if (open === null) continue;
+    if (open === null) {
+      // #1888: outside a block, a `--|` line's text is a doc too. Blank its
+      // prefix to spaces so the heading/emphasis columns stay the line's own.
+      const doc = DOC_LINE.exec(raw);
+      if (doc) {
+        decorateLine(" ".repeat(doc[1].length) + raw.slice(doc[1].length), line, ranges);
+      }
+      continue;
+    }
     decorateLine(raw, line, ranges);
   }
 

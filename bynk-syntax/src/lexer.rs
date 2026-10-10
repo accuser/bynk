@@ -3,8 +3,9 @@
 //! Token kinds correspond to the terminals defined in the grammar (spec §3
 //! and §4). Whitespace is skipped; line comments are emitted as `Comment`
 //! tokens so the formatter can preserve them through round-trips (v1.1 LSP
-//! spec §3.5). Doc blocks (`---`) are emitted as `DocBlock` tokens, lexed
-//! outside of logos (see [`tokenize`]).
+//! spec §3.5). Doc blocks (`---`) are emitted as `DocBlock` tokens, and
+//! one-line docs (`--|`, #1888) as `DocLine` tokens, both lexed outside of
+//! logos (see [`tokenize`]).
 
 use logos::Logos;
 
@@ -257,6 +258,16 @@ pub enum TokenKind {
     /// Inserted by [`tokenize`]; not lexed by logos directly.
     DocBlock,
 
+    /// #1888: one line of the one-line doc form, `--| text`. A `--|` is a doc
+    /// line only when it is the first thing on its line (indentation aside);
+    /// anywhere else it is an ordinary [`TokenKind::Comment`] whose body starts
+    /// with `|`, so a `--|` at the end of a member's line stays a comment. Like
+    /// [`TokenKind::DocBlock`], the span runs from the marker through the
+    /// terminating newline (or EOF), so the parser's blank-line check treats
+    /// both forms alike. The parser groups consecutive lines into one doc
+    /// ([`doc_line_text`] recovers each line's text). Inserted by [`tokenize`].
+    DocLine,
+
     /// A line comment: `-- ...` running to end of line. The span starts at
     /// the `--` marker and runs through the last character before the
     /// terminating newline (exclusive). The trivia body (the text after the
@@ -446,6 +457,7 @@ impl TokenKind {
             LArrow => "`<-`",
             TildeArrow => "`~>`",
             DocBlock => "documentation block",
+            DocLine => "documentation line (`--|`)",
             Comment => "line comment",
             Ident => "identifier",
             IntLit => "integer literal",
@@ -556,6 +568,23 @@ pub fn tokenize_in(source: &str, file: FileId) -> Result<Vec<Token>, CompileErro
         // silently swallowed as a line comment. This resolves the `a--b`
         // "comment vs subtraction" ambiguity in favour of subtraction.
         let comment_eligible = pos == 0 || matches!(bytes[pos - 1], b' ' | b'\t' | b'\r' | b'\n');
+        // #1888: a `--|` that is the first thing on its line is a one-line doc,
+        // its span running through the newline as a doc block's does. Anywhere
+        // else (after code on the line) it falls through to a `--` comment.
+        if bytes[pos..].starts_with(b"--|") && only_indent_before(bytes, pos) {
+            let start = pos;
+            while pos < bytes.len() && bytes[pos] != b'\n' {
+                pos += 1;
+            }
+            if pos < bytes.len() {
+                pos += 1;
+            }
+            tokens.push(Token {
+                kind: TokenKind::DocLine,
+                span: Span::new_in(file, start, pos),
+            });
+            continue;
+        }
         if comment_eligible && pos + 1 < bytes.len() && bytes[pos] == b'-' && bytes[pos + 1] == b'-'
         {
             let start = pos;
@@ -1033,6 +1062,35 @@ fn doc_block_close(source: &str, mut pos: usize, dashes: usize) -> Option<(usize
 }
 
 /// Returns true if byte offset `pos` is at a line start (column 0).
+/// #1888: true when only horizontal whitespace precedes `pos` on its line.
+fn only_indent_before(bytes: &[u8], pos: usize) -> bool {
+    bytes[..pos]
+        .iter()
+        .rev()
+        .take_while(|&&b| b != b'\n')
+        .all(|&b| matches!(b, b' ' | b'\t' | b'\r'))
+}
+
+/// #1888: the text of one `--|` doc line (a [`TokenKind::DocLine`] token):
+/// everything after the marker, less one separating space when there is one,
+/// and less the line ending. Further indentation is kept, so a doc line can
+/// indent a Markdown code block or a nested list.
+pub fn doc_line_text(source: &str, span: Span) -> &str {
+    let slice = &source[span.range()];
+    let slice = slice.strip_prefix("--|").unwrap_or(slice);
+    let slice = slice.strip_prefix(' ').unwrap_or(slice);
+    slice.trim_end_matches(['\n', '\r'])
+}
+
+/// #1888: the byte range of a doc line's text within `source`, as
+/// [`doc_line_text`] returns it, for callers that map positions in a doc
+/// back to the source (document links).
+pub fn doc_line_text_range(source: &str, span: Span) -> std::ops::Range<usize> {
+    let text = doc_line_text(source, span);
+    let start = text.as_ptr() as usize - source.as_ptr() as usize;
+    start..start + text.len()
+}
+
 fn at_line_start(source: &str, pos: usize) -> bool {
     if pos == 0 {
         return true;
@@ -1281,6 +1339,29 @@ mod tests {
         assert_eq!(kinds("a ---b"), vec![Ident, Comment]);
         // A single `-` between terms is unaffected.
         assert_eq!(kinds("a - b"), vec![Ident, Minus, Ident]);
+    }
+
+    /// #1888: a `--|` first on its line is a doc line, its span running
+    /// through the newline; after code on the line it is a comment (DECISION
+    /// E), and `---|` is a comment too (a `---` marker needs the line alone).
+    #[test]
+    fn a_line_leading_bar_comment_is_a_doc_line() {
+        use TokenKind::*;
+        assert_eq!(kinds("--| doc\ntype"), vec![DocLine, Type]);
+        assert_eq!(kinds("  --| doc\n\t--|\n"), vec![DocLine, DocLine]);
+        assert_eq!(
+            kinds("x: Int, --| text\n"),
+            vec![Ident, Colon, Int, Comma, Comment]
+        );
+        assert_eq!(kinds("---| text\n"), vec![Comment]);
+        assert_eq!(kinds("-- | spaced\n"), vec![Comment]);
+        let src = "  --|  indented  \r\n--|bare\n--|";
+        let toks = tokenize(src).unwrap();
+        assert_eq!(&src[toks[0].span.range()], "--|  indented  \r\n");
+        assert_eq!(doc_line_text(src, toks[0].span), " indented  ");
+        assert_eq!(doc_line_text(src, toks[1].span), "bare");
+        assert_eq!(doc_line_text(src, toks[2].span), "");
+        assert_eq!(&src[doc_line_text_range(src, toks[0].span)], " indented  ");
     }
 
     #[test]

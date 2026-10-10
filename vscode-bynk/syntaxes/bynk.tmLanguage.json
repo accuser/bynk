@@ -5,6 +5,7 @@
   "fileTypes": ["bynk"],
   "patterns": [
     { "include": "#doc-block" },
+    { "include": "#doc-line" },
     { "include": "#line-comment" },
     { "include": "#annotations" },
     { "include": "#keywords" },
@@ -22,6 +23,11 @@
       "begin": "^\\s*(---+)\\s*$",
       "end": "^\\s*\\1\\s*$",
       "patterns": []
+    },
+    "doc-line": {
+      "comment": "#1888: a `--|` one-line doc, first on its line. After code on the line, `--|` is a plain comment, so this is anchored to the line start.",
+      "name": "comment.line.documentation.bynk",
+      "match": "^\\s*--\\|.*$"
     },
     "line-comment": {
       "name": "comment.line.double-dash.bynk",

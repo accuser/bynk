@@ -425,7 +425,9 @@ mod tests {
         // inside `service_protocol`'s Events arm, extended in place). Net +1.
         // #1706 added: faults_expr (the `expect <call> faults` fault claim).
         // Net +1.
-        assert_eq!(rules.len(), 152);
+        // #1888 added: doc_line (the `--|` one-line doc token, an extra).
+        // Net +1.
+        assert_eq!(rules.len(), 153);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

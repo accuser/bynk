@@ -374,51 +374,90 @@ fn doc_fence_len(doc: &str) -> usize {
         .fold(3, usize::max)
 }
 
-/// #1664: the `---` counterpart of [`comment_loss`]. Returns a
-/// `bynk.fmt.comment_loss` error naming the first doc block of `source` (already
-/// tokenized as `tokens`) that has no counterpart in `output`, compared by
-/// content multiset. Attached and orphaned (#1756) blocks are both re-rendered
-/// with their content intact, so this fires only on a printer gap.
-///
-/// An `output` that does not tokenize returns `None`: that is a formatter bug
-/// the round-trip guard reports accurately ("no longer parses"), and counting
-/// every block as lost would point the user at an innocent one instead.
-fn doc_block_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileError> {
-    use bynk_syntax::lexer::doc_block_content;
-    let in_docs: Vec<Span> = tokens
-        .iter()
-        .filter(|t| t.kind == TokenKind::DocBlock)
-        .map(|t| t.span)
-        .collect();
-    if in_docs.is_empty() {
-        return None;
-    }
-    // Compare content line by line with surrounding whitespace removed, so the
-    // formatter's re-indentation of an attached block is not mistaken for loss.
-    let normalise = |content: String| {
+/// #1888: every doc in `source` (already tokenized as `tokens`), in order: its
+/// span, its form, and its text with each line's surrounding whitespace
+/// removed, so the formatter's re-indentation of an attached doc is not
+/// mistaken for loss. A run of `--|` lines on consecutive lines is one doc, as
+/// the parser groups it.
+fn source_docs(source: &str, tokens: &[Token]) -> Vec<(Span, DocForm, String)> {
+    use bynk_syntax::lexer::{doc_block_content, doc_line_text};
+    let normalise = |content: &str| {
         content
             .lines()
             .map(str::trim)
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let out_tokens = tokenize(output).ok()?;
-    let mut out_docs: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    for t in &out_tokens {
-        if t.kind == TokenKind::DocBlock {
-            *out_docs
-                .entry(normalise(doc_block_content(output, t.span)))
-                .or_insert(0) += 1;
+    let mut out: Vec<(Span, DocForm, String)> = Vec::new();
+    let mut run: Option<(Span, Vec<&str>)> = None;
+    let flush = |run: &mut Option<(Span, Vec<&str>)>, out: &mut Vec<_>| {
+        if let Some((span, lines)) = run.take() {
+            out.push((span, DocForm::Lines, normalise(&lines.join("\n"))));
         }
+    };
+    for t in tokens {
+        match t.kind {
+            TokenKind::DocLine => match &mut run {
+                Some((span, lines))
+                    if source[span.end..t.span.start]
+                        .bytes()
+                        .all(|b| matches!(b, b' ' | b'\t' | b'\r')) =>
+                {
+                    *span = span.merge(t.span);
+                    lines.push(doc_line_text(source, t.span));
+                }
+                _ => {
+                    flush(&mut run, &mut out);
+                    run = Some((t.span, vec![doc_line_text(source, t.span)]));
+                }
+            },
+            TokenKind::DocBlock => {
+                flush(&mut run, &mut out);
+                out.push((
+                    t.span,
+                    DocForm::Block,
+                    normalise(&doc_block_content(source, t.span)),
+                ));
+            }
+            _ => flush(&mut run, &mut out),
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+
+/// #1664: the `---` counterpart of [`comment_loss`]. Returns a
+/// `bynk.fmt.comment_loss` error naming the first doc of `source` (already
+/// tokenized as `tokens`) that has no counterpart in `output`, compared by
+/// content multiset. Attached and orphaned (#1756) docs are both re-rendered
+/// with their content intact, so this fires only on a printer gap.
+///
+/// #1888: both doc forms are compared, each keyed by its form as well as its
+/// content, so a printer path that converted a doc from one form to the other
+/// (DECISION F says it never does) is refused as well as one that lost it.
+///
+/// An `output` that does not tokenize returns `None`: that is a formatter bug
+/// the round-trip guard reports accurately ("no longer parses"), and counting
+/// every block as lost would point the user at an innocent one instead.
+fn doc_block_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileError> {
+    let in_docs = source_docs(source, tokens);
+    if in_docs.is_empty() {
+        return None;
+    }
+    let out_tokens = tokenize(output).ok()?;
+    let mut out_docs: std::collections::HashMap<(DocForm, String), usize> =
+        std::collections::HashMap::new();
+    for (_, form, content) in source_docs(output, &out_tokens) {
+        *out_docs.entry((form, content)).or_insert(0) += 1;
     }
     let mut lost = 0usize;
     let mut first_lost: Option<Span> = None;
-    for span in &in_docs {
-        match out_docs.get_mut(&normalise(doc_block_content(source, *span))) {
+    for (span, form, content) in in_docs {
+        match out_docs.get_mut(&(form, content)) {
             Some(n) if *n > 0 => *n -= 1,
             _ => {
                 lost += 1;
-                first_lost.get_or_insert(*span);
+                first_lost.get_or_insert(span);
             }
         }
     }
@@ -435,9 +474,10 @@ fn doc_block_loss(source: &str, tokens: &[Token], output: &str) -> Option<Compil
             "this documentation block has no counterpart in the formatted output".to_string(),
         )],
         notes: vec![
-            "a `---` block attaches to the declaration directly below it; one separated from \
-             it by a blank line, or with no declaration after it, attaches to nothing. Remove \
-             the blank line to attach it, or make it a `--` comment if it documents nothing"
+            "a doc (a `---` block or `--|` lines) attaches to the declaration or member \
+             directly below it; one separated from it by a blank line, or with nothing after \
+             it, attaches to nothing. Remove the blank line to attach it, or make it a `--` \
+             comment if it documents nothing"
                 .to_string(),
             "if the block is already directly above a declaration, this is a formatter bug; \
              please report it with the file that triggered it"
@@ -624,7 +664,25 @@ impl<'a> Formatter<'a> {
     /// the fence is the shortest (three or more dashes) that is longer than
     /// every marker-shaped line in the content; the output re-lexes to the
     /// same block. A doc with no such line keeps the canonical `---`.
-    fn emit_doc(&mut self, doc: &str) {
+    ///
+    /// #1888 (DECISION F): a doc prints in the form it was written in, never
+    /// converted. A `--|` doc prints one `--| ` line per line of its text, and
+    /// a bare `--|` for an empty one.
+    fn emit_doc(&mut self, doc: &Doc) {
+        if doc.form == DocForm::Lines {
+            // `split`, not `lines`: a trailing bare `--|` is an empty last
+            // line, and an empty doc is one bare `--|`.
+            for line in doc.split('\n') {
+                if line.is_empty() {
+                    self.push("--|");
+                } else {
+                    self.push("--| ");
+                    self.push(line);
+                }
+                self.newline();
+            }
+            return;
+        }
         let fence = "-".repeat(doc_fence_len(doc));
         self.push(&fence);
         self.newline();
@@ -1263,6 +1321,9 @@ impl<'a> Formatter<'a> {
         self.newline();
         self.indented(|f| {
             for entry in &m.entries {
+                if let Some(doc) = &entry.documentation {
+                    f.emit_doc(doc);
+                }
                 f.push(&format!(
                     "\"{}\" => \"{}\"",
                     escape_string(&entry.code),
@@ -1348,10 +1409,13 @@ impl<'a> Formatter<'a> {
     }
 
     fn format_record_body(&mut self, r: &RecordBody) {
+        // A comment, or a field's doc (#1888), forces the multi-line form.
         let has_comments = !r.trailing_comments.is_empty()
-            || r.fields
-                .iter()
-                .any(|f| !f.trivia.leading.is_empty() || f.trivia.trailing.is_some());
+            || r.fields.iter().any(|f| {
+                !f.trivia.leading.is_empty()
+                    || f.trivia.trailing.is_some()
+                    || f.documentation.is_some()
+            });
         if r.fields.is_empty() && !has_comments {
             self.push("{}");
             return;
@@ -1375,6 +1439,9 @@ impl<'a> Formatter<'a> {
         self.indented(|f| {
             for (i, field) in r.fields.iter().enumerate() {
                 f.emit_leading_comments(&field.trivia.leading);
+                if let Some(doc) = &field.documentation {
+                    f.emit_doc(doc);
+                }
                 f.format_record_field(field);
                 if i + 1 < r.fields.len() || f.opts.trailing_comma {
                     f.push(",");
@@ -1422,9 +1489,11 @@ impl<'a> Formatter<'a> {
             // Enum-style. #1794: a comment forces the multi-line form, as in
             // a record body.
             let has_comments = !s.trailing_comments.is_empty()
-                || s.variants
-                    .iter()
-                    .any(|v| !v.trivia.leading.is_empty() || v.trivia.trailing.is_some());
+                || s.variants.iter().any(|v| {
+                    !v.trivia.leading.is_empty()
+                        || v.trivia.trailing.is_some()
+                        || v.documentation.is_some()
+                });
             if !has_comments {
                 let names: Vec<&str> = s.variants.iter().map(|v| v.name.name.as_str()).collect();
                 let oneline = format!("enum {{ {} }}", names.join(", "));
@@ -1438,6 +1507,9 @@ impl<'a> Formatter<'a> {
             self.indented(|f| {
                 for (i, v) in s.variants.iter().enumerate() {
                     f.emit_leading_comments(&v.trivia.leading);
+                    if let Some(doc) = &v.documentation {
+                        f.emit_doc(doc);
+                    }
                     f.push(&v.name.name);
                     if i + 1 < s.variants.len() || f.opts.trailing_comma {
                         f.push(",");
@@ -1452,9 +1524,9 @@ impl<'a> Formatter<'a> {
         // Pipe form, multi-line. #1794: a variant's end-of-line comment ends
         // its line, so the next variant needs no newline of its own.
         for (i, v) in s.variants.iter().enumerate() {
-            if i == 0 && !v.trivia.leading.is_empty() {
-                // A comment printed after `type S = ` would trail the `=`:
-                // break the line after it instead.
+            if i == 0 && (!v.trivia.leading.is_empty() || v.documentation.is_some()) {
+                // A comment (or a doc, #1888) printed after `type S = ` would
+                // trail the `=`: break the line after it instead.
                 while self.out.ends_with(' ') {
                     self.out.pop();
                 }
@@ -1463,9 +1535,35 @@ impl<'a> Formatter<'a> {
                 self.newline();
             }
             self.emit_leading_comments(&v.trivia.leading);
+            if let Some(doc) = &v.documentation {
+                self.emit_doc(doc);
+            }
             self.push("| ");
             self.push(&v.name.name);
-            if !v.payload.is_empty() {
+            if v.payload.iter().any(|p| p.documentation.is_some()) {
+                // #1888: a documented payload field puts each field on its
+                // own line, under its doc, as in a record body.
+                self.push("(");
+                self.newline();
+                let last = v.payload.len() - 1;
+                self.indented(|f| {
+                    for (j, p) in v.payload.iter().enumerate() {
+                        if let Some(doc) = &p.documentation {
+                            f.emit_doc(doc);
+                        }
+                        f.push(&format!(
+                            "{}: {}",
+                            p.name.name,
+                            type_ref_to_string(&p.type_ref)
+                        ));
+                        if j < last || f.opts.trailing_comma {
+                            f.push(",");
+                        }
+                        f.newline();
+                    }
+                });
+                self.push(")");
+            } else if !v.payload.is_empty() {
                 self.push("(");
                 let parts: Vec<String> = v
                     .payload
@@ -3469,6 +3567,41 @@ mod tests {
         );
         assert_eq!(doc_fence_len("a\n  ---  \nb"), 4);
         assert_eq!(doc_fence_len("a\n--\n- - -"), 3);
+    }
+
+    /// #1888 (DECISION F): each doc form prints as written, on declarations
+    /// and on every member kind: a `--|` run stays lines (a bare `--|` too),
+    /// a one-line fence stays a fence. Canonical input is a fixed point.
+    #[test]
+    fn each_doc_form_round_trips_unchanged() {
+        let src = "commons m\n\n--| A commit SHA.\ntype Commit = String\n\n---\nOne line, fenced.\n---\ntype Id = Int\n\ntype Point = {\n\t--| Across.\n\tx: Int,\n}\n\n--| One run.\n--|\n--|   Indented.\ntype Run = {\n\t--| The repository.\n\trepo: String,\n\t---\n\tThe version.\n\t---\n\tversion: String,\n\t-- a note\n\tsha: String,  --| trailing\n}\n\ntype Outcome = enum {\n\t--| Passed.\n\tPass,\n\t---\n\tFailed.\n\t---\n\tFail,\n}\n\ntype Shape =\n--| Round.\n| Circle(\n\t--| The radius.\n\tr: Int,\n\td: Int,\n)\n--| A dot.\n| Dot\n\nmessages \"en\" @reference {\n\t--| Greets.\n\t\"hi\" => \"Hello\"\n}\n";
+        let out = format_source(src, &FormatOptions::default()).unwrap();
+        assert_eq!(out, src);
+        // The marker's separating space is canonical.
+        let bare = "commons m\n\n--|bare\nfn f() -> Int { 1 }\n";
+        assert_eq!(
+            format_source(bare, &FormatOptions::default()).unwrap(),
+            "commons m\n\n--| bare\nfn f() -> Int { 1 }\n"
+        );
+    }
+
+    /// #1888: an orphaned `--|` run (a blank line before the declaration)
+    /// stays lines too, where it was.
+    #[test]
+    fn an_orphaned_doc_line_run_keeps_its_form() {
+        let src = "commons m\n\n--| Orphaned.\n\nfn f() -> Int { 1 }\n";
+        assert_eq!(format_source(src, &FormatOptions::default()).unwrap(), src);
+    }
+
+    /// #1888: the doc-loss guard keys a doc by its form as well as its text,
+    /// so a doc printed in the other form counts as lost.
+    #[test]
+    fn the_doc_loss_guard_sees_a_converted_form() {
+        let src = "commons m\n\n--| Text.\nfn f() -> Int { 1 }\n";
+        let tokens = tokenize(src).unwrap();
+        let converted = "commons m\n\n---\nText.\n---\nfn f() -> Int { 1 }\n";
+        assert!(doc_block_loss(src, &tokens, converted).is_some());
+        assert!(doc_block_loss(src, &tokens, src).is_none());
     }
 
     /// #1763: a CRLF copy of a canonical file formats to the LF canonical form,

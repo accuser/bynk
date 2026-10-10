@@ -799,7 +799,7 @@ fn emit_method(
     // is `---`-delimited, per the lexer — `Timestamp.diff`/`Timestamp.add`
     // in `65_money_uses_time` both carry one) — caught by the zero-diff
     // fixture check, not reasoned about in the abstract.
-    let doc = f.documentation.clone();
+    let doc = f.documentation.as_deref().map(str::to_owned);
     // #594: a method on a generic type erases to a generic namespace-object
     // member. The namespace `const` cannot itself carry `<T>`, so the type's own
     // parameters are threaded onto *each* method alongside the method's own
@@ -2189,7 +2189,7 @@ pub(crate) fn emit_capability(
                     .collect(),
                 params,
                 ret: ts_ty_to_ts_type(sig.return_ty, &commons.ty_intern),
-                doc: op.documentation.clone(),
+                doc: op.documentation.as_deref().map(str::to_owned),
             }
         })
         .collect();
@@ -3106,7 +3106,7 @@ pub(crate) fn emit_service(
             generics: Vec::new(),
             params,
             return_type: Some(ts_ty_to_ts_type(*ir_ret, tys)),
-            doc: handler.documentation.clone(),
+            doc: handler.documentation.as_deref().map(str::to_owned),
             inline: false,
             body: vec![raw_stmt],
         };
@@ -4545,6 +4545,7 @@ pub(crate) fn emit_agent(
             )
         })
         .map(|f| RecordField {
+            documentation: None,
             trivia: Default::default(),
             name: f.name.clone(),
             type_ref: f.kind.args[0].clone(),
@@ -6075,7 +6076,7 @@ pub(crate) fn emit_agent(
             is_async: effectful,
             params,
             return_type: Some(ret),
-            doc: h.documentation.clone(),
+            doc: h.documentation.as_deref().map(str::to_owned),
             body: vec![bynk_ts::TsStmt::raw(raw_body.clone(), None)],
         };
         emit_class_method_and_merge_source_map(
