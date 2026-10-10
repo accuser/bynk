@@ -466,12 +466,12 @@ fn doc_block_loss(source: &str, tokens: &[Token], output: &str) -> Option<Compil
         category: "bynk.fmt.comment_loss",
         span,
         message: format!(
-            "formatting would lose {lost} documentation block{} — the file was left unchanged",
+            "formatting would lose {lost} doc{} — the file was left unchanged",
             if lost == 1 { "" } else { "s" }
         ),
         labels: vec![(
             span,
-            "this documentation block has no counterpart in the formatted output".to_string(),
+            "this doc has no counterpart in the formatted output".to_string(),
         )],
         notes: vec![
             "a doc (a `---` block or `--|` lines) attaches to the declaration or member \
@@ -3590,6 +3590,24 @@ mod tests {
             format_source(bare, &FormatOptions::default()).unwrap(),
             "commons m\n\n--| bare\nfn f() -> Int { 1 }\n"
         );
+    }
+
+    /// #1888 review: a `--` comment under a `--|` doc line is on its own line,
+    /// as one under a `---` block is, so the blank line after it (#1884) is
+    /// kept in both forms.
+    #[test]
+    fn a_blank_after_a_comment_under_a_doc_line_is_kept() {
+        for (doc, printed) in [
+            ("--| Doc.\n", "--| Doc.\n"),
+            ("---\nDoc.\n---\n", "---\nDoc.\n---\n"),
+        ] {
+            let src = format!("commons m\n\n{doc}-- note\n\ntype X = Int\n");
+            assert_eq!(
+                format_source(&src, &FormatOptions::default()).unwrap(),
+                format!("commons m\n\n-- note\n\n{printed}type X = Int\n"),
+                "{doc:?}"
+            );
+        }
     }
 
     /// #1888: an orphaned `--|` run (a blank line before the declaration)

@@ -290,9 +290,17 @@ impl<'a> Parser<'a> {
             let mut end_span = name.span;
             if self.peek_kind() == Some(TokenKind::LParen) {
                 self.bump();
-                // #1888: a payload field may carry a doc above it.
+                // #1888: a payload field may carry a doc above it. The lead is
+                // taken here, as `parse_record_body` does, so a doc with only
+                // the `)` after it is an orphan warning, not a parse error.
                 while self.peek_kind() != Some(TokenKind::RParen) {
-                    payload.push(self.parse_variant_field()?);
+                    let (_, documentation) = self.collect_member_lead(TokenKind::RParen);
+                    if self.peek_kind() == Some(TokenKind::RParen) {
+                        break;
+                    }
+                    let mut field = self.parse_variant_field()?;
+                    field.documentation = documentation;
+                    payload.push(field);
                     if self.eat(TokenKind::Comma).is_none() {
                         break;
                     }
@@ -444,11 +452,11 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// One payload field, `name: Type`, with the doc above it (#1888). A
-    /// payload field keeps no comments; one above it stays in the trivia
-    /// table, and `bynk fmt`'s comment-loss guard refuses rather than drop it.
+    /// One payload field, `name: Type`. The caller takes the doc above it
+    /// (#1888). A payload field keeps no comments; one above it is dropped
+    /// with the lead, and `bynk fmt`'s comment-loss guard refuses rather than
+    /// lose it.
     fn parse_variant_field(&mut self) -> Result<VariantField, CompileError> {
-        let (_, documentation) = self.collect_member_lead(TokenKind::RParen);
         let name = self.expect_ident("as a variant payload field name")?;
         self.expect(TokenKind::Colon, "after the variant payload field name")?;
         let type_ref = self.parse_type_ref("as the variant payload field type")?;
@@ -457,7 +465,8 @@ impl<'a> Parser<'a> {
             name,
             type_ref,
             span,
-            documentation,
+            // The payload loop attaches the doc above the field.
+            documentation: None,
         })
     }
 

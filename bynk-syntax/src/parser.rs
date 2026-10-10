@@ -153,11 +153,12 @@ fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
                 }
             }
             // A doc block's token ends past its closing line's newline, so a
-            // comment under it is on its own line with no newline between.
+            // comment under it is on its own line with no newline between. A
+            // `--|` doc line's token does too (#1888).
             let own_line = !pending_leading.is_empty()
                 || filtered
                     .last()
-                    .is_none_or(|t| t.kind == TokenKind::DocBlock)
+                    .is_none_or(|t| matches!(t.kind, TokenKind::DocBlock | TokenKind::DocLine))
                 || last_content_end.is_some_and(|end| source[end..tok.span.start].contains('\n'));
             pending_leading.push(Comment::Line(body));
             last_leading_end = own_line.then_some(tok.span.end);
@@ -3273,6 +3274,21 @@ mod tests {
                     .any(|e| e.category == "bynk.parse.doc_forms_mixed")
             );
         }
+    }
+
+    /// #1888 review: a doc with only a payload's `)` after it is an orphan
+    /// warning, and the variant still parses with its field.
+    #[test]
+    fn a_dangling_doc_before_a_payload_close_is_only_an_orphan() {
+        let src =
+            "commons m\n\ntype S =\n  | Circle(\n    r: Int,\n    --| dangling\n  )\n  | Dot\n";
+        assert_eq!(strict_codes(src), ["bynk.parse.orphan_doc_block"]);
+        let c = parse_str(src).unwrap();
+        let TypeBody::Sum(s) = &type_at(&c, 0).body else {
+            panic!("sum")
+        };
+        assert_eq!(s.variants[0].payload.len(), 1);
+        assert_eq!(s.variants[0].payload[0].documentation, None);
     }
 
     /// #1888: a member doc follows the declaration rules: a blank line

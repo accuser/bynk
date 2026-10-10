@@ -285,7 +285,7 @@ proptest! {
             Ok(formatted) => formatted,
             Err(e) => {
                 let refused_a_doc = e.errors.iter().any(|x| {
-                    x.category == "bynk.fmt.comment_loss" && x.message.contains("documentation block")
+                    x.category == "bynk.fmt.comment_loss" && (x.message.contains(" doc ") || x.message.contains(" docs "))
                 });
                 prop_assert!(!refused_a_doc, "refused a doc block\n--- input ---\n{}", src);
                 return Ok(());

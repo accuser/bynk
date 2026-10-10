@@ -286,7 +286,10 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
             .filter(|t| {
                 matches!(
                     t.kind,
-                    TokenKind::StrLit | TokenKind::InterpStr | TokenKind::DocBlock
+                    TokenKind::StrLit
+                        | TokenKind::InterpStr
+                        | TokenKind::DocBlock
+                        | TokenKind::DocLine
                 )
             })
             .map(|t| (t.span.start, t.span.end))
