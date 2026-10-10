@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.320**.
+written against **v0.321**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.321.0** | "A doc-block's closing marker must have as many dashes as its opening one (#1885), as with a Markdown code fence, so a `----` block can hold `---` lines: a horizontal rule, front matter, or a Bynk example with its own doc-block. A doc-block whose content, outside Markdown code fences, parses as declarations is the new error `bynk.parse.doc_block_contains_code`; a pair of dash dividers around code no longer turns it into documentation silently. The `bynk.lex.unclosed_doc_block` note now says a line of dashes is a marker, not a divider. `bynk fmt` prints the shortest fence longer than any marker line in the doc. VS Code no longer maps *Toggle Block Comment* to `---`, and the editor grammars pair markers by length" |
 | **v0.320.0** | "Resolves #1889: the `List[T]` kernel gains `append(x: T) -> List[T]` and `concat(other: List[T]) -> List[T]`, both pure and non-mutating, so a `fold` or `foldEff` builds a list in order without `prepend` and `reverse`. They emit as the spreads `[...xs, x]` and `[...xs, ...ys]`, and like `prepend` they pass an expected list type down to their receiver, so `let xs: List[Int] = [].append(1)` infers. Supersedes ADR 0036's never-append clause." |
 | **v0.319.0** | "**A fault claim carries a call-site principal** ([#1812](https://github.com/accuser/bynk/issues/1812)). `expect api.POST(\"/orders\", order) by User(\"bob\") faults` drives an identity-carrying handler as `let r <- … by User(\"bob\")` does, so its fault path is testable; the principal is checked against the addressed handler (an absent `by` is still `bynk.test.principal_required`) and lowered around the claimed call. A fault claim driven `by Nobody` is `bynk.test.faults_needs_in_process` at any tier. Grammar (`faults_expr`), formatter and tree-sitter updated." |
 | **v0.318.0** | "A test suite checks a type its target reaches only through an imported declaration (#1814). A unit suite's view and a `system` case's harness table each merged one level of `uses`, so `t.model`'s `Run { repo: Repo }` reached a suite over `t.web` (which `uses t.model` only) with `repo` typed by nothing: `Run { repo: 42 }` and an `Int` read of `r.repo` compiled. Each suite view is now closed over the types its imported declarations reach, as the unit's own table is (#1807), and the same naming gate rejects a reached type a suite writes. A reached name a suite's view already binds to another declaration is `bynk.uses.name_conflict`: in a `system` suite, a participant's type of the same name as one the suite's `uses` reaches; in a unit suite, a consumed context's unexported type, which only the suite's view merges. The generated test module imports each reached type from its owning commons, so a lowered case can spell it (`(__x: Repo) => …`, `Repo.shout(…)`)" |

@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "A doc-block's closing marker must have as many dashes as its opening one (#1885), as with a Markdown code fence, so a `----` block can hold `---` lines: a horizontal rule, front matter, or a Bynk example with its own doc-block. A doc-block whose content, outside Markdown code fences, parses as declarations is the new error `bynk.parse.doc_block_contains_code`; a pair of dash dividers around code no longer turns it into documentation silently. The `bynk.lex.unclosed_doc_block` note now says a line of dashes is a marker, not a divider. `bynk fmt` prints the shortest fence longer than any marker line in the doc. VS Code no longer maps *Toggle Block Comment* to `---`, and the editor grammars pair markers by length"
----
+# 0449 — A doc-block closes on a marker of its opener's length, and may not contain code
 
-## ADR: doc-fence-matched-length
-title: A doc-block closes on a marker of its opener's length, and may not contain code
-summary: Matched-length `---` fences (ADR 0188 D4 superseded in part), `bynk.parse.doc_block_contains_code` for a doc-block whose content parses as declarations, and no editor block-comment mapping
+- **Status:** Accepted (v0.321)
 
 **Context.** A doc-block is fenced by lines of three or more dashes, and ADR 0188
 D4 pinned that any such line opens or closes one. That left three faults, found
