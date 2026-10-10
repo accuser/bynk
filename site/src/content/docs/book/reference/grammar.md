@@ -1653,7 +1653,9 @@ principal the case acts as when the effect drives a service handler.
 The test-body `by <Actor>(<identity>)` clause (v0.182): names the actor a `case`
 acts as when it drives a service handler, and supplies the identity value. Written
 `by User("bob")` for an identity-carrying actor, or `by Visitor` (no argument) for
-a unit-identity actor. Distinct from [`by_clause`](#rule-by_clause), the handler
+a unit-identity actor. It trails an effect-let's value, or sits between a fault
+claim's call and `faults` ([`faults_expr`](#rule-faults_expr), #1812). Distinct
+from [`by_clause`](#rule-by_clause), the handler
 form, which binds an actor and admits a sum but carries no identity argument.
 
 ### effect_send_stmt {#rule-effect_send_stmt}
@@ -1719,7 +1721,9 @@ words are contextual keywords.
 A fault claim, inside a `case`: `expect <call> faults` holds when awaiting the
 call throws (an injected `stub … fails`, a real provider's failure, an invariant
 violation) rather than returns. The subject is the call itself, not a value bound
-from it. `faults` is a contextual keyword.
+from it. An optional [`call_site_actor`](#rule-call_site_actor) between the call
+and `faults` supplies the caller identity the addressed handler reads (#1812).
+`faults` is a contextual keyword.
 
 **See also.** [Claiming a fault](/book/reference/testing/#faults).
 

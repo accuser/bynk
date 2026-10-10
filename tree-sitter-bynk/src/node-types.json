@@ -3612,6 +3612,16 @@
             "named": true
           }
         ]
+      },
+      "principal": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "call_site_actor",
+            "named": true
+          }
+        ]
       }
     }
   },

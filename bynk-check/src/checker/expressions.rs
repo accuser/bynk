@@ -553,11 +553,18 @@ pub(crate) fn check_observation(o: &ObservationExpr, _span: Span, ctx: &mut Ctx)
 /// re-diagnosed here.
 ///
 /// Awaiting is an effect, so the claim needs an effectful body, as `<-` does
-/// (`bynk.effect.bind_in_pure_context`). A call-site principal has no slot in
-/// the claim, so an identity-carrying handler is validated as an absent `by`
-/// (`check_effect_let_principal`), rather than silently driven with no
-/// identity.
-pub(crate) fn check_faults(call: &Expr, span: Span, ctx: &mut Ctx) -> Option<TyId> {
+/// (`bynk.effect.bind_in_pure_context`). The claim's call-site principal
+/// (#1812, `expect <call> by User("bob") faults`) is validated against the
+/// addressed handler exactly as an effect-let's is
+/// (`check_effect_let_principal`) — an absent `by` on an identity-carrying
+/// handler included, rather than silently driven with no identity.
+///
+/// `by Nobody` is the exception: it drives the `system`-tier auth seam, where
+/// a fault claim cannot hold, so the tier pass reports it as
+/// `bynk.test.faults_needs_in_process` and it is not validated here — the
+/// route-shape diagnostics would only bury that one.
+pub(crate) fn check_faults(faults: &FaultsExpr, span: Span, ctx: &mut Ctx) -> Option<TyId> {
+    let FaultsExpr { call, principal } = faults;
     let tys = ctx.tys;
     let bool_ty = tys.intern(Ty::Base(BaseType::Bool));
     if !ctx.in_test_body {
@@ -574,7 +581,23 @@ pub(crate) fn check_faults(call: &Expr, span: Span, ctx: &mut Ctx) -> Option<TyI
         );
     }
     let call_ty = type_of(call, None, ctx);
-    super::calls::check_effect_let_principal(call, None, ctx);
+    match principal {
+        Some(p) if p.actor.name == "Nobody" => {
+            if let Some(identity) = &p.identity {
+                let _ = type_of(identity, None, ctx);
+                // #1878 review: the route-shape checks are skipped (the tier
+                // error is the one that matters), but `Nobody` taking no
+                // identity is said now, not after the rewrite the tier error
+                // suggests.
+                ctx.errors.push(CompileError::new(
+                    "bynk.test.actor_no_identity",
+                    p.span,
+                    "actor `Nobody` has no identity, so write `by Nobody` with no argument",
+                ));
+            }
+        }
+        _ => super::calls::check_effect_let_principal(call, principal.as_ref(), ctx),
+    }
     let note = "only an effectful call can fault; give `faults` the call itself (`expect svc.call(x) faults`), not a value already bound from it";
     // The subject must be a call *syntactically* as well as an `Effect` by
     // type: a case-body binding from an address call is deliberately untyped

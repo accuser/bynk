@@ -2229,8 +2229,16 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
         ExprKind::EffectPure(inner) => {
             check_expr_references(inner, cx);
         }
-        ExprKind::Expect(inner) | ExprKind::Faults(inner) => {
+        ExprKind::Expect(inner) => {
             check_expr_references(inner, cx);
+        }
+        ExprKind::Faults(f) => {
+            // #1812: a call-site principal's identity (`by User(who)`) is an
+            // ordinary expression, resolved like the call's arguments.
+            if let Some(identity) = f.principal.as_ref().and_then(|p| p.identity.as_deref()) {
+                check_expr_references(identity, cx);
+            }
+            check_expr_references(&f.call, cx);
         }
         ExprKind::Val { args, .. } => {
             // v0.9.4: the mocked type is validated by the checker; resolve any

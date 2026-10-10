@@ -98,6 +98,11 @@ impl<'a> Parser<'a> {
             return self.parse_observation();
         }
         let subject = self.parse_expr()?;
+        // #1812: a fault claim may carry a call-site principal between its
+        // call and `faults`, in the same position as on an effect-let
+        // (`let r <- call by User("bob")`). Only a fault claim takes one, so
+        // once a `by` is read the `faults` is required.
+        let principal = self.parse_call_site_actor()?;
         // #1706: `expect <call> faults`. An expression is never followed by a
         // bare identifier, so a trailing `faults` is unambiguous here — the
         // same contextual-word reading as the observation's `with`/`times`.
@@ -106,8 +111,26 @@ impl<'a> Parser<'a> {
             let span = subject.span.merge(self.prev_span());
             return Ok(Expr {
                 id: self.alloc_expr_id(),
-                kind: ExprKind::Faults(Box::new(subject)),
+                kind: ExprKind::Faults(Box::new(FaultsExpr {
+                    call: subject,
+                    principal,
+                })),
                 span,
+            });
+        }
+        if principal.is_some() {
+            let ctx = "after a call-site `by` clause in an `expect` — only a fault claim (`expect <call> by <Actor>(…) faults`) takes one";
+            return Err(match self.peek() {
+                Some(t) => CompileError::new(
+                    "bynk.parse.expected_token",
+                    t.span,
+                    format!("expected `faults` {ctx}, found {}", t.kind.describe()),
+                ),
+                None => CompileError::new(
+                    "bynk.parse.unexpected_eof",
+                    self.eof_span(),
+                    format!("expected `faults` {ctx}, found end of file"),
+                ),
             });
         }
         Ok(subject)

@@ -1,0 +1,3 @@
+bynk.test.actor_no_identity actor `Nobody` has no identity
+bynk.test.faults_needs_in_process a fault claim cannot be driven `by Nobody`
+# exact

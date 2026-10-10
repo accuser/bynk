@@ -1295,7 +1295,14 @@ module.exports = grammar({
     // call throws. `faults` is contextual (an ordinary identifier elsewhere),
     // mirroring the compiler's trailing-word parse; an expression is never
     // followed by a bare identifier, so the word alone decides.
-    faults_expr: ($) => seq(field("call", $._expression), "faults"),
+    // #1812: an optional call-site actor sits between the call and `faults`,
+    // in the same position as on an effect-let (`by User("bob")`).
+    faults_expr: ($) =>
+      seq(
+        field("call", $._expression),
+        optional(field("principal", $.call_site_actor)),
+        "faults",
+      ),
 
     // v0.117: an observation — a `Cap.op` seam reference followed by one of the
     // sugar matchers. `called` / `never` / `once` / `times` / `with` / `before`

@@ -1,0 +1,10 @@
+context demo
+
+type UserId = String where NonEmpty
+actor Buyer { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+service api from http {
+  on GET("/a") () -> Effect[HttpResult[Int]] by u: Buyer {
+    Ok(1)
+  }
+}

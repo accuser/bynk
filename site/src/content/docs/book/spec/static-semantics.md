@@ -1365,7 +1365,7 @@ test-build-only* — no source declares it, and the deploy build carries none of
 
 ### §5.9e Fault claim
 
-A **fault claim**, `expect <call> faults` (#1706), asserts that awaiting an
+A **fault claim**, `expect <call> [by <Actor>(<identity>)] faults` (#1706, #1812), asserts that awaiting an
 effectful call throws rather than returns. A fault is untyped and no caller can
 handle it ([§7.4.12](/book/spec/runtime-library/#7412-the-stub-clause-v0118)), so
 the claim is how a `case` observes one, not a way to catch it. Well-formedness:
@@ -1376,14 +1376,20 @@ the claim is how a `case` observes one, not a way to catch it. Well-formedness:
   (`bynk.expect.faults_not_effect`) — a value bound from a call has already run it;
 - awaiting is an effect, so the claim MUST sit in an effectful body, as `<-` does
   (`bynk.effect.bind_in_pure_context`);
-- the claim has no call-site principal slot: an addressed handler that requires an
-  identity is reported as for an absent `by` (`bynk.test.principal_required`);
+- the claim's optional call-site principal, written between the call and
+  `faults`, is validated against the addressed handler exactly as an effect-let's
+  is ([`call_site_actor`](/book/reference/grammar/#rule-call_site_actor)): an addressed handler that requires an
+  identity and is given no `by` is `bynk.test.principal_required`, and a supplied
+  identity MUST type as the handler's;
 - the case MUST NOT be `system`-tier (`bynk.test.faults_needs_in_process`): at
   `system` a handler's fault crosses the deployed Worker's boundary as an error
   response, never a throw. The restriction is deliberate (#1811): a fault is an
   in-process concept, and at `system` the observable is the response. A `system`
   case asserts `r is ServerError(_)`, which does not distinguish a fault from a
-  handler's deliberate `ServerError`.
+  handler's deliberate `ServerError`;
+- the principal MUST NOT be `by Nobody`, at any tier
+  (`bynk.test.faults_needs_in_process`): `Nobody` exercises the `system`-tier auth
+  seam, where the claim cannot hold.
 
 The claim types as `Bool`.
 

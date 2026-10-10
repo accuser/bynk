@@ -3260,7 +3260,16 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
         ExprKind::Wire(inner) => format!("Wire({})", expr_with_prec(inner, 0)),
         ExprKind::Trace { cap, op } => format!("trace({}.{})", cap.name, op.name),
         // #1706: the fault claim — the call, then the contextual `faults`.
-        ExprKind::Faults(call) => format!("{} faults", expr_with_prec(call, 0)),
+        // #1812: the call-site principal sits between the call and `faults`,
+        // in the same position as on an effect-let.
+        ExprKind::Faults(f) => match &f.principal {
+            Some(p) => format!(
+                "{} {} faults",
+                expr_with_prec(&f.call, 0),
+                call_site_actor_src(p)
+            ),
+            None => format!("{} faults", expr_with_prec(&f.call, 0)),
+        },
         ExprKind::Observation(o) => {
             let subject = format!("{}.{}", o.cap.name, o.op.name);
             match &o.matcher {
@@ -3509,6 +3518,24 @@ mod tests {
         let out = fmt(src);
         let out2 = fmt(&out);
         assert_eq!(out, out2, "formatter not idempotent: {out}");
+    }
+
+    #[test]
+    fn formats_a_fault_claim_with_a_call_site_principal() {
+        // #1812: the principal sits between the call and `faults`, and the
+        // claim round-trips with it — and without it.
+        let src = "suite s {\n  case \"c\" {\n    expect api.POST(\"/o\", x)   by  User( \"bob\" ) faults\n    expect api.GET(\"/a\") by Visitor faults\n    expect box.call() faults\n  }\n}\n";
+        let out = fmt(src);
+        assert!(
+            out.contains("expect api.POST(\"/o\", x) by User(\"bob\") faults"),
+            "{out}"
+        );
+        assert!(
+            out.contains("expect api.GET(\"/a\") by Visitor faults"),
+            "{out}"
+        );
+        assert!(out.contains("expect box.call() faults"), "{out}");
+        assert_eq!(out, fmt(&out), "formatter not idempotent: {out}");
     }
 
     #[test]

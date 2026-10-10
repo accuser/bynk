@@ -1526,27 +1526,65 @@ fn blocks_deep(block: &Block) -> Vec<&Block> {
 /// as an error response, never a throw at the harness, so the claim could
 /// never hold there (`bynk.test.faults_needs_in_process`).
 fn block_uses_faults(block: &Block) -> bool {
-    fn contains_faults(e: &Expr) -> bool {
-        matches!(e.kind, ExprKind::Faults(_))
-            || bynk_syntax::ast::expr_children(e)
-                .into_iter()
-                .any(contains_faults)
+    !faults_claims(block).is_empty()
+}
+
+/// Every fault claim (`expect <call> faults`) in `block`, at any depth, in
+/// source order.
+fn faults_claims(block: &Block) -> Vec<&bynk_syntax::ast::FaultsExpr> {
+    fn collect<'a>(e: &'a Expr, out: &mut Vec<&'a bynk_syntax::ast::FaultsExpr>) {
+        if let ExprKind::Faults(f) = &e.kind {
+            out.push(f);
+        }
+        for c in bynk_syntax::ast::expr_children(e) {
+            collect(c, out);
+        }
     }
     let mut exprs = Vec::new();
     for s in &block.statements {
         bynk_syntax::ast::statement_exprs(s, &mut exprs);
     }
-    exprs.into_iter().any(contains_faults) || contains_faults(&block.tail)
+    exprs.push(&block.tail);
+    let mut out = Vec::new();
+    for e in exprs {
+        collect(e, &mut out);
+    }
+    out
 }
 
 /// #1706: report a `system`-tier case that claims a fault — see
 /// [`block_uses_faults`].
+///
+/// #1812: a fault claim driven `by Nobody` is reported too, at any tier.
+/// `by Nobody` exercises the auth seam that exists only at `system`, where
+/// the claim cannot hold, so it falls under the same code rather than
+/// `bynk.test.credential_needs_system`, whose advice (promote the case to
+/// `system`) would only lead here.
 fn check_faults_tier(
     case: &Case,
     tier: bynk_syntax::ast::TestTier,
     errors: &mut Vec<CompileError>,
 ) {
-    if tier == bynk_syntax::ast::TestTier::System && block_uses_faults(&case.body) {
+    if tier != bynk_syntax::ast::TestTier::System {
+        for p in faults_claims(&case.body)
+            .into_iter()
+            .filter_map(|f| f.principal.as_ref())
+            .filter(|p| p.actor.name == "Nobody")
+        {
+            errors.push(
+                CompileError::new(
+                    "bynk.test.faults_needs_in_process",
+                    p.span,
+                    "a fault claim cannot be driven `by Nobody`: the missing credential is rejected only by the `system`-tier auth seam, where a fault is never a throw",
+                )
+                .with_note(
+                    "assert the rejection instead, in a `system` case: `let r <- <call> by Nobody` then `expect r is Rejected(Unauthorized)`",
+                ),
+            );
+        }
+        return;
+    }
+    if block_uses_faults(&case.body) {
         errors.push(
             CompileError::new(
                 "bynk.test.faults_needs_in_process",

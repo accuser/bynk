@@ -1,0 +1,2 @@
+bynk.parse.expected_token
+expected `faults` after a call-site `by` clause
