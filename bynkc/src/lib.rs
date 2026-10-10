@@ -51,6 +51,7 @@ pub use bynk_emit::project::{
     Artefacts, AttributedError, BuildTarget, CompileOptions, DiscoveredCase, DiscoveredSuite,
     Document, ImportExt, ProjectFailure, ProjectOutput, ProjectPaths, ProjectPathsError, Roots,
     SchemaLock, TestLocation, compile_project, sibling_path, try_read_project_paths,
+    try_read_workers_config,
 };
 pub use bynk_emit::{Compiled, NODE_MAJOR_FLOOR, compile, compile_with_warnings};
 

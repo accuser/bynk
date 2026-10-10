@@ -384,6 +384,10 @@ pub(crate) fn env_qualify(environment: &str, name: &str) -> String {
 /// anyway, so the `[env.<name>]` block states every Durable Object fact its
 /// bindings rely on rather than leaning on an inheritance rule the bindings
 /// beside it don't follow. The two can't disagree: the copy is verbatim.
+///
+/// #1890: `compatibility_date` and `compatibility_flags` are inheritable too,
+/// and nothing here is environment-specific about them, so neither is copied:
+/// every environment runs under the top level's date and flags.
 pub(crate) fn synthesise_environment_block(
     config_text: &str,
     environment: &str,
@@ -559,6 +563,7 @@ pub(crate) mod tests {
 name = "api"
 main = "index.ts"
 compatibility_date = "2026-07-01"
+compatibility_flags = ["global_fetch_strictly_public"]
 
 [[services]]
 binding = "PAYMENT"
@@ -608,6 +613,10 @@ max_batch_size = 10
         // TOML with the right shape, not merely text that looks right.
         let doc: toml::Table = out.parse().expect("synthesised output is valid TOML");
         let env = doc["env"]["staging"].as_table().expect("env.staging");
+
+        // #1890: `compatibility_flags` is inheritable, so the environment
+        // takes the top level's rather than a copy.
+        assert!(!env.contains_key("compatibility_flags"));
 
         assert_eq!(env["kv_namespaces"][0]["binding"].as_str(), Some("BYNK_KV"));
         assert_eq!(
@@ -704,6 +713,7 @@ max_batch_size = 10
 name = "commerce-orders"
 main = "index.ts"
 compatibility_date = "2026-07-01"
+compatibility_flags = ["global_fetch_strictly_public"]
 
 [[services]]
 binding = "COMMERCE_PAYMENT"
@@ -732,6 +742,7 @@ service = "commerce-payment"
 name = "jobs"
 main = "index.ts"
 compatibility_date = "2026-07-01"
+compatibility_flags = ["global_fetch_strictly_public"]
 
 [[queues.consumers]]
 queue = "high-priority"
@@ -757,6 +768,7 @@ max_batch_size = 10
 name = "cart"
 main = "index.ts"
 compatibility_date = "2026-07-01"
+compatibility_flags = ["global_fetch_strictly_public"]
 
 [[durable_objects.bindings]]
 name = "CART_ENTITY"
@@ -784,6 +796,7 @@ storage = "sqlite"
 name = "ops-hub"
 main = "index.ts"
 compatibility_date = "2026-07-01"
+compatibility_flags = ["global_fetch_strictly_public"]
 
 [[kv_namespaces]]
 binding = "KV"
