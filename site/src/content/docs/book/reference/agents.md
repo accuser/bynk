@@ -209,7 +209,8 @@ boundary codec the HTTP and queue seams use. A load runs each stored value, and
 textual `Set` elements / `Map` keys, back through the boundary deserialiser, against
 the **current** type definition. A failure is an internal
 fault, **`RehydrationViolation`** — the load-time twin of an `InvariantViolation`
-(it logs the agent and field, never the key/value) — *not* a caller-facing `400`:
+(it logs `RehydrationViolation <Agent>` with the agent, the field path and the
+kind of failure, never the key/value) — *not* a caller-facing `400`:
 the supplier of stored state is trusted past-self, not an untrusted caller.
 
 Two consequences follow:
