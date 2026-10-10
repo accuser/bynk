@@ -88,10 +88,10 @@ use tests_emit::*;
 pub use bynk_check::project_model::BuildTarget;
 pub use bynk_check::symbols::{FileDeclIndex, UnitTable};
 pub use bynk_project::{
-    AttributedError, ProjectPaths, ProjectPathsError, Roots, SchemaLock, UnitKind, check_manifest,
-    check_manifest_str, discover_project_files, try_read_project_paths,
-    try_read_project_paths_with, worker_dir_name, worker_handlers_output_path,
-    worker_handlers_source_path,
+    AttributedError, ProjectPaths, ProjectPathsError, Roots, SchemaLock, UnitKind, WorkersConfig,
+    check_manifest, check_manifest_str, discover_project_files, try_read_project_paths,
+    try_read_project_paths_with, try_read_workers_config, try_read_workers_config_with,
+    worker_dir_name, worker_handlers_output_path, worker_handlers_source_path,
 };
 pub use diagnostics::{ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis, ProjectFailure};
 
@@ -326,6 +326,14 @@ pub struct CompileOptions {
     /// comes back out on [`ProjectOutput::schema_lock`] for the caller to
     /// persist.
     pub schema_registry: SchemaLock,
+    /// #1890: the project's extra Cloudflare compatibility flags, from
+    /// `bynk.toml`'s `[workers] compatibility_flags`, in manifest order.
+    /// A Workers build writes them into every `wrangler.toml` after
+    /// [`crate::DEFAULT_COMPATIBILITY_FLAGS`]; a duplicate is dropped with a
+    /// `bynk.project.duplicate_compatibility_flag` warning. Empty by default:
+    /// `bynk-driver`'s `project_options`/`try_project_options` read the
+    /// manifest and set it, as does `bynkc/tests/e2e.rs` for a fixture.
+    pub compatibility_flags: Vec<String>,
 }
 
 impl CompileOptions {
@@ -340,6 +348,7 @@ impl CompileOptions {
             tests: true,
             sources: None,
             schema_registry: SchemaLock::Off,
+            compatibility_flags: Vec::new(),
         }
     }
 
@@ -359,6 +368,7 @@ impl CompileOptions {
             tests: true,
             sources: None,
             schema_registry: SchemaLock::Off,
+            compatibility_flags: Vec::new(),
         }
     }
 
@@ -414,6 +424,13 @@ impl CompileOptions {
     /// it off.
     pub fn schema_registry(mut self, mode: SchemaLock) -> Self {
         self.schema_registry = mode;
+        self
+    }
+
+    /// #1890: the project's extra Cloudflare compatibility flags, from
+    /// `bynk.toml`'s `[workers]` table. See the field's own doc.
+    pub fn compatibility_flags(mut self, flags: Vec<String>) -> Self {
+        self.compatibility_flags = flags;
         self
     }
 }
@@ -504,7 +521,12 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
     // instead and has no revised content for a caller to persist). The
     // caller (today, `bynk-driver`'s two wiring points) does the atomic
     // write.
-    finish_build(run, options.import_ext, options.roots.project_root())
+    finish_build(
+        run,
+        options.import_ext,
+        options.roots.project_root(),
+        &options.compatibility_flags,
+    )
 }
 
 /// Result of [`check_project`]: every diagnostic from a non-bailing project
@@ -581,7 +603,12 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
         | RunChecks::Checked {
             errors, snapshots, ..
         } => ProjectCheck {
-            errors: errors.into_all(),
+            // #1890: the manifest's duplicate-flag warnings, as a build reports.
+            errors: errors
+                .into_all()
+                .into_iter()
+                .chain(compatibility_flag_warnings(&options.compatibility_flags))
+                .collect(),
             snapshots,
             display_root: options.roots.project_root().to_path_buf(),
         },
@@ -630,7 +657,7 @@ pub fn compile_in_memory(
         &root,
         tys,
     );
-    finish_build(run, ImportExt::Js, Path::new(""))
+    finish_build(run, ImportExt::Js, Path::new(""), &[])
 }
 
 /// [`compile_in_memory`] for several files (#1830): each `(path, source)` pair
@@ -668,7 +695,7 @@ pub(crate) fn compile_files_in_memory(
         &root,
         tys,
     );
-    finish_build(run, ImportExt::Js, Path::new(""))
+    finish_build(run, ImportExt::Js, Path::new(""), &[])
 }
 
 /// Analyse a single **in-memory** Bynk source and return all diagnostics —
@@ -778,28 +805,59 @@ fn in_memory_logical_path(source: &str) -> PathBuf {
     }
 }
 
+/// #1890: one `bynk.project.duplicate_compatibility_flag` warning per
+/// duplicate in the manifest's `[workers] compatibility_flags` (`extra`),
+/// shared by [`finish_build`] and [`check_project`] so `compile` and `check`
+/// report the same thing. Attributed to `bynk.toml` by its root-relative
+/// identity path, like every other [`AttributedError`]; the manifest is never
+/// a snapshot, so renderers print that path (or none) rather than a source
+/// excerpt, and the message names `bynk.toml` itself.
+fn compatibility_flag_warnings(extra: &[String]) -> Vec<AttributedError> {
+    let (_, duplicates) = crate::compatibility_flags(extra);
+    duplicates
+        .into_iter()
+        .map(|flag| {
+            let default = crate::DEFAULT_COMPATIBILITY_FLAGS.contains(&flag.as_str());
+            bynk_project::duplicate_compatibility_flag_warning(
+                &flag,
+                default,
+                PathBuf::from("bynk.toml"),
+            )
+        })
+        .collect()
+}
+
 /// Assemble a finished [`ProjectOutput`] (or a [`ProjectFailure`]) from a
 /// [`RunChecks`] result — the shared tail of `compile_project` and
 /// `compile_in_memory`.
+///
+/// #1890: `compatibility_flags` is the manifest's `[workers]` list
+/// ([`CompileOptions::compatibility_flags`]). It is merged with the defaults
+/// once here, for every Worker, and each duplicate it held becomes one
+/// [`compatibility_flag_warnings`] warning, whatever the build target: the
+/// duplicate is a fact about the manifest.
 fn finish_build(
     run: RunChecks,
     import_ext: ImportExt,
     display_root: &Path,
+    compatibility_flags: &[String],
 ) -> Result<ProjectOutput, ProjectFailure> {
+    let (flags, _) = crate::compatibility_flags(compatibility_flags);
+    let flag_warnings = compatibility_flag_warnings(compatibility_flags);
     match run {
         RunChecks::Bailed {
             errors, snapshots, ..
         } => Err(ProjectFailure {
             // ADR 0117: a failed build still renders any warnings it produced
             // (the sink yields errors then warnings).
-            errors: errors.into_all(),
+            errors: errors.into_all().into_iter().chain(flag_warnings).collect(),
             snapshots,
             display_root: display_root.to_path_buf(),
         }),
         RunChecks::Checked {
             errors, snapshots, ..
         } if !errors.is_empty() => Err(ProjectFailure {
-            errors: errors.into_all(),
+            errors: errors.into_all().into_iter().chain(flag_warnings).collect(),
             snapshots,
             display_root: display_root.to_path_buf(),
         }),
@@ -845,10 +903,12 @@ fn finish_build(
                 npm_deps,
                 target,
                 import_ext,
+                &flags,
             );
             // ADR 0117: surface non-failing warnings on the successful build
             // (errors is empty here — the guard arm above caught any).
             out.warnings = errors.into_warnings();
+            out.warnings.extend(flag_warnings);
             out.snapshots = snapshots;
             out.display_root = display_root.to_path_buf();
             // #1078: the reconciled registry, if this build had one on —
@@ -2263,6 +2323,8 @@ fn build_output(
     npm_deps: std::collections::BTreeMap<String, String>,
     target: BuildTarget,
     import_ext: ImportExt,
+    // #1890: the merged `wrangler.toml` flag list (`finish_build` merges it).
+    compatibility_flags: &[String],
 ) -> ProjectOutput {
     // #1655 (runtime-semantics track S6): a `--target workers` build writes the
     // workers layout (`workers/<ctx>/…`), but a *unit* test module imports the
@@ -2502,6 +2564,7 @@ fn build_output(
                     &crons,
                     &queues,
                     ctx_uses_emit,
+                    compatibility_flags,
                 );
                 // Arc C slice 4 (#1323): `emit_worker_entry` returns a real
                 // `TsProgram` directly — the construction site's own

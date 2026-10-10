@@ -220,6 +220,15 @@ the new date.** The recommended option of #1677's Decision A.
    the generated Workers under the new runtime behaviour. The PR lists the
    compatibility flags Cloudflare switched on between the two dates and says
    which of them, if any, the runtime or the emitted code depends on.
+
+   **The default flag set is part of the review** (#1890).
+   `DEFAULT_COMPATIBILITY_FLAGS`, beside `COMPATIBILITY_DATE`, lists the flags
+   every emitted `wrangler.toml` carries ahead of a project's own
+   (`bynk.toml`'s `[workers] compatibility_flags`). It's currently
+   `global_fetch_strictly_public`, which makes a Bynk `Fetch` to a URL go over
+   the public internet. The review checks each default against the new date:
+   a flag the date now turns on is redundant and can be dropped, and a flag a
+   new default would contradict needs an explicit decision.
 3. **Record.** A bump changes what every deployed Worker runs under, so it
    carries a changelog entry. It needs an ADR only when a flag changes
    behaviour a Bynk program can observe.
