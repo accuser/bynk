@@ -23,9 +23,15 @@
 //! the name span each heading links back to (click-to-code). The Markdown is
 //! rendered — HTML-disabled — by the webview; nothing here emits HTML.
 //!
-//! Tier 1 (Decision A) is **file-scoped**: the model is built from one file's
-//! text, exactly like `document_symbols`. Context-aggregation (merging every
-//! file of a multi-file `context`) is the deferred follow-up.
+//! Tier 1 (Decision A) was **file-scoped**: [`documentation_model`] builds the
+//! model from one file's text, exactly like `document_symbols`. #1885 adds
+//! [`documentation_model_merged`], which merges every file of a multi-file unit
+//! into one page. That is unambiguous now that a unit carries at most one
+//! module doc (`bynk.project.duplicate_module_doc`): the page's lede is that
+//! doc, from whichever file has it, and its entries are every file's
+//! declarations, each tagged with the file it came from.
+
+use std::path::{Path, PathBuf};
 
 use bynk_syntax::ast::*;
 use bynk_syntax::lexer::tokenize;
@@ -74,40 +80,68 @@ pub struct DocEntry {
     pub documented: bool,
     /// The declaration's name span — the heading and signature link here.
     pub span: Span,
+    /// #1885: the file `span` is in, for a page merged from several files
+    /// ([`documentation_model_merged`]); `None` on a single-file page, whose
+    /// spans are all in the one file it was built from.
+    pub file: Option<PathBuf>,
+}
+
+/// A parsed unit's page-relevant parts: its kind keyword, name, name span,
+/// module doc and items.
+type PageParts<'u> = (
+    &'static str,
+    String,
+    Span,
+    &'u Option<Doc>,
+    &'u [CommonsItem],
+);
+
+/// The [`PageParts`] of `unit`; `None` for a `suite`.
+fn page_parts(unit: &SourceUnit) -> Option<PageParts<'_>> {
+    match unit {
+        SourceUnit::Commons(c) => Some((
+            "commons",
+            c.name.joined(),
+            c.name.span,
+            &c.documentation,
+            &c.items,
+        )),
+        SourceUnit::Context(c) => Some((
+            "context",
+            c.name.joined(),
+            c.name.span,
+            &c.documentation,
+            &c.items,
+        )),
+        SourceUnit::Adapter(a) => Some((
+            "adapter",
+            a.name.joined(),
+            a.name.span,
+            &a.documentation,
+            &a.items,
+        )),
+        SourceUnit::Suite(_) => None,
+    }
+}
+
+fn parse(text: &str) -> Option<SourceUnit> {
+    let tokens = tokenize(text).ok()?;
+    parse_unit_with_recovery(&tokens, text).0
 }
 
 /// Build the documentation model for a single file's `text`. Returns `None`
 /// when the file has no recognisable unit header, or is a test suite (`suite`
 /// units are not a documentation unit in Tier 1 — their `case`/`stub` members
 /// have no `describe_*` renderer, and a doc page for tests is out of scope).
+///
+/// Since #1885 the language server serves [`documentation_model_merged`]
+/// instead, so this has no production caller. It stays as the file-scoped
+/// core that needs no project: this module's unit tests pin each declaration
+/// kind's entry through it, and a host with a lone buffer (no project to merge
+/// across) can still build a page from one text.
 pub fn documentation_model(text: &str) -> Option<DocModel> {
-    let tokens = tokenize(text).ok()?;
-    let (unit, _errs) = parse_unit_with_recovery(&tokens, text);
-    let unit = unit?;
-    let (unit_kind, unit_name, unit_span, unit_doc, items) = match &unit {
-        SourceUnit::Commons(c) => (
-            "commons",
-            c.name.joined(),
-            c.name.span,
-            &c.documentation,
-            &c.items,
-        ),
-        SourceUnit::Context(c) => (
-            "context",
-            c.name.joined(),
-            c.name.span,
-            &c.documentation,
-            &c.items,
-        ),
-        SourceUnit::Adapter(a) => (
-            "adapter",
-            a.name.joined(),
-            a.name.span,
-            &a.documentation,
-            &a.items,
-        ),
-        SourceUnit::Suite(_) => return None,
-    };
+    let unit = parse(text)?;
+    let (unit_kind, unit_name, unit_span, unit_doc, items) = page_parts(&unit)?;
     let mut entries = Vec::new();
     for item in items {
         push_item(&mut entries, item);
@@ -116,6 +150,63 @@ pub fn documentation_model(text: &str) -> Option<DocModel> {
         unit_name,
         unit_kind,
         unit_doc: unit_doc.as_deref().map(str::to_owned),
+        unit_span,
+        entries,
+    })
+}
+
+/// #1885: the documentation model for the unit that `primary` declares,
+/// merged across every file in `files` that declares the same unit.
+///
+/// `files` is `(path, text)` for the candidate files — typically the unit's
+/// files from the project's unit→sources map; any that declare another unit,
+/// a different kind, or a `suite` are skipped, and `primary` need not be among
+/// them (it is always included). The page title and `unit_span` come from
+/// `primary`, the file the page was asked for. The lede is the unit's module
+/// doc from whichever file carries it (at most one does; should a broken
+/// project have more, the first in path order wins). Entries are every file's
+/// declarations, files in path order and each file's in source order, each
+/// tagged with its [`DocEntry::file`]. The result is the same page whichever
+/// of the unit's files is `primary`, apart from the title's span.
+pub fn documentation_model_merged<'a>(
+    primary: (&'a Path, &'a str),
+    files: impl IntoIterator<Item = (&'a Path, &'a str)>,
+) -> Option<DocModel> {
+    let unit = parse(primary.1)?;
+    let (unit_kind, unit_name, unit_span, _, _) = page_parts(&unit)?;
+    let mut all: Vec<(&Path, &str)> = files.into_iter().collect();
+    if !all.iter().any(|(p, _)| *p == primary.0) {
+        all.push(primary);
+    }
+    all.sort_by(|a, b| a.0.cmp(b.0));
+    all.dedup_by(|a, b| a.0 == b.0);
+    let mut unit_doc: Option<String> = None;
+    let mut entries = Vec::new();
+    for (path, text) in all {
+        let Some(unit) = parse(text) else {
+            continue;
+        };
+        let Some((kind, name, _, _, items)) = page_parts(&unit) else {
+            continue;
+        };
+        if kind != unit_kind || name != unit_name {
+            continue;
+        }
+        if unit_doc.is_none() {
+            unit_doc = unit.module_doc().map(str::to_string);
+        }
+        let start = entries.len();
+        for item in items {
+            push_item(&mut entries, item);
+        }
+        for e in &mut entries[start..] {
+            e.file = Some(path.to_path_buf());
+        }
+    }
+    Some(DocModel {
+        unit_name,
+        unit_kind,
+        unit_doc,
         unit_span,
         entries,
     })
@@ -138,6 +229,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
                 markdown: symbols::describe_type(t),
                 documented: t.documentation.is_some(),
                 span: t.name.span,
+                file: None,
             });
             push_member_docs(out, t);
         }
@@ -151,6 +243,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
             markdown: symbols::describe_fn(f),
             documented: f.documentation.is_some(),
             span: f.name.ident().span,
+            file: None,
         }),
         CommonsItem::Capability(c) => {
             out.push(DocEntry {
@@ -160,6 +253,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
                 markdown: symbols::describe_capability(c),
                 documented: c.documentation.is_some(),
                 span: c.name.span,
+                file: None,
             });
             for op in &c.ops {
                 out.push(DocEntry {
@@ -169,6 +263,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
                     markdown: symbols::describe_capability_op(c, op),
                     documented: op.documentation.is_some(),
                     span: op.name.span,
+                    file: None,
                 });
             }
         }
@@ -179,6 +274,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
             markdown: symbols::describe_provider(p),
             documented: p.documentation.is_some(),
             span: p.provider_name.span,
+            file: None,
         }),
         CommonsItem::Service(s) => {
             out.push(DocEntry {
@@ -188,6 +284,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
                 markdown: symbols::describe_service(s),
                 documented: s.documentation.is_some(),
                 span: s.name.span,
+                file: None,
             });
             for h in &s.handlers {
                 out.push(DocEntry {
@@ -200,6 +297,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
                     markdown: symbols::describe_service_handler(s, h),
                     documented: h.documentation.is_some(),
                     span: h.span,
+                    file: None,
                 });
             }
         }
@@ -211,6 +309,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
                 markdown: symbols::describe_agent(a),
                 documented: a.documentation.is_some(),
                 span: a.name.span,
+                file: None,
             });
             for h in &a.handlers {
                 let handler = h
@@ -225,6 +324,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
                     markdown: symbols::describe_agent_handler(a, h, &handler),
                     documented: h.documentation.is_some(),
                     span: h.method_name.as_ref().map(|m| m.span).unwrap_or(h.span),
+                    file: None,
                 });
             }
         }
@@ -235,6 +335,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
             markdown: symbols::describe_actor(a),
             documented: a.documentation.is_some(),
             span: a.name.span,
+            file: None,
         }),
         // message-bundles slice 1 (#859): a messages block, keyed by its tag.
         CommonsItem::Messages(m) => {
@@ -245,6 +346,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
                 markdown: symbols::describe_messages(m),
                 documented: m.documentation.is_some(),
                 span: m.tag_span,
+                file: None,
             });
             // #1888: a documented entry, under its bundle.
             for e in &m.entries {
@@ -260,6 +362,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
                         ),
                         documented: true,
                         span: e.code_span,
+                        file: None,
                     });
                 }
             }
@@ -275,6 +378,7 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
                 markdown: symbols::describe_type(&e.as_type_decl()),
                 documented: e.documentation.is_some(),
                 span: e.name.span,
+                file: None,
             });
             push_member_docs(out, &e.as_type_decl());
         }
@@ -297,6 +401,7 @@ fn push_member_docs(out: &mut Vec<DocEntry>, t: &TypeDecl) {
                     markdown: symbols::describe_record_field(t, f),
                     documented: true,
                     span: f.name.span,
+                    file: None,
                 });
             }
         }
@@ -310,6 +415,7 @@ fn push_member_docs(out: &mut Vec<DocEntry>, t: &TypeDecl) {
                         markdown: symbols::describe_variant(t, v),
                         documented: true,
                         span: v.name.span,
+                        file: None,
                     });
                 }
                 for p in v.payload.iter().filter(|p| p.documentation.is_some()) {
@@ -320,6 +426,7 @@ fn push_member_docs(out: &mut Vec<DocEntry>, t: &TypeDecl) {
                         markdown: symbols::describe_variant_field(t, v, p),
                         documented: true,
                         span: p.name.span,
+                        file: None,
                     });
                 }
             }
@@ -508,6 +615,33 @@ agent Counter {
         assert!(model.entries[3].markdown.contains("Round."));
         assert!(model.entries[4].markdown.contains("The radius."));
         assert!(model.entries[6].markdown.contains("Greets."));
+    }
+
+    /// #1888: on the merged page of a multi-file unit, each file's member
+    /// entries follow their type and carry that file, and a `--|` module doc
+    /// is the page's lede.
+    #[test]
+    fn the_merged_page_lists_member_docs_with_their_file() {
+        use std::path::Path;
+        let a = "--| The model.\ncommons m\n\ntype Run = {\n  --| The repo.\n  repo: String,\n}\n";
+        let b = "commons m\n\ntype Outcome = enum {\n  --| Passed.\n  Pass,\n  Fail,\n}\n";
+        let (pa, pb) = (Path::new("a.bynk"), Path::new("b.bynk"));
+        let model = documentation_model_merged((pa, a), [(pb, b)]).expect("a model");
+        assert_eq!(model.unit_doc.as_deref(), Some("The model."));
+        let rows: Vec<(&str, u32, Option<&Path>)> = model
+            .entries
+            .iter()
+            .map(|e| (e.name.as_str(), e.depth, e.file.as_deref()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("Run", 0, Some(pa)),
+                ("Run.repo", 1, Some(pa)),
+                ("Outcome", 0, Some(pb)),
+                ("Outcome.Pass", 1, Some(pb)),
+            ]
+        );
     }
 
     #[test]

@@ -15,7 +15,8 @@ pub struct Ident {
 ///
 /// - `leading` holds comments that appear immediately above the node,
 ///   ordered top-to-bottom: each a `--` line, or an orphaned `---` doc block
-///   (see [`Comment`]).
+///   (see [`Comment`]). Above a unit-level declaration it also records where a
+///   blank line separated them ([`Comment::Blank`]).
 /// - `trailing` holds a single comment that appears on the same source
 ///   line as the node's final token (e.g. `expr  -- note`).
 #[derive(Debug, Clone, Default)]
@@ -37,6 +38,17 @@ pub enum Comment {
     /// can print it where it was. Its content is normalised as an attached
     /// doc's is.
     OrphanDoc(Doc),
+    /// #1884: a blank line after a `--` comment, before the next comment or
+    /// the declaration. Recorded only where canonical style sets declarations
+    /// apart with blank lines: in the leading and closing comments of a
+    /// unit-level declaration (an item, a `uses`/`consumes`/`exports` clause,
+    /// the unit header), and of a service's sections and handlers or an agent's
+    /// invariants, transitions and handlers. There it keeps a comment that is
+    /// separated from the declaration below from reading as describing it.
+    /// Elsewhere (statements, record fields, capability ops, policy fields,
+    /// store fields) style has no blank lines, so the parser drops it. Several
+    /// blank lines are one entry.
+    Blank,
 }
 
 /// #1888: a documentation comment as written: its normalised text and the
@@ -315,6 +327,28 @@ impl SourceUnit {
             SourceUnit::Suite(t) => t.span,
             SourceUnit::Adapter(a) => a.span,
         }
+    }
+
+    /// The doc-block above this file's unit header, if it carries one. For a
+    /// `commons`/`context`/`adapter` this is the unit's *module doc* (#1885);
+    /// for a `suite` it is the suite's own doc.
+    pub fn documentation(&self) -> Option<&str> {
+        match self {
+            SourceUnit::Commons(c) => c.documentation.as_deref(),
+            SourceUnit::Context(c) => c.documentation.as_deref(),
+            SourceUnit::Suite(t) => t.documentation.as_deref(),
+            SourceUnit::Adapter(a) => a.documentation.as_deref(),
+        }
+    }
+
+    /// The doc-block above this file's unit header when it carries prose:
+    /// [`SourceUnit::documentation`], with an empty or all-whitespace block
+    /// treated as absent. This is what "a file carries a module doc" means
+    /// for the one-module-doc-per-unit rule and for the tooling that shows the
+    /// doc (#1885): an empty `---`/`---` pair documents nothing, so it neither
+    /// counts against the rule nor shadows a sibling file's real doc.
+    pub fn module_doc(&self) -> Option<&str> {
+        self.documentation().filter(|d| !d.trim().is_empty())
     }
 
     pub fn kind_name(&self) -> &'static str {

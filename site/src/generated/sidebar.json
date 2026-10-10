@@ -123,6 +123,10 @@
           {
             "label": "Consume another context's services",
             "link": "/book/guides/program-structure/consume-services/"
+          },
+          {
+            "label": "Document your code",
+            "link": "/book/guides/program-structure/document-your-code/"
           }
         ]
       },

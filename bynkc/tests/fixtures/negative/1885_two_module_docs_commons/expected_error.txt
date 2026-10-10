@@ -1,0 +1,6 @@
+bynk.project.duplicate_module_doc
+# exact
+# The one-module-doc rule is kind-agnostic (ADR one-module-doc-per-unit, D2):
+# a multi-file `commons` is legal (ADR 0160), so two documented files of one
+# commons are rejected just as for a context.
+bynk.project.duplicate_module_doc commons `lib.text` has a module doc in more than one file: `lib/text/case.bynk`, `lib/text/trim.bynk`

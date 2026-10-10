@@ -34,14 +34,56 @@ export class LoggerProvider implements Logger {
   }
 }
 
+// Headers a `Request.headers` entry may not name: the platform owns them —
+// the host comes from the URL, the framing from the body, and the rest are
+// hop-by-hop. Lowercase; `Fetch.send` compares case-insensitively. Kept
+// identical across the node and cloudflare bindings and with the `Request`
+// doc comment in `bynk.bynk`.
+const FORBIDDEN_REQUEST_HEADERS: ReadonlySet<string> = new Set([
+  "host",
+  "content-length",
+  "connection",
+  "keep-alive",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "expect",
+]);
+
 export class FetchProvider implements Fetch {
   async send(req: FetchRequest): Promise<Result<FetchResponse, FetchError>> {
-    const headers: Record<string, string> = {};
-    if (req.contentType.tag === "Some") {
-      headers["content-type"] = req.contentType.value;
-    }
-    if (req.authorization.tag === "Some") {
-      headers["authorization"] = req.authorization.value;
+    // Built in its own `try`, apart from the one around `fetch`, so a refused
+    // header is `InvalidHeader` — never mistaken for a `Network` failure —
+    // and nothing is sent.
+    const headers = new Headers();
+    try {
+      if (req.contentType.tag === "Some") {
+        headers.set("content-type", req.contentType.value);
+      }
+      if (req.authorization.tag === "Some") {
+        headers.set("authorization", req.authorization.value);
+      }
+      const seen = new Set<string>();
+      for (const [name, value] of req.headers) {
+        const lower = name.toLowerCase();
+        if (FORBIDDEN_REQUEST_HEADERS.has(lower) || seen.has(lower)) {
+          return Err(FetchError.InvalidHeader);
+        }
+        // A typed slot that is `Some` owns its header; `headers` may supply
+        // it only while the slot is `None`, so neither silently wins.
+        if (
+          (lower === "content-type" && req.contentType.tag === "Some") ||
+          (lower === "authorization" && req.authorization.tag === "Some")
+        ) {
+          return Err(FetchError.InvalidHeader);
+        }
+        seen.add(lower);
+        // Throws a TypeError for a name or value that is not a legal header.
+        headers.set(lower, value);
+      }
+    } catch {
+      return Err(FetchError.InvalidHeader);
     }
     try {
       const res = await fetch(req.url, {
@@ -49,7 +91,30 @@ export class FetchProvider implements Fetch {
         headers,
         body: req.body.tag === "Some" ? req.body.value : undefined,
       });
-      return Ok({ status: res.status, body: await res.text() });
+      // `Headers` iteration yields lowercased names, and already joins a
+      // repeated header's values with ", " — except `set-cookie`, which the
+      // Fetch standard yields once per value (and an older runtime may join).
+      // So `set-cookie` is set aside and rebuilt from `getSetCookie()` where
+      // the runtime has it, then joined like every other header: undici and
+      // workerd agree on the result. The join is lossy for cookies — an
+      // `Expires` attribute holds a comma — as the `Response` doc says.
+      // `forEach`, not `for…of`: the latter needs the `DOM.Iterable` lib,
+      // which a consumer's tsconfig may omit.
+      const resHeaders = new Map<string, string>();
+      const iterated: string[] = [];
+      res.headers.forEach((value, name) => {
+        if (name === "set-cookie") {
+          iterated.push(value);
+        } else {
+          resHeaders.set(name, value);
+        }
+      });
+      const getSetCookie = (res.headers as { getSetCookie?: () => string[] }).getSetCookie;
+      const cookies = typeof getSetCookie === "function" ? getSetCookie.call(res.headers) : iterated;
+      if (cookies.length > 0) {
+        resHeaders.set("set-cookie", cookies.join(", "));
+      }
+      return Ok({ status: res.status, headers: resHeaders, body: await res.text() });
     } catch (e) {
       const name = e instanceof Error ? e.name : "";
       return Err(name === "TimeoutError" || name === "AbortError" ? FetchError.Timeout : FetchError.Network);

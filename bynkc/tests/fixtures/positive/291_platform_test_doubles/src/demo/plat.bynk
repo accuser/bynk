@@ -79,6 +79,7 @@ service relay {
       url:           url,
       contentType:   None,
       authorization: None,
+      headers:       Map.empty().insert("user-agent", "bynk-demo/1.0"),
       body:          None,
     })
     match res {

@@ -1862,13 +1862,14 @@ impl Backend {
     }
 
     /// #847: `bynk/documentationModel` — the documentation-view query for the
-    /// whole file under the request. This server's second custom request,
+    /// unit under the request. This server's second custom request,
     /// registered via `custom_method` in [`run`] (like `sequence_model`).
     /// Served from the committed round (#733), on-demand: no cursor position
-    /// (the page is the whole file, Decision A) and no refresh nudge (Decision
-    /// D — see the `documentation_request` module doc, and #846's for why a
-    /// custom method needs none). A non-project file / no committed round →
-    /// `None` (empty page).
+    /// (the page is the whole unit — every file of a multi-file unit since
+    /// #1885) and no refresh nudge (Decision D — see the
+    /// `documentation_request` module doc, and #846's for why a custom method
+    /// needs none). A non-project file / no committed round → `None` (empty
+    /// page).
     async fn documentation_model(
         &self,
         params: documentation_request::DocumentationModelParams,
@@ -1880,11 +1881,12 @@ impl Backend {
         let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
             return Ok(None);
         };
-        let Some(text) = analysis.snapshots.get(&rel) else {
-            return Ok(None);
-        };
-        let model = documentation_request::documentation_model_at(text);
-        Ok(model.map(|m| documentation_request::to_wire(&m, text)))
+        Ok(documentation_request::documentation_model_for(
+            &rel,
+            &analysis.snapshots,
+            &analysis.unit_sources,
+            &analysis.project_root,
+        ))
     }
 
     /// #851: `bynk/architectureModel` — the whole-project architecture-map

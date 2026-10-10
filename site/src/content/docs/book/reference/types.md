@@ -362,28 +362,10 @@ not directly be of the record's own type (`bynk.resolve.recursive_record_field`)
 
 ### Documenting fields and variants
 
-A record is often a wire contract, so each field can carry its own doc: a `--|`
-line (or several) or a `---` block on the lines above it. Hover on the field, at
-its declaration, at an access like `r.repo` or at a label in a record literal,
-shows that doc, and so do completion and the documentation page.
-
-```bynk
---| One canary result, exactly the body of `POST /runs`.
-type Run = {
-	--| The repository, as `owner/name`.
-	repo: String,
-	--| The Bynk release the checks ran against.
-	version: String,
-	-- A plain comment: hover never shows it.
-	passed: Int,
-}
-```
-
-Sum variants (in either form), a variant's payload fields and `messages` entries
-take docs the same way. Use `--|` for a sentence or two; reach for a `---` block
-once a doc needs structure (lists, code, headings). A target carries one form,
-not both (`bynk.parse.doc_forms_mixed`). See
-[doc lines](/book/reference/grammar/#rule-doc_line).
+A record field, a sum variant, a variant's payload field and a `messages` entry
+each take a doc on the lines above them, as a `--|` line or a `---` block.
+Hover, completion and the documentation page show it. See
+[Document fields and variants](/book/guides/program-structure/document-your-code/#document-fields-and-variants).
 
 ## Generic record types
 
@@ -505,16 +487,7 @@ Reach for the pipe form only when a variant needs a payload.
 - **Construct** by naming a variant: `Pending`, `Shipped("1Z…")`.
 - **Consume** with [`match`](#matching) or [`is`](/book/reference/operators/).
 - **Document** a variant, or a payload field, with a doc on the lines above it,
-  as a [record field](#documenting-fields-and-variants) is:
-
-```bynk
-type Outcome = enum {
-	--| Every canary check passed.
-	Pass,
-	--| At least one check failed; the run URL has the details.
-	Fail,
-}
-```
+  as a [record field](#documenting-fields-and-variants) is.
 
 Sum types emit a discriminated union keyed on a `tag` field. As JSON, a variant
 is a flat object whose `kind` key names the variant (`{"kind": "Shipped",

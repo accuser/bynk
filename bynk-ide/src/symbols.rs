@@ -586,6 +586,81 @@ pub fn unit_reference_spans(source: &str) -> Vec<(String, Span)> {
     out
 }
 
+/// #1885: the qualified unit name under `offset`, when the cursor sits on the
+/// file's own unit-header name or on a `uses`/`consumes` (or a suite's) target
+/// path — the positions where hover shows a unit's module doc.
+///
+/// The match is on the name's byte range (`start..=end`), never on `Span`
+/// equality, so it holds for a buffer re-parsed with `FileId::UNKNOWN`. Every
+/// segment of a dotted path answers with the whole name: the cursor on
+/// `model` in `uses compat.model` names `compat.model`, not a `model`.
+pub fn unit_name_at(source: &str, offset: usize) -> Option<String> {
+    let own = own_declaration_name(source);
+    own.into_iter()
+        .chain(unit_reference_spans(source))
+        .find(|(_, span)| span.start <= offset && offset <= span.end)
+        .map(|(name, _)| name)
+}
+
+/// #1885: hover Markdown for the unit `name` — a fenced `<kind> <name>` line,
+/// followed by its module doc when one of its files carries one.
+///
+/// `sources` are the texts to search: every file of the project the caller
+/// can see (a multi-file context's doc may live in a sibling of the file the
+/// cursor is in). A file that declares `name` as a `commons`, `context` or
+/// `adapter` contributes; `suite` files never do, since a suite's own doc is
+/// not its target's. At most one file of a unit carries a module doc
+/// (`bynk.project.duplicate_module_doc`); should a broken project have more,
+/// the first one in `sources` order is shown. `None` when no source declares
+/// `name`.
+pub fn describe_unit<'s>(sources: impl IntoIterator<Item = &'s str>, name: &str) -> Option<String> {
+    let mut kind: Option<&'static str> = None;
+    let mut doc: Option<String> = None;
+    for source in sources {
+        let Ok(tokens) = tokenize(source) else {
+            continue;
+        };
+        let (Some(unit), _) = parse_unit_with_recovery(&tokens, source) else {
+            continue;
+        };
+        if matches!(unit, SourceUnit::Suite(_)) || unit.name().joined() != name {
+            continue;
+        }
+        kind.get_or_insert(unit.kind_name());
+        if doc.is_none() {
+            doc = unit.module_doc().map(str::to_string);
+        }
+        if doc.is_some() {
+            break;
+        }
+    }
+    let kind = kind?;
+    let mut out = format!("```bynk\n{kind} {name}\n```\n");
+    if let Some(doc) = doc {
+        out.push('\n');
+        out.push_str(&doc);
+        out.push('\n');
+    }
+    Some(out)
+}
+
+/// #1885: the module-doc hover for the unit name under `offset` in `text` (see
+/// [`unit_name_at`]), resolved against `text` itself, then `others` (the
+/// project's other files), then the embedded first-party sources (so
+/// `consumes bynk.cloudflare` still names its unit). `None` when the cursor is
+/// not on a unit name, or no source declares it.
+pub fn describe_unit_at<'s>(
+    text: &'s str,
+    offset: usize,
+    others: impl IntoIterator<Item = &'s str>,
+) -> Option<String> {
+    let name = unit_name_at(text, offset)?;
+    let firstparty = bynk_check::firstparty::FIRSTPARTY_SOURCES
+        .iter()
+        .map(|(_, src)| *src);
+    describe_unit(std::iter::once(text).chain(others).chain(firstparty), &name)
+}
+
 /// #848: one intra-doc-link candidate scanned from doc-comment text — a
 /// `[Name]` shortcut, a `` [`Name`] `` code-span-wrapped shortcut, or a
 /// `[text][Name]` full reference. `span` is the byte range (into the text the

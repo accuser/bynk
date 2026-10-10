@@ -21,6 +21,7 @@ export class FetchWeather implements Weather {
       url: `https://api.example.com/weather?city=${encodeURIComponent(city)}`,
       contentType: None,
       authorization: key.tag === "Some" ? Some(`Bearer ${key.value}`) : None,
+      headers: new Map<string, string>(),
       body: None,
     });
     if (res.tag === "Err") {

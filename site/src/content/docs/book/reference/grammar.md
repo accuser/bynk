@@ -145,10 +145,9 @@ type Outcome = enum {
 }
 ```
 
-**Which form.** Use `--|` for a sentence or two, and for members. Use a `---`
-block once a doc needs structure: lists, code, headings. A declaration or
-member carries one form, not both (`bynk.parse.doc_forms_mixed`), and
-`bynk fmt` never converts one form into the other.
+A declaration or member carries one form, not both
+(`bynk.parse.doc_forms_mixed`). For which form to use, see
+[Document your code](/book/guides/program-structure/document-your-code/).
 
 ## Top-level & modules
 

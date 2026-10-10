@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0452](0452-one-module-doc-per-unit.md) | **A unit split across files carries at most one module doc** (v0.324) — Two module docs on one unit are an error naming every file; hover and the documentation page read the one there is | Accepted (v0.324) |
 | [0451](0451-workers-compatibility-flags.md) | **Every Worker fetches over the public internet, and a project can add compatibility flags** (v0.323) — `global_fetch_strictly_public` is on by default; `[workers] compatibility_flags` appends unchecked extras | Accepted (v0.323) |
 | [0450](0450-lenient-option-decode.md) | **An Option decodes leniently from absent, null, a bare value or the tagged form** (v0.322) — Amends 0045; Option decoding accepts the forms non-Bynk JSON uses, tagged forms first | Accepted (v0.322) |
 | [0449](0449-doc-fence-matched-length.md) | **A doc-block closes on a marker of its opener's length, and may not contain code** (v0.321) — Matched-length `---` fences (ADR 0188 D4 superseded in part), `bynk.parse.doc_block_contains_code` for a doc-block whose content parses as declarations, and no editor block-comment mapping | Accepted (v0.321) |
@@ -307,7 +308,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 | [0019](0019-adapter-dependencies.md) | Adapter-to-adapter dependencies via braced `consumes` + `given` | Accepted (v0.18) |
 | [0020](0020-adapter-dependency-trust.md) | Adapter npm-dependency trust policy | **Open** |
 | [0021](0021-secrets-env-source.md) | Secrets: optional injected env + `globalThis` probe | Accepted (v0.18) |
-| [0022](0022-fetch-minimal-typed-core.md) | Fetch ships a minimal typed core pending sequence types | Accepted (v0.18) |
+| [0022](0022-fetch-minimal-typed-core.md) | Fetch ships a minimal typed core pending sequence types | Accepted (v0.18); header deferral superseded by the `fetch-headers` ADR (#1886) |
 | [0023](0023-platform-adapter-before-stdlib.md) | The Cloudflare adapter lands before the standard library | Accepted (post-v0.18) |
 | [0024](0024-platform-native-via-first-party-metadata.md) | Platform-native marking is first-party metadata, not syntax | Accepted (v0.19) |
 | [0025](0025-env-threading-for-platform-resources.md) | Platform resources reach bindings via threaded env, both targets | Accepted (v0.19) |

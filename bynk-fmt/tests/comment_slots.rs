@@ -9,7 +9,11 @@
 //! - **split:** after each `{` or `,` token on the line, a line break, the
 //!   comment, and a line break. This reaches the slots inside a one-line body
 //!   or list (`actor A { auth = …, identity = … }`, `exports { A, B }`,
-//!   `enum { A, B }`), where #1786, #1788, #1794 and #1797 lived.
+//!   `enum { A, B }`), where #1786, #1788, #1794 and #1797 lived;
+//! - **own line, blank after:** a `-- c<N>` line and an empty line before a
+//!   unit-level line (one starting with a keyword or a `---` at column 0). The
+//!   blank line keeps the comment apart from the declaration below, so it must
+//!   survive too (#1884).
 //!
 //! An insertion that no longer parses, or that lands inside a string or a doc
 //! block (where it is text, not a comment), is skipped. Each remaining one must
@@ -54,8 +58,8 @@ use bynk_syntax::lexer::{TokenKind, tokenize};
 use bynk_syntax::parser::parse_units;
 
 /// Refusals in the default sample, per insertion kind: `(trailing, own line,
-/// split)`.
-const REFUSED: (usize, usize, usize) = (832, 525, 480);
+/// split, own line with a blank after)`.
+const REFUSED: (usize, usize, usize, usize) = (835, 527, 481, 0);
 
 /// Where a comment was inserted: the line it went on or before, the line
 /// above that, and the construct a closing line ends (the nearest line above
@@ -84,6 +88,7 @@ enum Kind {
     OwnLine,
     /// After the `n`th `{`/`,` token of the line.
     Split(usize),
+    OwnLineBlank,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -172,14 +177,20 @@ fn skeleton(s: &str) -> Vec<String> {
 /// empty goes too (a brace-line comment moves onto its own line, #1788), and
 /// so does the blank line the formatter puts before a body's or file's
 /// trailing comments ("one blank line before trailing comments if anything
-/// came before them").
-fn strip_comment(out: &str, tag: &str) -> String {
+/// came before them"). With `blank_after`, the blank line inserted after the
+/// comment goes as well.
+fn strip_comment(out: &str, tag: &str, blank_after: bool) -> String {
     let marker = format!("-- {tag}");
     let lines: Vec<&str> = out.lines().collect();
     let mut kept: Vec<String> = Vec::new();
+    let mut skip = false;
     for (i, line) in lines.iter().enumerate() {
+        if std::mem::take(&mut skip) {
+            continue;
+        }
         match line.find(&marker) {
             Some(j) if line[..j].trim().is_empty() => {
+                skip = blank_after;
                 let closes = lines
                     .get(i + 1)
                     .is_none_or(|next| next.trim().starts_with('}'));
@@ -194,7 +205,7 @@ fn strip_comment(out: &str, tag: &str) -> String {
     kept.into_iter().map(|l| l + "\n").collect()
 }
 
-fn classify(mutated: &str, tag: &str, base: &str, opts: &FormatOptions) -> Outcome {
+fn classify(mutated: &str, tag: &str, kind: Kind, base: &str, opts: &FormatOptions) -> Outcome {
     let out = match format_source(mutated, opts) {
         Ok(out) => out,
         Err(e)
@@ -217,7 +228,13 @@ fn classify(mutated: &str, tag: &str, base: &str, opts: &FormatOptions) -> Outco
     if format_source(&out, opts).ok().as_deref() != Some(out.as_str()) {
         return Outcome::NotIdempotent;
     }
-    if skeleton(&strip_comment(&out, tag)) != skeleton(base) {
+    // The blank line after the comment is checked here: a lost one would strip
+    // back to the base skeleton all the same.
+    let blank_after = kind == Kind::OwnLineBlank;
+    if blank_after && !out.contains(&format!("-- {tag}\n\n")) {
+        return Outcome::Perturbed;
+    }
+    if skeleton(&strip_comment(&out, tag, blank_after)) != skeleton(base) {
         return Outcome::Perturbed;
     }
     Outcome::Kept
@@ -306,9 +323,12 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
                     this_start < o && o < line_end && !line[o - this_start..].trim().is_empty()
                 })
                 .collect();
+            let unit_level =
+                line.starts_with(|c: char| c.is_ascii_alphabetic()) || line.starts_with("---");
             let kinds = [Kind::Trailing, Kind::OwnLine]
                 .into_iter()
-                .chain((0..splits.len()).map(Kind::Split));
+                .chain((0..splits.len()).map(Kind::Split))
+                .chain(unit_level.then_some(Kind::OwnLineBlank));
             for kind in kinds {
                 if !exhaustive && !sampled(&file, i + 1, kind) && !known_candidate(kind, &site) {
                     continue;
@@ -317,6 +337,7 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
                     Kind::Trailing => format!("c{}t", i + 1),
                     Kind::OwnLine => format!("c{}o", i + 1),
                     Kind::Split(n) => format!("c{}s{n}", i + 1),
+                    Kind::OwnLineBlank => format!("c{}b", i + 1),
                 };
                 let mut mutated: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
                 let offset = match kind {
@@ -338,6 +359,10 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
                         mutated[i] = format!("{}\n-- {tag}\n{}", &line[..at], &line[at..]);
                         splits[n]
                     }
+                    Kind::OwnLineBlank => {
+                        mutated.insert(i, format!("-- {tag}\n"));
+                        this_start
+                    }
                 };
                 if opaque.iter().any(|&(a, b)| a < offset && offset < b) {
                     continue;
@@ -346,7 +371,7 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
                 if !parses(&mutated) {
                     continue;
                 }
-                let outcome = classify(&mutated, &tag, &base, &opts);
+                let outcome = classify(&mutated, &tag, kind, &base, &opts);
                 *counts.entry((outcome, kind)).or_default() += 1;
                 if matches!(outcome, Outcome::Kept | Outcome::Refused) {
                     continue;
@@ -380,6 +405,7 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
         refused_where(|k| k == Kind::Trailing),
         refused_where(|k| k == Kind::OwnLine),
         refused_where(|k| matches!(k, Kind::Split(_))),
+        refused_where(|k| k == Kind::OwnLineBlank),
     );
     let summary = format!("{counts:?}");
     assert!(
@@ -396,7 +422,7 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
     }
     assert_eq!(
         refused, REFUSED,
-        "refusals (trailing, own line, split) moved from the `REFUSED` pin.\n\
+        "refusals (trailing, own line, split, own line with a blank after) moved from the `REFUSED` pin.\n\
          More: the formatter now refuses a comment somewhere it kept one, which is a regression.\n\
          Fewer: it learned a placement; lower the pin so the gain cannot quietly reverse.\n\
          Adding or editing a fixture moves this too: set `REFUSED` to the new counts.\n{summary}"
