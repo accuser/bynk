@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.324**.
+written against **v0.325**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.325.0** | "`Fetch.send` sends extra request headers and returns the response's: `Request` and `Response` gain `headers: Map[String, String]` (a required field — existing literals add `headers: Map.empty()`), and `FetchError` gains `InvalidHeader` for a request whose headers conflict with a typed slot, name a header the platform owns or are not legal headers, or whose `contentType`/`authorization` value is not a legal header value (#1886)" |
 | **v0.324.0** | "**Module docs** ([#1885](https://github.com/accuser/bynk/issues/1885)). A doc-block above a `commons`/`context`/`adapter` header is the unit's module doc. A unit split across files carries at most one: two or more is `bynk.project.duplicate_module_doc`, naming every file that carries one. Hover on a unit name (its header, a `uses` target, a `consumes` target) shows the unit's module doc, found in whichever of its files has it, and the documentation page merges every file of a multi-file unit under that doc. New guide: [Document your code](/book/guides/program-structure/document-your-code/); spec [§5.1a](/book/spec/static-semantics/#module-docs)." |
 | **v0.323.1** | "`bynk fmt` keeps the blank line between a standalone comment and the next top-level declaration, so the comment no longer reads as describing it (#1884)" |
 | **v0.323.0** | "Every generated `wrangler.toml` now carries `compatibility_flags = [\"global_fetch_strictly_public\"]`, so a `Fetch` to a URL goes over the public internet even when the URL is another Worker on the same Cloudflare account; before, Cloudflare refused it (error 1042, or a fast `404` from a `workers.dev` sibling). `bynk.toml` gains a `[workers]` table whose `compatibility_flags` list is appended after the default: names pass through unchecked, a duplicate is dropped with a `bynk.project.duplicate_compatibility_flag` warning, and anything but a list of strings is an error. Every deployed Worker's configuration changes on its next deploy (#1890)" |

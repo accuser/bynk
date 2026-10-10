@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "`Fetch.send` sends extra request headers and returns the response's: `Request` and `Response` gain `headers: Map[String, String]` (a required field — existing literals add `headers: Map.empty()`), and `FetchError` gains `InvalidHeader` for a request whose headers conflict with a typed slot, name a header the platform owns or are not legal headers, or whose `contentType`/`authorization` value is not a legal header value (#1886)"
----
+# 0453 — Fetch requests and responses carry a header map; conflicting and platform-owned headers are refused
 
-## ADR: fetch-headers
-title: Fetch requests and responses carry a header map; conflicting and platform-owned headers are refused
-summary: Request/Response gain headers: Map[String, String] (lowercased response keys); a typed-slot conflict or forbidden name is Err(InvalidHeader), unsent
+- **Status:** Accepted (v0.325)
 
 **Context.** ADR 0022 shipped `bynk.Fetch` with a minimal typed core: a
 `Request` whose only headers were the `contentType` and `authorization`
