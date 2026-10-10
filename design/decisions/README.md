@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0454](0454-one-line-docs.md) | **A one-line doc form, `--|`, and docs on record fields and variants** (v0.326) — `--|` doc lines (line-leading only), consecutive lines join, both forms on one target is `bynk.parse.doc_forms_mixed`, docs on fields, variants, payload fields and message entries, and the formatter keeps each form | Accepted (v0.326) |
 | [0453](0453-fetch-headers.md) | **Fetch requests and responses carry a header map; conflicting and platform-owned headers are refused** (v0.325) — Request/Response gain headers: Map[String, String] (lowercased response keys); a typed-slot conflict or forbidden name is Err(InvalidHeader), unsent | Accepted (v0.325) |
 | [0452](0452-one-module-doc-per-unit.md) | **A unit split across files carries at most one module doc** (v0.324) — Two module docs on one unit are an error naming every file; hover and the documentation page read the one there is | Accepted (v0.324) |
 | [0451](0451-workers-compatibility-flags.md) | **Every Worker fetches over the public internet, and a project can add compatibility flags** (v0.323) — `global_fetch_strictly_public` is on by default; `[workers] compatibility_flags` appends unchecked extras | Accepted (v0.323) |

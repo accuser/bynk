@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.325**.
+written against **v0.326**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.326.0** | "One-line docs and member docs (#1888). A `--|` line that is the first thing on its line is a doc line; consecutive doc lines form one doc, and a bare `--|` separates paragraphs. Record fields, sum variants (pipe and `enum` form), variant payload fields and `messages` entries now take a doc in either form, a `--|` run or a `---` block; hover on a field (at its declaration, an access or a record-literal label) and on a variant shows it, completion items carry it, and the documentation page lists documented members under their type. A target documented in both forms is the new error `bynk.parse.doc_forms_mixed`. `bynk fmt` keeps each doc in the form it was written in. The tree-sitter grammar gains a `doc_line` token (highlighted as documentation), the TextMate grammar a `--|` rule, VS Code continues `--| ` on Enter, and the language server classifies doc lines as `comment` + `documentation` semantic tokens" |
 | **v0.325.0** | "`Fetch.send` sends extra request headers and returns the response's: `Request` and `Response` gain `headers: Map[String, String]` (a required field — existing literals add `headers: Map.empty()`), and `FetchError` gains `InvalidHeader` for a request whose headers conflict with a typed slot, name a header the platform owns or are not legal headers, or whose `contentType`/`authorization` value is not a legal header value (#1886)" |
 | **v0.324.0** | "**Module docs** ([#1885](https://github.com/accuser/bynk/issues/1885)). A doc-block above a `commons`/`context`/`adapter` header is the unit's module doc. A unit split across files carries at most one: two or more is `bynk.project.duplicate_module_doc`, naming every file that carries one. Hover on a unit name (its header, a `uses` target, a `consumes` target) shows the unit's module doc, found in whichever of its files has it, and the documentation page merges every file of a multi-file unit under that doc. New guide: [Document your code](/book/guides/program-structure/document-your-code/); spec [§5.1a](/book/spec/static-semantics/#module-docs)." |
 | **v0.323.1** | "`bynk fmt` keeps the blank line between a standalone comment and the next top-level declaration, so the comment no longer reads as describing it (#1884)" |

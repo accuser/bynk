@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "One-line docs and member docs (#1888). A `--|` line that is the first thing on its line is a doc line; consecutive doc lines form one doc, and a bare `--|` separates paragraphs. Record fields, sum variants (pipe and `enum` form), variant payload fields and `messages` entries now take a doc in either form, a `--|` run or a `---` block; hover on a field (at its declaration, an access or a record-literal label) and on a variant shows it, completion items carry it, and the documentation page lists documented members under their type. A target documented in both forms is the new error `bynk.parse.doc_forms_mixed`. `bynk fmt` keeps each doc in the form it was written in. The tree-sitter grammar gains a `doc_line` token (highlighted as documentation), the TextMate grammar a `--|` rule, VS Code continues `--| ` on Enter, and the language server classifies doc lines as `comment` + `documentation` semantic tokens"
----
+# 0454 — A one-line doc form, `--|`, and docs on record fields and variants
 
-## ADR: one-line-docs
-title: A one-line doc form, `--|`, and docs on record fields and variants
-summary: `--|` doc lines (line-leading only), consecutive lines join, both forms on one target is `bynk.parse.doc_forms_mixed`, docs on fields, variants, payload fields and message entries, and the formatter keeps each form
+- **Status:** Accepted (v0.326)
 
 **Context.** Before #1888 a doc was a `---` fence, three lines for one sentence
 (25 of the repository's 71 docs were a single line), and only declarations could
