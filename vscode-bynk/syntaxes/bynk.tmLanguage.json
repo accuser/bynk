@@ -19,8 +19,8 @@
   "repository": {
     "doc-block": {
       "name": "comment.block.documentation.bynk",
-      "begin": "^\\s*---+\\s*$",
-      "end": "^\\s*---+\\s*$",
+      "begin": "^\\s*(---+)\\s*$",
+      "end": "^\\s*\\1\\s*$",
       "patterns": []
     },
     "line-comment": {

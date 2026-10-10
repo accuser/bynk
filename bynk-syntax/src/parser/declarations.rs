@@ -1326,7 +1326,7 @@ impl<'a> Parser<'a> {
     /// bodied-provider placement is validated by the checker, not rejected
     /// here, so the diagnostics can be precise. v0.18 admits `consumes`
     /// (braced form, adapter targets — also checked semantically).
-    fn parse_adapter_body(
+    pub(super) fn parse_adapter_body(
         &mut self,
         start: Span,
         name: QualifiedName,

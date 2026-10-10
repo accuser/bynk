@@ -513,9 +513,10 @@ pub fn tokenize_in(source: &str, file: FileId) -> Result<Vec<Token>, CompileErro
         // Detect a `---` doc-block marker at the start of a line (the line may
         // begin with leading whitespace; the marker itself must be alone on
         // its line).
-        if let Some(open_end) = doc_block_open_at(source, pos) {
-            // Find the matching closing `---` line.
-            match doc_block_close(source, open_end) {
+        if let Some((open_end, dashes)) = doc_block_open_at(source, pos) {
+            // Find the matching closing marker: a line of exactly as many
+            // dashes as the opener (#1885), so a `----` block can hold `---`.
+            match doc_block_close(source, open_end, dashes) {
                 Some((close_start, close_end)) => {
                     let span = Span::new_in(file, pos, close_end);
                     tokens.push(Token {
@@ -532,9 +533,11 @@ pub fn tokenize_in(source: &str, file: FileId) -> Result<Vec<Token>, CompileErro
                         Span::new_in(file, pos, open_end),
                         "documentation block opened but never closed",
                     )
-                    .with_note(
-                        "a doc block must be terminated by another `---` on a line by itself",
-                    ));
+                    .with_note(format!(
+                        "a doc block is closed by a line of exactly {dashes} dashes on its own; \
+                         a line of three or more dashes is a doc-block marker, not a divider, so \
+                         for a divider use a line comment with text, such as `-- Helpers --`"
+                    )));
                 }
             }
         }
@@ -958,10 +961,10 @@ pub(crate) fn split_interp(source: &str, span: Span) -> Result<Vec<InterpSegment
 
 /// If a `---` doc-block marker line starts at or shortly after `pos` (which
 /// must be at a line boundary), return the byte offset just past the marker
-/// line (after the terminating newline, or at EOF). The doc-block grammar
-/// requires the marker to be alone on its line; leading horizontal whitespace
-/// is allowed and ignored.
-fn doc_block_open_at(source: &str, pos: usize) -> Option<usize> {
+/// line (after the terminating newline, or at EOF), and the marker's dash
+/// count (three or more). The doc-block grammar requires the marker to be
+/// alone on its line; leading horizontal whitespace is allowed and ignored.
+fn doc_block_open_at(source: &str, pos: usize) -> Option<(usize, usize)> {
     let bytes = source.as_bytes();
     if !at_line_start(source, pos) {
         return None;
@@ -977,29 +980,33 @@ fn doc_block_open_at(source: &str, pos: usize) -> Option<usize> {
     if &bytes[i..i + 3] != b"---" {
         return None;
     }
+    let dash_start = i;
     i += 3;
     // The marker may have additional trailing dashes (per spec "three or more
     // consecutive hyphens"). Consume them.
     while i < bytes.len() && bytes[i] == b'-' {
         i += 1;
     }
+    let dashes = i - dash_start;
     // After the dashes, allow only horizontal whitespace then newline/EOF.
     while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\r') {
         i += 1;
     }
     if i == bytes.len() {
-        return Some(i);
+        return Some((i, dashes));
     }
     if bytes[i] == b'\n' {
-        return Some(i + 1);
+        return Some((i + 1, dashes));
     }
     None
 }
 
-/// Find the next closing `---` line at or after `pos`. Returns
-/// `(start_of_line, end_of_line)` (`end_of_line` is just past the
-/// terminating newline, or at EOF).
-fn doc_block_close(source: &str, mut pos: usize) -> Option<(usize, usize)> {
+/// Find the next closing marker line at or after `pos`: a marker of exactly
+/// `dashes` dashes, the opener's count (#1885), as with a Markdown code fence.
+/// A marker line of any other length is content, so a longer fence can hold a
+/// shorter one. Returns `(start_of_line, end_of_line)` (`end_of_line` is just
+/// past the terminating newline, or at EOF).
+fn doc_block_close(source: &str, mut pos: usize, dashes: usize) -> Option<(usize, usize)> {
     let bytes = source.as_bytes();
     while pos < bytes.len() {
         // Advance pos to the start of a line.
@@ -1010,7 +1017,9 @@ fn doc_block_close(source: &str, mut pos: usize) -> Option<(usize, usize)> {
             line_end += 1;
         }
         // Check this line.
-        if let Some(end) = doc_block_open_at(source, line_start) {
+        if let Some((end, n)) = doc_block_open_at(source, line_start)
+            && n == dashes
+        {
             return Some((line_start, end));
         }
         // Move to the next line.
@@ -1503,5 +1512,46 @@ mod tests {
         let range = doc_block_body_range(src, span).unwrap();
         assert_eq!(&src[range], "");
         assert_eq!(doc_block_content(src, span), "");
+    }
+
+    /// #1885 (DECISION A): a `----` block closes only on `----`, so the `---`
+    /// lines inside it are content, a nested doc example among them.
+    #[test]
+    fn a_longer_fence_holds_shorter_marker_lines() {
+        let src = "----\nIntro.\n---\nInner doc.\n---\nTail.\n----\nfn f() -> Int = 1\n";
+        let tokens = tokenize(src).unwrap();
+        let docs: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.kind == TokenKind::DocBlock)
+            .collect();
+        assert_eq!(docs.len(), 1, "one block, not three");
+        assert_eq!(
+            doc_block_content(src, docs[0].span),
+            "Intro.\n---\nInner doc.\n---\nTail."
+        );
+    }
+
+    /// The trailing-dash trim in `doc_block_body_range` stops at the closer's
+    /// line, so a body that ends in a shorter marker line keeps it.
+    #[test]
+    fn a_body_ending_in_a_shorter_marker_line_keeps_it() {
+        let src = "----\nAbove.\n---\n----\nfn f() -> Int = 1\n";
+        let span = doc_block_span(src);
+        assert_eq!(doc_block_content(src, span), "Above.\n---");
+    }
+
+    /// #1885: a marker of another length does not close the block, so a
+    /// `----` opened and only `---` seen after is unclosed at EOF, and the note
+    /// names the length that would close it.
+    #[test]
+    fn a_marker_of_another_length_does_not_close_the_block() {
+        let err = tokenize("----\nText.\n---\nfn f() -> Int = 1\n").unwrap_err();
+        assert_eq!(err.category, "bynk.lex.unclosed_doc_block");
+        let note = err.notes.join(" ");
+        assert!(note.contains("exactly 4 dashes"), "{note}");
+        assert!(note.contains("not a divider"), "{note}");
+        // The other way round: a `---` block does not close on `----`.
+        let err = tokenize("---\nText.\n----\n").unwrap_err();
+        assert_eq!(err.category, "bynk.lex.unclosed_doc_block");
     }
 }
