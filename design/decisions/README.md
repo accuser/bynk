@@ -17,6 +17,8 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0451](0451-workers-compatibility-flags.md) | **Every Worker fetches over the public internet, and a project can add compatibility flags** (v0.323) — `global_fetch_strictly_public` is on by default; `[workers] compatibility_flags` appends unchecked extras | Accepted (v0.323) |
+| [0450](0450-lenient-option-decode.md) | **An Option decodes leniently from absent, null, a bare value or the tagged form** (v0.322) — Amends 0045; Option decoding accepts the forms non-Bynk JSON uses, tagged forms first | Accepted (v0.322) |
 | [0449](0449-doc-fence-matched-length.md) | **A doc-block closes on a marker of its opener's length, and may not contain code** (v0.321) — Matched-length `---` fences (ADR 0188 D4 superseded in part), `bynk.parse.doc_block_contains_code` for a doc-block whose content parses as declarations, and no editor block-comment mapping | Accepted (v0.321) |
 | [0448](0448-list-concat-append.md) | **The List kernel gains `append` and `concat`** (v0.320) — Order-preserving list building uses `append`/`concat`; supersedes ADR 0036's "never append" clause | Accepted (v0.320) |
 | [0447](0447-workers-capability-not-provided.md) | **A required capability needs a provider on the Workers target only** (v0.317) — Workers rejects a `given` capability with no provider; bundle leaves it to the host | Accepted (v0.317) |

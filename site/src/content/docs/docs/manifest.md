@@ -9,7 +9,8 @@ Every section and every key is optional. An omitted section falls back to its
 defaults, and a manifest that lists only `[project]` behaves identically to one
 that omits it. `[paths]` is parsed by the compiler; `[fmt]` by the formatter
 (`bynk-fmt`), which both the CLI and the language server read it through;
-`[lsp]` by the language server.
+`[lsp]` by the language server; `[workers]` by the compiler, for a Workers
+build.
 
 ## Example
 
@@ -34,6 +35,9 @@ trailing_comma = true
 [lsp]
 diagnostics_mode = "live"
 diagnostics_debounce_ms = 300
+
+[workers]
+compatibility_flags = []    # extra Cloudflare flags, after the default
 ```
 
 Delete any line you are happy to leave at its default — the file above is
@@ -41,12 +45,13 @@ equivalent to an empty `bynk.toml`, which is equivalent to `[project]` alone.
 
 ## Unknown tables and keys
 
-`bynk.toml` holds the four tables below, and nothing else. An unknown table, a
+`bynk.toml` holds the five tables below, and nothing else. An unknown table, a
 key outside any table (including a table's own name given a plain value, such
-as `paths = "src"`), or an unknown key in `[project]`, `[paths]` or `[lsp]` is
-an error. `bynkc` and `bynk` report it, with the nearest name when there is
-one, and build nothing. An unknown `[fmt]` key is reported by the formatter
-(`bynkc fmt`, `bynk fmt`), which owns that table, not by `check` or `compile`:
+as `paths = "src"`), or an unknown key in `[project]`, `[paths]`, `[lsp]` or
+`[workers]` is an error. `bynkc` and `bynk` report it, with the nearest name
+when there is one, and build nothing. An unknown `[fmt]` key is reported by the
+formatter (`bynkc fmt`, `bynk fmt`), which owns that table, not by `check` or
+`compile`:
 
 ```text
 bynkc: `bynk.toml` has no table named `[pahts]` — did you mean `[paths]`?
@@ -145,6 +150,44 @@ Language-server settings, consumed by `bynkc-lsp`. See the
 |---|---|---|---|
 | `diagnostics_mode` | string | `"live"` | When diagnostics are computed: `"live"` or `"on_save"`. Any value other than `"on_save"` is treated as `"live"`. |
 | `diagnostics_debounce_ms` | integer | `300` | Debounce interval, in milliseconds, for live diagnostics. |
+
+## `[workers]`
+
+Settings for the Cloudflare Workers a Workers build emits (`bynkc compile
+--target workers`, `bynk dev`, `bynk deploy`). A bundle build emits no
+`wrangler.toml`, so the flags have no effect there, but the table is still
+checked, and the duplicate warning below still appears.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `compatibility_flags` | array of strings | `[]` | Extra [compatibility flags](https://developers.cloudflare.com/workers/configuration/compatibility-flags/) for every Worker's `wrangler.toml`, after the default set. |
+
+Every Worker gets `global_fetch_strictly_public` whatever this list says. In
+Bynk, a `Fetch` to a URL goes over the public internet, and the flag makes
+that true even when the URL is another Worker on the same Cloudflare account.
+Without it Cloudflare refuses that fetch (error 1042), so one Bynk service
+couldn't `Fetch` another's `workers.dev` URL. Contexts in the same project
+reach each other through Service Bindings (`consumes`), which the flag doesn't
+change.
+
+The flags you list follow the default, in order:
+
+```toml
+[workers]
+compatibility_flags = ["nodejs_compat"]
+```
+
+```toml
+# workers/<context>/wrangler.toml (generated)
+compatibility_flags = ["global_fetch_strictly_public", "nodejs_compat"]
+```
+
+Flag names aren't checked, so a flag newer than the compiler works, and a
+misspelt one is left for Wrangler and the Workers runtime to reject. A flag
+listed twice, or one that is already on by default, is dropped with a
+`bynk.project.duplicate_compatibility_flag` warning, which `check`, `compile`,
+`dev` and `deploy` all report, once per build. Anything but a list of strings
+is an error.
 
 ## Legacy mode
 

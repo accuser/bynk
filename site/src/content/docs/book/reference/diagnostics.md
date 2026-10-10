@@ -401,6 +401,7 @@ There are **475** codes in total.
 
 | Code | Summary | Construct | Severity |
 |---|---|---|---|
+| `bynk.project.duplicate_compatibility_flag` | `bynk.toml`'s `[workers] compatibility_flags` lists a flag twice, or one every Bynk Worker already has; the duplicate is dropped (warning). |  | Warning |
 | `bynk.project.file_and_directory` | A unit exists as both a file and a directory. |  | — |
 | `bynk.project.inconsistent_commons_name` | A source file's path does not match its declared name. |  | — |
 | `bynk.project.kind_conflict` | A name is declared as both a commons and a context. |  | — |

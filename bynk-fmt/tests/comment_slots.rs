@@ -55,7 +55,7 @@ use bynk_syntax::parser::parse_units;
 
 /// Refusals in the default sample, per insertion kind: `(trailing, own line,
 /// split)`.
-const REFUSED: (usize, usize, usize) = (813, 513, 470);
+const REFUSED: (usize, usize, usize) = (832, 525, 480);
 
 /// Where a comment was inserted: the line it went on or before, the line
 /// above that, and the construct a closing line ends (the nearest line above
@@ -269,10 +269,7 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
             .filter(|t| {
                 matches!(
                     t.kind,
-                    TokenKind::StrLit
-                        | TokenKind::InterpStr
-                        | TokenKind::DocBlock
-                        | TokenKind::DocLine
+                    TokenKind::StrLit | TokenKind::InterpStr | TokenKind::DocBlock
                 )
             })
             .map(|t| (t.span.start, t.span.end))
