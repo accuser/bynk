@@ -388,6 +388,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Data crossing a context boundary did not match the expected shape.",
     ),
     dg(
+        "bynk.capability.not_provided",
+        "On the Workers target, a capability a context requires has no provider in it.",
+        &["capability_decl"],
+    ),
+    dg(
         "bynk.capability.op_arity",
         "A capability operation was called with the wrong number of arguments.",
         &["capability_decl"],

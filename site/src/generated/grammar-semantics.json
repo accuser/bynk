@@ -128,6 +128,10 @@
   ],
   "capability_decl": [
     {
+      "code": "bynk.capability.not_provided",
+      "summary": "On the Workers target, a capability a context requires has no provider in it."
+    },
+    {
       "code": "bynk.capability.op_arity",
       "summary": "A capability operation was called with the wrong number of arguments."
     },

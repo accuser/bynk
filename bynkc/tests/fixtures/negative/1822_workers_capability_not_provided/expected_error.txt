@@ -1,0 +1,1 @@
+bynk.capability.not_provided capability `Mailer` is required here but has no provider in context `shop.mail`

@@ -3092,6 +3092,78 @@ pub fn phase_secrets_computed_name(
     }
 }
 
+/// #1822: on the Workers target, a capability a context declares and requires
+/// (`given`, on a service or agent handler or a provider) needs a provider in
+/// that context. A Worker's composition root builds every capability its
+/// handlers are given, so one with no provider left `compose` passing `{}`
+/// where the capability was required (TS2345): the bundle built and the
+/// Workers build didn't. On the bundle target the host may supply it through
+/// `__makeSurface(deps)`, so the check is Workers-only, like
+/// [`phase_secrets_computed_name`]. A capability from another unit (flattened
+/// or qualified) is that unit's to provide, and `exports capability` already
+/// requires its provider (`bynk.exports.capability_not_provided`).
+pub fn phase_workers_unprovided_capabilities(
+    target: BuildTarget,
+    parsed: &[ParsedFile],
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
+    unit_tables: &HashMap<String, UnitTable>,
+    errors: &mut ErrorSink,
+) {
+    if target != BuildTarget::Workers {
+        return;
+    }
+    for (name, indices) in groups {
+        if kinds.get(name) != Some(&UnitKind::Context) {
+            continue;
+        }
+        let Some(table) = unit_tables.get(name) else {
+            continue;
+        };
+        for &i in indices {
+            let SourceUnit::Context(ctx) = &parsed[i].unit() else {
+                continue;
+            };
+            let mut givens: Vec<&CapRef> = Vec::new();
+            for item in &ctx.items {
+                match item {
+                    CommonsItem::Service(s) => {
+                        givens.extend(s.handlers.iter().flat_map(|h| &h.given));
+                    }
+                    CommonsItem::Agent(a) => {
+                        givens.extend(a.handlers.iter().flat_map(|h| &h.given));
+                    }
+                    CommonsItem::Provider(p) => givens.extend(&p.given),
+                    _ => {}
+                }
+            }
+            for cap in givens {
+                if cap.context.is_some()
+                    || !table.capabilities.contains_key(&cap.name.name)
+                    || table.providers.contains_key(&cap.name.name)
+                {
+                    continue;
+                }
+                errors.push_for(
+                    Some(&parsed[i].identity_path()),
+                    CompileError::new(
+                        "bynk.capability.not_provided",
+                        cap.span,
+                        format!(
+                            "capability `{}` is required here but has no provider in context `{name}`; a Worker builds every capability its handlers are given",
+                            cap.name.name
+                        ),
+                    )
+                    .with_note(format!(
+                        "add `provides {} = …` to `{name}`, or build for `--target bundle`, where the host supplies it",
+                        cap.name.name
+                    )),
+                );
+            }
+        }
+    }
+}
+
 /// Phase 7: build each production unit's file-declaration index (which file in
 /// the unit declares which name), for cross-file lookups in the back half.
 pub fn phase_file_index(

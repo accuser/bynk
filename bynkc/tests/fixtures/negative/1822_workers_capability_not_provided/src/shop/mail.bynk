@@ -1,0 +1,12 @@
+-- #1822: on Workers, a required capability needs a provider in its context.
+context shop.mail
+
+capability Mailer {
+	fn send(to: String) -> Effect[()]
+}
+
+service notify {
+	on call(to: String) -> Effect[()] given Mailer {
+		Mailer.send(to)
+	}
+}
