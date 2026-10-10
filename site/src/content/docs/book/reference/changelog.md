@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.316**.
+written against **v0.317**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.317.0** | "Built for Workers, a context that requires a capability it declares (`given Mailer`) but has no `provides Mailer = …` for is now `bynk.capability.not_provided` (#1822). The Workers composition root passed `{}` where the capability was required, so the Worker failed `tsc` (TS2345) while the bundle build passed. The bundle target is unchanged: there the host may supply the capability through `__makeSurface(deps)`" |
 | **v0.316.0** | "A `consumes` clause repeated in another file of a context split across files is accepted (#1857), aliased (`consumes shop.payment as Payment`) or as a `{ Cap }` selection; both were rejected, though the unaliased repeat was accepted, and the alias diagnostic's \"previously defined here\" pointed at the wrong file. The same clause twice in one file is still an error. `alias_conflict` reports a true conflict, an alias naming two units or a unit consumed under two aliases (the latter newly rejected), labelling the earlier clause in the same file or naming its file in the message" |
 | **v0.315.2** | "A `RehydrationViolation` is now logged, as the docs said it was (#1827). The load-time gate threw it without a log line, unlike an `InvariantViolation`, and an HTTP or `on call` entry point then caught it. `rehydrationViolation` now logs `RehydrationViolation <Agent>` with the agent, the field path and the kind of failure (never the key or the offending value) wherever a gate builds it" |
 | **v0.315.1** | "A Worker that decodes a consumed context's export now generates the codec of every type the export reaches, including one the callee does not export (#1846). `Ticket.code`, typed by `t.vault`'s unexported `Code`, was decoded through a `__deserialise_Code` that was neither generated nor imported (TS2552), and a consumer declaring its own `Code` would have reached its own codec instead. Such a type's codecs and instantiations are generated under a callee-qualified name (`__serialise_t_vault__Code`, `__serialise_Option_t_vault__Code`), so they can't collide with the consumer's, while their TS type stays the callee's (`t_vault.Code`) and a refined one still validates inline" |

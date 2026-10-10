@@ -2531,9 +2531,10 @@ pub fn phase_validate_capability_exports(
                                     n.name, name
                                 ),
                             )
-                            .with_note(
-                                "add a `provides {n} = …` declaration so the capability can be wired into consumers",
-                            ),
+                            .with_note(format!(
+                                "add a `provides {} = …` declaration so the capability can be wired into consumers",
+                                n.name
+                            )),
                         );
                     }
                 }
@@ -3155,6 +3156,86 @@ pub fn phase_secrets_computed_name(
             let (_, warnings) = crate::secrets::secret_reads_of(handlers.flatten(), flattened);
             let rel = parsed[i].identity_path();
             errors.extend_for(Some(&rel), warnings);
+        }
+    }
+}
+
+/// #1822: on the Workers target, a capability a context declares and requires
+/// (`given`, on a service or agent handler or a provider) needs a provider in
+/// that context. A Worker's composition root builds every capability its
+/// handlers are given, so one with no provider left `compose` passing `{}`
+/// where the capability was required (TS2345): the bundle built and the
+/// Workers build didn't. On the bundle target the host may supply it through
+/// `__makeSurface(deps)`, so the check is Workers-only, like
+/// [`phase_secrets_computed_name`]. A capability from another unit (flattened
+/// or qualified) is that unit's to provide, and `exports capability` already
+/// requires its provider (`bynk.exports.capability_not_provided`).
+pub fn phase_workers_unprovided_capabilities(
+    target: BuildTarget,
+    parsed: &[ParsedFile],
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
+    unit_tables: &HashMap<String, UnitTable>,
+    errors: &mut ErrorSink,
+) {
+    if target != BuildTarget::Workers {
+        return;
+    }
+    for (name, indices) in groups {
+        if kinds.get(name) != Some(&UnitKind::Context) {
+            continue;
+        }
+        let Some(table) = unit_tables.get(name) else {
+            continue;
+        };
+        // #1882 review: once per capability, at its first `given`, however
+        // many handlers require it.
+        let mut reported: HashSet<String> = HashSet::new();
+        for &i in indices {
+            let SourceUnit::Context(ctx) = &parsed[i].unit() else {
+                continue;
+            };
+            let mut givens: Vec<&CapRef> = Vec::new();
+            for item in &ctx.items {
+                match item {
+                    CommonsItem::Service(s) => {
+                        givens.extend(s.handlers.iter().flat_map(|h| &h.given));
+                    }
+                    CommonsItem::Agent(a) => {
+                        givens.extend(a.handlers.iter().flat_map(|h| &h.given));
+                    }
+                    CommonsItem::Provider(p) => givens.extend(&p.given),
+                    _ => {}
+                }
+            }
+            for cap in givens {
+                // An exported capability with no provider is already
+                // `bynk.exports.capability_not_provided` (#1882 review: no
+                // second error for the same gap).
+                if cap.context.is_some()
+                    || !table.capabilities.contains_key(&cap.name.name)
+                    || table.providers.contains_key(&cap.name.name)
+                    || table.exported_capabilities.contains(&cap.name.name)
+                    || !reported.insert(cap.name.name.clone())
+                {
+                    continue;
+                }
+                errors.push_for(
+                    Some(&parsed[i].identity_path()),
+                    CompileError::new(
+                        "bynk.capability.not_provided",
+                        cap.span,
+                        format!(
+                            "capability `{}` is required here but has no provider in context `{name}`; a Worker builds every capability its handlers are given",
+                            cap.name.name
+                        ),
+                    )
+                    .with_note(format!(
+                        "add `provides {} = …` to `{name}`, or build for `--target bundle`, where the host supplies it",
+                        cap.name.name
+                    )),
+                );
+            }
         }
     }
 }
