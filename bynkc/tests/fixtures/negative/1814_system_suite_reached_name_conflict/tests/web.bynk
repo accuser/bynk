@@ -1,0 +1,17 @@
+---
+Review of #1814: the harness view merges the suite's `uses t.model` and the
+participant `t.web`, whose own `Repo` is an `Int`. `t.model`'s `Tag` reaches
+`t.core`'s `Repo`, which the view already binds to `t.web`'s, so `Tag.repo`
+would be checked as an `Int`. No unit sees the pair together, so the suite
+reports the conflict at its `uses`.
+---
+suite t.web as system {
+  uses t.model
+
+  case "c" {
+    let t = Tag { repo: 5 }
+    let n: Int = t.repo
+    let p <- api.GET("/ping")
+    expect n == 5
+  }
+}

@@ -1,0 +1,11 @@
+context t.web
+
+uses t.model
+consumes t.vault as Vault
+
+service ping {
+  on call() -> Effect[Int] {
+    let b <- Vault.open()
+    Effect.pure(b.n)
+  }
+}

@@ -650,6 +650,29 @@ pub fn phase_integration_bodies(
 
         // -- Type-check each case body. --
         let mut body_errs: Vec<CompileError> = Vec::new();
+        // #1814: the harness view every case is checked in, closed over the
+        // types its declarations reach.
+        let view = integration_view(&uses_targets, &participants, unit_tables, unit_uses);
+        // Review of #1814: the harness pairs the suite's own `uses` with the
+        // participants, which no unit's closure sees together, so a reached
+        // name one of them already binds is reported here, at the suite's
+        // `uses` the reaching declaration came through (or its target, for a
+        // participant's).
+        for c in &view.conflicts {
+            let span = indices
+                .iter()
+                .filter_map(|&i| parsed[i].integration())
+                .flat_map(|d| &d.uses)
+                .find(|u| u.target.joined() == c.via)
+                .map(|u| u.target.span)
+                .unwrap_or(decl.target.span);
+            let names = c
+                .bound
+                .as_ref()
+                .map(|b| format!("`{b}`'s type"))
+                .unwrap_or_else(|| "another declaration".to_string());
+            body_errs.push(view_conflict_error(c, span, &names));
+        }
         // v0.25: the harness root is a synthetic namespace — declare its
         // resolution order (uses first, then participants) for assembly.
         let mut harness_resolution = uses_targets.clone();
@@ -664,10 +687,17 @@ pub fn phase_integration_bodies(
                 &harness_name,
                 parsed[i].is_synthetic(),
             );
+            // #1814: a reached type resolves in the view, but the suite may
+            // not name it.
+            body_errs.extend(resolver::check_hidden_type_names_in_suite(
+                d,
+                None,
+                &view.hidden,
+            ));
             for case in &d.cases {
                 let _ = typecheck_integration_case_body(
                     &participants,
-                    &uses_targets,
+                    &view,
                     case,
                     &cross_context,
                     unit_tables,
@@ -743,7 +773,7 @@ pub fn phase_integration_bodies(
 #[allow(clippy::too_many_arguments)]
 pub fn typecheck_integration_case_body(
     participants: &[String],
-    uses_targets: &[String],
+    view: &SuiteView,
     case: &Case,
     cross_context: &resolver::CrossContextInfo,
     unit_tables: &HashMap<String, UnitTable>,
@@ -754,44 +784,13 @@ pub fn typecheck_integration_case_body(
     HashMap<ExprId, checker::TypedExpr>,
     HashMap<ExprId, checker::Callee>,
 ) {
-    // Names in scope: types/fns/methods from `uses` commons (for constructing
-    // arguments) plus each participant's types/methods (so return types rebrand
-    // and variant patterns resolve).
-    let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
-    let mut fns: HashMap<String, Arc<FnDecl>> = HashMap::new();
-    let mut methods: HashMap<String, ResolverMethodTable> = HashMap::new();
-    let mut merge = |src: Option<&UnitTable>, with_fns: bool| {
-        let Some(t) = src else { return };
-        for (n, d) in &t.types {
-            types.entry(n.clone()).or_insert_with(|| d.clone());
-        }
-        if with_fns {
-            for (n, f) in &t.fns {
-                fns.entry(n.clone()).or_insert_with(|| f.clone());
-            }
-        }
-        for (n, mt) in &t.methods {
-            let entry = methods.entry(n.clone()).or_default();
-            for (m, decl) in &mt.instance {
-                entry
-                    .instance
-                    .entry(m.clone())
-                    .or_insert_with(|| decl.clone());
-            }
-            for (m, decl) in &mt.statics {
-                entry
-                    .statics
-                    .entry(m.clone())
-                    .or_insert_with(|| decl.clone());
-            }
-        }
-    };
-    for u in uses_targets {
-        merge(unit_tables.get(u), true);
-    }
-    for p in participants {
-        merge(unit_tables.get(p), false);
-    }
+    // Names in scope: the harness view (#1814: closed over reached types).
+    let SuiteView {
+        types,
+        fns,
+        methods,
+        ..
+    } = view.clone();
 
     let synthetic_commons = Commons {
         name: QualifiedName {
@@ -874,6 +873,31 @@ pub fn typecheck_integration_case_body(
     (expr_types, callees)
 }
 
+/// Review of #1814: `bynk.uses.name_conflict` for a reached name a suite's
+/// view binds to another declaration, at `span`. `names` says what the view
+/// binds the name to. The same diagnostic a unit's closure gives (#1807).
+fn view_conflict_error(
+    c: &crate::project_model::ViewConflict,
+    span: Span,
+    names: &str,
+) -> CompileError {
+    CompileError::new(
+        "bynk.uses.name_conflict",
+        span,
+        format!(
+            "`{via}` brings in declarations that use type `{t}` from `{owner}`, but `{t}` in \
+             this suite names {names}",
+            via = c.via,
+            t = c.name,
+            owner = c.owner,
+        ),
+    )
+    .with_note(
+        "rename one of the two types; the imported declarations cannot be checked against a \
+         different type of the same name",
+    )
+}
+
 fn first_test_target_span(indices: &[usize], parsed: &[ParsedFile]) -> Span {
     indices
         .first()
@@ -901,20 +925,23 @@ fn check_test_bodies(
     tys: &Arc<Types>,
 ) -> Vec<CompileError> {
     let mut errors = Vec::new();
-    let _ = exports_visibility;
+
+    // The target's privileged view, built once for the `stub` check and the
+    // #1814 naming gate and conflict report below.
+    let privileged = build_privileged_resolved(
+        target_name,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+    );
 
     // v0.118: validate each `stub` RHS value's type against the overridden
     // op's declared return type, in the target's privileged view. A best-effort
     // check: the value expression is type-checked as if it were the op body's
     // tail; any resulting error surfaces as `bynk.stub.rhs_type`.
     if !stubs.is_empty()
-        && let Some((resolved, _)) = build_privileged_resolved(
-            target_name,
-            unit_tables,
-            unit_uses,
-            unit_consumes,
-            unit_consumes_aliases,
-        )
+        && let Some((resolved, _)) = &privileged
     {
         for rp in stubs.values() {
             refs.enter_file(&rp.identity_path, target_name, false);
@@ -928,7 +955,7 @@ fn check_test_bodies(
                     continue;
                 };
                 let check_value = |e: &Expr, errors: &mut Vec<CompileError>| {
-                    if !stub_value_typechecks(e, op, &resolved, tys) {
+                    if !stub_value_typechecks(e, op, resolved, tys) {
                         errors.push(CompileError::new(
                             "bynk.stub.rhs_type",
                             e.span,
@@ -965,12 +992,46 @@ fn check_test_bodies(
         unit_consumes_aliases,
     );
 
+    // #1814: the types the target's privileged view reaches but does not
+    // name. A case resolves them; no suite may write one.
+    let reach = privileged.map(|(_, r)| r).unwrap_or_default();
+    let hidden = reach.hidden;
+
+    // Review of #1814: a reached name the view binds to a consumed context's
+    // unexported type. The target's own table holds only that context's
+    // exports, so its closure resolved the name to the reached commons type
+    // and reported nothing; every other conflict here is the target's own,
+    // which its closure already reported as `bynk.uses.name_conflict`.
+    for c in &reach.conflicts {
+        let Some(bound) = &c.bound else {
+            continue;
+        };
+        let consumed = unit_consumes
+            .get(target_name)
+            .is_some_and(|cs| cs.contains(bound));
+        let exported = exports_visibility
+            .get(bound)
+            .is_some_and(|e| e.contains_key(&c.name));
+        if consumed && !exported {
+            errors.push(view_conflict_error(
+                c,
+                first_test_target_span(indices, parsed),
+                &format!("`{bound}`'s unexported type"),
+            ));
+        }
+    }
+
     // Type-check test case bodies — they live in the target's privileged
     // view, with `stub` overriding individual capability seams.
     for &i in indices {
         let Some(test_decl) = parsed[i].test() else {
             continue;
         };
+        errors.extend(resolver::check_hidden_type_names_in_suite(
+            test_decl,
+            Some(target_name),
+            &hidden,
+        ));
         // v0.25: test-case edges record in the test file, resolving bare
         // names through the *target* unit's namespace.
         refs.enter_file(
@@ -2826,68 +2887,166 @@ fn record_type_refs_in_property(
     checker::record_type_refs(type_ref, &resolved.types, &HashSet::new(), refs);
 }
 
-/// Build a [`resolver::ResolvedCommons`] backed by `owning_unit`'s privileged
-/// view: its types, fns, methods, plus types/fns from every commons it
-/// `uses`, plus exported types from every consumed context. The same
-/// shape used by the production pipeline. Returns the [`ResolvedCommons`]
-/// plus a synthetic commons span for the test.
+/// #1814: a test suite's composed symbol tables, closed over the types its
+/// imported declarations reach. `hidden` names each type the closure added,
+/// with its owning commons: resolvable in the view, never nameable by the
+/// suite (`resolver::check_hidden_type_names_in_suite`), and imported by the
+/// test scaffold from that commons.
+#[derive(Clone, Default)]
+pub struct SuiteView {
+    pub types: HashMap<String, Arc<TypeDecl>>,
+    pub fns: HashMap<String, Arc<FnDecl>>,
+    pub methods: HashMap<String, ResolverMethodTable>,
+    pub hidden: BTreeMap<String, String>,
+    /// Review of #1814: each reached name the view already binds to another
+    /// declaration (`project_model::close_view_types`).
+    pub conflicts: Vec<crate::project_model::ViewConflict>,
+}
+
+impl SuiteView {
+    /// What the closure found, without the tables.
+    pub fn reach(&self) -> crate::project_model::ViewReach {
+        crate::project_model::ViewReach {
+            hidden: self.hidden.clone(),
+            conflicts: self.conflicts.clone(),
+        }
+    }
+
+    /// Merge `t`'s types and methods (and its fns, when `with_fns`) into the
+    /// view, first declaration of a name winning; `with_statics` brings static
+    /// methods too.
+    fn merge(&mut self, t: &UnitTable, with_fns: bool, with_statics: bool) {
+        for (n, d) in &t.types {
+            self.types.entry(n.clone()).or_insert_with(|| d.clone());
+        }
+        if with_fns {
+            for (n, f) in &t.fns {
+                self.fns.entry(n.clone()).or_insert_with(|| f.clone());
+            }
+        }
+        for (n, mt) in &t.methods {
+            let entry = self.methods.entry(n.clone()).or_default();
+            for (m, decl) in &mt.instance {
+                entry
+                    .instance
+                    .entry(m.clone())
+                    .or_insert_with(|| decl.clone());
+            }
+            if with_statics {
+                for (m, decl) in &mt.statics {
+                    entry
+                        .statics
+                        .entry(m.clone())
+                        .or_insert_with(|| decl.clone());
+                }
+            }
+        }
+    }
+
+    /// #1814: close the view over what the declarations of `imported` reach
+    /// (`project_model::close_view_types`), recording what it adds.
+    fn close(
+        &mut self,
+        imported: &[String],
+        unit_tables: &HashMap<String, UnitTable>,
+        unit_uses: &HashMap<String, Vec<String>>,
+    ) {
+        let reach = crate::project_model::close_view_types(
+            imported,
+            unit_tables,
+            unit_uses,
+            &mut self.types,
+            &self.fns,
+            &mut self.methods,
+        );
+        self.hidden = reach.hidden;
+        self.conflicts = reach.conflicts;
+    }
+}
+
+/// `owning_unit`'s privileged view: its types, fns, methods, plus those of
+/// every commons it `uses`, plus the types and instance methods of every
+/// consumed context. #1814: closed over the types those imported declarations
+/// reach, as the unit's own table is, so a case is checked against the same
+/// types the target is.
+pub fn privileged_view(
+    owning_unit: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+) -> Option<SuiteView> {
+    let local = unit_tables.get(owning_unit)?;
+    let mut view = SuiteView {
+        types: local.types.clone(),
+        fns: local.fns.clone(),
+        methods: local.methods.clone(),
+        ..SuiteView::default()
+    };
+    let mut imported: Vec<String> = Vec::new();
+    for t in unit_uses.get(owning_unit).into_iter().flatten() {
+        if let Some(used) = unit_tables.get(t) {
+            view.merge(used, true, true);
+            imported.push(t.clone());
+        }
+    }
+    // Consumed-context types come in too: every one, not only the exported
+    // ones, since the view is privileged. Review of #1814: so a reached name
+    // can bind here to an unexported type the target's own table never
+    // binds; `check_test_bodies` reports that.
+    for t in unit_consumes.get(owning_unit).into_iter().flatten() {
+        if let Some(used) = unit_tables.get(t) {
+            view.merge(used, false, false);
+            imported.push(t.clone());
+        }
+    }
+    view.close(&imported, unit_tables, unit_uses);
+    Some(view)
+}
+
+/// #1814: a `system` case's harness view: types, fns and methods from the
+/// suite's `uses` commons (for constructing arguments), plus each
+/// participant's types and methods (so return types rebrand and variant
+/// patterns resolve), closed over the types those declarations reach.
+pub fn integration_view(
+    uses_targets: &[String],
+    participants: &[String],
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+) -> SuiteView {
+    let mut view = SuiteView::default();
+    let mut imported: Vec<String> = Vec::new();
+    for (units, with_fns) in [(uses_targets, true), (participants, false)] {
+        for u in units {
+            if let Some(t) = unit_tables.get(u) {
+                view.merge(t, with_fns, true);
+                imported.push(u.clone());
+            }
+        }
+    }
+    view.close(&imported, unit_tables, unit_uses);
+    view
+}
+
+/// Build a [`resolver::ResolvedCommons`] backed by `owning_unit`'s
+/// [`privileged_view`]. The same shape used by the production pipeline.
+/// Returns the [`ResolvedCommons`] plus what the view's closure found (#1814):
+/// its hidden types and its conflicts.
 pub fn build_privileged_resolved(
     owning_unit: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
-) -> Option<(ResolvedCommons, ())> {
+) -> Option<(ResolvedCommons, crate::project_model::ViewReach)> {
     let local = unit_tables.get(owning_unit)?;
-    let mut types = local.types.clone();
-    let mut fns = local.fns.clone();
-    let mut methods = local.methods.clone();
-    if let Some(targets) = unit_uses.get(owning_unit) {
-        for t in targets {
-            if let Some(used) = unit_tables.get(t) {
-                for (n, d) in &used.types {
-                    types.entry(n.clone()).or_insert_with(|| d.clone());
-                }
-                for (n, d) in &used.fns {
-                    fns.entry(n.clone()).or_insert_with(|| d.clone());
-                }
-                for (n, mt) in &used.methods {
-                    let entry = methods.entry(n.clone()).or_default();
-                    for (m, decl) in &mt.instance {
-                        entry
-                            .instance
-                            .entry(m.clone())
-                            .or_insert_with(|| decl.clone());
-                    }
-                    for (m, decl) in &mt.statics {
-                        entry
-                            .statics
-                            .entry(m.clone())
-                            .or_insert_with(|| decl.clone());
-                    }
-                }
-            }
-        }
-    }
-    // Consumed-context types come in too (only the exported ones).
-    if let Some(consumed) = unit_consumes.get(owning_unit) {
-        for t in consumed {
-            if let Some(used) = unit_tables.get(t) {
-                for (n, d) in &used.types {
-                    types.entry(n.clone()).or_insert_with(|| d.clone());
-                }
-                for (n, mt) in &used.methods {
-                    let entry = methods.entry(n.clone()).or_default();
-                    for (m, decl) in &mt.instance {
-                        entry
-                            .instance
-                            .entry(m.clone())
-                            .or_insert_with(|| decl.clone());
-                    }
-                }
-            }
-        }
-    }
+    let view = privileged_view(owning_unit, unit_tables, unit_uses, unit_consumes)?;
+    let reach = view.reach();
+    let SuiteView {
+        types,
+        fns,
+        methods,
+        ..
+    } = view;
     let cross_context = build_cross_context_info(
         owning_unit,
         unit_consumes,
@@ -2935,7 +3094,7 @@ pub fn build_privileged_resolved(
         false,
         HashSet::new(),
     );
-    Some((resolved, ()))
+    Some((resolved, reach))
 }
 
 #[cfg(test)]

@@ -1,0 +1,9 @@
+context t.web
+
+uses t.model
+
+service ping {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

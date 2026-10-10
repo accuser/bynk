@@ -1,0 +1,3 @@
+bynk.types.field_value_mismatch field `repo` expects `Repo`, but the value has type `Int`
+bynk.types.let_annotation_mismatch let binding's value has type `Repo`, but the annotation declares `Int`
+# exact

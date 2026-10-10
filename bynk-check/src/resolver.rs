@@ -1307,6 +1307,212 @@ fn check_fn_refs(
     check_block_references(&f.body, &mut cx);
 }
 
+/// #1807, #1814: the walk the naming gates share: every place source writes
+/// a type name, reporting each one that names a hidden type. See
+/// [`check_hidden_type_names`] for what is walked.
+struct Gate<'a> {
+    hidden: &'a std::collections::BTreeMap<String, String>,
+    /// #1814: the note for a hidden name, given the name and its owner. A
+    /// unit and a suite name the `uses` that would admit it differently.
+    note: &'a dyn Fn(&str, &str) -> String,
+    errors: Vec<CompileError>,
+}
+impl Gate<'_> {
+    fn name(&mut self, id: &Ident) {
+        if let Some(owner) = self.hidden.get(&id.name) {
+            // Not `unknown_type_error`: its note lists what is in scope,
+            // which a hidden type, reached but unnameable, is not.
+            self.errors.push(
+                CompileError::new(
+                    "bynk.resolve.unknown_type",
+                    id.span,
+                    format!("unknown type `{}`", id.name),
+                )
+                .with_note((self.note)(&id.name, owner)),
+            );
+        }
+    }
+    fn type_ref(&mut self, r: &TypeRef) {
+        match r {
+            TypeRef::Named(id) => self.name(id),
+            TypeRef::App { name, args, .. } => {
+                self.name(name);
+                for a in args {
+                    self.type_ref(a);
+                }
+            }
+            TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+                self.type_ref(a);
+                self.type_ref(b);
+            }
+            TypeRef::Option(t, _)
+            | TypeRef::Effect(t, _)
+            | TypeRef::HttpResult(t, _)
+            | TypeRef::List(t, _)
+            | TypeRef::Query(t, _)
+            | TypeRef::Stream(t, _)
+            | TypeRef::Connection(t, _)
+            | TypeRef::History(t, _) => self.type_ref(t),
+            TypeRef::Fn(params, ret, _) => {
+                for p in params {
+                    self.type_ref(p);
+                }
+                self.type_ref(ret);
+            }
+            TypeRef::Base(..)
+            | TypeRef::QueueResult(_)
+            | TypeRef::ValidationError(_)
+            | TypeRef::JsonError(_)
+            | TypeRef::Unit(_) => {}
+        }
+    }
+    fn type_decl(&mut self, t: &TypeDecl) {
+        match &t.body {
+            TypeBody::Record(r) => {
+                for f in &r.fields {
+                    self.type_ref(&f.type_ref);
+                    // Review of #1813: an `event` field default.
+                    if let Some(init) = &f.init {
+                        self.expr(init);
+                    }
+                }
+            }
+            TypeBody::Sum(s) => {
+                for v in &s.variants {
+                    for p in &v.payload {
+                        self.type_ref(&p.type_ref);
+                    }
+                }
+            }
+            TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
+        }
+    }
+    fn signature(&mut self, params: &[Param], ret: &TypeRef) {
+        for p in params {
+            self.type_ref(&p.type_ref);
+        }
+        self.type_ref(ret);
+    }
+    fn pattern(&mut self, p: &Pattern) {
+        match p {
+            Pattern::Variant {
+                type_name,
+                variant,
+                bindings,
+                ..
+            } => {
+                if let Some(tn) = type_name {
+                    self.name(tn);
+                } else if bindings.is_empty() {
+                    // A bare, payload-less pattern may name a refined type
+                    // rather than a variant: `s is Repo` tests a refinement.
+                    self.name(variant);
+                }
+                for b in bindings {
+                    match &b.kind {
+                        PatternBindingKind::Positional { pattern }
+                        | PatternBindingKind::Named { pattern, .. } => self.pattern(pattern),
+                    }
+                }
+            }
+            Pattern::Refined { inner, .. } => self.pattern(inner),
+            Pattern::Or(alts, _) => {
+                for a in alts {
+                    self.pattern(a);
+                }
+            }
+            Pattern::Wildcard(_) | Pattern::Binding(_) | Pattern::Literal { .. } => {}
+        }
+    }
+    fn block(&mut self, b: &Block) {
+        for s in &b.statements {
+            if let Statement::Let(l) | Statement::EffectLet(l) = s
+                && let Some(t) = &l.type_annot
+            {
+                self.type_ref(t);
+            }
+        }
+        // `expr_children` of a block expression is exactly its statements'
+        // expressions and its tail.
+        for e in &b.statements {
+            let mut exprs = Vec::new();
+            statement_exprs(e, &mut exprs);
+            for x in exprs {
+                self.expr(x);
+            }
+        }
+        self.expr(&b.tail);
+    }
+    fn expr(&mut self, e: &Expr) {
+        match &e.kind {
+            ExprKind::Block(b) => return self.block(b),
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                self.expr(cond);
+                self.block(then_block);
+                return self.block(else_block);
+            }
+            ExprKind::Match { discriminant, arms } => {
+                self.expr(discriminant);
+                for arm in arms {
+                    self.pattern(&arm.pattern);
+                    if let Some(g) = &arm.guard {
+                        self.expr(g);
+                    }
+                    match &arm.body {
+                        MatchBody::Expr(b) => self.expr(b),
+                        MatchBody::Block(b) => self.block(b),
+                    }
+                }
+                return;
+            }
+            ExprKind::Is { pattern, .. } => self.pattern(pattern),
+            ExprKind::RecordConstruction { type_name, .. } => self.name(type_name),
+            ExprKind::RecordSpread {
+                type_name: Some(tn),
+                ..
+            } => self.name(tn),
+            ExprKind::FieldAccess { receiver, .. } => {
+                if let ExprKind::Ident(id) = &receiver.kind {
+                    self.name(id);
+                }
+            }
+            ExprKind::MethodCall {
+                receiver,
+                type_args,
+                ..
+            } => {
+                if let ExprKind::Ident(id) = &receiver.kind {
+                    self.name(id);
+                }
+                for t in type_args {
+                    self.type_ref(t);
+                }
+            }
+            ExprKind::Call { type_args, .. } => {
+                for t in type_args {
+                    self.type_ref(t);
+                }
+            }
+            ExprKind::Val { type_ref, .. } => self.type_ref(type_ref),
+            ExprKind::Lambda(l) => {
+                for p in &l.params {
+                    if let Some(t) = &p.type_ref {
+                        self.type_ref(t);
+                    }
+                }
+            }
+            _ => {}
+        }
+        for c in expr_children(e) {
+            self.expr(c);
+        }
+    }
+}
+
 /// #1807: the naming gate for *hidden* types. A hidden type is one this unit's
 /// composed table carries only because an imported declaration reaches it
 /// (`crate::project_model::close_reachable_types`): resolvable here, never
@@ -1329,213 +1535,16 @@ pub fn check_hidden_type_names(
     items: &[CommonsItem],
     hidden: &std::collections::BTreeMap<String, String>,
 ) -> Vec<CompileError> {
-    struct Gate<'a> {
-        hidden: &'a std::collections::BTreeMap<String, String>,
-        errors: Vec<CompileError>,
-    }
-    impl Gate<'_> {
-        fn name(&mut self, id: &Ident) {
-            if let Some(owner) = self.hidden.get(&id.name) {
-                // Not `unknown_type_error`: its note lists what is in scope,
-                // which a hidden type, reached but unnameable, is not.
-                self.errors.push(
-                    CompileError::new(
-                        "bynk.resolve.unknown_type",
-                        id.span,
-                        format!("unknown type `{}`", id.name),
-                    )
-                    .with_note(format!(
-                        "`{}` reaches this unit only through an imported declaration. It is \
-                         declared in `{owner}`, which this unit does not `uses`; add `uses \
-                         {owner}` to name it",
-                        id.name
-                    )),
-                );
-            }
-        }
-        fn type_ref(&mut self, r: &TypeRef) {
-            match r {
-                TypeRef::Named(id) => self.name(id),
-                TypeRef::App { name, args, .. } => {
-                    self.name(name);
-                    for a in args {
-                        self.type_ref(a);
-                    }
-                }
-                TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
-                    self.type_ref(a);
-                    self.type_ref(b);
-                }
-                TypeRef::Option(t, _)
-                | TypeRef::Effect(t, _)
-                | TypeRef::HttpResult(t, _)
-                | TypeRef::List(t, _)
-                | TypeRef::Query(t, _)
-                | TypeRef::Stream(t, _)
-                | TypeRef::Connection(t, _)
-                | TypeRef::History(t, _) => self.type_ref(t),
-                TypeRef::Fn(params, ret, _) => {
-                    for p in params {
-                        self.type_ref(p);
-                    }
-                    self.type_ref(ret);
-                }
-                TypeRef::Base(..)
-                | TypeRef::QueueResult(_)
-                | TypeRef::ValidationError(_)
-                | TypeRef::JsonError(_)
-                | TypeRef::Unit(_) => {}
-            }
-        }
-        fn type_decl(&mut self, t: &TypeDecl) {
-            match &t.body {
-                TypeBody::Record(r) => {
-                    for f in &r.fields {
-                        self.type_ref(&f.type_ref);
-                        // Review of #1813: an `event` field default.
-                        if let Some(init) = &f.init {
-                            self.expr(init);
-                        }
-                    }
-                }
-                TypeBody::Sum(s) => {
-                    for v in &s.variants {
-                        for p in &v.payload {
-                            self.type_ref(&p.type_ref);
-                        }
-                    }
-                }
-                TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
-            }
-        }
-        fn signature(&mut self, params: &[Param], ret: &TypeRef) {
-            for p in params {
-                self.type_ref(&p.type_ref);
-            }
-            self.type_ref(ret);
-        }
-        fn pattern(&mut self, p: &Pattern) {
-            match p {
-                Pattern::Variant {
-                    type_name,
-                    variant,
-                    bindings,
-                    ..
-                } => {
-                    if let Some(tn) = type_name {
-                        self.name(tn);
-                    } else if bindings.is_empty() {
-                        // A bare, payload-less pattern may name a refined type
-                        // rather than a variant: `s is Repo` tests a refinement.
-                        self.name(variant);
-                    }
-                    for b in bindings {
-                        match &b.kind {
-                            PatternBindingKind::Positional { pattern }
-                            | PatternBindingKind::Named { pattern, .. } => self.pattern(pattern),
-                        }
-                    }
-                }
-                Pattern::Refined { inner, .. } => self.pattern(inner),
-                Pattern::Or(alts, _) => {
-                    for a in alts {
-                        self.pattern(a);
-                    }
-                }
-                Pattern::Wildcard(_) | Pattern::Binding(_) | Pattern::Literal { .. } => {}
-            }
-        }
-        fn block(&mut self, b: &Block) {
-            for s in &b.statements {
-                if let Statement::Let(l) | Statement::EffectLet(l) = s
-                    && let Some(t) = &l.type_annot
-                {
-                    self.type_ref(t);
-                }
-            }
-            // `expr_children` of a block expression is exactly its statements'
-            // expressions and its tail.
-            for e in &b.statements {
-                let mut exprs = Vec::new();
-                statement_exprs(e, &mut exprs);
-                for x in exprs {
-                    self.expr(x);
-                }
-            }
-            self.expr(&b.tail);
-        }
-        fn expr(&mut self, e: &Expr) {
-            match &e.kind {
-                ExprKind::Block(b) => return self.block(b),
-                ExprKind::If {
-                    cond,
-                    then_block,
-                    else_block,
-                } => {
-                    self.expr(cond);
-                    self.block(then_block);
-                    return self.block(else_block);
-                }
-                ExprKind::Match { discriminant, arms } => {
-                    self.expr(discriminant);
-                    for arm in arms {
-                        self.pattern(&arm.pattern);
-                        if let Some(g) = &arm.guard {
-                            self.expr(g);
-                        }
-                        match &arm.body {
-                            MatchBody::Expr(b) => self.expr(b),
-                            MatchBody::Block(b) => self.block(b),
-                        }
-                    }
-                    return;
-                }
-                ExprKind::Is { pattern, .. } => self.pattern(pattern),
-                ExprKind::RecordConstruction { type_name, .. } => self.name(type_name),
-                ExprKind::RecordSpread {
-                    type_name: Some(tn),
-                    ..
-                } => self.name(tn),
-                ExprKind::FieldAccess { receiver, .. } => {
-                    if let ExprKind::Ident(id) = &receiver.kind {
-                        self.name(id);
-                    }
-                }
-                ExprKind::MethodCall {
-                    receiver,
-                    type_args,
-                    ..
-                } => {
-                    if let ExprKind::Ident(id) = &receiver.kind {
-                        self.name(id);
-                    }
-                    for t in type_args {
-                        self.type_ref(t);
-                    }
-                }
-                ExprKind::Call { type_args, .. } => {
-                    for t in type_args {
-                        self.type_ref(t);
-                    }
-                }
-                ExprKind::Val { type_ref, .. } => self.type_ref(type_ref),
-                ExprKind::Lambda(l) => {
-                    for p in &l.params {
-                        if let Some(t) = &p.type_ref {
-                            self.type_ref(t);
-                        }
-                    }
-                }
-                _ => {}
-            }
-            for c in expr_children(e) {
-                self.expr(c);
-            }
-        }
-    }
-
+    let note = |name: &str, owner: &str| {
+        format!(
+            "`{name}` reaches this unit only through an imported declaration. It is \
+             declared in `{owner}`, which this unit does not `uses`; add `uses \
+             {owner}` to name it"
+        )
+    };
     let mut g = Gate {
         hidden,
+        note: &note,
         errors: Vec::new(),
     };
     if hidden.is_empty() {
@@ -1608,6 +1617,81 @@ pub fn check_hidden_type_names(
             }
             CommonsItem::Messages(_) => {}
         }
+    }
+    g.errors
+}
+
+/// #1814: the naming gate for a test suite's view. A suite resolves names in
+/// its target's privileged view (a unit suite) or its harness table (a
+/// `system` suite), each closed over the types its imported declarations reach
+/// (`crate::project_model::close_view_types`). A hidden type is resolvable
+/// there, so a case can build and read a reached field, but a suite may no
+/// more name it than its target may. Walks every `stub` clause's argument
+/// patterns and values, every case body, and every property's `for all`
+/// bindings, `where` filter and predicate, as [`check_hidden_type_names`]
+/// walks a unit's items. `target` is the unit whose `uses` would admit a
+/// hidden name: the target of a unit suite, or the suite itself (`None`) for a
+/// `system` suite, which declares its own `uses`.
+pub fn check_hidden_type_names_in_suite(
+    suite: &SuiteDecl,
+    target: Option<&str>,
+    hidden: &std::collections::BTreeMap<String, String>,
+) -> Vec<CompileError> {
+    let note = |name: &str, owner: &str| match target {
+        Some(target) => format!(
+            "`{name}` reaches this suite only through an imported declaration. It is \
+             declared in `{owner}`, which `{target}` does not `uses`; add `uses {owner}` \
+             to `{target}` to name it"
+        ),
+        None => format!(
+            "`{name}` reaches this suite only through an imported declaration. It is \
+             declared in `{owner}`, which this suite does not `uses`; add `uses {owner}` \
+             to name it"
+        ),
+    };
+    let mut g = Gate {
+        hidden,
+        note: &note,
+        errors: Vec::new(),
+    };
+    if hidden.is_empty() {
+        return g.errors;
+    }
+    let stub = |g: &mut Gate<'_>, s: &StubClause| {
+        for a in &s.args {
+            if let ArgPattern::Value(e) = a {
+                g.expr(e);
+            }
+        }
+        match &s.rhs {
+            StubRhs::Returns(e) => g.expr(e),
+            StubRhs::ReturnsEach(outcomes, _) => {
+                for o in outcomes {
+                    if let SeqOutcome::Value(e) = o {
+                        g.expr(e);
+                    }
+                }
+            }
+            StubRhs::Fails(_) => {}
+        }
+    };
+    for s in &suite.stubs {
+        stub(&mut g, s);
+    }
+    for case in &suite.cases {
+        for s in &case.stubs {
+            stub(&mut g, s);
+        }
+        g.block(&case.body);
+    }
+    for prop in &suite.properties {
+        for b in &prop.forall.bindings {
+            g.type_ref(&b.type_ref);
+        }
+        if let Some(w) = &prop.forall.where_pred {
+            g.expr(w);
+        }
+        g.block(&prop.forall.body);
     }
     g.errors
 }

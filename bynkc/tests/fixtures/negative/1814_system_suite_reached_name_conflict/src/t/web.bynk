@@ -1,0 +1,9 @@
+context t.web
+
+type Repo = Int
+
+service api from http {
+  on GET("/ping") () -> Effect[HttpResult[Repo]] by Visitor {
+    Ok(1)
+  }
+}

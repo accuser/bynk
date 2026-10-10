@@ -107,6 +107,12 @@ pub(crate) fn process_tests(
             .get(target_name)
             .expect("phase_test_bodies only returns targets it resolved against `kinds`");
         let indices = test_groups.get(target_name).unwrap();
+        // #1814: the types the target's privileged view reaches but does not
+        // import, computed once per target for every runner below.
+        let hidden =
+            test_suites::privileged_view(target_name, unit_tables, unit_uses, unit_consumes)
+                .map(|v| v.hidden)
+                .unwrap_or_default();
 
         // -- Phase 5: emit TypeScript test module. --
         let emit_out = emit_test_module(
@@ -123,6 +129,7 @@ pub(crate) fn process_tests(
             exports_visibility,
             import_ext,
             contracts,
+            &hidden,
             tys,
         );
         if let Some((path, program, source_map, runnable)) = emit_out {
@@ -145,6 +152,8 @@ pub(crate) fn process_tests(
             if let Some(used) = unit_uses.get(target_name) {
                 imported.extend(used.iter().map(String::as_str));
             }
+            // #1814: and the owner of each reached type it imports.
+            imported.extend(hidden.values().map(String::as_str));
             for name in imported {
                 if let Some(barrel) =
                     emit_commons_barrel(name, groups, parsed, import_ext, emitted_barrels, &[])
@@ -261,10 +270,14 @@ pub(crate) fn process_integration_tests(
                 });
             }
         }
+        // #1814: the harness view the cases were checked in.
+        let view =
+            test_suites::integration_view(&uses_targets, &participants, unit_tables, unit_uses);
         if let Some((path, program, source_map, runnable)) = emit_integration_module(
             &suite_name,
             &participants,
             &uses_targets,
+            &view,
             cross_context,
             unit_consumes,
             unit_tables,
@@ -283,7 +296,9 @@ pub(crate) fn process_integration_tests(
             // namespace (`import * as ns from "./<name>.js"`); participants come
             // in through `../workers/`, so only `uses_targets` need a barrel.
             // Emit one (deduped) for each that is a multi-file commons.
-            for name in &uses_targets {
+            // #1814: and the owner of each reached type it imports.
+            let owners: BTreeSet<&String> = view.hidden.values().collect();
+            for name in uses_targets.iter().chain(owners) {
                 if let Some(barrel) =
                     emit_commons_barrel(name, groups, parsed, ImportExt::Js, emitted_barrels, &[])
                 {
@@ -314,6 +329,7 @@ fn emit_integration_module(
     suite: &str,
     participants: &[String],
     uses_targets: &[String],
+    view: &test_suites::SuiteView,
     cross_context: &resolver::CrossContextInfo,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_tables: &HashMap<String, UnitTable>,
@@ -424,6 +440,12 @@ fn emit_integration_module(
         let path = relative_import_for_test(&commons_dir_for(u));
         uses_imports.push((ns, path));
     }
+    // #1814: and the commons owning each type the harness view reaches.
+    let hidden = hidden_by_owner(&view.hidden);
+    for owner in hidden.keys() {
+        let path = relative_import_for_test(&commons_dir_for(owner));
+        uses_imports.push((test_ns(owner), path));
+    }
     uses_imports.sort();
     uses_imports.dedup();
     for (ns, path) in &uses_imports {
@@ -466,7 +488,7 @@ fn emit_integration_module(
     }
 
     // One async function per case.
-    let mut typed = integration_typed_commons(uses_targets, participants, unit_tables, tys);
+    let mut typed = integration_typed_commons(view, tys);
     let mut case_runners: Vec<String> = Vec::new();
     let mut discovered: Vec<DiscoveredCase> = Vec::new();
     for input in cases {
@@ -510,6 +532,7 @@ fn emit_integration_module(
                 );
             }
         }
+        extend_hidden_destructures(&mut case_out, &hidden, unit_tables);
         // #1855: the lowering reads the case's checked types (a literal at a
         // refined record field is branded only when its type says so), so
         // type the body here as the check pass did, into throwaway sinks.
@@ -517,7 +540,7 @@ fn emit_integration_module(
         let mut throwaway_refs = RefSink::new();
         (typed.expr_types, typed.callees) = test_suites::typecheck_integration_case_body(
             participants,
-            uses_targets,
+            view,
             case,
             cross_context,
             unit_tables,
@@ -1356,49 +1379,19 @@ fn emit_integration_harness(
 }
 
 /// Build the [`checker::TypedCommons`] used to lower integration case bodies —
-/// `uses` commons plus participant types/fns/methods, so static calls and
-/// constructors resolve.
+/// the harness view ([`test_suites::integration_view`]: `uses` commons plus
+/// participant types/fns/methods, closed over the types they reach, #1814),
+/// so static calls and constructors resolve.
 fn integration_typed_commons(
-    uses_targets: &[String],
-    participants: &[String],
-    unit_tables: &HashMap<String, UnitTable>,
+    view: &test_suites::SuiteView,
     tys: &Arc<checker::Types>,
 ) -> checker::TypedCommons {
-    let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
-    let mut fns: HashMap<String, Arc<FnDecl>> = HashMap::new();
-    let mut methods: HashMap<String, ResolverMethodTable> = HashMap::new();
-    let mut add = |t: Option<&UnitTable>, with_fns: bool| {
-        let Some(t) = t else { return };
-        for (n, d) in &t.types {
-            types.entry(n.clone()).or_insert_with(|| d.clone());
-        }
-        if with_fns {
-            for (n, f) in &t.fns {
-                fns.entry(n.clone()).or_insert_with(|| f.clone());
-            }
-        }
-        for (n, mt) in &t.methods {
-            let entry = methods.entry(n.clone()).or_default();
-            for (m, decl) in &mt.instance {
-                entry
-                    .instance
-                    .entry(m.clone())
-                    .or_insert_with(|| decl.clone());
-            }
-            for (m, decl) in &mt.statics {
-                entry
-                    .statics
-                    .entry(m.clone())
-                    .or_insert_with(|| decl.clone());
-            }
-        }
-    };
-    for u in uses_targets {
-        add(unit_tables.get(u), true);
-    }
-    for p in participants {
-        add(unit_tables.get(p), false);
-    }
+    let test_suites::SuiteView {
+        types,
+        fns,
+        methods,
+        ..
+    } = view.clone();
     checker::TypedCommons {
         commons: Commons {
             name: QualifiedName {
@@ -1717,6 +1710,7 @@ fn emit_test_module(
     exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
     import_ext: ImportExt,
     contracts: bool,
+    hidden: &BTreeMap<String, String>,
     tys: &Arc<Types>,
 ) -> Option<(PathBuf, TsProgram, Option<String>, RunnableTest)> {
     // #914: the test-scaffold module's runtime import list is emitted below as a
@@ -1844,7 +1838,18 @@ fn emit_test_module(
             uses_imports.push((ns, import_path));
         }
     }
+    // #1814: and the commons owning each type the target's view reaches but
+    // does not import, which a lowered case spells (a kernel's
+    // `(__x: Repo) => …`, `Repo.shout(…)`); `emit_test_scope_setup` aliases
+    // them.
+    for owner in hidden_by_owner(hidden).keys() {
+        let ns = test_ns(owner);
+        if !consumed_imports.iter().any(|(n, _)| *n == ns) {
+            uses_imports.push((ns, relative_import_for_test(&commons_dir_for(owner))));
+        }
+    }
     uses_imports.sort();
+    uses_imports.dedup();
     for (ns, path) in &uses_imports {
         stmts.push(TsStmt::decl(
             TsDecl::ImportNamespace {
@@ -1980,6 +1985,7 @@ fn emit_test_module(
             unit_consumes,
             unit_consumes_aliases,
             &runtime_use,
+            hidden,
             tys,
         );
         if suppress_next_blank {
@@ -2063,6 +2069,7 @@ fn emit_test_module(
                 &rel_path,
                 &runtime_use,
                 suite,
+                hidden,
                 tys,
             );
             // v0.70: merge this case's body checkpoints into the module map under
@@ -2126,6 +2133,7 @@ fn emit_test_module(
                     &rel_path,
                     &runtime_use,
                     suite,
+                    hidden,
                     tys,
                 )
             } else {
@@ -2143,6 +2151,7 @@ fn emit_test_module(
                     &rel_path,
                     &runtime_use,
                     suite,
+                    hidden,
                     tys,
                 )
             };
@@ -2188,6 +2197,7 @@ fn emit_test_module(
             unit_consumes_aliases,
             &rep_rel_path,
             &runtime_use,
+            hidden,
             tys,
         );
         if let Some(attack_stmt) = attack_stmt {
@@ -2222,6 +2232,7 @@ fn emit_test_module(
             unit_tables,
             unit_uses,
             unit_consumes,
+            hidden,
             tys,
         );
         let (codec_names, codec_insts) = crate::emitter::serialisation::collect_codec_closure(
@@ -2700,6 +2711,7 @@ fn emit_stub_class(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     runtime_use: &RuntimeUse,
+    hidden: &BTreeMap<String, String>,
     tys: &Arc<Types>,
 ) -> TsStmt {
     let mut out = String::new();
@@ -2895,6 +2907,7 @@ fn emit_stub_class(
                         unit_consumes,
                         unit_consumes_aliases,
                         runtime_use,
+                        hidden,
                         tys,
                     );
                     let vname = format!("__pv_{idx}_{i}");
@@ -2929,6 +2942,7 @@ fn emit_stub_class(
                 unit_consumes,
                 unit_consumes_aliases,
                 runtime_use,
+                hidden,
                 tys,
             );
             for line in rhs_body.lines() {
@@ -2998,6 +3012,7 @@ fn emit_stub_rhs(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     runtime_use: &RuntimeUse,
+    hidden: &BTreeMap<String, String>,
     tys: &Arc<Types>,
 ) -> String {
     let lower = |e: &Expr| {
@@ -3011,6 +3026,7 @@ fn emit_stub_rhs(
             unit_consumes,
             unit_consumes_aliases,
             runtime_use,
+            hidden,
             tys,
         )
     };
@@ -3083,6 +3099,7 @@ fn lower_stub_value_block(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     runtime_use: &RuntimeUse,
+    hidden: &BTreeMap<String, String>,
     tys: &Arc<Types>,
 ) -> String {
     let owning_unit = target_name.to_string();
@@ -3091,6 +3108,7 @@ fn lower_stub_value_block(
         unit_tables,
         unit_uses,
         unit_consumes,
+        hidden,
         tys,
     );
     let block = test_suites::value_block(e);
@@ -3130,6 +3148,7 @@ fn synthetic_typed_commons_for_target(
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
+    hidden: &BTreeMap<String, String>,
     tys: &Arc<checker::Types>,
 ) -> checker::TypedCommons {
     let table = unit_tables.get(target_name).cloned().unwrap_or_default();
@@ -3190,6 +3209,20 @@ fn synthetic_typed_commons_for_target(
                     }
                 }
             }
+        }
+    }
+    // #1814: and the types the target's privileged view reaches (`hidden`,
+    // each with its owning commons), which the case was checked against,
+    // with their methods.
+    for (name, owner) in hidden {
+        let Some(owner_table) = unit_tables.get(owner) else {
+            continue;
+        };
+        if let Some(d) = owner_table.types.get(name) {
+            types.entry(name.clone()).or_insert_with(|| d.clone());
+        }
+        if let Some(mt) = owner_table.methods.get(name) {
+            methods.entry(name.clone()).or_insert_with(|| mt.clone());
         }
     }
     checker::TypedCommons {
@@ -3773,6 +3806,42 @@ fn aliased_types(table: &UnitTable, keep: impl Fn(&String) -> bool) -> Vec<(Stri
     types
 }
 
+/// #1814: a suite view's hidden types grouped by owning commons, each group
+/// sorted by name.
+fn hidden_by_owner(hidden: &BTreeMap<String, String>) -> BTreeMap<String, Vec<String>> {
+    let mut by_owner: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (name, owner) in hidden {
+        by_owner
+            .entry(owner.clone())
+            .or_default()
+            .push(name.clone());
+    }
+    by_owner
+}
+
+/// #1814: destructure each hidden type from its owning commons' namespace,
+/// as a value and a type alias, the way a `uses` commons' types are: a
+/// lowered case spells a reached type (a kernel's `(__x: Repo) => …`), names
+/// a reached sum's variants (`Status.Done`) and calls its methods
+/// (`Repo.shout(…)`).
+fn extend_hidden_destructures(
+    out: &mut String,
+    hidden: &BTreeMap<String, Vec<String>>,
+    unit_tables: &HashMap<String, UnitTable>,
+) {
+    for (owner, names) in hidden {
+        let Some(table) = unit_tables.get(owner) else {
+            continue;
+        };
+        let type_names = aliased_types(table, |n| names.contains(n));
+        crate::emitter::extend_printed_at(
+            out,
+            emit_ns_destructure(&test_ns(owner), names, &type_names),
+            2,
+        );
+    }
+}
+
 /// Emit the shared per-runner scope setup — agent reset, the `deps` factory, and
 /// the destructurings (see [`emit_ns_destructure`]) that bring the target's,
 /// `uses`', and consumed contexts' names into scope. Shared by `case` and
@@ -3796,6 +3865,7 @@ fn emit_test_scope_setup(
     // #1860: the running suite's ordinal, passed when some `stub` clause is
     // scoped to a suite.
     suite: Option<usize>,
+    hidden: &BTreeMap<String, String>,
 ) {
     let deps_args: Vec<TsExpr> = match suite {
         Some(n) => vec![
@@ -3991,6 +4061,9 @@ fn emit_test_scope_setup(
             }
         }
     }
+    // #1814: the types the target's view reaches but does not import, from
+    // their owning commons (imported by `emit_test_module`).
+    extend_hidden_destructures(out, &hidden_by_owner(hidden), unit_tables);
     // Bring consumed-context exported names into scope, plus a `Payment`
     // alias for the consumed surface (so `Payment.authorise.call(...)` works).
     if let Some(consumed) = unit_consumes.get(target_name) {
@@ -4113,6 +4186,7 @@ fn emit_test_case_function(
     runtime_use: &RuntimeUse,
     // #1860: the run's suite ordinal, when some `stub` is suite-scoped.
     suite: Option<usize>,
+    hidden: &BTreeMap<String, String>,
     tys: &Arc<Types>,
 ) -> TsStmt {
     // #291: a case some `stub` clause is scoped to passes its name to
@@ -4135,9 +4209,16 @@ fn emit_test_case_function(
         block_uses_observation(&case.body),
         scoped.then_some(case.name.as_str()),
         suite,
+        hidden,
     );
-    let mut typed =
-        synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, unit_consumes, tys);
+    let mut typed = synthetic_typed_commons_for_target(
+        target_name,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        hidden,
+        tys,
+    );
     // v0.117: re-type-check the case body (with the call-record types registered)
     // so the lowering has full expr types — collection kernels, notably a
     // `trace(Cap.op)` result's `List[…]` methods, dispatch on the checked type.
@@ -5221,6 +5302,7 @@ fn emit_test_property_function(
     runtime_use: &RuntimeUse,
     // #1860: the run's suite ordinal, when some `stub` is suite-scoped.
     suite: Option<usize>,
+    hidden: &BTreeMap<String, String>,
     tys: &Arc<Types>,
 ) -> TsStmt {
     let mut out = String::new();
@@ -5235,6 +5317,7 @@ fn emit_test_property_function(
         false,
         None,
         suite,
+        hidden,
     );
 
     // Generator descriptors, one per binding, over the target's privileged type
@@ -5283,8 +5366,14 @@ fn emit_test_property_function(
     out.push_str(&bynk_ts::print_stmt(&gens_stmt, 2));
 
     // The `where` filter and the predicate body, as closures over the tuple.
-    let mut typed =
-        synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, unit_consumes, tys);
+    let mut typed = synthetic_typed_commons_for_target(
+        target_name,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        hidden,
+        tys,
+    );
     let cross = bynk_check::resolver::CrossContextInfo::default();
     let binding_names: Vec<String> = prop
         .forall
@@ -5482,6 +5571,7 @@ fn emit_test_history_property_function(
     runtime_use: &RuntimeUse,
     // #1860: the run's suite ordinal, when some `stub` is suite-scoped.
     suite: Option<usize>,
+    hidden: &BTreeMap<String, String>,
     tys: &Arc<Types>,
 ) -> TsStmt {
     let mut out = String::new();
@@ -5496,6 +5586,7 @@ fn emit_test_history_property_function(
         false,
         None,
         suite,
+        hidden,
     );
 
     let Some((run_var, agent_name)) = prop_history_binding(prop) else {
@@ -5522,8 +5613,14 @@ fn emit_test_history_property_function(
     // The privileged view, plus the synthetic call/step/state types and the body's
     // expr types (with `run: List[Step]` in scope), so the lowering resolves the
     // predicate's `List` and value surface (`.call is …`, `.old`/`.new`, `.upTo`).
-    let mut typed =
-        synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, unit_consumes, tys);
+    let mut typed = synthetic_typed_commons_for_target(
+        target_name,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        hidden,
+        tys,
+    );
     let mut handler_descs: Vec<TsExpr> = Vec::new();
     if let Some((mut resolved, _)) = test_suites::build_privileged_resolved(
         target_name,
@@ -5737,6 +5834,7 @@ fn emit_contract_attack_function(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     rel_path: &str,
     runtime_use: &RuntimeUse,
+    hidden: &BTreeMap<String, String>,
     tys: &Arc<Types>,
 ) -> Option<TsStmt> {
     let FnName::Free(fname) = &f.name else {
@@ -5754,6 +5852,7 @@ fn emit_contract_attack_function(
         false,
         None,
         None,
+        hidden,
     );
     let _ = target_kind;
 
@@ -5825,6 +5924,7 @@ fn emit_contract_attack_function(
             unit_tables,
             unit_uses,
             unit_consumes,
+            hidden,
             tys,
         );
         let cross = bynk_check::resolver::CrossContextInfo::default();

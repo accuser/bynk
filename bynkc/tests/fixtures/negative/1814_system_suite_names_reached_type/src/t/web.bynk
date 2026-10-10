@@ -1,0 +1,9 @@
+context t.web
+
+uses t.model
+
+service api from http {
+  on GET("/ping") () -> Effect[HttpResult[Int]] by Visitor {
+    Ok(1)
+  }
+}
