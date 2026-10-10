@@ -1,0 +1,25 @@
+---
+#1824: `t.app` declares its own `Repo` beside a `uses` of `t.core`, whose
+`Repo` `t.model`'s `Run` names. The shadow is legal, and so is every use here:
+`retag` moves a `t.core` `Repo` from one imported position (`first`'s result)
+straight into another (`Run.repo`), and the rest touch only `Run.n` and the
+local `Repo`. Neither `Repo` ever meets the other.
+---
+commons t.app
+
+uses t.core
+uses t.model
+
+type Repo = Int
+
+fn retag(r: Run) -> Run {
+  Run { repo: first(r), n: r.n + 1 }
+}
+
+fn size(r: Run) -> Int {
+  r.n
+}
+
+fn mine() -> Repo {
+  7
+}

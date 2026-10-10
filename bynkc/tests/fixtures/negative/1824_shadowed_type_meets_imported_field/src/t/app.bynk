@@ -1,0 +1,15 @@
+---
+#1824: `t.app` declares its own `Repo` beside a `uses` of `t.core`, whose
+`Repo` `t.model`'s `Run` names. The shadow is legal, but `42` goes into
+`Run.repo`, which means `t.core`'s `Repo`: a conflict at the use.
+---
+commons t.app
+
+uses t.core
+uses t.model
+
+type Repo = Int
+
+fn make() -> Run {
+  Run { repo: 42 }
+}

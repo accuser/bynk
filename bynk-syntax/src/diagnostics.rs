@@ -2249,7 +2249,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.uses.name_conflict",
-        "A `uses` name collides with another name.",
+        "A `uses` name collides with another name, or a value crosses between a unit's code and an imported declaration's position whose type the unit shadows.",
         &["uses_decl"],
     ),
     dg(

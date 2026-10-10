@@ -1,0 +1,17 @@
+commons t.model
+
+uses t.core
+
+type Run = { repo: Repo, n: Int }
+
+fn sample() -> Run {
+  Run { repo: "bynk", n: 1 }
+}
+
+fn first(r: Run) -> Repo {
+  r.repo
+}
+
+fn label(r: Run) -> String {
+  r.repo
+}

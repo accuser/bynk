@@ -1097,7 +1097,7 @@
     },
     {
       "code": "bynk.uses.name_conflict",
-      "summary": "A `uses` name collides with another name."
+      "summary": "A `uses` name collides with another name, or a value crosses between a unit's code and an imported declaration's position whose type the unit shadows."
     },
     {
       "code": "bynk.uses.self_reference",
