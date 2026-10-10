@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "Built for Workers, a context that requires a capability it declares (`given Mailer`) but has no `provides Mailer = …` for is now `bynk.capability.not_provided` (#1822). The Workers composition root passed `{}` where the capability was required, so the Worker failed `tsc` (TS2345) while the bundle build passed. The bundle target is unchanged: there the host may supply the capability through `__makeSurface(deps)`"
----
+# 0447 — A required capability needs a provider on the Workers target only
 
-## ADR: workers-capability-not-provided
-title: A required capability needs a provider on the Workers target only
-summary: Workers rejects a `given` capability with no provider; bundle leaves it to the host
+- **Status:** Accepted (v0.317)
 
 **Context.** A context may declare a capability, require it with `given`, and provide it nowhere. On the bundle target that is a working pattern: the context exports `__makeSurface(deps)`, and the host passes the capability in. On Workers there is no host to pass it: the generated composition root builds every capability its handlers are given from the context's providers, so a missing one became `{}` where the capability was required, and the Worker failed `tsc` (TS2345) while `bynkc check` and the bundle build passed (#1822).
 
