@@ -1178,13 +1178,14 @@ impl<'a> Parser<'a> {
 
     /// #1888: the comments and doc above a member: a record field, a variant,
     /// a variant's payload field or a message entry. As
-    /// [`Self::collect_item_lead`] and [`Self::finalize_doc`] together, so a
-    /// blank line orphans a member's doc as it does a declaration's. A doc with
+    /// [`Self::collect_body_item_lead`] and [`Self::finalize_doc`] together, so
+    /// a blank line orphans a member's doc as it does a declaration's, and a
+    /// [`Comment::Blank`] is dropped, as in any body (#1884). A doc with
     /// `close` (the body's closing token) next documents nothing: it is warned
     /// about and kept among the comments, which the caller then takes as the
     /// body's closing comments.
     fn collect_member_lead(&mut self, close: TokenKind) -> (Vec<Comment>, Option<Doc>) {
-        let (mut leading, doc) = self.collect_item_lead();
+        let (mut leading, doc) = self.collect_body_item_lead();
         let Some(doc) = doc else {
             return (leading, None);
         };
