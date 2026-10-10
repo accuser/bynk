@@ -290,6 +290,7 @@ pub fn parse_units_recovering_from(tokens: &[Token], source: &str, next_id: &mut
     let broken_decl_names = std::mem::take(&mut p.broken_decl_names);
     *next_id = p.next_expr_id;
     let mut all_errors = p.recovered_errors;
+    all_errors.append(&mut p.doc_errors);
     all_errors.append(&mut warnings);
     Recovered {
         units,
@@ -354,6 +355,16 @@ pub fn parse_unit_with_warnings_from(
             }
         }
         Err(e) => Err(vec![e]),
+    };
+    // #1885: a doc block that holds code fails the parse, after any error the
+    // parse itself hit.
+    let result = match (result, std::mem::take(&mut p.doc_errors)) {
+        (r, docs) if docs.is_empty() => r,
+        (Ok(_), docs) => Err(docs),
+        (Err(mut errs), mut docs) => {
+            errs.append(&mut docs);
+            Err(errs)
+        }
     };
     *next_id = p.next_expr_id;
     // ADR 0117: warnings (e.g. orphan doc blocks) ride alongside a successful
@@ -454,6 +465,8 @@ pub fn parse_units_with_drain_check_from(
             }
         }
     }
+    // #1885: a doc block that holds code fails the parse.
+    errors.append(&mut p.doc_errors);
     *next_id = p.next_expr_id;
     let eof = p.eof_span();
     let fully_drained = p.trivia.is_fully_drained();
@@ -557,6 +570,15 @@ struct Parser<'a> {
     /// [`Self::alloc_expr_id`], the sole allocation point every `Expr`
     /// construction site in this parser calls.
     next_expr_id: u32,
+    /// #1885: `bynk.parse.doc_block_contains_code` errors found by
+    /// [`Self::take_doc_block`]. Kept apart from the item `Result` path so a
+    /// doc block, which every item loop reads before its recovery point, never
+    /// aborts the body it sits in; each entry point turns them into errors.
+    doc_errors: Vec<CompileError>,
+    /// #1885: true for the parser [`doc_content_is_code`] runs over a doc
+    /// block's content. It skips the code check on doc blocks inside that
+    /// content, so the probe stays a plain parse.
+    doc_probe: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -581,6 +603,8 @@ impl<'a> Parser<'a> {
             brace_depth: 0,
             item_loop_baseline: Vec::new(),
             next_expr_id: 0,
+            doc_errors: Vec::new(),
+            doc_probe: false,
         }
     }
 
@@ -1011,10 +1035,17 @@ impl<'a> Parser<'a> {
     /// Consume an optional doc block at the current position, returning the
     /// (content, end-of-doc span) pair. Returns None if the next token is not
     /// a doc block.
+    ///
+    /// #1885: a doc block whose content is code (see [`doc_content_is_code`])
+    /// records `bynk.parse.doc_block_contains_code` in [`Self::doc_errors`];
+    /// the block is still returned, so parsing carries on around it.
     fn take_doc_block(&mut self) -> Option<(String, Span)> {
         if self.peek_kind() == Some(TokenKind::DocBlock) {
             let t = self.bump().unwrap();
             let body = doc_block_content(self.source, t.span);
+            if !self.doc_probe && doc_content_is_code(&body) {
+                self.doc_errors.push(doc_block_contains_code(t.span));
+            }
             return Some((body, t.span));
         }
         None
@@ -1086,6 +1117,110 @@ pub(crate) struct DocLead {
 fn keep_orphan(leading: &mut Vec<Comment>, doc: DocLead) {
     let at = doc.at.min(leading.len());
     leading.insert(at, Comment::OrphanDoc(doc.content));
+}
+
+/// #1885: the `bynk.parse.doc_block_contains_code` error for the doc block at
+/// `span`.
+fn doc_block_contains_code(span: Span) -> CompileError {
+    CompileError::new(
+        "bynk.parse.doc_block_contains_code",
+        span,
+        "this documentation block contains declarations, so they are not compiled",
+    )
+    .with_note(
+        "a line of three or more dashes opens or closes a doc block, so two dash \
+         dividers turn the code between them into documentation; for a divider use a \
+         line comment with text, such as `-- Helpers --`, and to show code in a doc \
+         block put it in a Markdown code fence (```)",
+    )
+}
+
+/// The keywords that open a declaration in a unit body. A doc block's content
+/// is probed as code only when it lexes and holds one of these, so prose (which
+/// usually fails to lex, or has none) costs one tokenize at most.
+const DECLARATION_KEYWORDS: &[TokenKind] = &[
+    TokenKind::Type,
+    TokenKind::Fn,
+    TokenKind::Capability,
+    TokenKind::Provides,
+    TokenKind::Service,
+    TokenKind::Agent,
+    TokenKind::Actor,
+    TokenKind::Messages,
+    TokenKind::Event,
+    TokenKind::Uses,
+    TokenKind::Consumes,
+    TokenKind::Exports,
+    TokenKind::Binding,
+];
+
+/// #1885 (ADR: doc-fence-matched-length): true when a doc block's `content`,
+/// with its Markdown code fences removed, parses as one or more declarations.
+///
+/// The probe is an `adapter` body in fragment form: an adapter accepts every
+/// item a context or commons does, plus `binding`, and leaves placement to the
+/// checker. Success means the whole content parsed and declared something; a
+/// content that only holds another doc block (front matter, say) is prose.
+/// Doc blocks inside the content are not themselves checked (`doc_probe`).
+fn doc_content_is_code(content: &str) -> bool {
+    let stripped = strip_code_fences(content);
+    let Ok(tokens) = crate::lexer::tokenize(&stripped) else {
+        return false;
+    };
+    if !tokens
+        .iter()
+        .any(|t| DECLARATION_KEYWORDS.contains(&t.kind))
+    {
+        return false;
+    }
+    let (filtered, trivia) = split_trivia(&tokens, &stripped);
+    let mut warnings = Vec::new();
+    let mut p = Parser::new(&filtered, &stripped, trivia, &mut warnings);
+    p.doc_probe = true;
+    let at = Span::new(0, 0);
+    let name = QualifiedName {
+        parts: Vec::new(),
+        span: at,
+    };
+    match p.parse_adapter_body(at, name, None, false) {
+        Ok(a) => {
+            p.peek().is_none()
+                && (!a.items.is_empty()
+                    || !a.uses.is_empty()
+                    || !a.consumes.is_empty()
+                    || !a.exports.is_empty()
+                    || a.binding.is_some())
+        }
+        Err(_) => false,
+    }
+}
+
+/// `content` with every Markdown fenced code block (```` ``` ```` or `~~~`,
+/// three or more, closed by a fence of the same character at least as long)
+/// blanked out, line for line. An unclosed fence runs to the end, as in
+/// Markdown. Code shown in a fence is an example, not swallowed code.
+fn strip_code_fences(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut open: Option<(char, usize)> = None;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let fence = ['`', '~'].into_iter().find_map(|c| {
+            let n = trimmed.chars().take_while(|&x| x == c).count();
+            (n >= 3).then_some((c, n))
+        });
+        match (open, fence) {
+            (None, Some(f)) => open = Some(f),
+            (Some((c, n)), Some((fc, fnum)))
+                if fc == c && fnum >= n && trimmed.len() == fnum * c.len_utf8() =>
+            {
+                open = None;
+            }
+            (None, None) => out.push_str(line),
+            (Some(_), _) => {}
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// Parse the body of a lexed double-quoted string literal (the lexeme,
@@ -2679,5 +2814,103 @@ mod tests {
             );
         };
         assert!(matches!(&inner.kind, ExprKind::RecordConstruction { .. }));
+    }
+
+    /// The codes a strict multi-unit parse (the build's path) reports.
+    fn strict_codes(src: &str) -> Vec<&'static str> {
+        let toks = tokenize(src).unwrap();
+        match parse_units_with_warnings(&toks, src) {
+            Ok((_, warnings)) => warnings.iter().map(|e| e.category).collect(),
+            Err(errs) => errs.iter().map(|e| e.category).collect(),
+        }
+    }
+
+    /// #1885 (DECISION B): a divider pair around a declaration, attached to
+    /// the next one, swallowed `helper` silently. Every parse entry point now
+    /// reports it.
+    #[test]
+    fn a_divider_pair_around_code_is_doc_block_contains_code() {
+        let src =
+            "commons m\n\n--------\nfn helper() -> Int { 1 }\n--------\nfn f() -> Int { 2 }\n";
+        assert_eq!(strict_codes(src), ["bynk.parse.doc_block_contains_code"]);
+        let errs = parse_str(src).unwrap_err();
+        assert_eq!(errs[0].category, "bynk.parse.doc_block_contains_code");
+        // The span is the whole doc block.
+        assert_eq!(
+            &src[errs[0].span.range()],
+            "--------\nfn helper() -> Int { 1 }\n--------\n"
+        );
+        let (unit, errs) = parse_recover_str(src);
+        assert!(unit.is_some(), "recovery keeps the unit");
+        assert!(
+            errs.iter()
+                .any(|e| e.category == "bynk.parse.doc_block_contains_code"),
+            "{errs:?}"
+        );
+    }
+
+    /// The orphan shape (a blank line before `fn f`) is the same error, beside
+    /// the orphan warning; and so is a pair with nothing after it.
+    #[test]
+    fn an_orphaned_or_trailing_divider_pair_is_doc_block_contains_code() {
+        let orphan = "commons m\n\n---\nfn helper() -> Int { 1 }\n---\n\nfn f() -> Int { 2 }\n";
+        let codes = strict_codes(orphan);
+        assert!(
+            codes.contains(&"bynk.parse.doc_block_contains_code"),
+            "{codes:?}"
+        );
+        let trailing = "commons m\n\nfn f() -> Int { 2 }\n\n---\ntype Id = Int\n---\n";
+        let codes = strict_codes(trailing);
+        assert!(
+            codes.contains(&"bynk.parse.doc_block_contains_code"),
+            "{codes:?}"
+        );
+    }
+
+    /// Prose that only starts like a declaration, a doc whose code sits in a
+    /// Markdown fence, and a doc that holds only a nested doc example are all
+    /// documentation.
+    #[test]
+    fn near_miss_prose_and_fenced_code_are_not_code() {
+        for doc in [
+            "type of the thing",
+            "fn is used here",
+            "The type Id is an Int.",
+            "uses the clock",
+            "Event handler.\nfn helper() -> Int { 1 }",
+            "Example:\n```bynk\nfn helper() -> Int { 1 }\n```",
+            "~~~~\ntype Id = Int\n~~~~",
+            "---\nA nested doc.\n---",
+            "",
+        ] {
+            assert!(!doc_content_is_code(doc), "{doc:?} read as code");
+        }
+        for doc in [
+            "fn helper() -> Int { 1 }",
+            "type Id = Int\nfn f() -> Int { 1 }",
+            "```\nan example\n```\nfn helper() -> Int { 1 }",
+            "---\nA nested doc.\n---\nfn helper() -> Int { 1 }",
+        ] {
+            assert!(doc_content_is_code(doc), "{doc:?} not read as code");
+        }
+    }
+
+    /// A `----` doc holding a nested doc example in a code fence attaches to
+    /// its declaration with no diagnostic.
+    #[test]
+    fn a_fenced_nested_doc_example_parses_clean() {
+        let src = "commons m\n\n----\nShows a doc.\n\n```bynk\n---\nInner.\n---\nfn example() -> Int { 1 }\n```\n----\nfn f() -> Int { 2 }\n";
+        assert!(strict_codes(src).is_empty(), "{:?}", strict_codes(src));
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!("expected fn")
+        };
+        assert!(
+            f.documentation
+                .as_deref()
+                .is_some_and(|d| d.contains("---\nInner.\n---")),
+            "{:?}",
+            f.documentation
+        );
     }
 }

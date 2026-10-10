@@ -8,9 +8,10 @@
 //
 // The opening marker is a line consisting of three or more consecutive
 // hyphens (followed only by horizontal whitespace and a newline / EOF).
-// The closing marker is another such line. Content between the markers is
-// arbitrary text and may include `--` line-comment fragments without
-// terminating the block.
+// The closing marker is another such line with exactly as many hyphens as
+// the opener (#1885), so a `----` block can hold `---` lines. Content
+// between the markers is arbitrary text and may include `--` line-comment
+// fragments without terminating the block.
 //
 // The scanner must run before the regex tokenizer because tree-sitter's
 // regex flavour disallows lazy quantifiers and look-around, so the
@@ -122,7 +123,9 @@ bool tree_sitter_bynk_external_scanner_scan(void *payload, TSLexer *lexer,
                 advance(lexer);
                 local_dashes++;
             }
-            if (local_dashes >= 3) {
+            // #1885: only a marker of the opener's length closes the block,
+            // like a Markdown code fence; any other marker line is content.
+            if (local_dashes == dashes) {
                 // After dashes, only horizontal whitespace then newline / EOF.
                 while (lexer->lookahead == ' ' || lexer->lookahead == '\t' ||
                        lexer->lookahead == '\r') {

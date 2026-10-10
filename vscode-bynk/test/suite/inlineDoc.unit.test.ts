@@ -64,8 +64,22 @@ describe("docDecorations — block scoping", () => {
   });
 
   it("accepts markers with extra dashes and surrounding whitespace", () => {
-    const text = ["  ----  ", "*hi*", "-----"].join("\n");
+    const text = ["  ----  ", "*hi*", "----"].join("\n");
     assert.deepStrictEqual(decos(text), ["emphasis@1:0-4"]);
+  });
+
+  it("closes only on a marker of the opener's length (#1885)", () => {
+    // The `---` lines are body text of the `----` block, so the heading after
+    // them is still doc; the code after the `----` close is not.
+    const text = ["----", "---", "# Inner", "---", "----", "**code**"].join(
+      "\n",
+    );
+    assert.deepStrictEqual(decos(text), ["heading@2:0-7"]);
+  });
+
+  it("treats a block whose closer has another length as unclosed", () => {
+    const text = ["----", "# Dropped", "---"].join("\n");
+    assert.deepStrictEqual(decos(text), []);
   });
 });
 
