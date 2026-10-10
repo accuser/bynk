@@ -1,0 +1,14 @@
+---
+Review of #1814: a unit suite's privileged view merges every type of a
+consumed context, so `t.vault`'s unexported `Repo` (an `Int`) binds the name
+that `t.model`'s `Tag` reaches from `t.core`. `t.web`'s own table holds only
+`t.vault`'s exports, so it checks `Tag.repo` as `t.core`'s `Repo`; the suite
+reports the conflict rather than check it as an `Int`.
+---
+suite t.web {
+  case "c" {
+    let t = Tag { repo: 5 }
+    let n: Int = t.repo
+    expect n == 5
+  }
+}

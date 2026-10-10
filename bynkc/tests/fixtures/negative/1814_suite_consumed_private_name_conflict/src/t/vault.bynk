@@ -1,0 +1,13 @@
+context t.vault
+
+exports transparent { Box }
+
+type Repo = Int
+
+type Box = { n: Int }
+
+service open {
+  on call() -> Effect[Box] {
+    Effect.pure(Box { n: 1 })
+  }
+}

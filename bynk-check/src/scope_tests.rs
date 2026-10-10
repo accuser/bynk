@@ -340,6 +340,44 @@ const ROWS: &[Row] = &[
         ],
         expect: &[Expect::Reports("bynk.resolve.unknown_type")],
     },
+    // Review of #1814: a reached name a suite's view binds to a different
+    // declaration, where no unit's closure sees the pair.
+    Row {
+        name: "a system suite's uses and a participant may not bind a reached name twice",
+        files: &[
+            ("t/core.bynk", CORE),
+            ("t/model.bynk", MODEL),
+            (
+                "t/web.bynk",
+                "context t.web\n\ntype Repo = Int\n\nservice api from http {\n  on GET(\"/ping\") () -> Effect[HttpResult[Repo]] by Visitor {\n    Ok(1)\n  }\n}\n",
+            ),
+            (
+                "tests/web.bynk",
+                "suite t.web as system {\n  uses t.model\n\n  case \"c\" {\n    let r = Run { repo: 5 }\n    let p <- api.GET(\"/ping\")\n    expect p is Ok(_)\n  }\n}\n",
+            ),
+        ],
+        expect: &[Expect::Reports("bynk.uses.name_conflict")],
+    },
+    Row {
+        name: "a consumed context's unexported type may not bind a name a suite reaches",
+        files: &[
+            ("t/core.bynk", CORE),
+            ("t/model.bynk", MODEL),
+            (
+                "t/vault.bynk",
+                "context t.vault\n\nexports transparent { Box }\n\ntype Repo = Int\n\ntype Box = { n: Int }\n\nservice open {\n  on call() -> Effect[Box] {\n    Effect.pure(Box { n: 1 })\n  }\n}\n",
+            ),
+            (
+                "t/web.bynk",
+                "context t.web\n\nuses t.model\nconsumes t.vault as Vault\n\nservice ping {\n  on call() -> Effect[Int] {\n    let b <- Vault.open()\n    Effect.pure(b.n)\n  }\n}\n",
+            ),
+            (
+                "tests/web.bynk",
+                "suite t.web\n\ncase \"c\" {\n  let r = Run { repo: 5 }\n  expect r.repo == r.repo\n}\n",
+            ),
+        ],
+        expect: &[Expect::Reports("bynk.uses.name_conflict")],
+    },
     Row {
         name: "a context's rebranded uses type resolves to the commons",
         files: &[("geo.bynk", GEO), ("left.bynk", LEFT)],

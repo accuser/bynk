@@ -3400,10 +3400,12 @@ pub fn close_reachable_types(
 /// commons.
 ///
 /// A reached name the view already binds to a different declaration is left
-/// as it is, with no diagnostic: a unit suite's target already reported it as
-/// `bynk.uses.name_conflict` from its own closure, and a harness's
-/// first-wins merge of its `uses` and participants has always let one name
-/// stand for one declaration.
+/// bound as it is and returned as a [`ViewConflict`]; the caller decides
+/// which it reports (review of #1814). A `system` harness reports every one:
+/// its view pairs the suite's own `uses` with the participants, which no
+/// unit's closure ever sees together. A unit suite reports only those its
+/// target's closure cannot: a binding to a consumed context's unexported
+/// type, which only the privileged view merges.
 pub fn close_view_types(
     imported: &[String],
     unit_tables: &HashMap<String, UnitTable>,
@@ -3411,7 +3413,7 @@ pub fn close_view_types(
     types: &mut HashMap<String, Arc<TypeDecl>>,
     fns: &HashMap<String, Arc<FnDecl>>,
     methods: &mut HashMap<String, ResolverMethodTable>,
-) -> BTreeMap<String, String> {
+) -> ViewReach {
     let mut imported_from: HashMap<String, String> = HashMap::new();
     for u in imported {
         let Some(t) = unit_tables.get(u) else {
@@ -3428,7 +3430,9 @@ pub fn close_view_types(
             }
         }
     }
-    close_imported(
+    let mut conflicts: Vec<ViewConflict> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let hidden = close_imported(
         &TableScopes {
             tables: unit_tables,
             uses: unit_uses,
@@ -3438,22 +3442,58 @@ pub fn close_view_types(
         methods,
         &mut imported_from,
         &mut HashMap::new(),
-        |_, _, _| {},
-    )
+        |r, owner, bound| {
+            if bound != Some(owner) && seen.insert(r.name.clone()) {
+                conflicts.push(ViewConflict {
+                    name: r.name.clone(),
+                    owner: owner.to_string(),
+                    bound: bound.map(str::to_string),
+                    via: r.via.clone(),
+                });
+            }
+        },
+    );
+    ViewReach { hidden, conflicts }
+}
+
+/// #1814: what [`close_view_types`] found.
+#[derive(Debug, Clone, Default)]
+pub struct ViewReach {
+    /// Each type the closure added, with its owning commons.
+    pub hidden: BTreeMap<String, String>,
+    /// Each reached name the view already bound to another declaration, in
+    /// the walk's order, once per name.
+    pub conflicts: Vec<ViewConflict>,
+}
+
+/// #1814 review: a type an imported declaration of a suite view names, which
+/// the view binds to a different declaration of the same name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewConflict {
+    /// The name both declarations share.
+    pub name: String,
+    /// The commons whose declaration the imported one means.
+    pub owner: String,
+    /// The unit whose declaration the view binds the name to; `None` for the
+    /// view's own (a unit suite's target's local type).
+    pub bound: Option<String>,
+    /// The imported unit the reaching declaration came from.
+    pub via: String,
 }
 
 /// #1814: what the reachable-type walk reads of a unit: its declared table,
-/// its `uses`, and its kind. A unit's own closure reads the assembled
-/// [`UnitInfo`]s; a suite view's reads the per-unit maps the suite phases
-/// carry.
+/// its `uses`, and its kind (`None` for a table built without one, which is
+/// then a scope but never a commons, so nothing it declares is added).
+/// A unit's own closure reads the assembled [`UnitInfo`]s; a suite view's
+/// reads the per-unit maps the suite phases carry.
 trait ScopeTables {
-    fn scope(&self, unit: &str) -> Option<(&UnitTable, &[String], UnitKind)>;
+    fn scope(&self, unit: &str) -> Option<(&UnitTable, &[String], Option<UnitKind>)>;
 }
 
 impl ScopeTables for BTreeMap<String, UnitInfo> {
-    fn scope(&self, unit: &str) -> Option<(&UnitTable, &[String], UnitKind)> {
+    fn scope(&self, unit: &str) -> Option<(&UnitTable, &[String], Option<UnitKind>)> {
         self.get(unit)
-            .map(|i| (&i.table, i.uses.as_slice(), i.kind))
+            .map(|i| (&i.table, i.uses.as_slice(), Some(i.kind)))
     }
 }
 
@@ -3464,10 +3504,10 @@ struct TableScopes<'a> {
 }
 
 impl ScopeTables for TableScopes<'_> {
-    fn scope(&self, unit: &str) -> Option<(&UnitTable, &[String], UnitKind)> {
+    fn scope(&self, unit: &str) -> Option<(&UnitTable, &[String], Option<UnitKind>)> {
         let table = self.tables.get(unit)?;
         let uses = self.uses.get(unit).map(Vec::as_slice).unwrap_or_default();
-        Some((table, uses, table.kind?))
+        Some((table, uses, table.kind))
     }
 }
 
@@ -3568,7 +3608,7 @@ fn close_imported<S: ScopeTables + ?Sized>(
         let Some((owner_table, _, owner_kind)) = scopes.scope(owner) else {
             continue;
         };
-        if owner_kind != UnitKind::Commons {
+        if owner_kind != Some(UnitKind::Commons) {
             continue;
         }
         if combined_types.contains_key(&r.name) {
@@ -4058,5 +4098,62 @@ mod native_platform_closure_tests {
             "a `given` closure that never reaches a platform-native unit must not \
              report one — got {native:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod view_closure_tests {
+    use super::{HashMap, UnitTable, build_unit_table, close_view_types};
+    use bynk_project::{ParsedFile, UnitKind};
+    use bynk_syntax::{lexer, parser};
+    use std::path::PathBuf;
+
+    fn table(name: &str, kind: UnitKind, src: &str) -> UnitTable {
+        let tokens = lexer::tokenize(src).expect("lex");
+        let unit = parser::parse_unit(&tokens, src).expect("parse");
+        let path = PathBuf::from(format!("{}.bynk", name.replace('.', "/")));
+        let pf = ParsedFile::new(path.clone(), path, None, src.to_string(), unit, kind, false);
+        let mut errors = Vec::new();
+        build_unit_table(name, kind, &[0], &[pf], &mut errors)
+    }
+
+    /// Review of #1814: a table built without a kind (`UnitTable::default()`,
+    /// the shape several harnesses build) is still a scope. Its types and its
+    /// `uses` are searched; only its own declarations, never a commons', are
+    /// not added. It used to make the scope invisible, so a type reached
+    /// through it resolved to nothing, silently.
+    #[test]
+    fn a_kindless_table_is_still_searched_as_a_scope() {
+        let core = table(
+            "t.core",
+            UnitKind::Commons,
+            "commons t.core\n\ntype Repo = String where NonEmpty\n",
+        );
+        let mut model = table(
+            "t.model",
+            UnitKind::Commons,
+            "commons t.model\n\nuses t.core\n\ntype Run = { repo: Repo }\n",
+        );
+        model.kind = None;
+        let mut types = model.types.clone();
+        let tables: HashMap<String, UnitTable> =
+            [("t.core".to_string(), core), ("t.model".to_string(), model)].into();
+        let uses: HashMap<String, Vec<String>> =
+            [("t.model".to_string(), vec!["t.core".to_string()])].into();
+        let reach = close_view_types(
+            &["t.model".to_string()],
+            &tables,
+            &uses,
+            &mut types,
+            &HashMap::new(),
+            &mut HashMap::new(),
+        );
+        assert_eq!(
+            reach.hidden.get("Repo").map(String::as_str),
+            Some("t.core"),
+            "{:?}",
+            reach.hidden
+        );
+        assert!(types.contains_key("Repo"));
     }
 }

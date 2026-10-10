@@ -293,7 +293,6 @@ fn symbol_modifiers(unit: &str, type_decl: Option<&TypeDecl>) -> crate::index::S
 /// Combined symbol tables for a single logical commons or context.
 #[derive(Clone, Default)]
 pub struct UnitTable {
-    #[allow(dead_code)]
     pub kind: Option<UnitKind>,
     pub types: HashMap<String, Arc<TypeDecl>>,
     pub fns: HashMap<String, Arc<FnDecl>>,
