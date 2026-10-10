@@ -696,6 +696,28 @@ The codec runtime types (`JsonError`, `__JsonValue`, `__BoundaryError`) are
 imported only by modules that use the codec, so non-codec modules emit
 byte-identically to v0.22a.
 
+**`Option[U]` on the wire** (#1887). `__serialise_Option_<U>` writes the tagged
+form, `{ "kind": "Some", "value": … }` or `{ "kind": "None" }`.
+`__deserialise_Option_<U>` is lenient, and because it is the one `Option` codec,
+the rule holds at every boundary that decodes JSON: `Json.decode`, an HTTP
+request body, a cross-context call, agent-store rehydration and a WebSocket
+frame. It tries these forms in order:
+
+1. `undefined` (the key is absent from the enclosing record) or `null` is `None`.
+2. An object whose only key is `kind`, set to `"None"`, is `None`.
+3. An object whose only keys are `kind` and `value`, with `kind` set to
+   `"Some"`, is `Some` of `value` decoded as `U`, with errors at `<path>.value`.
+4. Anything else is a bare value, `Some` of the value decoded and
+   refinement-checked as `U`.
+
+The tagged forms win when a value could be read both ways, so a value the
+encoder wrote always decodes back to itself. Recognition is exact, so a tagged
+object carrying any other key falls to rule 4 and is decoded as a bare `U`; the
+pre-#1887 decoder ignored such keys. `U`'s checks are emitted once, in a
+module-local `__option_value_<U>(raw, at)` that rules 3 and 4 share. A bare value
+that fails as a `StructuralMismatch` at the `Option`'s own path has its
+`expected` extended with every form the decoder accepts.
+
 ### §7.3.10 Streams and WebSockets (v0.100, v0.102+)
 
 A **`Stream[T]`** lowers to a host **`AsyncIterable<T>`**, emitted **inline** as
