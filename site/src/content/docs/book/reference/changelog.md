@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.317**.
+written against **v0.318**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.318.0** | "A test suite checks a type its target reaches only through an imported declaration (#1814). A unit suite's view and a `system` case's harness table each merged one level of `uses`, so `t.model`'s `Run { repo: Repo }` reached a suite over `t.web` (which `uses t.model` only) with `repo` typed by nothing: `Run { repo: 42 }` and an `Int` read of `r.repo` compiled. Each suite view is now closed over the types its imported declarations reach, as the unit's own table is (#1807), and the same naming gate rejects a reached type a suite writes. A reached name a suite's view already binds to another declaration is `bynk.uses.name_conflict`: in a `system` suite, a participant's type of the same name as one the suite's `uses` reaches; in a unit suite, a consumed context's unexported type, which only the suite's view merges. The generated test module imports each reached type from its owning commons, so a lowered case can spell it (`(__x: Repo) => …`, `Repo.shout(…)`)" |
 | **v0.317.1** | "A `system` suite against a context that consumes a unit only for its capabilities (`consumes bynk { Clock }`, an adapter) now runs (#1856). The suite stood up every unit in the target's `consumes` closure as a participant Worker, so it imported `../workers/bynk/handlers.js`, which is never emitted (TS2307), and wired it a Service Binding the deployment never has. Only a context is a participant now: a capability-only unit is provided in-process, as the Worker's composition root provides it" |
 | **v0.317.0** | "Built for Workers, a context that requires a capability it declares (`given Mailer`) but has no `provides Mailer = …` for is now `bynk.capability.not_provided` (#1822). The Workers composition root passed `{}` where the capability was required, so the Worker failed `tsc` (TS2345) while the bundle build passed. The bundle target is unchanged: there the host may supply the capability through `__makeSurface(deps)`" |
 | **v0.316.0** | "A `consumes` clause repeated in another file of a context split across files is accepted (#1857), aliased (`consumes shop.payment as Payment`) or as a `{ Cap }` selection; both were rejected, though the unaliased repeat was accepted, and the alias diagnostic's \"previously defined here\" pointed at the wrong file. The same clause twice in one file is still an error. `alias_conflict` reports a true conflict, an alias naming two units or a unit consumed under two aliases (the latter newly rejected), labelling the earlier clause in the same file or naming its file in the message" |
