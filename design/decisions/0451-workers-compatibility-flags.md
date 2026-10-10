@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "Every generated `wrangler.toml` now carries `compatibility_flags = [\"global_fetch_strictly_public\"]`, so a `Fetch` to a URL goes over the public internet even when the URL is another Worker on the same Cloudflare account; before, Cloudflare refused it (error 1042, or a fast `404` from a `workers.dev` sibling). `bynk.toml` gains a `[workers]` table whose `compatibility_flags` list is appended after the default: names pass through unchecked, a duplicate is dropped with a `bynk.project.duplicate_compatibility_flag` warning, and anything but a list of strings is an error. Every deployed Worker's configuration changes on its next deploy (#1890)"
----
+# 0451 — Every Worker fetches over the public internet, and a project can add compatibility flags
 
-## ADR: workers-compatibility-flags
-title: Every Worker fetches over the public internet, and a project can add compatibility flags
-summary: `global_fetch_strictly_public` is on by default; `[workers] compatibility_flags` appends unchecked extras
+- **Status:** Accepted (v0.323)
 
 **Context.** A generated `wrangler.toml` set only `compatibility_date`, pinned by
 the compiler, and `bynk.toml` had no way to set Cloudflare compatibility flags.
