@@ -340,6 +340,10 @@ fn splice_stmts(out: &mut String, stmts: Vec<TsStmt>) {
 /// `import type * as <ns>` alias. Codec *function* names are never qualified:
 /// the caller's `deserialise_AuthId` calls its own local `deserialise_*`, which
 /// is the whole point of the increment.
+///
+/// #1846: a value with no trailing `.` is a whole qualified name instead
+/// (`"t_vault.Code"`), for a callee's unexported type the caller renamed;
+/// see [`qual_type`].
 type Qual = std::collections::HashMap<String, String>;
 
 /// #1437 (Arc E slice 2): [`crate::emitter::ts_type_ref_qualified_multi_ts_type`]
@@ -347,7 +351,7 @@ type Qual = std::collections::HashMap<String, String>;
 /// — a real, empirically-found convention mismatch, not assumed compatible
 /// from the two functions' identical `HashMap<String, String>` shapes alone.
 /// `Qual`'s own values already carry the trailing separator (`"shop_payment."`,
-/// this type's own doc), concatenated directly by [`qual_prefix`]; the
+/// this type's own doc), concatenated directly by [`qual_type`]; the
 /// existing renderer's own qualify closure (`emitter.rs`'s `ts_type_ref_to_ts_type`,
 /// `TypeRef::Named`'s arm) instead appends its OWN `.` (`format!("{ns}.{}",
 /// id.name)`), so passing `Qual` through unmodified doubles the separator
@@ -386,12 +390,23 @@ pub(crate) fn qualified_ts_type(t: &TypeRef, qual: &Qual) -> bynk_ts::TsType {
     );
     let bare: Qual = qual
         .iter()
+        .filter(|(_, v)| v.ends_with('.'))
         .filter_map(|(k, v)| {
             let ns = v.trim_end_matches('.');
             (!ns.is_empty()).then(|| (k.clone(), ns.to_string()))
         })
         .collect();
-    crate::emitter::ts_type_ref_qualified_multi_ts_type(t, &bare)
+    // #1846: a whole-name entry replaces the name outright (see [`qual_type`]).
+    let whole: std::collections::HashMap<String, String> = qual
+        .iter()
+        .filter(|(_, v)| !v.is_empty() && !v.ends_with('.'))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if whole.is_empty() {
+        crate::emitter::ts_type_ref_qualified_multi_ts_type(t, &bare)
+    } else {
+        crate::emitter::ts_type_ref_qualified_multi_ts_type(&rename_type_ref(t, &whole), &bare)
+    }
 }
 
 #[cfg(test)]
@@ -447,8 +462,29 @@ mod qualified_ts_type_tests {
 }
 
 /// The namespace prefix for a type name under `qual` (`""` when unqualified).
-fn qual_prefix(qual: &Qual, name: &str) -> String {
-    qual.get(name).cloned().unwrap_or_default()
+/// The TS type a codec for `name` names. A [`Qual`] value is either a
+/// namespace prefix ending in `.` (`"t_vault."`, giving `t_vault.Code`) or,
+/// #1846, a whole qualified name with no trailing `.` (`"t_vault.Code"`): the
+/// form a callee's *unexported* type takes, renamed in the caller's copy of
+/// the callee's table (`t_vault__Code`) so its codecs can't collide with a
+/// caller type of the same name, while its TS type stays the callee's own.
+fn qual_type(qual: &Qual, name: &str) -> String {
+    match qual.get(name) {
+        Some(v) if v.ends_with('.') => format!("{v}{name}"),
+        Some(v) if !v.is_empty() => v.clone(),
+        _ => name.to_string(),
+    }
+}
+
+/// [`Provenance::Consumed`] for a name [`Qual`] qualifies, either form, owned
+/// by the namespace's unit; [`Provenance::Owned`] otherwise.
+fn qual_provenance(qual: &Qual, name: &str) -> Provenance {
+    match qual.get(name) {
+        Some(v) if !v.is_empty() => Provenance::Consumed {
+            owner_unit: v.split('.').next().unwrap_or_default().to_string(),
+        },
+        _ => Provenance::Owned,
+    }
 }
 
 // #855 (Phase 1): `collect_boundary_types`, `collect_type_names`,
@@ -464,6 +500,7 @@ fn qual_prefix(qual: &Qual, name: &str) -> String {
 pub(crate) use bynk_check::wire::collect_boundary_types;
 pub(crate) use bynk_check::wire::inst_codec_suffix as app_ts_name;
 pub(crate) use bynk_check::wire::record_inst_fields;
+pub(crate) use bynk_check::wire::rename_type_ref;
 pub(crate) use bynk_check::wire::sum_inst_variants;
 
 // #855 (Phase 2 step 5): the scalar-codec decision vocabulary — which TS
@@ -682,7 +719,7 @@ fn index_signature_record_ty() -> TsType {
 /// one shape for both halves of this slice's call tree, not two.
 fn emit_bytes_named_codec(name: &str, qual: &Qual, ru: &RuntimeUse) -> Vec<TsDecl> {
     ru.note_bytes();
-    let ty = format!("{}{name}", qual_prefix(qual, name));
+    let ty = qual_type(qual, name);
 
     let serialise = TsDecl::Export(Box::new(TsDecl::Function {
         name: format!("__serialise_{name}"),
@@ -790,15 +827,8 @@ fn emit_refined(
     qual: &Qual,
     ru: &RuntimeUse,
 ) -> Vec<TsDecl> {
-    let qprefix = qual_prefix(qual, name);
-    let ty = format!("{qprefix}{name}");
-    let prov = if qprefix.is_empty() {
-        Provenance::Owned
-    } else {
-        Provenance::Consumed {
-            owner_unit: qprefix.trim_end_matches('.').to_string(),
-        }
-    };
+    let ty = qual_type(qual, name);
+    let prov = qual_provenance(qual, name);
     let scalar = match wire_type(name, decl, types, prov) {
         Some(WireType {
             body: WireBody::Scalar(s),
@@ -871,8 +901,11 @@ fn emit_refined(
             // predicates, in the same order the owner's `.of` applies them, but
             // wrapped as this codec's `BoundaryError` rather than a
             // `ValidationError`.
+            // #1846: a renamed unexported type reports its declared name,
+            // the one its owner's `.of` reports (`Code`, not `t_vault__Code`).
+            let field = ty.rsplit('.').next().unwrap_or(name);
             body.extend(emit_inline_refinement_checks(
-                name,
+                field,
                 &scalar.base_guards,
                 &scalar.predicates,
             ));
@@ -1137,14 +1170,7 @@ fn emit_record(
     qual: &Qual,
     ru: &RuntimeUse,
 ) -> Vec<TsDecl> {
-    let qprefix = qual_prefix(qual, name);
-    let prov = if qprefix.is_empty() {
-        Provenance::Owned
-    } else {
-        Provenance::Consumed {
-            owner_unit: qprefix.trim_end_matches('.').to_string(),
-        }
-    };
+    let prov = qual_provenance(qual, name);
     let fields = match wire_type(name, decl, types, prov) {
         Some(WireType {
             body: WireBody::Record { fields },
@@ -1158,7 +1184,7 @@ fn emit_record(
     // namespace (`commerce_payment.Receipt`); the codec function name stays
     // bare and local. Its field codec calls are unqualified too — they resolve
     // to the caller's own locally-generated helpers.
-    let ts_type = format!("{qprefix}{name}");
+    let ts_type = qual_type(qual, name);
     emit_record_codec(name, &ts_type, &fields, types, ru)
 }
 
@@ -1378,14 +1404,7 @@ fn emit_sum(
     // the codec body is the shared `emit_sum_codec` (also reused, unqualified,
     // for a generic-sum instantiation), so the qualified value type is threaded
     // in as its `ts_type`.
-    let qprefix = qual_prefix(qual, name);
-    let prov = if qprefix.is_empty() {
-        Provenance::Owned
-    } else {
-        Provenance::Consumed {
-            owner_unit: qprefix.trim_end_matches('.').to_string(),
-        }
-    };
+    let prov = qual_provenance(qual, name);
     let sum = match wire_type(name, decl, types, prov) {
         Some(WireType {
             body: WireBody::Sum(s),
@@ -1393,7 +1412,7 @@ fn emit_sum(
         }) => s,
         _ => unreachable!("emit_sum is only ever called for a non-generic Sum declaration"),
     };
-    let ty = format!("{qprefix}{name}");
+    let ty = qual_type(qual, name);
     emit_sum_codec(name, &ty, &sum, ru)
 }
 
@@ -2865,9 +2884,8 @@ pub(crate) fn emit_generic_helpers_qualified(
             GenericInst::RecordInst { name, args } => {
                 let fn_suffix = app_ts_name(name, args);
                 let ts_type = format!(
-                    "{}{}<{}>",
-                    qual_prefix(qual, name),
-                    name,
+                    "{}<{}>",
+                    qual_type(qual, name),
                     args.iter()
                         .map(|a| bynk_ts::print_type(&qualified_ts_type(a, qual)))
                         .collect::<Vec<_>>()
@@ -2917,9 +2935,8 @@ pub(crate) fn emit_generic_helpers_qualified(
                 // #1736: qualified like `RecordInst` above: a consumed
                 // context's generic sum is named through its namespace.
                 let ts_type = format!(
-                    "{}{}<{}>",
-                    qual_prefix(qual, name),
-                    name,
+                    "{}<{}>",
+                    qual_type(qual, name),
                     args.iter()
                         .map(|a| bynk_ts::print_type(&qualified_ts_type(a, qual)))
                         .collect::<Vec<_>>()

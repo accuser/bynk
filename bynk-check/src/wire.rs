@@ -528,6 +528,61 @@ fn subst_type_ref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
     }
 }
 
+/// #1846: `t` with each type `renames` names renamed, wherever it is named:
+/// a bare name, and the base of a generic application (`Envelope[Int]`),
+/// which `subst_type_ref` leaves alone because a type parameter is never
+/// applied. `bynk-emit` renames a consumed context's unexported types with it.
+pub fn rename_type_ref(t: &TypeRef, renames: &HashMap<String, String>) -> TypeRef {
+    match t {
+        TypeRef::Named(id) => match renames.get(&id.name) {
+            Some(to) => TypeRef::Named(Ident {
+                name: to.clone(),
+                span: id.span,
+            }),
+            None => t.clone(),
+        },
+        TypeRef::App { name, args, span } => TypeRef::App {
+            name: match renames.get(&name.name) {
+                Some(to) => Ident {
+                    name: to.clone(),
+                    span: name.span,
+                },
+                None => name.clone(),
+            },
+            args: args.iter().map(|a| rename_type_ref(a, renames)).collect(),
+            span: *span,
+        },
+        TypeRef::Result(a, b, s) => TypeRef::Result(
+            Box::new(rename_type_ref(a, renames)),
+            Box::new(rename_type_ref(b, renames)),
+            *s,
+        ),
+        TypeRef::Option(a, s) => TypeRef::Option(Box::new(rename_type_ref(a, renames)), *s),
+        TypeRef::Effect(a, s) => TypeRef::Effect(Box::new(rename_type_ref(a, renames)), *s),
+        TypeRef::HttpResult(a, s) => TypeRef::HttpResult(Box::new(rename_type_ref(a, renames)), *s),
+        TypeRef::List(a, s) => TypeRef::List(Box::new(rename_type_ref(a, renames)), *s),
+        TypeRef::Map(k, v, s) => TypeRef::Map(
+            Box::new(rename_type_ref(k, renames)),
+            Box::new(rename_type_ref(v, renames)),
+            *s,
+        ),
+        TypeRef::Query(a, s) => TypeRef::Query(Box::new(rename_type_ref(a, renames)), *s),
+        TypeRef::Stream(a, s) => TypeRef::Stream(Box::new(rename_type_ref(a, renames)), *s),
+        TypeRef::Connection(a, s) => TypeRef::Connection(Box::new(rename_type_ref(a, renames)), *s),
+        TypeRef::History(a, s) => TypeRef::History(Box::new(rename_type_ref(a, renames)), *s),
+        TypeRef::Fn(ps, r, s) => TypeRef::Fn(
+            ps.iter().map(|p| rename_type_ref(p, renames)).collect(),
+            Box::new(rename_type_ref(r, renames)),
+            *s,
+        ),
+        TypeRef::Base(..)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => t.clone(),
+    }
+}
+
 /// v0.174 (#592): the concrete `(field-name, field-type)` list for a generic
 /// record instantiation `Name[args…]` — the declared fields with every type
 /// parameter substituted by the matching argument. Returns `None` if `name` is
