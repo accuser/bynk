@@ -10,8 +10,13 @@ suite demo.lists {
   }
 
   case "a foldEff with concat builds the list in order" {
-    let ys <- appendAllEff([1, 2, 3])
+    let ys <- concatAllEff([1, 2, 3])
     expect ys == [10, 20, 30]
+  }
+
+  case "a foldEff with append builds the list in order" {
+    let ys <- appendAllEff([1, 2, 3])
+    expect ys == [100, 200, 300]
   }
 
   case "append onto an empty list" {

@@ -33,7 +33,7 @@ function __makeTestDeps() {
 async function test_a_fold_with_append_builds_the_list_in_order() {
   try {
     const deps = {};
-    const { appendAll, appendAllEff, appendToEmpty, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
+    const { appendAll, appendAllEff, appendToEmpty, concatAllEff, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
     if (!(__bynkEq(appendAll([1, 2, 3]), [1, 2, 3]))) { throw __bynkExpectFailure("tests/lists.test.bynk:5:12", 225, 258, "expect appendAll([1, 2, 3]) == [1, 2, 3]\n  expected: appendAll([1, 2, 3]) == [1, 2, 3]\n  actual:   " + __bynkShow((appendAll([1, 2, 3]))) + " == " + __bynkShow(([1, 2, 3]))); }
     return { pass: true };
   } catch (e) {
@@ -48,7 +48,7 @@ async function test_a_fold_with_append_builds_the_list_in_order() {
 async function test_a_fold_with_concat_joins_the_lists_in_order() {
   try {
     const deps = {};
-    const { appendAll, appendAllEff, appendToEmpty, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
+    const { appendAll, appendAllEff, appendToEmpty, concatAllEff, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
     if (!(__bynkEq(concatPairs([1, 3]), [1, 2, 3, 4]))) { throw __bynkExpectFailure("tests/lists.test.bynk:9:12", 330, 365, "expect concatPairs([1, 3]) == [1, 2, 3, 4]\n  expected: concatPairs([1, 3]) == [1, 2, 3, 4]\n  actual:   " + __bynkShow((concatPairs([1, 3]))) + " == " + __bynkShow(([1, 2, 3, 4]))); }
     return { pass: true };
   } catch (e) {
@@ -63,9 +63,25 @@ async function test_a_fold_with_concat_joins_the_lists_in_order() {
 async function test_a_foldEff_with_concat_builds_the_list_in_order() {
   try {
     const deps = {};
-    const { appendAll, appendAllEff, appendToEmpty, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
-    const ys = await appendAllEff([1, 2, 3]);
+    const { appendAll, appendAllEff, appendToEmpty, concatAllEff, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
+    const ys = await concatAllEff([1, 2, 3]);
     if (!(__bynkEq(ys, [10, 20, 30]))) { throw __bynkExpectFailure("tests/lists.test.bynk:14:12", 478, 496, "expect ys == [10, 20, 30]\n  expected: ys == [10, 20, 30]\n  actual:   " + __bynkShow((ys)) + " == " + __bynkShow(([10, 20, 30]))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_a_foldEff_with_append_builds_the_list_in_order() {
+  try {
+    const deps = {};
+    const { appendAll, appendAllEff, appendToEmpty, concatAllEff, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
+    const ys = await appendAllEff([1, 2, 3]);
+    if (!(__bynkEq(ys, [100, 200, 300]))) { throw __bynkExpectFailure("tests/lists.test.bynk:19:12", 609, 630, "expect ys == [100, 200, 300]\n  expected: ys == [100, 200, 300]\n  actual:   " + __bynkShow((ys)) + " == " + __bynkShow(([100, 200, 300]))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -79,8 +95,8 @@ async function test_a_foldEff_with_concat_builds_the_list_in_order() {
 async function test_append_onto_an_empty_list() {
   try {
     const deps = {};
-    const { appendAll, appendAllEff, appendToEmpty, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
-    if (!(__bynkEq(appendToEmpty(), [7]))) { throw __bynkExpectFailure("tests/lists.test.bynk:18:12", 550, 572, "expect appendToEmpty() == [7]\n  expected: appendToEmpty() == [7]\n  actual:   " + __bynkShow((appendToEmpty())) + " == " + __bynkShow(([7]))); }
+    const { appendAll, appendAllEff, appendToEmpty, concatAllEff, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
+    if (!(__bynkEq(appendToEmpty(), [7]))) { throw __bynkExpectFailure("tests/lists.test.bynk:23:12", 684, 706, "expect appendToEmpty() == [7]\n  expected: appendToEmpty() == [7]\n  actual:   " + __bynkShow((appendToEmpty())) + " == " + __bynkShow(([7]))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -94,8 +110,8 @@ async function test_append_onto_an_empty_list() {
 async function test_concat_with_an_empty_other_is_the_receiver() {
   try {
     const deps = {};
-    const { appendAll, appendAllEff, appendToEmpty, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
-    if (!(__bynkEq(concatEmptyOther([1, 2]), [1, 2]))) { throw __bynkExpectFailure("tests/lists.test.bynk:22:12", 643, 677, "expect concatEmptyOther([1, 2]) == [1, 2]\n  expected: concatEmptyOther([1, 2]) == [1, 2]\n  actual:   " + __bynkShow((concatEmptyOther([1, 2]))) + " == " + __bynkShow(([1, 2]))); }
+    const { appendAll, appendAllEff, appendToEmpty, concatAllEff, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
+    if (!(__bynkEq(concatEmptyOther([1, 2]), [1, 2]))) { throw __bynkExpectFailure("tests/lists.test.bynk:27:12", 777, 811, "expect concatEmptyOther([1, 2]) == [1, 2]\n  expected: concatEmptyOther([1, 2]) == [1, 2]\n  actual:   " + __bynkShow((concatEmptyOther([1, 2]))) + " == " + __bynkShow(([1, 2]))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -109,8 +125,8 @@ async function test_concat_with_an_empty_other_is_the_receiver() {
 async function test_concat_onto_an_empty_receiver_is_the_other() {
   try {
     const deps = {};
-    const { appendAll, appendAllEff, appendToEmpty, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
-    if (!(__bynkEq(concatOntoEmpty([1, 2]), [1, 2]))) { throw __bynkExpectFailure("tests/lists.test.bynk:26:12", 748, 781, "expect concatOntoEmpty([1, 2]) == [1, 2]\n  expected: concatOntoEmpty([1, 2]) == [1, 2]\n  actual:   " + __bynkShow((concatOntoEmpty([1, 2]))) + " == " + __bynkShow(([1, 2]))); }
+    const { appendAll, appendAllEff, appendToEmpty, concatAllEff, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
+    if (!(__bynkEq(concatOntoEmpty([1, 2]), [1, 2]))) { throw __bynkExpectFailure("tests/lists.test.bynk:31:12", 882, 915, "expect concatOntoEmpty([1, 2]) == [1, 2]\n  expected: concatOntoEmpty([1, 2]) == [1, 2]\n  actual:   " + __bynkShow((concatOntoEmpty([1, 2]))) + " == " + __bynkShow(([1, 2]))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -124,8 +140,8 @@ async function test_concat_onto_an_empty_receiver_is_the_other() {
 async function test_concat_of_two_empty_lists_is_empty() {
   try {
     const deps = {};
-    const { appendAll, appendAllEff, appendToEmpty, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
-    if (!((concatBothEmpty()).length === 0)) { throw __bynkExpectFailure("tests/lists.test.bynk:30:12", 844, 875, "expect concatBothEmpty().length() == 0\n  expected: concatBothEmpty().length() == 0\n  actual:   " + __bynkShow(((concatBothEmpty()).length)) + " == " + __bynkShow((0))); }
+    const { appendAll, appendAllEff, appendToEmpty, concatAllEff, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
+    if (!((concatBothEmpty()).length === 0)) { throw __bynkExpectFailure("tests/lists.test.bynk:35:12", 978, 1009, "expect concatBothEmpty().length() == 0\n  expected: concatBothEmpty().length() == 0\n  actual:   " + __bynkShow(((concatBothEmpty()).length)) + " == " + __bynkShow((0))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -139,8 +155,8 @@ async function test_concat_of_two_empty_lists_is_empty() {
 async function test_append_and_concat_leave_the_receiver_unchanged() {
   try {
     const deps = {};
-    const { appendAll, appendAllEff, appendToEmpty, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
-    if (!(receiverUnchanged([1, 2]))) { throw __bynkExpectFailure("tests/lists.test.bynk:34:12", 950, 975, "expect receiverUnchanged([1, 2])"); }
+    const { appendAll, appendAllEff, appendToEmpty, concatAllEff, concatBothEmpty, concatEmptyOther, concatOntoEmpty, concatPairs, receiverUnchanged } = __ns_demo_lists;
+    if (!(receiverUnchanged([1, 2]))) { throw __bynkExpectFailure("tests/lists.test.bynk:39:12", 1084, 1109, "expect receiverUnchanged([1, 2])"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -156,6 +172,7 @@ export async function run(only?: string) {
   if (want("a fold with append builds the list in order")) results.push({ name: "a fold with append builds the list in order", ...(await test_a_fold_with_append_builds_the_list_in_order()) });
   if (want("a fold with concat joins the lists in order")) results.push({ name: "a fold with concat joins the lists in order", ...(await test_a_fold_with_concat_joins_the_lists_in_order()) });
   if (want("a foldEff with concat builds the list in order")) results.push({ name: "a foldEff with concat builds the list in order", ...(await test_a_foldEff_with_concat_builds_the_list_in_order()) });
+  if (want("a foldEff with append builds the list in order")) results.push({ name: "a foldEff with append builds the list in order", ...(await test_a_foldEff_with_append_builds_the_list_in_order()) });
   if (want("append onto an empty list")) results.push({ name: "append onto an empty list", ...(await test_append_onto_an_empty_list()) });
   if (want("concat with an empty other is the receiver")) results.push({ name: "concat with an empty other is the receiver", ...(await test_concat_with_an_empty_other_is_the_receiver()) });
   if (want("concat onto an empty receiver is the other")) results.push({ name: "concat onto an empty receiver is the other", ...(await test_concat_onto_an_empty_receiver_is_the_other()) });
