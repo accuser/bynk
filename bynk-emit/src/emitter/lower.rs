@@ -3323,6 +3323,18 @@ fn lower_list_kernel(
             let recv = pre.lower(receiver, cx);
             Some(format!("[{head}, ...{recv}]"))
         }
+        // #1889: the receiver lowers before the argument, as written, so any
+        // hoisted effects keep source order.
+        ("append", [item]) => {
+            let recv = pre.lower(receiver, cx);
+            let item = pre.lower(item, cx);
+            Some(format!("[...{recv}, {item}]"))
+        }
+        ("concat", [other]) => {
+            let recv = pre.lower(receiver, cx);
+            let other = pre.lower(other, cx);
+            Some(format!("[...{recv}, ...{other}]"))
+        }
         ("fold", [init, f]) => {
             // The call's checked type is the accumulator type.
             let acc_ts = cx

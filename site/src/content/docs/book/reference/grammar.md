@@ -112,8 +112,11 @@ or when **preceded by whitespace** — adjacent to a token, `a--b` is `a - -b`
 (subtraction), not a comment (spec [§3.3.1](/book/spec/lexical-grammar/#331-line_comment)).
 
 A `--- … ---` **doc-block** is an external token attached to the following
-declaration; its markers are lines of **three or more** hyphens, and there is no
-standalone `---` divider (an unclosed marker is `bynk.lex.unclosed_doc_block`). A
+declaration; its markers are lines of **three or more** hyphens, and the closing
+marker has **as many hyphens as the opening one**, so a `----` block can hold
+`---` lines. There is no standalone `---` divider (an unclosed marker is
+`bynk.lex.unclosed_doc_block`), and a block whose content, outside Markdown code
+fences, parses as declarations is `bynk.parse.doc_block_contains_code`. A
 doc-block, whitespace, and line comments are the trivia ignored between tokens
 (see the appendix's [Tokens & trivia](/book/reference/grammar-appendix/#tokens--trivia)).
 
