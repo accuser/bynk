@@ -1,0 +1,11 @@
+context shop.orders
+
+consumes shop.payment as Payment
+consumes shop.clock { Clock }
+
+service refund {
+  on call(qty: Int) -> Effect[Bool] given Clock {
+    let _ <- Clock.now()
+    Payment.authorise(0 - qty)
+  }
+}
