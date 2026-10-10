@@ -1,0 +1,46 @@
+---
+#1889: `List.append` and `List.concat` build a list in order, so a fold
+accumulates without the `prepend` + `reverse` detour.
+---
+commons demo.lists
+
+fn appendAll(xs: List[Int]) -> List[Int] {
+	let none: List[Int] = []
+	xs.fold(none, (acc, x) => acc.append(x))
+}
+
+fn concatPairs(xs: List[Int]) -> List[Int] {
+	let none: List[Int] = []
+	xs.fold(none, (acc, x) => acc.concat([x, x + 1]))
+}
+
+fn appendAllEff(xs: List[Int]) -> Effect[List[Int]] {
+	let none: List[Int] = []
+	xs.foldEff(none, (acc, x) => Effect.pure(acc.concat([x * 10])))
+}
+
+fn appendToEmpty() -> List[Int] {
+	let xs: List[Int] = [].append(7)
+	xs
+}
+
+fn concatEmptyOther(xs: List[Int]) -> List[Int] {
+	xs.concat([])
+}
+
+fn concatOntoEmpty(xs: List[Int]) -> List[Int] {
+	let none: List[Int] = []
+	none.concat(xs)
+}
+
+fn concatBothEmpty() -> List[Int] {
+	let a: List[Int] = []
+	let b: List[Int] = []
+	a.concat(b)
+}
+
+fn receiverUnchanged(xs: List[Int]) -> Bool {
+	let ys = xs.append(9)
+	let zs = xs.concat([8])
+	xs == [1, 2] && ys == [1, 2, 9] && zs == [1, 2, 8]
+}
