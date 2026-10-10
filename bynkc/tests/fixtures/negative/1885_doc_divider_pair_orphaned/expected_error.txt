@@ -1,0 +1,1 @@
+bynk.parse.doc_block_contains_code this documentation block contains declarations
