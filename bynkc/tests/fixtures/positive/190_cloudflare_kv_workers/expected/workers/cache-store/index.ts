@@ -19,7 +19,10 @@ export default {
           case "cache": {
             __route = "call cache";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "b232012bc9c63357") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "cache", expected: "b232012bc9c63357", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "b232012bc9c63357") {
+              globalThis.console.error("ContractMismatch cache.store call cache", { service: "cache", expected: "b232012bc9c63357", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "cache", expected: "b232012bc9c63357", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             if (typeof args !== "object" || args === null || globalThis.Array.isArray(args)) return new globalThis.Response(globalThis.JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
             const argsObj = args as { [k: string]: __JsonValue };
