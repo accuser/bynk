@@ -471,7 +471,12 @@ export async function callService<R>(
       } catch {
         // Not a Bynk 409; fall through to `Transport`.
       }
-      if (detail && detail.kind === "ContractMismatch") throw boundaryError(detail);
+      if (detail && detail.kind === "ContractMismatch") {
+        // #1826: logged on the caller's side too, with both hashes, before the
+        // fault: the caller's catch reports only `BoundaryError: ContractMismatch`.
+        globalThis.console.error(`ContractMismatch ${callerContext} -> ${servicePath}`, detail);
+        throw boundaryError(detail);
+      }
     }
     throw boundaryError({
       kind: "Transport",

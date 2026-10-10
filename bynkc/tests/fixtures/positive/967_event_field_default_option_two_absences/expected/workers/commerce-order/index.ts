@@ -21,7 +21,10 @@ export default {
           case "markPaid": {
             __route = "call markPaid";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "f754ed184415d345") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "markPaid", expected: "f754ed184415d345", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "f754ed184415d345") {
+              globalThis.console.error("ContractMismatch commerce.order call markPaid", { service: "markPaid", expected: "f754ed184415d345", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "markPaid", expected: "f754ed184415d345", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_orderId = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(args);
             if (__r_orderId.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_orderId.error), { status: 400, headers: { "content-type": "application/json" } });

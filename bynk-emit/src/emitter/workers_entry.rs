@@ -734,19 +734,42 @@ pub(crate) fn emit_worker_entry(
                     vec![str_lit("X-Bynk-Contract")],
                 ),
             ));
+            // #1826: the callee decides, so it logs the skew, by name and with
+            // both hashes, before refusing: otherwise the diagnosis existed only
+            // in a response body passed between two Workers.
+            let skew = |actual: TsExpr| {
+                vec![
+                    ("service".to_string(), str_lit(sname.to_string())),
+                    ("expected".to_string(), str_lit(expected.clone())),
+                    ("actual".to_string(), actual),
+                ]
+            };
+            // #1826 review: `/_bynk/call/` is reachable from outside, and
+            // nothing about the request is trusted yet, so the header is
+            // logged bounded to a hash's 16 characters: an operator loses
+            // nothing, and a sender can't write arbitrary text to the log.
+            // The 409 body echoes it unbounded, to the sender who sent it.
+            let logged_actual = method_call(
+                call(ident("globalThis.String"), vec![ident("__contract")]),
+                "slice",
+                vec![num_lit("0"), num_lit("16")],
+            );
             case_body.push(if_(
                 strict_neq(ident("__contract"), str_lit(expected.clone())),
-                return_(Some(json_response(
-                    json_error_kind(
-                        "ContractMismatch",
+                block(vec![
+                    expr_stmt(method_call(
+                        ident("globalThis.console"),
+                        "error",
                         vec![
-                            ("service".to_string(), str_lit(sname.to_string())),
-                            ("expected".to_string(), str_lit(expected.clone())),
-                            ("actual".to_string(), ident("__contract")),
+                            str_lit(format!("ContractMismatch {context} call {sname}")),
+                            TsExpr::object(skew(logged_actual)),
                         ],
-                    ),
-                    409,
-                ))),
+                    )),
+                    return_(Some(json_response(
+                        json_error_kind("ContractMismatch", skew(ident("__contract"))),
+                        409,
+                    ))),
+                ]),
             ));
         }
         case_body.push(const_(
@@ -2593,6 +2616,15 @@ service calc {
             "{ts}"
         );
         assert!(ts.contains("{ status: 409,"), "{ts}");
+        // #1826: logged before the refusal, the sender's header bounded.
+        assert!(
+            ts.contains("globalThis.console.error(\"ContractMismatch demo.shop call calc\""),
+            "{ts}"
+        );
+        assert!(
+            ts.contains("actual: globalThis.String(__contract).slice(0, 16)"),
+            "{ts}"
+        );
     }
 
     #[test]
