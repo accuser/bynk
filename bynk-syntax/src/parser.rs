@@ -24,22 +24,25 @@ mod types;
 /// [`TriviaTable::take_trailing`] as it recognises declarations.
 #[derive(Debug, Default)]
 struct TriviaTable {
-    /// `leading[i]` holds the comment-body texts that appear immediately
-    /// before content token `i` (zero or more `--` lines, in source order,
-    /// not separated from the token by another content token).
-    leading: Vec<Vec<String>>,
+    /// `leading[i]` holds the comments that appear immediately before content
+    /// token `i` (zero or more `--` lines, in source order, not separated from
+    /// the token by another content token). A comment on its own line is
+    /// followed by a [`Comment::Blank`] when a blank line comes after it
+    /// (#1884).
+    leading: Vec<Vec<Comment>>,
     /// `trailing[i]` holds an optional comment on the same source line as
     /// content token `i`. Only one trailing comment is recorded per token
     /// because a single `--` consumes the rest of the line. A doc block or an
     /// opening `{` never has one: see [`split_trivia`].
     trailing: Vec<Option<String>>,
     /// Any pending leading comments at end-of-file (no content token
-    /// followed). Used to preserve file-trailing comments.
-    epilogue: Vec<String>,
+    /// followed), shaped as a `leading` entry. Used to preserve file-trailing
+    /// comments.
+    epilogue: Vec<Comment>,
 }
 
 impl TriviaTable {
-    fn take_leading(&mut self, index: usize) -> Vec<String> {
+    fn take_leading(&mut self, index: usize) -> Vec<Comment> {
         match self.leading.get_mut(index) {
             Some(v) => std::mem::take(v),
             None => Vec::new(),
@@ -50,7 +53,7 @@ impl TriviaTable {
         self.trailing.get_mut(index).and_then(|s| s.take())
     }
 
-    fn take_epilogue(&mut self) -> Vec<String> {
+    fn take_epilogue(&mut self) -> Vec<Comment> {
         std::mem::take(&mut self.epilogue)
     }
 
@@ -93,12 +96,29 @@ impl TriviaTable {
 /// on the same source line as the preceding content token is recorded as
 /// that token's *trailing* trivia, unless that token is a doc block or an
 /// opening `{`; everything else is *leading* for the next content token.
+///
+/// A blank line after a leading comment on its own line, before the next
+/// comment or content token, is recorded as a [`Comment::Blank`] (#1884). Only
+/// a unit-level declaration keeps it: see [`Parser::take_leading_trivia`].
 fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
     let mut filtered: Vec<Token> = Vec::with_capacity(tokens.len());
     let mut table = TriviaTable::default();
-    let mut pending_leading: Vec<String> = Vec::new();
+    let mut pending_leading: Vec<Comment> = Vec::new();
     let mut last_content_end: Option<usize> = None;
+    // Where the last comment in `pending_leading` ends, if it has a line to
+    // itself: the gap from there to the next token says whether a blank line
+    // follows it. A comment's span stops before its newline, so a blank line
+    // is two newlines. A comment that leads only because it sits on a `{` line
+    // has no blank line of its own: the one below it was between the `{` and
+    // the first item.
+    let mut last_leading_end: Option<usize> = None;
     for tok in tokens {
+        if !pending_leading.is_empty()
+            && let Some(end) = last_leading_end
+            && source[end..tok.span.start].matches('\n').count() >= 2
+        {
+            pending_leading.push(Comment::Blank);
+        }
         if tok.kind == TokenKind::Comment {
             let body = comment_body(source, tok.span).to_string();
             // If nothing has been buffered as leading for the next token and
@@ -125,13 +145,22 @@ fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
                     continue;
                 }
             }
-            pending_leading.push(body);
+            // A doc block's token ends past its closing line's newline, so a
+            // comment under it is on its own line with no newline between.
+            let own_line = !pending_leading.is_empty()
+                || filtered
+                    .last()
+                    .is_none_or(|t| t.kind == TokenKind::DocBlock)
+                || last_content_end.is_some_and(|end| source[end..tok.span.start].contains('\n'));
+            pending_leading.push(Comment::Line(body));
+            last_leading_end = own_line.then_some(tok.span.end);
             continue;
         }
         filtered.push(*tok);
         table.leading.push(std::mem::take(&mut pending_leading));
         table.trailing.push(None);
         last_content_end = Some(tok.span.end);
+        last_leading_end = None;
     }
     table.epilogue = pending_leading;
     (filtered, table)
@@ -701,21 +730,27 @@ impl<'a> Parser<'a> {
     /// Comments immediately preceding the current peek position. Consumed
     /// (the table entry is cleared) so the same comments are not attached
     /// to two nodes.
+    ///
+    /// For a slot in a body: canonical style has no blank lines there, so a
+    /// [`Comment::Blank`] is dropped and the comments stay attached to what
+    /// follows. A unit-level declaration keeps it, through
+    /// [`Self::take_unit_leading_trivia`].
     fn take_leading_trivia(&mut self) -> Vec<Comment> {
-        self.trivia
-            .take_leading(self.pos)
-            .into_iter()
-            .map(Comment::Line)
-            .collect()
+        let mut comments = self.take_unit_leading_trivia();
+        comments.retain(|c| *c != Comment::Blank);
+        comments
     }
 
-    /// The comments after the last token, as [`Comment::Line`]s.
+    /// [`Self::take_leading_trivia`] for a unit-level slot, keeping each
+    /// [`Comment::Blank`] (#1884).
+    fn take_unit_leading_trivia(&mut self) -> Vec<Comment> {
+        self.trivia.take_leading(self.pos)
+    }
+
+    /// The comments after the last token, which close the file at unit level,
+    /// so a [`Comment::Blank`] between them is kept.
     fn take_epilogue_trivia(&mut self) -> Vec<Comment> {
-        self.trivia
-            .take_epilogue()
-            .into_iter()
-            .map(Comment::Line)
-            .collect()
+        self.trivia.take_epilogue()
     }
 
     /// Trailing comment, if any, on the same source line as the most
@@ -1027,15 +1062,31 @@ impl<'a> Parser<'a> {
     ///
     /// The doc comes back as a [`DocLead`], which records where it sat among
     /// the comments, so an orphan can be kept in place ([`keep_orphan`]).
+    ///
+    /// For a unit-level declaration, which keeps a blank line after a comment
+    /// (#1884); [`Self::collect_body_item_lead`] is the body-slot form.
     fn collect_item_lead(&mut self) -> (Vec<Comment>, Option<DocLead>) {
-        let mut leading = self.take_leading_trivia();
+        self.collect_lead(Self::take_unit_leading_trivia)
+    }
+
+    /// [`Self::collect_item_lead`] for a declaration in a body, which drops a
+    /// [`Comment::Blank`] as [`Self::take_leading_trivia`] does.
+    fn collect_body_item_lead(&mut self) -> (Vec<Comment>, Option<DocLead>) {
+        self.collect_lead(Self::take_leading_trivia)
+    }
+
+    fn collect_lead(
+        &mut self,
+        take: fn(&mut Self) -> Vec<Comment>,
+    ) -> (Vec<Comment>, Option<DocLead>) {
+        let mut leading = take(self);
         let doc = self.take_doc_block().map(|(content, span)| DocLead {
             content,
             span,
             at: leading.len(),
         });
         if doc.is_some() {
-            leading.extend(self.take_leading_trivia());
+            leading.extend(take(self));
         }
         (leading, doc)
     }

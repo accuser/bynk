@@ -624,3 +624,90 @@ fn a_trailing_comment_adds_no_blank_line() {
         );
     }
 }
+
+/// Format `source`, check the result reformats to itself, and return it.
+fn format_idempotent(name: &str, source: &str) -> String {
+    let out = format_source(source, &FormatOptions::default())
+        .unwrap_or_else(|e| panic!("{name}: refused: {}", e.errors[0].message));
+    assert_eq!(
+        out,
+        format_source(&out, &FormatOptions::default()).expect("reformats"),
+        "{name}: not idempotent"
+    );
+    out
+}
+
+/// #1884: at unit level, a comment a blank line separates from the next
+/// declaration stays separated, so it doesn't read as describing it. That
+/// holds after the unit header, with or without a doc block below, and
+/// between declarations. A run of blank lines keeps one.
+#[test]
+fn a_blank_line_after_a_unit_level_comment_is_kept() {
+    for (name, source) in [
+        (
+            "after the header, above a doc block",
+            "commons demo\n\n-- What this module is for.\n\n---\nDoubles a number.\n---\nfn double(n: Int) -> Int { n * 2 }\n",
+        ),
+        (
+            "after the header, no doc block",
+            "commons demo\n\n-- What this module is for.\n\nfn double(n: Int) -> Int { n * 2 }\n",
+        ),
+        (
+            "between declarations",
+            "commons demo\n\nfn double(n: Int) -> Int { n * 2 }\n\n-- A comment between declarations.\n\n---\nTriples a number.\n---\nfn triple(n: Int) -> Int { n * 3 }\n",
+        ),
+        (
+            "above a context's uses",
+            "context demo\n\n-- Dependencies.\n\nuses demo.a\n\nfn f() -> Int { 1 }\n",
+        ),
+        (
+            "above the unit header",
+            "-- File header.\n\ncommons demo\n\nfn f() -> Int { 1 }\n",
+        ),
+    ] {
+        let out = format_idempotent(name, source);
+        assert_eq!(out, source, "{name}: the blank line moved");
+    }
+    let out = format_idempotent(
+        "two blank lines",
+        "commons demo\n\n-- What this module is for.\n\n\nfn f() -> Int { 1 }\n",
+    );
+    assert_eq!(
+        out,
+        "commons demo\n\n-- What this module is for.\n\nfn f() -> Int { 1 }\n"
+    );
+}
+
+/// #1884's boundary: a comment directly above a declaration stays attached,
+/// and in a body, where canonical style has no blank lines, a comment's blank
+/// line goes as before.
+#[test]
+fn a_comment_without_a_blank_line_or_in_a_body_stays_attached() {
+    let attached = "commons demo\n\n-- Doubles.\nfn double(n: Int) -> Int { n * 2 }\n";
+    assert_eq!(format_idempotent("attached", attached), attached);
+    for (name, source, expected) in [
+        (
+            "record field",
+            "commons demo\n\ntype P = {\n  -- the x\n\n  x: Int,\n  y: Int,\n}\n",
+            "\t-- the x\n\tx: Int,\n",
+        ),
+        (
+            "statement",
+            "commons demo\n\nfn f() -> Int {\n  -- the answer\n\n  42\n}\n",
+            "\t-- the answer\n\t42\n",
+        ),
+        (
+            // The comment on the `{` line leads the first item (#1788), but
+            // the blank line below it was the `{`'s, not the comment's.
+            "brace line",
+            "suite demo.t { -- the cases\n\n  case \"x\" {\n    expect 1 == 1\n  }\n}\n",
+            "{\n\t-- the cases\n\tcase \"x\" {\n",
+        ),
+    ] {
+        let out = format_idempotent(name, source);
+        assert!(
+            out.contains(expected),
+            "{name}: the blank line stayed:\n{out}"
+        );
+    }
+}

@@ -15,7 +15,8 @@ pub struct Ident {
 ///
 /// - `leading` holds comments that appear immediately above the node,
 ///   ordered top-to-bottom: each a `--` line, or an orphaned `---` doc block
-///   (see [`Comment`]).
+///   (see [`Comment`]). Above a unit-level declaration it also records where a
+///   blank line separated them ([`Comment::Blank`]).
 /// - `trailing` holds a single comment that appears on the same source
 ///   line as the node's final token (e.g. `expr  -- note`).
 #[derive(Debug, Clone, Default)]
@@ -36,6 +37,14 @@ pub enum Comment {
     /// can print it where it was. Its content is normalised as an attached
     /// doc's is.
     OrphanDoc(String),
+    /// #1884: a blank line after a `--` comment, before the next comment or
+    /// the declaration. Recorded only in the leading and closing comments of a
+    /// unit-level declaration (an item, a `uses`/`consumes`/`exports` clause,
+    /// the unit header), where it keeps a comment that is separated from the
+    /// declaration below from reading as describing it. In a body, canonical
+    /// style has no blank lines, so the parser drops it. Several blank lines
+    /// are one entry.
+    Blank,
 }
 
 impl Trivia {

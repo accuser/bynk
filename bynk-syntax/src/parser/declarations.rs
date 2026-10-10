@@ -856,7 +856,7 @@ impl<'a> Parser<'a> {
         let open = self.expect(TokenKind::LBrace, "to open the test case body")?;
         let mut stubs = Vec::new();
         while self.peek_kind() == Some(TokenKind::Stub) {
-            let (mut leading, item_doc) = self.collect_item_lead();
+            let (mut leading, item_doc) = self.collect_body_item_lead();
             let next_span = self.peek().unwrap().span;
             let doc = self.finalize_doc(item_doc, next_span, &mut leading);
             let mut p = self.parse_stub_clause()?;
