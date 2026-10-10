@@ -1,0 +1,2 @@
+bynk.uses.name_conflict
+field `Run.repo` from `t.model` takes `t.core`'s `Repo`, but `Repo` in `t.app` names `t.app`'s type

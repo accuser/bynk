@@ -100,6 +100,9 @@ pub struct UnitCheckCtx {
     /// owning commons. Resolvable, never nameable: the naming gate
     /// (`resolver::check_hidden_type_names`) runs beside the resolver.
     pub hidden_types: BTreeMap<String, String>,
+    /// #1824: the reached types this unit's own declarations shadow, which
+    /// `shadow_uses` checks the unit's bodies against.
+    pub shadowed: crate::project_model::ShadowedReaches,
 }
 
 /// Build the per-unit prelude [`check_file_core`] shares across every file
@@ -111,7 +114,7 @@ pub fn prepare_unit_check_ctx(
     unit_info: &BTreeMap<String, UnitInfo>,
     combined_types: &HashMap<String, Arc<TypeDecl>>,
     imported_from_kind: &HashMap<String, UnitKind>,
-    hidden_types: &BTreeMap<String, String>,
+    reached_types: &crate::project_model::ReachedTypes,
 ) -> UnitCheckCtx {
     let cross_context_views = if kind == UnitKind::Context || kind == UnitKind::Adapter {
         let unit_tables: HashMap<String, UnitTable> = unit_info
@@ -156,7 +159,8 @@ pub fn prepare_unit_check_ctx(
         cross_context_views,
         uses_commons_type_names,
         visible_broken_names,
-        hidden_types: hidden_types.clone(),
+        hidden_types: reached_types.hidden.clone(),
+        shadowed: reached_types.shadowed.clone(),
     }
 }
 
@@ -533,6 +537,25 @@ pub fn check_file_core(
             );
             return None;
         }
+    }
+
+    // #1824: a value crossing between this unit's code and an imported
+    // position that names a type the unit shadows. Last, over every body the
+    // stages above have typed.
+    let shadow_errs = ours(crate::shadow_uses::check_shadowed_uses(
+        &typed,
+        &crate::shadow_uses::ShadowScope {
+            unit: name,
+            shadowed: &ctx.shadowed,
+            combined_types,
+            combined_fns,
+            combined_methods,
+            imported_from,
+        },
+    ));
+    if !shadow_errs.is_empty() {
+        errors.extend_for(Some(&pf.identity_path()), shadow_errs);
+        failed = true;
     }
 
     // #1663: every stage has now checked past the earlier errors; the file
