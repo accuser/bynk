@@ -1295,8 +1295,9 @@ fn check_unit_files(
     consumed_types: &HashMap<String, ConsumedType>,
     imported_from: &HashMap<String, String>,
     imported_from_kind: &HashMap<String, UnitKind>,
-    // #1807: the types this unit reaches through imported declarations.
-    hidden_types: &BTreeMap<String, String>,
+    // #1807: the types this unit reaches through imported declarations
+    // (#1824: and the shadows among them).
+    reached_types: &project_model::ReachedTypes,
     owning_context_for_emit: &Option<String>,
     target: BuildTarget,
     import_ext: ImportExt,
@@ -1333,7 +1334,14 @@ fn check_unit_files(
     // once here rather than once per file (see `EmitUnitCtx`).
     let split_worker =
         target == BuildTarget::Workers && kind == UnitKind::Context && indices.len() > 1;
-    let unit_ctx = build_emit_unit_ctx(name, unit_info, hidden_types, target, tys, split_worker);
+    let unit_ctx = build_emit_unit_ctx(
+        name,
+        unit_info,
+        &reached_types.hidden,
+        target,
+        tys,
+        split_worker,
+    );
     let first_emitted = compiled.len();
     let check_ctx = prepare_unit_check_ctx(
         name,
@@ -1342,7 +1350,7 @@ fn check_unit_files(
         unit_info,
         combined_types,
         imported_from_kind,
-        hidden_types,
+        reached_types,
     );
 
     for &i in indices {
@@ -1994,7 +2002,7 @@ fn run_checks(
             &mut errors,
         );
         // #1807: close over the types the imported declarations reach.
-        let hidden_types = project_model::close_reachable_types(
+        let reached_types = project_model::close_reachable_types(
             name,
             &parsed,
             &unit_info,
@@ -2045,7 +2053,7 @@ fn run_checks(
             &consumed_types,
             &imported_from,
             &imported_from_kind,
-            &hidden_types,
+            &reached_types,
             &owning_context_for_emit,
             target,
             import_ext,

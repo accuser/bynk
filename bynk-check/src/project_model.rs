@@ -3311,8 +3311,13 @@ pub fn merge_consumed_exports(
 ///   never chose to shadow. Shadowing a directly used type keeps its existing
 ///   meaning. Provenance is compared by owning unit.
 ///
+/// #1824: that exemption leaves the same hole open for a directly used
+/// commons. Such a shadow is recorded rather than reported (see
+/// [`ShadowedReaches`]), and `crate::shadow_uses` rejects it where the unit's
+/// own code meets it.
+///
 /// Returns each hidden name with its owning commons, which emission needs to
-/// import it.
+/// import it, and the shadows the imported declarations reach.
 #[allow(clippy::too_many_arguments)]
 pub fn close_reachable_types(
     name: &str,
@@ -3324,7 +3329,7 @@ pub fn close_reachable_types(
     imported_from: &mut HashMap<String, String>,
     imported_from_kind: &mut HashMap<String, UnitKind>,
     errors: &mut ErrorSink,
-) -> BTreeMap<String, String> {
+) -> ReachedTypes {
     /// A type name an imported declaration references: resolved in `scope`
     /// (the declaring unit), and reached through `via` (the `uses` or
     /// `consumes` target this unit imported the declaration from, which a
@@ -3393,6 +3398,7 @@ pub fn close_reachable_types(
     let mut hidden: BTreeMap<String, String> = BTreeMap::new();
     let mut visited: HashSet<(String, String)> = HashSet::new();
     let mut conflicted: HashSet<String> = HashSet::new();
+    let mut shadowed = ShadowedReaches::default();
     while let Some(r) = queue.pop() {
         if !visited.insert((r.scope.clone(), r.name.clone())) {
             continue;
@@ -3418,6 +3424,19 @@ pub fn close_reachable_types(
             // its own `Message` beside `uses bynk.locale.types`), so only a
             // shadow of a type the unit cannot name is a conflict.
             let directly_used = unit_info[name].uses.iter().any(|u| u == owner);
+            // #1824: the directly used case is a conflict only where this
+            // unit's code meets the imported position, which `shadow_uses`
+            // decides after checking.
+            if bound != owner && directly_used {
+                shadowed.0.insert(
+                    (r.scope.clone(), r.name.clone()),
+                    ShadowedType {
+                        name: r.name.clone(),
+                        owner: owner.to_string(),
+                        bound: bound.to_string(),
+                    },
+                );
+            }
             if bound != owner && !directly_used && conflicted.insert(r.name.clone()) {
                 let site = uses_span_of(parsed, &unit_info[name].files, &r.via)
                     .or_else(|| consumes_span_of(parsed, &unit_info[name].files, &r.via));
@@ -3476,7 +3495,65 @@ pub fn close_reachable_types(
             }
         }
     }
-    hidden
+    ReachedTypes { hidden, shadowed }
+}
+
+/// What [`close_reachable_types`] finds beyond the unit's composed table.
+#[derive(Debug, Clone, Default)]
+pub struct ReachedTypes {
+    /// Each hidden type name with its owning commons, which emission needs to
+    /// import it.
+    pub hidden: BTreeMap<String, String>,
+    /// #1824: the reached names this unit's own declaration shadows.
+    pub shadowed: ShadowedReaches,
+}
+
+/// #1824: a type an imported declaration names, which this unit resolves to a
+/// different declaration of the same name.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ShadowedType {
+    /// The name both declarations share.
+    pub name: String,
+    /// The commons whose declaration the imported one means.
+    pub owner: String,
+    /// The unit whose declaration the name resolves to here (the unit itself,
+    /// for its own `type`).
+    pub bound: String,
+}
+
+/// #1824: the reached type names a unit's own declaration shadows, keyed by
+/// the declaring unit whose scope resolves the name and the name.
+///
+/// Type names are bare strings to the checker, so an imported declaration's
+/// `Repo` is checked as whatever `Repo` the importing unit binds. When that is
+/// the unit's own `type Repo`, beside a `uses` of the commons the imported
+/// declaration means, the checker accepts what the emitted TypeScript rejects.
+/// `close_reachable_types` records each such reach here; `crate::shadow_uses`
+/// reports the positions the unit's code fills or reads.
+#[derive(Debug, Clone, Default)]
+pub struct ShadowedReaches(HashMap<(String, String), ShadowedType>);
+
+impl ShadowedReaches {
+    /// No imported declaration reaches a shadowed type.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The shadowed types `r` names, resolved in `scope` (the unit that
+    /// declares the position), its type variables `vars` excluded. Sorted, so
+    /// two positions compare equal when they name the same shadowed types.
+    pub fn in_type_ref(&self, scope: &str, r: &TypeRef, vars: &[TypeParam]) -> Vec<&ShadowedType> {
+        let vars: HashSet<&str> = vars.iter().map(|p| p.name.name.as_str()).collect();
+        let mut names = Vec::new();
+        type_ref_names(r, &vars, &mut names);
+        let mut out: Vec<&ShadowedType> = names
+            .iter()
+            .filter_map(|n| self.0.get(&(scope.to_string(), n.clone())))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
 }
 
 /// #1807: the unit that owns type `name` as seen from `scope`: `scope` itself
