@@ -47,20 +47,39 @@ export function __serialise_Option_Code(value: Option<Code>): __JsonValue {
   return { kind: "None" };
 }
 
-export function __deserialise_Option_Code(json: __JsonValue, path: string = "$"): Result<Option<Code>, __BoundaryError> {
-  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
-    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
-  }
-  const obj = json as { [k: string]: __JsonValue };
-  if (obj["kind"] === "Some") {
-  const __r_v = __deserialise_Code(obj["value"], `${path}.value`);
+function __option_value_Code(raw: __JsonValue, at: string): Result<unknown, __BoundaryError> {
+  const __r_v = __deserialise_Code(raw, at);
   if (__r_v.tag === "Err") return __r_v;
   const __v = __r_v.value;
-    return Ok(Some(__v) as Option<Code>);
-  } else if (obj["kind"] === "None") {
+  return Ok(__v);
+}
+
+export function __deserialise_Option_Code(json: __JsonValue, path: string = "$"): Result<Option<Code>, __BoundaryError> {
+  if (json === undefined || json === null) {
     return Ok(None as Option<Code>);
   }
-  return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
+  if (typeof json === "object" && !globalThis.Array.isArray(json)) {
+    const obj = json as { [k: string]: __JsonValue };
+    const __keys = globalThis.Object.keys(obj);
+    if (obj["kind"] === "None" && __keys.length === 1) {
+      return Ok(None as Option<Code>);
+    }
+    if (obj["kind"] === "Some" && __keys.length === 2 && "value" in obj) {
+      const __t = __option_value_Code(obj["value"], `${path}.value`);
+      if (__t.tag === "Err") {
+        return __t;
+      }
+      return Ok(Some(__t.value as Code) as Option<Code>);
+    }
+  }
+  const __b = __option_value_Code(json, path);
+  if (__b.tag === "Ok") {
+    return Ok(Some(__b.value as Code) as Option<Code>);
+  }
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path) {
+    return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
+  }
+  return __b;
 }
 
 export function __serialise_Ticket(value: t_vault.Ticket): __JsonValue {
@@ -124,20 +143,39 @@ export function __serialise_Option_t_vault__Code(value: Option<t_vault.Code>): _
   return { kind: "None" };
 }
 
-export function __deserialise_Option_t_vault__Code(json: __JsonValue, path: string = "$"): Result<Option<t_vault.Code>, __BoundaryError> {
-  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
-    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
-  }
-  const obj = json as { [k: string]: __JsonValue };
-  if (obj["kind"] === "Some") {
-  const __r_v = __deserialise_t_vault__Code(obj["value"], `${path}.value`);
+function __option_value_t_vault__Code(raw: __JsonValue, at: string): Result<unknown, __BoundaryError> {
+  const __r_v = __deserialise_t_vault__Code(raw, at);
   if (__r_v.tag === "Err") return __r_v;
   const __v = __r_v.value;
-    return Ok(Some(__v) as Option<t_vault.Code>);
-  } else if (obj["kind"] === "None") {
+  return Ok(__v);
+}
+
+export function __deserialise_Option_t_vault__Code(json: __JsonValue, path: string = "$"): Result<Option<t_vault.Code>, __BoundaryError> {
+  if (json === undefined || json === null) {
     return Ok(None as Option<t_vault.Code>);
   }
-  return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
+  if (typeof json === "object" && !globalThis.Array.isArray(json)) {
+    const obj = json as { [k: string]: __JsonValue };
+    const __keys = globalThis.Object.keys(obj);
+    if (obj["kind"] === "None" && __keys.length === 1) {
+      return Ok(None as Option<t_vault.Code>);
+    }
+    if (obj["kind"] === "Some" && __keys.length === 2 && "value" in obj) {
+      const __t = __option_value_t_vault__Code(obj["value"], `${path}.value`);
+      if (__t.tag === "Err") {
+        return __t;
+      }
+      return Ok(Some(__t.value as t_vault.Code) as Option<t_vault.Code>);
+    }
+  }
+  const __b = __option_value_t_vault__Code(json, path);
+  if (__b.tag === "Ok") {
+    return Ok(Some(__b.value as t_vault.Code) as Option<t_vault.Code>);
+  }
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path) {
+    return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
+  }
+  return __b;
 }
 
 export function __serialise_t_vault__Envelope_t_vault__Code(value: t_vault.Envelope<t_vault.Code>): __JsonValue {

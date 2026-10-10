@@ -1,0 +1,79 @@
+---
+#1887: an `Option[U]` decodes leniently at every boundary. Absent and `null`
+are `None`, a bare value is `Some`, and Bynk's tagged form still works. The
+tagged form wins where a value could be read both ways, so what `Json.encode`
+writes always decodes back to the same value.
+---
+commons demo.opt
+
+type Name = String where NonEmpty
+
+type Repo = { repo: String, description: Option[String] }
+
+type Named = { name: Option[Name] }
+
+type Nested = { n: Option[Option[Int]] }
+
+type Pair = { kind: String, value: Int }
+
+type Boxed = { p: Option[Pair] }
+
+type Wrapped =
+  | Wrap(value: Int)
+  | Empty
+
+type Holder = { w: Option[Wrapped] }
+
+fn repo(s: String) -> Option[Repo] {
+  match Json.decode[Repo](s) {
+    Ok(r) => Some(r)
+    Err(_) => None
+  }
+}
+
+fn named(s: String) -> Option[Named] {
+  match Json.decode[Named](s) {
+    Ok(r) => Some(r)
+    Err(_) => None
+  }
+}
+
+fn nested(s: String) -> Option[Nested] {
+  match Json.decode[Nested](s) {
+    Ok(r) => Some(r)
+    Err(_) => None
+  }
+}
+
+fn boxed(s: String) -> Option[Boxed] {
+  match Json.decode[Boxed](s) {
+    Ok(r) => Some(r)
+    Err(_) => None
+  }
+}
+
+fn holder(s: String) -> Option[Holder] {
+  match Json.decode[Holder](s) {
+    Ok(r) => Some(r)
+    Err(_) => None
+  }
+}
+
+fn repoError(s: String) -> String {
+  match Json.decode[Repo](s) {
+    Ok(_) => "decoded"
+    Err(e) => e.path.concat(": ").concat(e.message)
+  }
+}
+
+fn nestedRoundTrips(v: Nested) -> Bool {
+  nested(Json.encode(v)) == Some(v)
+}
+
+fn boxedRoundTrips(v: Boxed) -> Bool {
+  boxed(Json.encode(v)) == Some(v)
+}
+
+fn holderRoundTrips(v: Holder) -> Bool {
+  holder(Json.encode(v)) == Some(v)
+}

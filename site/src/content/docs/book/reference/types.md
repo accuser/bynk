@@ -289,6 +289,23 @@ program only as a fully-checked value. `JsonError` is the error it returns
 (malformed JSON, or a structural/refinement mismatch). See the guide
 [Decode untrusted JSON into a typed value](/book/guides/type-system/decode-json/).
 
+`Json.encode` writes an `Option[U]` in Bynk's tagged form:
+`{"kind": "Some", "value": …}` or `{"kind": "None"}`. `Json.decode` accepts
+that form and also the forms other JSON producers use for an optional value:
+
+| JSON for an `Option[U]` | Decodes to |
+|---|---|
+| the key is absent from its record | `None` |
+| `null` | `None` |
+| `{"kind": "None"}`, with no other keys | `None` |
+| `{"kind": "Some", "value": v}`, with no other keys | `Some(v)`, `v` checked as `U` |
+| any other value `v` | `Some(v)`, `v` checked as `U` |
+
+The tagged forms are tried first, so whatever `Json.encode` writes decodes back
+to the same value, even for an `Option[Option[T]]`. The same decoder runs at
+every boundary, so an HTTP request body, a cross-context call and a stored agent
+field accept these forms too.
+
 ## Type aliases
 
 ```bynk

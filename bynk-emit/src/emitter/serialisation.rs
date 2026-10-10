@@ -1293,8 +1293,12 @@ fn emit_record_codec(
         // what makes `Option[T]`'s two absences fall out with no
         // special-casing — a wire `{"kind":"None"}` already passed the `in`
         // test, so it flows through to a real `None`, untouched by the
-        // default). Everything downstream (`emit_field_deserialise_wire`) is
-        // unchanged either way.
+        // default; so does an explicit `null`, since #1887). Everything
+        // downstream (`emit_field_deserialise_wire`) is unchanged either
+        // way. An undefaulted field reads `obj["<field>"]` with no presence
+        // check, so an absent key reaches its codec as `undefined`, which
+        // the lenient `Option` decoder (#1887) reads as `None` and every
+        // other codec rejects.
         let default = field
             .default
             .as_ref()
@@ -2730,7 +2734,9 @@ pub(crate) use bynk_check::wire::collect_generic_instantiations;
 /// return Err(...); } const obj = json as { [k: string]: JsonValue };` — the
 /// exact 2-statement object-shape guard [`emit_record_codec`] already builds
 /// inline (#1443), needed verbatim by [`emit_generic_helpers_qualified`]'s
-/// own `ResultInst`/`OptionInst` arms (Arc E slice 7, #1447). A local helper
+/// own `ResultInst` arm (Arc E slice 7, #1447; the `OptionInst` arm used it
+/// too until #1887 made `Option` decoding lenient, which must accept `null`
+/// and non-object bare values this guard rejects). A local helper
 /// here rather than a shared export, or a call into `emit_record_codec`
 /// itself: matches this file's own "private builder set, not promoted
 /// cross-function" precedent (#1435's own doc) — two real call sites inside
@@ -2781,8 +2787,10 @@ fn array_shape_guard() -> TsStmt {
 
 /// `if (obj["kind"] === "<key_a>") { <guard_a><return_a> } else if
 /// (obj["kind"] === "<key_b>") { <guard_b><return_b> }` — `ResultInst`'s
-/// (`"Ok"`/`"Err"`) and `OptionInst`'s (`"Some"`/`"None"`) own two-armed
-/// wire-kind dispatch (Arc E slice 7, #1447).
+/// (`"Ok"`/`"Err"`) own two-armed wire-kind dispatch (Arc E slice 7, #1447).
+/// `OptionInst` used it for `"Some"`/`"None"` until #1887, whose lenient
+/// decoder ([`lenient_option_decode_body`]) needs no else-if cascade and is
+/// built from real `if` nodes instead.
 ///
 /// `bynk_ts::TsStmt` has no real "else if" continuation shape: the only way
 /// to nest a second `If` as this shape's own `else_branch` is
@@ -2791,7 +2799,7 @@ fn array_shape_guard() -> TsStmt {
 /// `If` — which always renders at depth 0 (correct only for the genuinely
 /// brace-free, single-line bodies that fallback was built for; nothing in
 /// `events_fanout.rs`'s own grounding ever nested a multi-line block that
-/// way). Both real call sites here need `body_a`/`body_b` at depth 2
+/// way). The real call site here needs `body_a`/`body_b` at depth 2
 /// (4-space, correctly nested one level inside this cascade's own `if`),
 /// which that depth-0 fallback cannot produce without mis-indenting them two
 /// spaces shallow. Building the whole two-branch cascade as one
@@ -2810,11 +2818,11 @@ fn array_shape_guard() -> TsStmt {
 /// `guard_a`/`guard_b` render at depth 1 (2-space) — one level shallower
 /// than their true nesting, the same pre-existing indentation quirk
 /// [`raw_stmts_at_depth_one`]'s own doc names for `emit_sum_codec`'s payload
-/// guards, confirmed byte-for-byte here too against
-/// `139_agent_state_zero_option/expected/demo/slot.ts`'s own
-/// `deserialise_Option_Int` (`if (obj["kind"] === "Some") {` immediately
-/// followed by a 2-space-indented `if (typeof obj["value"] !== "number")`,
-/// not the 4-space a correctly-nested `if`-inside-an-`if` would get).
+/// guards (first confirmed byte-for-byte against the pre-#1887
+/// `deserialise_Option_Int`, whose `if (obj["kind"] === "Some") {` was
+/// immediately followed by a 2-space-indented `if (typeof obj["value"] !==
+/// "number")`, not the 4-space a correctly-nested `if`-inside-an-`if` would
+/// get).
 /// `return_a`/`return_b` render at depth 2 (4-space) — the correctly-nested
 /// depth for content one level inside the cascade, itself one level inside
 /// the enclosing function's own top-level body (depth 1).
@@ -2841,6 +2849,209 @@ fn wire_kind_dispatch_raw(
     text.push_str(&bynk_ts::print_stmt(&return_b, 2));
     text.push_str("  }\n");
     TsStmt::raw(text, None)
+}
+
+/// The text appended to a bare value's `StructuralMismatch.expected` when it
+/// fails to decode as an `Option[U]`'s `U` (#1887), so the error names every
+/// form the `Option` decoder would have taken, not only `U`'s.
+const OPTION_FORMS_SUFFIX: &str =
+    " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}";
+
+/// `left && right`, for the `Option` decoder's tagged-form recognition
+/// (#1887). Left-folding prints flat, as [`or_expr`] does.
+fn and_expr(left: TsExpr, right: TsExpr) -> TsExpr {
+    binary(TsBinaryOp::And, left, right)
+}
+
+/// `Ok(<value> as Option<U>)`: the `Option` decoder's one success shape.
+fn ok_option(value: TsExpr, option_ty: &TsType) -> TsStmt {
+    return_(call(ident("Ok"), vec![as_expr(value, option_ty.clone())]))
+}
+
+/// The body of `__deserialise_Option_<U>` (#1887, ADR amending 0045). The
+/// decoder is lenient: it accepts the forms the rest of the JSON world uses
+/// for an optional value, as well as the tagged form Bynk's encoder writes.
+/// It is the one `Option` codec, so the rule holds at every boundary that
+/// decodes JSON: `Json.decode`, an HTTP request body, a service-to-service
+/// call, agent-store rehydration and a WebSocket frame.
+///
+/// In order:
+///
+/// 1. `undefined` (the key is absent from the enclosing record, whose codec
+///    reads `obj["f"]` with no presence check) or `null` decodes to `None`.
+/// 2. An object whose only key is `kind`, set to `"None"`, decodes to `None`.
+/// 3. An object whose only keys are `kind` and `value`, with `kind` set to
+///    `"Some"`, decodes to `Some(U(value))`, the error path at `$.value`.
+/// 4. Anything else is a bare value and decodes to `Some(U(json))`.
+///
+/// The tagged forms are tried before the bare one, so they win when a value
+/// could be read both ways. That keeps `decode(encode(x)) == x` for every
+/// `x`, because the encoder always writes a tagged form: `Some(None)` of an
+/// `Option[Option[T]]` is `{kind: "Some", value: {kind: "None"}}`, and
+/// `Some(r)` for an `r` that itself has `kind`/`value` fields wraps `r` in
+/// an outer tag, so the inner decoder sees `r` intact. The cost falls on
+/// non-Bynk input only: a bare `{"kind": "None"}` for an `Option[Option[T]]`
+/// is `None`, not `Some(None)`.
+///
+/// `U` is decoded by a local `__decode(raw, at)` arrow, so its checks are
+/// emitted once and shared by rules 3 and 4. Its result is typed
+/// `Result<unknown, …>` and cast to `U` on success, as the old decoder cast
+/// `Some(__v)`, because `U`'s codec may return an unbranded record where
+/// this module's `U` is a branded rebrand (#527). When a bare value fails as
+/// a `StructuralMismatch` at the `Option`'s own path, the error's `expected`
+/// is extended with [`OPTION_FORMS_SUFFIX`]. A deeper error, or a
+/// `RefinementViolation`, is returned as `U` reported it.
+fn lenient_option_decode_body(
+    value_fn: &str,
+    inner_ty: &TsType,
+    option_ty: &TsType,
+) -> Vec<TsStmt> {
+    let some_of = |result: &str| {
+        call(
+            ident("Some"),
+            vec![as_expr(member(ident(result), "value"), inner_ty.clone())],
+        )
+    };
+    let obj_kind_is = |kind: &str| strict_eq(index(ident("obj"), str_lit("kind")), str_lit(kind));
+    let keys_len_is = |n: &str| {
+        strict_eq(
+            member(ident("__keys"), "length"),
+            TsExpr::Lit(TsLit::Num(n.to_string())),
+        )
+    };
+    let tagged = vec![
+        TsStmt::const_stmt(
+            TsBindingName::Ident("obj".to_string()),
+            None,
+            as_expr(ident("json"), index_signature_record_ty()),
+            None,
+        ),
+        const_(
+            "__keys",
+            call(
+                member(ident("globalThis.Object"), "keys"),
+                vec![ident("obj")],
+            ),
+        ),
+        // Rule 2: exactly `{kind: "None"}`.
+        if_(
+            and_expr(obj_kind_is("None"), keys_len_is("1")),
+            block(vec![ok_option(ident("None"), option_ty)]),
+        ),
+        // Rule 3: exactly `{kind: "Some", value}`.
+        if_(
+            and_expr(
+                and_expr(obj_kind_is("Some"), keys_len_is("2")),
+                in_expr(str_lit("value"), ident("obj")),
+            ),
+            block(vec![
+                const_(
+                    "__t",
+                    call(
+                        ident(value_fn),
+                        vec![
+                            index(ident("obj"), str_lit("value")),
+                            ident("`${path}.value`"),
+                        ],
+                    ),
+                ),
+                if_(
+                    strict_eq(member(ident("__t"), "tag"), str_lit("Err")),
+                    block(vec![return_(ident("__t"))]),
+                ),
+                ok_option(some_of("__t"), option_ty),
+            ]),
+        ),
+    ];
+    let bare_error = member(ident("__b"), "error");
+    vec![
+        // Rule 1: absent or `null`.
+        if_(
+            or_expr(
+                strict_eq(ident("json"), ident("undefined")),
+                strict_eq(ident("json"), TsExpr::Lit(TsLit::Null)),
+            ),
+            block(vec![ok_option(ident("None"), option_ty)]),
+        ),
+        if_(
+            and_expr(
+                strict_eq(typeof_expr(ident("json")), str_lit("object")),
+                not_expr(call(
+                    member(ident("globalThis.Array"), "isArray"),
+                    vec![ident("json")],
+                )),
+            ),
+            block(tagged),
+        ),
+        // Rule 4: a bare value.
+        const_(
+            "__b",
+            call(ident(value_fn), vec![ident("json"), ident("path")]),
+        ),
+        if_(
+            strict_eq(member(ident("__b"), "tag"), str_lit("Ok")),
+            block(vec![ok_option(some_of("__b"), option_ty)]),
+        ),
+        if_(
+            and_expr(
+                strict_eq(
+                    member(bare_error.clone(), "kind"),
+                    str_lit("StructuralMismatch"),
+                ),
+                strict_eq(member(bare_error.clone(), "path"), ident("path")),
+            ),
+            block(vec![return_(call(
+                ident("Err"),
+                vec![TsExpr::object_entries(vec![
+                    TsObjectEntry::Spread(bare_error.clone()),
+                    TsObjectEntry::Prop(
+                        "expected".to_string(),
+                        binary(
+                            TsBinaryOp::Add,
+                            member(bare_error, "expected"),
+                            str_lit(OPTION_FORMS_SUFFIX),
+                        ),
+                    ),
+                ])],
+            ))]),
+        ),
+        return_(ident("__b")),
+    ]
+}
+
+/// `function <name>(raw, at): Result<unknown, __BoundaryError>`: decodes one
+/// `Option[U]`'s `U` from `raw`, reporting errors at `at` (#1887). The
+/// lenient `Option` decoder ([`lenient_option_decode_body`]) calls it for
+/// both the tagged `value` and a bare value, so `U`'s checks are emitted
+/// once. Module-local, not exported: only its own module's
+/// `__deserialise_Option_<U>` calls it, and an export would collide under
+/// a barrel's `export *` the way a shared helper name can.
+fn option_value_decoder(name: String, inner: &TypeRef, ru: &RuntimeUse) -> TsDecl {
+    let mut body = emit_field_deserialise("v", inner, "raw", "at", ru);
+    body.push(return_(call(ident("Ok"), vec![ident("__v")])));
+    TsDecl::Function {
+        name,
+        generics: Vec::new(),
+        params: vec![
+            TsParam {
+                name: "raw".to_string(),
+                ty: Some(TsType::named("__JsonValue")),
+                optional: false,
+            },
+            TsParam {
+                name: "at".to_string(),
+                ty: Some(TsType::named("string")),
+                optional: false,
+            },
+        ],
+        return_type: Some(TsType::named_with_args(
+            "Result",
+            vec![TsType::named("unknown"), TsType::named("__BoundaryError")],
+        )),
+        body,
+        is_async: false,
+        inline: false,
+    }
 }
 
 /// Emit specialised helpers for each `Result<A, B>` / `Option<A>`
@@ -3082,7 +3293,8 @@ pub(crate) fn emit_generic_helpers_qualified(
             GenericInst::OptionInst { inner } => {
                 let inner_ts = inner_ts_name(inner);
                 let inner_ty = bynk_ts::print_type(&qualified_ts_type(inner, qual));
-                let option_ty = TsType::named_with_args("Option", vec![TsType::named(inner_ty)]);
+                let inner_ty = TsType::named(inner_ty);
+                let option_ty = TsType::named_with_args("Option", vec![inner_ty.clone()]);
 
                 let serialise = TsDecl::Export(Box::new(TsDecl::Function {
                     name: format!("__serialise_Option_{inner_ts}"),
@@ -3110,28 +3322,9 @@ pub(crate) fn emit_generic_helpers_qualified(
                     inline: false,
                 }));
 
-                let mut body = object_shape_guard();
-                body.push(wire_kind_dispatch_raw(
-                    "Some",
-                    emit_field_deserialise("v", inner, "obj[\"value\"]", "`${path}.value`", ru),
-                    return_(call(
-                        ident("Ok"),
-                        vec![as_expr(
-                            call(ident("Some"), vec![ident("__v")]),
-                            option_ty.clone(),
-                        )],
-                    )),
-                    "None",
-                    Vec::new(),
-                    return_(call(
-                        ident("Ok"),
-                        vec![as_expr(ident("None"), option_ty.clone())],
-                    )),
-                ));
-                body.push(return_(err_structural_mismatch_top(
-                    "Some | None",
-                    call(ident("String"), vec![index(ident("obj"), str_lit("kind"))]),
-                )));
+                let value_fn = format!("__option_value_{inner_ts}");
+                let body = lenient_option_decode_body(&value_fn, &inner_ty, &option_ty);
+                let value_decoder = option_value_decoder(value_fn, inner, ru);
 
                 let deserialise = TsDecl::Export(Box::new(TsDecl::Function {
                     name: format!("__deserialise_Option_{inner_ts}"),
@@ -3153,7 +3346,7 @@ pub(crate) fn emit_generic_helpers_qualified(
                     inline: false,
                 }));
 
-                decls.extend([serialise, deserialise]);
+                decls.extend([serialise, value_decoder, deserialise]);
             }
             // v0.20b: `List[T]` — element-wise wire format (a JSON array).
             GenericInst::ListInst { elem } => {
@@ -3679,5 +3872,87 @@ event E = {
             lower_field_default_wire(init, ty, &types),
             Ok("{ kind: \"International\" }".to_string())
         );
+    }
+}
+
+/// #1887: the lenient `Option` decoder's emitted shape. The behaviour is
+/// proved at runtime by the `1887_lenient_option_decode` fixture; these pin
+/// the rule order the round-trip invariant depends on (absent or `null`, then
+/// the exact tagged forms, then a bare value) and the nesting an
+/// `Option[Option[Int]]` relies on.
+#[cfg(test)]
+mod lenient_option_decode_tests {
+    use crate::testkit::emit_project;
+
+    const SRC: &str = "commons d.opt\n\n\
+        type N = { n: Option[Option[Int]] }\n\n\
+        fn dec(s: String) -> Bool {\n  match Json.decode[N](s) {\n    Ok(_) => true\n    Err(_) => false\n  }\n}\n";
+
+    /// The emitted function `name`, from its signature to its closing brace.
+    fn function_body<'a>(text: &'a str, name: &str) -> &'a str {
+        let start = text
+            .find(&format!("function {name}("))
+            .unwrap_or_else(|| panic!("`{name}` is emitted:\n{text}"));
+        let len = text[start..].find("\n}\n").expect("the function closes");
+        &text[start..start + len]
+    }
+
+    /// The byte offset of `needle` in `body`, which must contain it.
+    fn at(body: &str, needle: &str) -> usize {
+        body.find(needle)
+            .unwrap_or_else(|| panic!("`{needle}` is in:\n{body}"))
+    }
+
+    fn emitted() -> String {
+        let out = emit_project(&[("d/opt.bynk", SRC)], crate::project::BuildTarget::Bundle);
+        out.text("d/opt.ts").to_string()
+    }
+
+    #[test]
+    fn the_tagged_forms_are_tried_before_a_bare_value() {
+        let text = emitted();
+        let outer = function_body(&text, "__deserialise_Option_Option_Int");
+        let absent = at(outer, "if (json === undefined || json === null) {");
+        let none = at(
+            outer,
+            "if (obj[\"kind\"] === \"None\" && __keys.length === 1) {",
+        );
+        let some = at(
+            outer,
+            "if (obj[\"kind\"] === \"Some\" && __keys.length === 2 && \"value\" in obj) {",
+        );
+        let tagged = at(
+            outer,
+            "__option_value_Option_Int(obj[\"value\"], `${path}.value`)",
+        );
+        let bare = at(outer, "const __b = __option_value_Option_Int(json, path);");
+        assert!(
+            absent < none && none < some && some < tagged && tagged < bare,
+            "{outer}"
+        );
+    }
+
+    #[test]
+    fn the_value_decoder_delegates_to_the_inner_option_codec() {
+        let text = emitted();
+        // Module-local: only this module's `Option` decoder calls it.
+        assert!(!text.contains("export function __option_value_"), "{text}");
+        let value = function_body(&text, "__option_value_Option_Int");
+        at(value, "__deserialise_Option_Int(raw, at)");
+        // The inner `Option[Int]` decoder is lenient in turn, so a bare `1`
+        // nests to `Some(Some(1))`.
+        let inner = function_body(&text, "__deserialise_Option_Int");
+        at(inner, "const __b = __option_value_Int(json, path);");
+    }
+
+    #[test]
+    fn a_failed_bare_value_names_every_option_form_only_at_its_own_path() {
+        let text = emitted();
+        let inner = function_body(&text, "__deserialise_Option_Int");
+        at(
+            inner,
+            "if (__b.error.kind === \"StructuralMismatch\" && __b.error.path === path) {",
+        );
+        at(inner, &super::OPTION_FORMS_SUFFIX.replace('"', "\\\""));
     }
 }

@@ -151,18 +151,37 @@ export function __serialise_Option_Line(value: Option<Line>): __JsonValue {
   return { kind: "None" };
 }
 
-export function __deserialise_Option_Line(json: __JsonValue, path: string = "$"): Result<Option<Line>, __BoundaryError> {
-  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
-    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
-  }
-  const obj = json as { [k: string]: __JsonValue };
-  if (obj["kind"] === "Some") {
-  const __r_v = __deserialise_Line(obj["value"], `${path}.value`);
+function __option_value_Line(raw: __JsonValue, at: string): Result<unknown, __BoundaryError> {
+  const __r_v = __deserialise_Line(raw, at);
   if (__r_v.tag === "Err") return __r_v;
   const __v = __r_v.value;
-    return Ok(Some(__v) as Option<Line>);
-  } else if (obj["kind"] === "None") {
+  return Ok(__v);
+}
+
+export function __deserialise_Option_Line(json: __JsonValue, path: string = "$"): Result<Option<Line>, __BoundaryError> {
+  if (json === undefined || json === null) {
     return Ok(None as Option<Line>);
   }
-  return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
+  if (typeof json === "object" && !globalThis.Array.isArray(json)) {
+    const obj = json as { [k: string]: __JsonValue };
+    const __keys = globalThis.Object.keys(obj);
+    if (obj["kind"] === "None" && __keys.length === 1) {
+      return Ok(None as Option<Line>);
+    }
+    if (obj["kind"] === "Some" && __keys.length === 2 && "value" in obj) {
+      const __t = __option_value_Line(obj["value"], `${path}.value`);
+      if (__t.tag === "Err") {
+        return __t;
+      }
+      return Ok(Some(__t.value as Line) as Option<Line>);
+    }
+  }
+  const __b = __option_value_Line(json, path);
+  if (__b.tag === "Ok") {
+    return Ok(Some(__b.value as Line) as Option<Line>);
+  }
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path) {
+    return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
+  }
+  return __b;
 }

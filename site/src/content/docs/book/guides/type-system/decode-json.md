@@ -30,6 +30,30 @@ compiler what shape to validate against. A missing field, a wrong base type, or
 malformed JSON all produce an `Err(jsonError)`; a well-formed payload produces
 `Ok(order)`.
 
+An `Option` field is the exception to "a missing field is an error". JSON that
+Bynk didn't write usually leaves an optional field out, or sets it to `null`, or
+gives the bare value, and `decode` accepts all three:
+
+```bynk
+commons registry {
+  type Repo = {
+    repo: String,
+    description: Option[String],
+  }
+
+  fn parse(raw: String) -> Result[Repo, JsonError] {
+    Json.decode[Repo](raw)
+  }
+}
+```
+
+`{"repo": "a"}` and `{"repo": "a", "description": null}` decode with
+`description` set to `None`, and `{"repo": "a", "description": "d"}` decodes
+with it set to `Some("d")`. Bynk's own tagged form, which `Json.encode` writes,
+also works: `{"kind": "Some", "value": "d"}` and `{"kind": "None"}`. A bare
+value is still checked as the inner type, so `"description": 7` is an error.
+See [the JSON codec](/book/reference/types/#the-json-codec) for the full rule.
+
 ## Decode straight into a refined type
 
 Point `decode` at a type whose fields are refined, and the predicates are
