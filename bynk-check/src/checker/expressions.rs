@@ -585,6 +585,15 @@ pub(crate) fn check_faults(faults: &FaultsExpr, span: Span, ctx: &mut Ctx) -> Op
         Some(p) if p.actor.name == "Nobody" => {
             if let Some(identity) = &p.identity {
                 let _ = type_of(identity, None, ctx);
+                // #1878 review: the route-shape checks are skipped (the tier
+                // error is the one that matters), but `Nobody` taking no
+                // identity is said now, not after the rewrite the tier error
+                // suggests.
+                ctx.errors.push(CompileError::new(
+                    "bynk.test.actor_no_identity",
+                    p.span,
+                    "actor `Nobody` has no identity, so write `by Nobody` with no argument",
+                ));
             }
         }
         _ => super::calls::check_effect_let_principal(call, principal.as_ref(), ctx),
