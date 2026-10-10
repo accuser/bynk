@@ -413,9 +413,14 @@ fn resolve_stubs(
 /// transitive `consumes` closure (testing track slice 6). A BFS from the target
 /// following `consumes` edges; the returned list starts with the target and
 /// includes every context reachable through it (deterministic breadth order).
+/// #1856: contexts only. A unit consumed for its capabilities alone
+/// (`consumes bynk { Clock }`, an adapter) is provided in-process by the
+/// composition root: no Worker, no Service Binding, no wire to cross. The
+/// walk still passes through one, but it is no participant.
 pub fn infer_participants(
     target: &str,
     unit_consumes: &HashMap<String, Vec<String>>,
+    kinds: &BTreeMap<String, UnitKind>,
 ) -> Vec<String> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut order: Vec<String> = Vec::new();
@@ -434,6 +439,7 @@ pub fn infer_participants(
             }
         }
     }
+    order.retain(|u| kinds.get(u) == Some(&UnitKind::Context));
     order
 }
 
@@ -460,6 +466,7 @@ pub fn infer_participants(
 pub fn phase_integration_bodies(
     integration_groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
+    kinds: &BTreeMap<String, UnitKind>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
@@ -483,7 +490,7 @@ pub fn phase_integration_bodies(
         // for its target context. The participant set is INFERRED from the
         // target's transitive `consumes` closure (no `wires` list).
         let suite_target = decl.target.joined();
-        let participants = infer_participants(&suite_target, unit_consumes);
+        let participants = infer_participants(&suite_target, unit_consumes, kinds);
 
         let mut bad = false;
 
