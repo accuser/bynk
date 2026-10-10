@@ -36,25 +36,43 @@ export const Method = {
 };
 
 /**
- * Why an outbound `Fetch.send` failed: a network error or a timeout.
+ * Why an outbound `Fetch.send` failed: a network error, a timeout, or a
+ * request whose headers `Fetch.send` refused to send (`InvalidHeader`). An
+ * `InvalidHeader` request never reaches the network: its `headers` named
+ * Content-Type or Authorization while the matching typed slot was `Some`,
+ * named a header the platform owns (`host`, `content-length`, and the other
+ * framing/hop-by-hop headers), named one header twice in different case, or
+ * held a name or value that is not a legal HTTP header.
  */
 export type FetchError =
     { readonly tag: "Network" }
-  | { readonly tag: "Timeout" };
+  | { readonly tag: "Timeout" }
+  | { readonly tag: "InvalidHeader" };
 
 export const FetchError = {
   Network: { tag: "Network" } as FetchError,
   Timeout: { tag: "Timeout" } as FetchError,
+  InvalidHeader: { tag: "InvalidHeader" } as FetchError,
 };
 
 /**
- * An outbound HTTP request, as passed to `Fetch.send`.
+ * An outbound HTTP request, as passed to `Fetch.send`. `contentType` and
+ * `authorization` are the typed slots for the two common headers; `headers`
+ * carries any other (`User-Agent`, `Accept`, `If-None-Match`, …), and an empty
+ * map (`Map.empty()`) sends none. Header names are case-insensitive. A
+ * `headers` entry for Content-Type or Authorization is accepted only while the
+ * matching typed slot is `None` — when both are given, `Fetch.send` returns
+ * `Err(InvalidHeader)` rather than let one silently win. Names the platform
+ * owns — `host`, `content-length`, `connection`, `keep-alive`, `te`,
+ * `trailer`, `transfer-encoding`, `upgrade`, `expect` — are refused the same
+ * way, as is a duplicate name differing only in case.
  */
 export interface Request {
   readonly method: Method;
   readonly url: string;
   readonly contentType: Option<string>;
   readonly authorization: Option<string>;
+  readonly headers: ReadonlyMap<string, string>;
   readonly body: Option<string>;
 }
 
@@ -62,10 +80,13 @@ export const Request = {
 };
 
 /**
- * An HTTP response: a status code and a body.
+ * An HTTP response: a status code, its headers, and a body. `headers` keys
+ * are lowercased (`res.headers.get("etag")`); a header the server repeated
+ * arrives as one comma-joined value.
  */
 export interface Response {
   readonly status: number;
+  readonly headers: ReadonlyMap<string, string>;
   readonly body: string;
 }
 

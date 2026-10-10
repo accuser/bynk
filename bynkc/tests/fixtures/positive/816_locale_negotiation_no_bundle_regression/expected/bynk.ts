@@ -36,25 +36,43 @@ export const Method = {
 };
 
 /**
- * Why an outbound `Fetch.send` failed: a network error or a timeout.
+ * Why an outbound `Fetch.send` failed: a network error, a timeout, or a
+ * request whose headers `Fetch.send` refused to send (`InvalidHeader`). An
+ * `InvalidHeader` request never reaches the network: its `headers` named
+ * Content-Type or Authorization while the matching typed slot was `Some`,
+ * named a header the platform owns (`host`, `content-length`, and the other
+ * framing/hop-by-hop headers), named one header twice in different case, or
+ * held a name or value that is not a legal HTTP header.
  */
 export type FetchError =
     { readonly tag: "Network" }
-  | { readonly tag: "Timeout" };
+  | { readonly tag: "Timeout" }
+  | { readonly tag: "InvalidHeader" };
 
 export const FetchError = {
   Network: { tag: "Network" } as FetchError,
   Timeout: { tag: "Timeout" } as FetchError,
+  InvalidHeader: { tag: "InvalidHeader" } as FetchError,
 };
 
 /**
- * An outbound HTTP request, as passed to `Fetch.send`.
+ * An outbound HTTP request, as passed to `Fetch.send`. `contentType` and
+ * `authorization` are the typed slots for the two common headers; `headers`
+ * carries any other (`User-Agent`, `Accept`, `If-None-Match`, …), and an empty
+ * map (`Map.empty()`) sends none. Header names are case-insensitive. A
+ * `headers` entry for Content-Type or Authorization is accepted only while the
+ * matching typed slot is `None` — when both are given, `Fetch.send` returns
+ * `Err(InvalidHeader)` rather than let one silently win. Names the platform
+ * owns — `host`, `content-length`, `connection`, `keep-alive`, `te`,
+ * `trailer`, `transfer-encoding`, `upgrade`, `expect` — are refused the same
+ * way, as is a duplicate name differing only in case.
  */
 export interface Request {
   readonly method: Method;
   readonly url: string;
   readonly contentType: Option<string>;
   readonly authorization: Option<string>;
+  readonly headers: ReadonlyMap<string, string>;
   readonly body: Option<string>;
 }
 
@@ -62,10 +80,13 @@ export const Request = {
 };
 
 /**
- * An HTTP response: a status code and a body.
+ * An HTTP response: a status code, its headers, and a body. `headers` keys
+ * are lowercased (`res.headers.get("etag")`); a header the server repeated
+ * arrives as one comma-joined value.
  */
 export interface Response {
   readonly status: number;
+  readonly headers: ReadonlyMap<string, string>;
   readonly body: string;
 }
 
@@ -238,6 +259,8 @@ export function __serialise_FetchError(value: FetchError): __JsonValue {
       return { kind: "Network" };
     case "Timeout":
       return { kind: "Timeout" };
+    case "InvalidHeader":
+      return { kind: "InvalidHeader" };
   }
 }
 
@@ -252,6 +275,8 @@ export function __deserialise_FetchError(json: __JsonValue, path: string = "$"):
       return Ok({ tag: "Network" } as FetchError);
     case "Timeout":
       return Ok({ tag: "Timeout" } as FetchError);
+    case "InvalidHeader":
+      return Ok({ tag: "InvalidHeader" } as FetchError);
     default:
       return Err({ kind: "StructuralMismatch", path, expected: "sum variant kind", actual: String(kind) });
   }
@@ -296,6 +321,7 @@ export function __serialise_Request(value: Request): __JsonValue {
     url: value.url as __JsonValue,
     contentType: __serialise_Option_String(value.contentType),
     authorization: __serialise_Option_String(value.authorization),
+    headers: __serialise_Map_String_String(value.headers),
     body: __serialise_Option_String(value.body),
   };
 }
@@ -318,15 +344,19 @@ export function __deserialise_Request(json: __JsonValue, path: string = "$"): Re
   const __r_authorization = __deserialise_Option_String(obj["authorization"], `${path}.authorization`);
   if (__r_authorization.tag === "Err") return __r_authorization;
   const __authorization = __r_authorization.value;
+  const __r_headers = __deserialise_Map_String_String(obj["headers"], `${path}.headers`);
+  if (__r_headers.tag === "Err") return __r_headers;
+  const __headers = __r_headers.value;
   const __r_body = __deserialise_Option_String(obj["body"], `${path}.body`);
   if (__r_body.tag === "Err") return __r_body;
   const __body = __r_body.value;
-  return Ok({ method: __method, url: __url, contentType: __contentType, authorization: __authorization, body: __body } as Request);
+  return Ok({ method: __method, url: __url, contentType: __contentType, authorization: __authorization, headers: __headers, body: __body } as Request);
 }
 
 export function __serialise_Response(value: Response): __JsonValue {
   return {
     status: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.status),
+    headers: __serialise_Map_String_String(value.headers),
     body: value.body as __JsonValue,
   };
 }
@@ -343,11 +373,14 @@ export function __deserialise_Response(json: __JsonValue, path: string = "$"): R
     return Err({ kind: "StructuralMismatch", path: `${path}.status`, expected: "safe integer", actual: String(obj["status"]) });
   }
   const __status = obj["status"];
+  const __r_headers = __deserialise_Map_String_String(obj["headers"], `${path}.headers`);
+  if (__r_headers.tag === "Err") return __r_headers;
+  const __headers = __r_headers.value;
   if (typeof obj["body"] !== "string") {
     return Err({ kind: "StructuralMismatch", path: `${path}.body`, expected: "string", actual: typeof obj["body"] });
   }
   const __body = obj["body"];
-  return Ok({ status: __status, body: __body } as Response);
+  return Ok({ status: __status, headers: __headers, body: __body } as Response);
 }
 
 export function __serialise_Uuid(value: Uuid): __JsonValue {
@@ -388,4 +421,37 @@ export function __deserialise_Option_String(json: __JsonValue, path: string = "$
     return Ok(None as Option<string>);
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
+}
+
+export function __serialise_Map_String_String(value: ReadonlyMap<string, string>): __JsonValue {
+  const entries: __JsonValue[] = [];
+  for (const [k, v] of value) {
+    entries.push([k as __JsonValue, v as __JsonValue]);
+  }
+  return entries;
+}
+
+export function __deserialise_Map_String_String(json: __JsonValue, path: string = "$"): Result<ReadonlyMap<string, string>, __BoundaryError> {
+  if (!globalThis.Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "array", actual: typeof json });
+  }
+  const out = new globalThis.Map<string, string>();
+  for (let i = 0; i < json.length; i++) {
+  const entry = json[i];
+  if (!globalThis.Array.isArray(entry) || entry.length !== 2) {
+    return Err({ kind: "StructuralMismatch", path: `${path}[${i}]`, expected: "[key, value] entry", actual: typeof entry });
+  }
+  const entryK = entry[0];
+  const entryV = entry[1];
+  if (typeof entryK !== "string") {
+    return Err({ kind: "StructuralMismatch", path: `${path}[${i}][0]`, expected: "string", actual: typeof entryK });
+  }
+  const __k = entryK;
+  if (typeof entryV !== "string") {
+    return Err({ kind: "StructuralMismatch", path: `${path}[${i}][1]`, expected: "string", actual: typeof entryV });
+  }
+  const __v = entryV;
+  out.set(__k as string, __v as string);
+  }
+  return Ok(out);
 }

@@ -14,25 +14,43 @@ adapter bynk {
 	type Method = enum { Get, Post, Put, Delete }
 
 	---
-	Why an outbound `Fetch.send` failed: a network error or a timeout.
+	Why an outbound `Fetch.send` failed: a network error, a timeout, or a
+	request whose headers `Fetch.send` refused to send (`InvalidHeader`). An
+	`InvalidHeader` request never reaches the network: its `headers` named
+	Content-Type or Authorization while the matching typed slot was `Some`,
+	named a header the platform owns (`host`, `content-length`, and the other
+	framing/hop-by-hop headers), named one header twice in different case, or
+	held a name or value that is not a legal HTTP header.
 	---
-	type FetchError = enum { Network, Timeout }
+	type FetchError = enum { Network, Timeout, InvalidHeader }
 
 	---
-	An outbound HTTP request, as passed to `Fetch.send`.
+	An outbound HTTP request, as passed to `Fetch.send`. `contentType` and
+	`authorization` are the typed slots for the two common headers; `headers`
+	carries any other (`User-Agent`, `Accept`, `If-None-Match`, …), and an empty
+	map (`Map.empty()`) sends none. Header names are case-insensitive. A
+	`headers` entry for Content-Type or Authorization is accepted only while the
+	matching typed slot is `None` — when both are given, `Fetch.send` returns
+	`Err(InvalidHeader)` rather than let one silently win. Names the platform
+	owns — `host`, `content-length`, `connection`, `keep-alive`, `te`,
+	`trailer`, `transfer-encoding`, `upgrade`, `expect` — are refused the same
+	way, as is a duplicate name differing only in case.
 	---
 	type Request = {
 		method: Method,
 		url: String,
 		contentType: Option[String],
 		authorization: Option[String],
+		headers: Map[String, String],
 		body: Option[String],
 	}
 
 	---
-	An HTTP response: a status code and a body.
+	An HTTP response: a status code, its headers, and a body. `headers` keys
+	are lowercased (`res.headers.get("etag")`); a header the server repeated
+	arrives as one comma-joined value.
 	---
-	type Response = { status: Int, body: String }
+	type Response = { status: Int, headers: Map[String, String], body: String }
 
 	---
 	Runtime metadata carried alongside an event payload (Events track, slice

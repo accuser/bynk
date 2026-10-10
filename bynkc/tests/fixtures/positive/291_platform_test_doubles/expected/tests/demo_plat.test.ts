@@ -67,7 +67,7 @@ class __Stub_Fetch {
     this.__case = c;
   }
   __applies(op: string): boolean {
-    if (op === "send") return this.__case === "a stubbed fetch answers for the network";
+    if (op === "send") return this.__case === "a fetch double sees the request's headers" || this.__case === "a stubbed fetch answers for the network";
     return true;
   }
   async send(req: __ns_bynk.Request): globalThis.Promise<Result<__ns_bynk.Response, __ns_bynk.FetchError>> {
@@ -79,7 +79,10 @@ class __Stub_Fetch {
     type Response = __ns_bynk.Response;
     type Uuid = __ns_bynk.Uuid;
     if (this.__case === "a stubbed fetch answers for the network") {
-      return Ok({ status: 204, body: "" });
+      return Ok({ status: 204, headers: new globalThis.Map<string, string>(), body: "" });
+    }
+    if (this.__case === "a fetch double sees the request's headers") {
+      return Ok({ status: 200, headers: new globalThis.Map<string, string>(), body: "" });
     }
     throw new globalThis.Error("bynk: no stub clause matched for Fetch.send");
   }
@@ -544,8 +547,37 @@ async function test_a_stubbed_fetch_answers_for_the_network() {
     type Response = __ns_bynk.Response;
     type Uuid = __ns_bynk.Uuid;
     const s = await relay.call("https://example.test", deps);
-    if (!(__bynkEq(s, 204))) { throw __bynkExpectFailure("tests/demo/plat.bynk:72:10", 1803, 1811, "expect s == 204\n  expected: s == 204\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((204))); }
-    if (!((((__obs.log["Fetch.send"] ?? []).filter((__c: { args: unknown[] }) => { const { req } = { req: __c.args[0] } as __Fetch_send_Call; return (req.url === "https://example.test"); }).length) === (1)))) { throw __bynkExpectFailure("tests/demo/plat.bynk:73:10", 1821, 1882, "expect Fetch.send called once with req.url == \"https://example.test\""); }
+    if (!(__bynkEq(s, 204))) { throw __bynkExpectFailure("tests/demo/plat.bynk:72:10", 1825, 1833, "expect s == 204\n  expected: s == 204\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((204))); }
+    if (!((((__obs.log["Fetch.send"] ?? []).filter((__c: { args: unknown[] }) => { const { req } = { req: __c.args[0] } as __Fetch_send_Call; return (req.url === "https://example.test"); }).length) === (1)))) { throw __bynkExpectFailure("tests/demo/plat.bynk:73:10", 1843, 1904, "expect Fetch.send called once with req.url == \"https://example.test\""); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_a_fetch_double_sees_the_request_s_headers() {
+  try {
+    const __obs = { log: {} as globalThis.Record<string, { args: unknown[]; order: number }[]>, n: 0 };
+    const deps = __bynkRecordDeps(__makeTestDeps("a fetch double sees the request's headers"), { Clock: ["now"], Fetch: ["send"], Idempotency: ["dedup", "remember"], Kv: ["delete", "get", "list", "put", "putTtl"], Locale: ["current"], Logger: ["error", "info"], Random: ["int", "uuid"], Secrets: ["get"] }, __obs);
+    const { clock, draws, greet, ids, locale, lookup, once, relay, secret, store } = __ns_demo_plat;
+    const { LocaleTag, Message, MessageArg } = __ns_bynk_locale_types;
+    type LocaleTag = __ns_bynk_locale_types.LocaleTag;
+    type Message = __ns_bynk_locale_types.Message;
+    type MessageArg = __ns_bynk_locale_types.MessageArg;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
+    const s = await relay.call("https://example.test", deps);
+    if (!(__bynkEq(s, 200))) { throw __bynkExpectFailure("tests/demo/plat.bynk:80:10", 2184, 2192, "expect s == 200\n  expected: s == 200\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((200))); }
+    if (!((((__obs.log["Fetch.send"] ?? []).filter((__c: { args: unknown[] }) => { const { req } = { req: __c.args[0] } as __Fetch_send_Call; return (__bynkEq(((__m: ReadonlyMap<string, string>, __k: string) => __m.has(__k) ? Some(__m.get(__k) as string) : None)(req.headers, "user-agent"), Some("bynk-demo/1.0"))); }).length) === (1)))) { throw __bynkExpectFailure("tests/demo/plat.bynk:81:10", 2202, 2284, "expect Fetch.send called once with req.headers.get(\"user-agent\") == Some(\"bynk-demo/1.0\")"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -572,7 +604,7 @@ async function test_an_unstubbed_fetch_faults_rather_than_reach_the_network() {
     type Response = __ns_bynk.Response;
     type Uuid = __ns_bynk.Uuid;
     const s = await relay.call("https://example.test", deps);
-    if (!(__bynkEq(s, 0))) { throw __bynkExpectFailure("tests/demo/plat.bynk:78:10", 2006, 2012, "expect s == 0\n  expected: s == 0\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((0))); }
+    if (!(__bynkEq(s, 0))) { throw __bynkExpectFailure("tests/demo/plat.bynk:86:10", 2408, 2414, "expect s == 0\n  expected: s == 0\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((0))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -600,8 +632,8 @@ async function test_the_doubles_hold_at_the_integration_tier() {
     type Uuid = __ns_bynk.Uuid;
     const t = await clock.call(deps);
     const s = await secret.call("API_KEY", deps);
-    if (!(__bynkEq(t, 0))) { throw __bynkExpectFailure("tests/demo/plat.bynk:84:10", 2148, 2154, "expect t == 0\n  expected: t == 0\n  actual:   " + __bynkShow((t)) + " == " + __bynkShow((0))); }
-    if (!(s.tag === "None")) { throw __bynkExpectFailure("tests/demo/plat.bynk:85:10", 2164, 2173, "expect s is None"); }
+    if (!(__bynkEq(t, 0))) { throw __bynkExpectFailure("tests/demo/plat.bynk:92:10", 2550, 2556, "expect t == 0\n  expected: t == 0\n  actual:   " + __bynkShow((t)) + " == " + __bynkShow((0))); }
+    if (!(s.tag === "None")) { throw __bynkExpectFailure("tests/demo/plat.bynk:93:10", 2566, 2575, "expect s is None"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -626,6 +658,7 @@ export async function run(only?: string) {
   if (want("kv is fresh per case")) results.push({ name: "kv is fresh per case", ...(await test_kv_is_fresh_per_case()) });
   if (want("a stubbed operation answers; the rest reach the double")) results.push({ name: "a stubbed operation answers; the rest reach the double", ...(await test_a_stubbed_operation_answers__the_rest_reach_the_double()) });
   if (want("a stubbed fetch answers for the network")) results.push({ name: "a stubbed fetch answers for the network", ...(await test_a_stubbed_fetch_answers_for_the_network()) });
+  if (want("a fetch double sees the request's headers")) results.push({ name: "a fetch double sees the request's headers", ...(await test_a_fetch_double_sees_the_request_s_headers()) });
   if (want("an unstubbed fetch faults rather than reach the network")) results.push({ name: "an unstubbed fetch faults rather than reach the network", ...(await test_an_unstubbed_fetch_faults_rather_than_reach_the_network()) });
   if (want("the doubles hold at the integration tier")) results.push({ name: "the doubles hold at the integration tier", ...(await test_the_doubles_hold_at_the_integration_tier()) });
   return results;

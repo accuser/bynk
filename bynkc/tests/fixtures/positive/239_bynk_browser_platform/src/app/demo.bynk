@@ -14,6 +14,7 @@ service demo {
       url: url,
       contentType: None,
       authorization: tok,
+      headers: Map.empty(),
       body: None,
     }
     let res <- Fetch.send(req)
