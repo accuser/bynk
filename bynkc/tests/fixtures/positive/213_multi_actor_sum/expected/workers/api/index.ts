@@ -12,6 +12,7 @@ export default {
     const method = request.method;
     const surface = compose(env);
     const __security_api: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
@@ -24,6 +25,7 @@ export default {
       {
         const __m = __matchPath("/notes/:id", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /notes/:id";
           const __raw_id = __m.params["id"];
           const id = __raw_id;
           const result = await surface.http_GET_notes_Param_id(request, id);
@@ -37,7 +39,8 @@ export default {
         return __applySecurityHeaders(__res, __security_api);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`api ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },
