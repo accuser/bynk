@@ -38,12 +38,15 @@ pub enum Comment {
     /// doc's is.
     OrphanDoc(String),
     /// #1884: a blank line after a `--` comment, before the next comment or
-    /// the declaration. Recorded only in the leading and closing comments of a
+    /// the declaration. Recorded only where canonical style sets declarations
+    /// apart with blank lines: in the leading and closing comments of a
     /// unit-level declaration (an item, a `uses`/`consumes`/`exports` clause,
-    /// the unit header), where it keeps a comment that is separated from the
-    /// declaration below from reading as describing it. In a body, canonical
-    /// style has no blank lines, so the parser drops it. Several blank lines
-    /// are one entry.
+    /// the unit header), and of a service's sections and handlers or an agent's
+    /// invariants, transitions and handlers. There it keeps a comment that is
+    /// separated from the declaration below from reading as describing it.
+    /// Elsewhere (statements, record fields, capability ops, policy fields,
+    /// store fields) style has no blank lines, so the parser drops it. Several
+    /// blank lines are one entry.
     Blank,
 }
 

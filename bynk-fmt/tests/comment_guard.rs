@@ -703,6 +703,21 @@ fn a_comment_without_a_blank_line_or_in_a_body_stays_attached() {
             "suite demo.t { -- the cases\n\n  case \"x\" {\n    expect 1 == 1\n  }\n}\n",
             "{\n\t-- the cases\n\tcase \"x\" {\n",
         ),
+        (
+            "capability op",
+            "context c\n\ncapability K {\n  fn a() -> Effect[Int]\n  -- the b\n\n  fn b() -> Effect[Int]\n}\n",
+            "\tfn a() -> Effect[Int]\n\t-- the b\n\tfn b() -> Effect[Int]\n",
+        ),
+        (
+            "cors field",
+            "context api\n\nservice api from http {\n  cors {\n    -- the origins\n\n    origins: [\"https://a.example.com\"],\n  }\n\n  on GET(\"/ping\") () -> Effect[HttpResult[String]] by v: Visitor {\n    Ok(\"pong\")\n  }\n}\n",
+            "\t\t-- the origins\n\t\torigins: ",
+        ),
+        (
+            "second store field",
+            "context c\n\nagent Meter {\n  key id: String\n\n  store totals: Cell[Int]\n  -- the flag\n\n  store active: Cell[Bool]\n\n  on call get() -> Effect[Int] {\n    totals.get()\n  }\n}\n",
+            "\tstore totals: Cell[Int]\n\t-- the flag\n\tstore active: Cell[Bool]\n",
+        ),
     ] {
         let out = format_idempotent(name, source);
         assert!(

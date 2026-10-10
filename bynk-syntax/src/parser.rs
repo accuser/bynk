@@ -99,7 +99,8 @@ impl TriviaTable {
 ///
 /// A blank line after a leading comment on its own line, before the next
 /// comment or content token, is recorded as a [`Comment::Blank`] (#1884). Only
-/// a unit-level declaration keeps it: see [`Parser::take_leading_trivia`].
+/// a declaration that canonical style sets apart with blank lines keeps it: see
+/// [`Parser::take_leading_trivia`].
 fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
     let mut filtered: Vec<Token> = Vec::with_capacity(tokens.len());
     let mut table = TriviaTable::default();
@@ -757,7 +758,8 @@ impl<'a> Parser<'a> {
     ///
     /// For a slot in a body: canonical style has no blank lines there, so a
     /// [`Comment::Blank`] is dropped and the comments stay attached to what
-    /// follows. A unit-level declaration keeps it, through
+    /// follows. A declaration set apart by blank lines (one at unit level, or a
+    /// service's or agent's section or handler) keeps it, through
     /// [`Self::take_unit_leading_trivia`].
     fn take_leading_trivia(&mut self) -> Vec<Comment> {
         let mut comments = self.take_unit_leading_trivia();
@@ -765,7 +767,7 @@ impl<'a> Parser<'a> {
         comments
     }
 
-    /// [`Self::take_leading_trivia`] for a unit-level slot, keeping each
+    /// [`Self::take_leading_trivia`] for a slot set apart by blank lines, keeping each
     /// [`Comment::Blank`] (#1884).
     fn take_unit_leading_trivia(&mut self) -> Vec<Comment> {
         self.trivia.take_leading(self.pos)
@@ -1094,8 +1096,10 @@ impl<'a> Parser<'a> {
     /// The doc comes back as a [`DocLead`], which records where it sat among
     /// the comments, so an orphan can be kept in place ([`keep_orphan`]).
     ///
-    /// For a unit-level declaration, which keeps a blank line after a comment
-    /// (#1884); [`Self::collect_body_item_lead`] is the body-slot form.
+    /// For a declaration set apart by blank lines (a unit-level one, or a
+    /// service's or agent's section or handler), which keeps a blank line after
+    /// a comment (#1884); [`Self::collect_body_item_lead`] is the form for a
+    /// body whose items have no blank lines between them.
     fn collect_item_lead(&mut self) -> (Vec<Comment>, Option<DocLead>) {
         self.collect_lead(Self::take_unit_leading_trivia)
     }

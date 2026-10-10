@@ -362,7 +362,7 @@ The Bynk formatter applies canonical style to source files.
 
 Specifically:
 - Comments before a top-level declaration go above the declaration in the formatted output (with the doc block, if any, between the comment and the declaration).
-- At the top level (between unit-level declarations, `uses`/`consumes`/`exports` clauses included, and between the unit header and the first of them), a blank line after a comment on its own line is kept, collapsed to one: a comment set apart from the declaration below stays apart, and does not read as describing it (#1884). A comment directly above a declaration stays attached. Inside a body there are no blank lines, so there a comment always attaches to what follows.
+- At the top level (between unit-level declarations, `uses`/`consumes`/`exports` clauses included, and between the unit header and the first of them), a blank line after a comment on its own line is kept, collapsed to one: a comment set apart from the declaration below stays apart, and does not read as describing it (#1884). A comment directly above a declaration stays attached. The same holds inside a service or agent body, between the sections and handlers that are set apart by a blank line. Where items have no blank lines between them (statements, record fields, capability ops, policy fields, `store` fields), a comment always attaches to what follows.
 - Comments at the end of a line stay on that line (`expr  -- note`).
 - Comments on their own line within a block preserve their position relative to surrounding statements.
 - Multi-line groups of comments stay together.
