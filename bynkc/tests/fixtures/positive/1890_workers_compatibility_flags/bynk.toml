@@ -1,0 +1,7 @@
+[project]
+name = "workers-compatibility-flags"
+version = "0.1.0"
+
+# #1890: appended after the default `global_fetch_strictly_public`.
+[workers]
+compatibility_flags = ["nodejs_compat"]

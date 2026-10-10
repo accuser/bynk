@@ -14,6 +14,45 @@ use crate::project::{UnitTable, worker_dir_name};
 /// the workerd smokes pass on the new date.
 pub const COMPATIBILITY_DATE: &str = "2026-07-01";
 
+/// #1890: the compatibility flags every emitted Worker carries, ahead of the
+/// project's own (`bynk.toml`'s `[workers] compatibility_flags`).
+///
+/// `global_fetch_strictly_public` makes `fetch()` to a URL go out over the
+/// public internet even when the URL is another Worker on the same account
+/// or zone. Without it Cloudflare refuses such a fetch (error 1042, or a
+/// fast `404` from a `workers.dev` sibling), so a Bynk `Fetch` to a sibling
+/// service's public URL failed where the same URL worked from outside. In
+/// Bynk, `Fetch` to a URL means over the public internet, which is exactly
+/// this flag's behaviour. Worker-to-Worker calls inside one project use
+/// Service Bindings, which the flag leaves alone.
+///
+/// Reviewed with [`COMPATIBILITY_DATE`] (`design/bynk-release-discipline.md`,
+/// Part 3): a date bump can turn a flag on by default, which makes it
+/// redundant here.
+pub const DEFAULT_COMPATIBILITY_FLAGS: &[&str] = &["global_fetch_strictly_public"];
+
+/// #1890: the flags a Worker's `wrangler.toml` carries, and the duplicates
+/// dropped on the way. [`DEFAULT_COMPATIBILITY_FLAGS`] come first, then
+/// `extra` (the manifest's list) in order. A name already present, whether a
+/// default or earlier in `extra`, is dropped and returned in the second list,
+/// once per extra occurrence, for the caller to warn about. Names are not
+/// otherwise checked.
+pub fn compatibility_flags(extra: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut flags: Vec<String> = DEFAULT_COMPATIBILITY_FLAGS
+        .iter()
+        .map(|f| f.to_string())
+        .collect();
+    let mut duplicates = Vec::new();
+    for flag in extra {
+        if flags.contains(flag) {
+            duplicates.push(flag.clone());
+        } else {
+            flags.push(flag.clone());
+        }
+    }
+    (flags, duplicates)
+}
+
 /// #1732: the oldest wrangler whose bundled `workerd` serves
 /// [`COMPATIBILITY_DATE`]. An older `workerd` refuses a newer date outright
 /// (`wrangler dev` exits: "This Worker requires compatibility date …"), so
@@ -84,6 +123,10 @@ pub(crate) fn emit_wrangler_toml(
     // ast` footprint (#1191) intact; the map's own element type would have
     // reintroduced exactly the literal spelling that slice removed.
     uses_emit: bool,
+    // #1890: the merged flag list, [`compatibility_flags`]' first result.
+    // The same for every Worker in the project, so the caller merges (and
+    // warns about duplicates) once, not per Worker.
+    flags: &[String],
 ) -> TomlDocument {
     let name = worker_dir_name(context);
     let mut doc = TomlDocument::new(
@@ -92,6 +135,10 @@ pub(crate) fn emit_wrangler_toml(
             TomlEntry::kv("name", TomlValue::str(name)),
             TomlEntry::kv("main", TomlValue::str("index.ts")),
             TomlEntry::kv("compatibility_date", TomlValue::str(COMPATIBILITY_DATE)),
+            TomlEntry::kv(
+                "compatibility_flags",
+                TomlValue::Array(flags.iter().map(TomlValue::str).collect()),
+            ),
         ],
     );
 
@@ -339,6 +386,7 @@ mod patch_tests {
 name = \"ops-hub\"
 main = \"index.ts\"
 compatibility_date = \"2026-07-01\"
+compatibility_flags = [\"global_fetch_strictly_public\"]
 
 [[services]]
 binding = \"PAYMENT\"
@@ -419,5 +467,64 @@ max_batch_size = 10
     #[test]
     fn materialise_kv_namespace_id_rejects_invalid_toml() {
         assert!(materialise_kv_namespace_id("not = valid = toml = at = all", "abc123").is_err());
+    }
+}
+
+#[cfg(test)]
+mod compatibility_flags_tests {
+    use super::*;
+
+    fn strings(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// #1890: the default set alone, when the manifest adds nothing.
+    #[test]
+    fn the_default_is_global_fetch_strictly_public() {
+        assert_eq!(
+            DEFAULT_COMPATIBILITY_FLAGS,
+            ["global_fetch_strictly_public"]
+        );
+        let (flags, duplicates) = compatibility_flags(&[]);
+        assert_eq!(flags, ["global_fetch_strictly_public"]);
+        assert!(duplicates.is_empty());
+    }
+
+    /// #1890: the manifest's flags follow the default, in manifest order;
+    /// names are not checked.
+    #[test]
+    fn extra_flags_follow_the_default_in_order() {
+        let (flags, duplicates) =
+            compatibility_flags(&strings(&["nodejs_compat", "a_future_flag"]));
+        assert_eq!(
+            flags,
+            [
+                "global_fetch_strictly_public",
+                "nodejs_compat",
+                "a_future_flag"
+            ]
+        );
+        assert!(duplicates.is_empty());
+    }
+
+    /// #1890: a repeat, of a default or of an earlier extra, is dropped and
+    /// reported once per repeat.
+    #[test]
+    fn duplicates_are_dropped_and_reported() {
+        let (flags, duplicates) = compatibility_flags(&strings(&[
+            "nodejs_compat",
+            "global_fetch_strictly_public",
+            "nodejs_compat",
+            "nodejs_compat",
+        ]));
+        assert_eq!(flags, ["global_fetch_strictly_public", "nodejs_compat"]);
+        assert_eq!(
+            duplicates,
+            [
+                "global_fetch_strictly_public",
+                "nodejs_compat",
+                "nodejs_compat"
+            ]
+        );
     }
 }

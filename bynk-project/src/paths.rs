@@ -119,10 +119,17 @@ pub enum ProjectPathsError {
     UnknownTable(String),
     /// #1665: a key at the top level of `bynk.toml`, outside any table.
     TopLevelKey(String),
-    /// #1665: a key in `[project]` or `[lsp]` that the table doesn't have.
-    /// (`[paths]` reports [`Self::UnknownKey`]; `[fmt]` is checked by its own
-    /// reader, which owns its keys.)
+    /// #1665: a key in `[project]`, `[lsp]` or `[workers]` that the table
+    /// doesn't have. (`[paths]` reports [`Self::UnknownKey`]; `[fmt]` is
+    /// checked by its own reader, which owns its keys.)
     UnknownTableKey { table: &'static str, key: String },
+    /// #1890: a key that must be a list of strings holds something else: a
+    /// bare string, a number, or a list with a non-string entry
+    /// (`[workers] compatibility_flags = ["a", 1]`).
+    NotAStringList {
+        table: &'static str,
+        key: &'static str,
+    },
 }
 
 /// #1665: the tables `bynk.toml` may hold, each with the keys it accepts.
@@ -133,6 +140,7 @@ pub const MANIFEST_TABLES: &[(&str, &[&str])] = &[
     ("paths", &["include", "exclude"]),
     ("fmt", &[]),
     ("lsp", &["diagnostics_mode", "diagnostics_debounce_ms"]),
+    ("workers", &["compatibility_flags"]),
 ];
 
 /// Tables a user might write for a feature that is designed but not built,
@@ -237,6 +245,10 @@ impl std::fmt::Display for ProjectPathsError {
                     }
                 }
             }
+            ProjectPathsError::NotAStringList { table, key } => write!(
+                f,
+                "`[{table}]` `{key}` must be a list of strings, like `{key} = [\"nodejs_compat\"]`"
+            ),
         }
     }
 }
@@ -287,6 +299,9 @@ pub fn check_manifest_str(content: &str) -> Result<(), ProjectPathsError> {
         };
         if keys.is_empty() {
             continue;
+        }
+        if *table == "workers" {
+            workers_config_from(entries)?;
         }
         for key in entries.keys() {
             if !keys.contains(&key.as_str()) {
@@ -359,6 +374,105 @@ pub fn try_read_project_paths_with(
         include = ProjectPaths::conventional(project_root).include;
     }
     Ok(ProjectPaths { include, exclude })
+}
+
+/// #1890: the project's `[workers]` table, settings for the Cloudflare
+/// Workers a `workers`-target build emits.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkersConfig {
+    /// Extra Cloudflare compatibility flags, in manifest order, for every
+    /// Worker's `wrangler.toml`, after the compiler's default set. The names
+    /// pass through unvalidated, since Cloudflare adds flags faster than a
+    /// list here could follow. Duplicates are kept here: the emitter drops
+    /// them and warns.
+    pub compatibility_flags: Vec<String>,
+}
+
+/// Read `bynk.toml`'s `[workers]` table, honouring `overlay` for `bynk.toml`
+/// the way [`try_read_project_paths_with`] does. No manifest, or no
+/// `[workers]` table, is the empty [`WorkersConfig`]. A manifest that doesn't
+/// parse is [`ProjectPathsError::Malformed`], and a `compatibility_flags`
+/// that isn't a list of strings is [`ProjectPathsError::NotAStringList`]. The
+/// shape is checked here as well as in [`check_manifest`], because some
+/// callers (the e2e harness) read the table without the whole-manifest check.
+pub fn try_read_workers_config_with(
+    project_root: &Path,
+    overlay: &HashMap<PathBuf, String>,
+) -> Result<WorkersConfig, ProjectPathsError> {
+    let toml_path = project_root.join("bynk.toml");
+    let Ok(content) = read_source(&toml_path, overlay) else {
+        return Ok(WorkersConfig::default());
+    };
+    let doc = content
+        .parse::<toml::Table>()
+        .map_err(|_| ProjectPathsError::Malformed)?;
+    match doc.get("workers").and_then(|v| v.as_table()) {
+        Some(t) => workers_config_from(t),
+        None => Ok(WorkersConfig::default()),
+    }
+}
+
+/// [`try_read_workers_config_with`], reading `bynk.toml` from disk.
+pub fn try_read_workers_config(project_root: &Path) -> Result<WorkersConfig, ProjectPathsError> {
+    let toml_path = project_root.join("bynk.toml");
+    let overlay = match fs::read_to_string(&toml_path) {
+        Ok(text) => HashMap::from([(toml_path, text)]),
+        Err(_) => HashMap::new(),
+    };
+    try_read_workers_config_with(project_root, &overlay)
+}
+
+/// #1890: the `bynk.project.duplicate_compatibility_flag` warning for one
+/// flag `[workers] compatibility_flags` repeats, against `manifest` (the
+/// project's `bynk.toml`). `default` says the repeat is of a flag every
+/// Worker already has, rather than of an earlier entry in the list. Built
+/// here, with the manifest's other diagnostics, rather than in `bynk-emit`,
+/// which only finds the duplicate while merging the list (R3.5 keeps
+/// diagnostics out of emission).
+pub fn duplicate_compatibility_flag_warning(
+    flag: &str,
+    default: bool,
+    manifest: PathBuf,
+) -> crate::AttributedError {
+    let message = if default {
+        format!(
+            "`[workers] compatibility_flags` lists `{flag}`, which every Bynk Worker already has"
+        )
+    } else {
+        format!("`[workers] compatibility_flags` lists `{flag}` more than once")
+    };
+    let mut error = bynk_syntax::CompileError::new(
+        "bynk.project.duplicate_compatibility_flag",
+        bynk_syntax::span::Span::default(),
+        message,
+    );
+    error
+        .notes
+        .push("the duplicate is dropped; remove it from `bynk.toml`".to_string());
+    crate::AttributedError {
+        source_path: Some(manifest),
+        error,
+    }
+}
+
+/// The `[workers]` table's typed content. Only the value shapes are checked
+/// here; an unknown key is [`check_manifest_str`]'s to refuse.
+fn workers_config_from(table: &toml::Table) -> Result<WorkersConfig, ProjectPathsError> {
+    let not_a_list = || ProjectPathsError::NotAStringList {
+        table: "workers",
+        key: "compatibility_flags",
+    };
+    let compatibility_flags = match table.get("compatibility_flags") {
+        None => Vec::new(),
+        Some(toml::Value::Array(items)) => items
+            .iter()
+            .map(|v| v.as_str().map(str::to_owned).ok_or_else(not_a_list))
+            .collect::<Result<_, _>>()?,
+        Some(_) => return Err(not_a_list()),
+    };
+    Ok(WorkersConfig {
+        compatibility_flags,
+    })
 }
 
 pub fn commons_dir_for(name: &str) -> PathBuf {
@@ -839,7 +953,7 @@ mod manifest_tests {
         check_manifest_str(
             "[project]\nname = \"p\"\nversion = \"0.1.0\"\n\n[paths]\ninclude = [\"src\"]\nexclude = []\n\n\
              [fmt]\nindent = \"tab\"\nmax_line_width = 100\n\n[lsp]\ndiagnostics_mode = \"live\"\n\
-             diagnostics_debounce_ms = 300\n",
+             diagnostics_debounce_ms = 300\n\n[workers]\ncompatibility_flags = [\"nodejs_compat\"]\n",
         )
         .expect("accepted");
         check_manifest_str("").expect("an empty manifest is accepted");
@@ -903,6 +1017,56 @@ mod manifest_tests {
     #[test]
     fn fmt_keys_are_left_to_the_formatter() {
         check_manifest_str("[fmt]\nanything = 1\n").expect("not this check's concern");
+    }
+
+    /// #1890: `[workers] compatibility_flags` must be a list of strings; the
+    /// names themselves pass through.
+    #[test]
+    fn workers_compatibility_flags_must_be_a_list_of_strings() {
+        let msg = "`[workers]` `compatibility_flags` must be a list of strings";
+        assert!(err("[workers]\ncompatibility_flags = \"nodejs_compat\"\n").contains(msg));
+        assert!(err("[workers]\ncompatibility_flags = [\"a\", 1]\n").contains(msg));
+        assert!(err("[workers]\ncompatibility_flags = [[\"a\"]]\n").contains(msg));
+        assert!(
+            err("[workers]\ncompatibility_flag = []\n")
+                .contains("did you mean `compatibility_flags`?")
+        );
+        check_manifest_str("[workers]\ncompatibility_flags = [\"no_such_flag_yet\"]\n")
+            .expect("flag names are not validated");
+        check_manifest_str("[workers]\n").expect("an empty `[workers]` is accepted");
+    }
+
+    #[test]
+    fn workers_config_reads_the_flags_in_order() {
+        let root = PathBuf::from("/nonexistent-bynk-test-root-1890");
+        let read = |manifest: &str| {
+            let overlay = HashMap::from([(root.join("bynk.toml"), manifest.to_string())]);
+            try_read_workers_config_with(&root, &overlay)
+        };
+        assert_eq!(
+            read("[workers]\ncompatibility_flags = [\"b\", \"a\", \"b\"]\n")
+                .unwrap()
+                .compatibility_flags,
+            vec!["b", "a", "b"],
+            "order and duplicates are kept; deduplication is the emitter's"
+        );
+        assert_eq!(
+            read("[project]\nname = \"p\"\n").unwrap(),
+            WorkersConfig::default()
+        );
+        assert_eq!(
+            try_read_workers_config_with(&root, &HashMap::new()).unwrap(),
+            WorkersConfig::default(),
+            "no manifest at all"
+        );
+        assert!(matches!(
+            read("[workers]\ncompatibility_flags = [true]\n"),
+            Err(ProjectPathsError::NotAStringList { .. })
+        ));
+        assert!(matches!(
+            read("[workers\n"),
+            Err(ProjectPathsError::Malformed)
+        ));
     }
 
     #[test]

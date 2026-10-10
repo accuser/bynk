@@ -2,6 +2,7 @@
 name = "shop-gate"
 main = "index.ts"
 compatibility_date = "2026-07-01"
+compatibility_flags = ["global_fetch_strictly_public"]
 
 [[services]]
 binding = "SHOP_TOKENS"

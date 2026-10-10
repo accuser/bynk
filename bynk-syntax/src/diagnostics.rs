@@ -37,7 +37,7 @@ pub struct DiagnosticInfo {
     /// instead of hardcoding its own copy of the (small) warning set —
     /// `tests/diagnostics_registry.rs` asserts the two never drift apart.
     /// Defaults to `Error` via the crate-private `d`/`dg` constructors; only
-    /// the crate-private `warn` helper's six call sites override it.
+    /// the crate-private `warn` helper's call sites override it.
     pub severity: Severity,
 }
 
@@ -1301,6 +1301,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A sum-type or enum variant name is not capitalised.",
         &["sum_variant", "enum_type"],
     ),
+    warn(d(
+        "bynk.project.duplicate_compatibility_flag",
+        "`bynk.toml`'s `[workers] compatibility_flags` lists a flag twice, or one every Bynk Worker already has; the duplicate is dropped (warning).",
+    )),
     d(
         "bynk.project.file_and_directory",
         "A unit exists as both a file and a directory.",
@@ -2363,7 +2367,7 @@ const fn dg(
 }
 
 /// Downgrades a [`d`]/[`dg`]-built entry to `Warning` severity (ADR 0117) —
-/// non-failing, surfaced alongside a clean build. The seven call sites here are
+/// non-failing, surfaced alongside a clean build. Its call sites here are
 /// the single source of truth [`crate::error::Severity::for_error`] reads.
 const fn warn(mut info: DiagnosticInfo) -> DiagnosticInfo {
     info.severity = Severity::Warning;
