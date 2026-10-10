@@ -169,6 +169,12 @@ fn block(stmts: Vec<TsStmt>) -> TsStmt {
     TsStmt::block(stmts, None)
 }
 
+/// #1825: `__route = "<what>";`, naming the dispatch `fetch`'s fault log
+/// reports.
+fn set_fault_route(what: String) -> TsStmt {
+    TsStmt::assign(ident("__route"), str_lit(what), None)
+}
+
 fn try_catch_stmt(
     try_stmts: Vec<TsStmt>,
     catch_param: Option<&str>,
@@ -692,7 +698,8 @@ pub(crate) fn emit_worker_entry(
             continue;
         };
 
-        let mut case_body: Vec<TsStmt> = Vec::new();
+        // #1825: names the dispatch for the fault log below.
+        let mut case_body: Vec<TsStmt> = vec![set_fault_route(format!("call {sname}"))];
         // v0.177 (#643): the deploy-skew check runs **before the body is read**.
         //
         // The caller stamps a hash of its compiled view of this contract; this
@@ -727,19 +734,42 @@ pub(crate) fn emit_worker_entry(
                     vec![str_lit("X-Bynk-Contract")],
                 ),
             ));
+            // #1826: the callee decides, so it logs the skew, by name and with
+            // both hashes, before refusing: otherwise the diagnosis existed only
+            // in a response body passed between two Workers.
+            let skew = |actual: TsExpr| {
+                vec![
+                    ("service".to_string(), str_lit(sname.to_string())),
+                    ("expected".to_string(), str_lit(expected.clone())),
+                    ("actual".to_string(), actual),
+                ]
+            };
+            // #1826 review: `/_bynk/call/` is reachable from outside, and
+            // nothing about the request is trusted yet, so the header is
+            // logged bounded to a hash's 16 characters: an operator loses
+            // nothing, and a sender can't write arbitrary text to the log.
+            // The 409 body echoes it unbounded, to the sender who sent it.
+            let logged_actual = method_call(
+                call(ident("globalThis.String"), vec![ident("__contract")]),
+                "slice",
+                vec![num_lit("0"), num_lit("16")],
+            );
             case_body.push(if_(
                 strict_neq(ident("__contract"), str_lit(expected.clone())),
-                return_(Some(json_response(
-                    json_error_kind(
-                        "ContractMismatch",
+                block(vec![
+                    expr_stmt(method_call(
+                        ident("globalThis.console"),
+                        "error",
                         vec![
-                            ("service".to_string(), str_lit(sname.to_string())),
-                            ("expected".to_string(), str_lit(expected.clone())),
-                            ("actual".to_string(), ident("__contract")),
+                            str_lit(format!("ContractMismatch {context} call {sname}")),
+                            TsExpr::object(skew(logged_actual)),
                         ],
-                    ),
-                    409,
-                ))),
+                    )),
+                    return_(Some(json_response(
+                        json_error_kind("ContractMismatch", skew(ident("__contract"))),
+                        409,
+                    ))),
+                ]),
             ));
         }
         case_body.push(const_(
@@ -785,6 +815,9 @@ pub(crate) fn emit_worker_entry(
     if !ws_open_routes.is_empty() {
         let mut ws_body: Vec<TsStmt> = Vec::new();
         for (sname, h) in &ws_open_routes {
+            // #1825 review: the auth seam and the DO forward run in the `try`
+            // too, so name the dispatch for the fault log.
+            ws_body.push(set_fault_route(format!("ws {sname}")));
             let mut args: Vec<TsExpr> = vec![ident("request")];
             for p in &h.params {
                 let pn = &p.name.name;
@@ -919,6 +952,9 @@ pub(crate) fn emit_worker_entry(
             let dser_payload =
                 deserialise_call(&h.params[0].type_ref, "payload", "$.payload", &runtime_use);
             let case_body = vec![
+                // #1825 review: a subscriber that throws is a fault the
+                // publisher's fan-out retries; name it for the log.
+                set_fault_route(format!("event {sname}")),
                 const_("__r_payload", dser_payload),
                 if_(
                     strict_eq(member(ident("__r_payload"), "tag"), str_lit("Err")),
@@ -1110,10 +1146,35 @@ pub(crate) fn emit_worker_entry(
 
     try_body.push(return_(Some(text_response("Not Found", 404))));
 
+    // #1825: a fault answers a bare 500, never leaking the error to the
+    // client (#184), but it is logged here first, with the context and the
+    // dispatch that faulted: the route *pattern* or `call <service>`, never
+    // the request, so no key or value reaches the log. Caught, it is no
+    // uncaught exception the platform would record, so without this a fault
+    // left no trace at all.
+    fetch_body.push(TsStmt::let_stmt(
+        TsBindingName::Ident("__route".to_string()),
+        Some(TsType::named("string")),
+        Some(str_lit("request")),
+        None,
+    ));
     fetch_body.push(try_catch_stmt(
         try_body,
-        None,
-        vec![return_(Some(text_response("Internal Server Error", 500)))],
+        Some("e"),
+        vec![
+            expr_stmt(method_call(
+                ident("globalThis.console"),
+                "error",
+                vec![
+                    TsExpr::template_lit(
+                        vec![format!("{context} "), " faulted".to_string()],
+                        vec![ident("__route")],
+                    ),
+                    ident("e"),
+                ],
+            )),
+            return_(Some(text_response("Internal Server Error", 500))),
+        ],
     ));
 
     let mut default_entries: Vec<TsObjectEntry> = vec![TsObjectEntry::Method {
@@ -1820,7 +1881,12 @@ fn emit_http_route_dispatch(
         )
     };
 
-    let mut guarded: Vec<TsStmt> = Vec::new();
+    // #1825: names the route, by its pattern, for the fault log.
+    let mut guarded: Vec<TsStmt> = vec![set_fault_route(format!(
+        "{} {}",
+        route.method.as_str(),
+        route.path
+    ))];
 
     // v0.142 (ADR 0165): the request-body ceiling. A route with an effective cap
     // rejects an oversized body with a synthesised `413` derived from the declared
@@ -2550,6 +2616,15 @@ service calc {
             "{ts}"
         );
         assert!(ts.contains("{ status: 409,"), "{ts}");
+        // #1826: logged before the refusal, the sender's header bounded.
+        assert!(
+            ts.contains("globalThis.console.error(\"ContractMismatch demo.shop call calc\""),
+            "{ts}"
+        );
+        assert!(
+            ts.contains("actual: globalThis.String(__contract).slice(0, 16)"),
+            "{ts}"
+        );
     }
 
     #[test]
