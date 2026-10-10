@@ -758,6 +758,17 @@ fn synthetic_render_fn() -> FnDecl {
     }
 }
 
+/// #1824: whether `f` is the synthetic `render` [`build_unit_table`] registers
+/// for a messages-bearing commons. It stands in for `bynk.locale`'s `render`,
+/// and its `LocaleTag`/`Message` mean `bynk.locale`'s, whatever the commons
+/// itself declares under those names: the emitted bundle names the stdlib
+/// types (#1697).
+pub fn is_synthetic_render(f: &FnDecl) -> bool {
+    matches!(&f.name, FnName::Free(n) if n.name == "render")
+        && f.span == Span::default()
+        && f.body.tail.id == ExprId::SYNTHETIC
+}
+
 /// For each name declared in the unit (type, fn, method, agent), record which
 /// source file declared it. Used by the emitter to render relative imports.
 #[derive(Clone)]
