@@ -90,7 +90,8 @@ A unit whose files share its qualified name
 at most one module doc across all of them: when two or more of its files carry
 one, each such file is rejected (`bynk.project.duplicate_module_doc`), and the
 diagnostic names every such file. A `suite` is not part of the unit it targets,
-so a suite's own doc-block is not counted.
+so a suite's own doc-block is not counted. Nor is a doc-block whose content is
+empty or only whitespace: it documents nothing, so it is not a module doc.
 
 > [!NOTE]
 > The rule exists so that a unit's documentation is one piece of prose,

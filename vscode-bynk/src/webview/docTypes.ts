@@ -23,9 +23,9 @@ export interface DocEntry {
   markdown: string;
   documented: boolean;
   range: Range;
-  /** #1885: the document `range` is in, when the page merges a multi-file
-   *  unit. Absent on a single-file page: the range is in the payload's `uri`. */
-  uri?: string;
+  /** #1885: the document `range` is in. Always sent: the page merges a
+   *  unit's files, so it may differ from the payload's `uri`. */
+  uri: string;
 }
 
 export interface DocModel {

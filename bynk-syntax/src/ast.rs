@@ -265,6 +265,16 @@ impl SourceUnit {
         }
     }
 
+    /// The doc-block above this file's unit header when it carries prose:
+    /// [`SourceUnit::documentation`], with an empty or all-whitespace block
+    /// treated as absent. This is what "a file carries a module doc" means
+    /// for the one-module-doc-per-unit rule and for the tooling that shows the
+    /// doc (#1885): an empty `---`/`---` pair documents nothing, so it neither
+    /// counts against the rule nor shadows a sibling file's real doc.
+    pub fn module_doc(&self) -> Option<&str> {
+        self.documentation().filter(|d| !d.trim().is_empty())
+    }
+
     pub fn kind_name(&self) -> &'static str {
         match self {
             SourceUnit::Commons(_) => "commons",

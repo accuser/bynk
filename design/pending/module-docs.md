@@ -21,7 +21,10 @@ files open with `--` comments that are really module docs.
 - **D1: at most one module doc per unit.** When two or more files of a unit
   carry a module doc, each such file gets `bynk.project.duplicate_module_doc`
   at its header name. The message names every file that carries one, with
-  paths `/`-joined on every platform. Alternatives rejected: concatenating in
+  paths `/`-joined on every platform. A block that is empty or only
+  whitespace documents nothing, so it is not a module doc: it neither counts
+  against the rule nor shadows a sibling's real doc on hover or on the page.
+  Alternatives rejected: concatenating in
   file order (the result depends on file names and reads oddly), and
   designating a file by name, such as one matching the unit (a convention
   dressed up as a rule).

@@ -51,13 +51,32 @@ consumes shop
 type OrderId = String
 ";
 
-/// A scratch project on disk, analysed. Returns the analysis and the root.
+/// `cart.bynk` with an **empty** doc-block above its header: it documents
+/// nothing, so it is not a module doc.
+const CART_EMPTY_DOC: &str = "\
+---
+---
+context shop
+
+uses lib.catalog
+
+fn catalog() -> Int { 1 }
+
+type CartId = String
+";
+
+/// The scratch project, analysed. Returns the analysis and the root.
 fn analysed(tag: &str) -> (ProjectDiagnostics, PathBuf) {
+    analysed_with(tag, CART)
+}
+
+/// The scratch project with `cart` as `shop/cart.bynk`, on disk and analysed.
+fn analysed_with(tag: &str, cart: &str) -> (ProjectDiagnostics, PathBuf) {
     let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("bynk-module-docs-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     for (rel, text) in [
-        ("shop/cart.bynk", CART),
+        ("shop/cart.bynk", cart),
         ("shop/pay.bynk", PAY),
         ("lib/catalog.bynk", CATALOG),
         ("orders.bynk", ORDERS),
@@ -134,16 +153,66 @@ fn hover_at(
     })
 }
 
+/// Every error-severity diagnostic in the analysed project.
+fn errors(r: &ProjectDiagnostics) -> Vec<String> {
+    r.files
+        .iter()
+        .flat_map(|f| f.diagnostics.iter())
+        .filter(|d| d.severity == bynk_syntax::error::Severity::Error)
+        .map(|d| format!("{d:?}"))
+        .collect()
+}
+
 #[test]
 fn the_scratch_project_analyses_cleanly() {
     let (r, _) = analysed("clean");
-    let diags: Vec<_> = r
+    let diags = errors(&r);
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+/// An empty `---`/`---` block above a header documents nothing, so it is not a
+/// module doc (#1900 review). It does not count against the one-doc rule: an
+/// empty block in `cart.bynk` beside the real doc in `pay.bynk` analyses
+/// cleanly.
+#[test]
+fn an_empty_doc_block_is_not_a_module_doc_for_the_rule() {
+    let (r, _) = analysed_with("empty-rule", CART_EMPTY_DOC);
+    let diags = errors(&r);
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+/// Nor does an empty block shadow a sibling's real doc on hover, though
+/// `cart.bynk` sorts before `pay.bynk` and is searched first.
+#[test]
+fn an_empty_doc_block_does_not_shadow_a_siblings_doc_on_hover() {
+    let (r, root) = analysed_with("empty-hover", CART_EMPTY_DOC);
+    let (_, text) = file(&r, "orders.bynk");
+    let offset = at(text, "consumes shop", "shop");
+    let hover = hover_at(&r, &root, "orders.bynk", offset, true).expect("hover on consumes");
+    assert!(hover.contains("The shop: carts and payments."), "{hover}");
+}
+
+/// Nor on the documentation page, where `cart.bynk`'s entries come first.
+#[test]
+fn an_empty_doc_block_does_not_shadow_a_siblings_doc_on_the_page() {
+    let (r, root) = analysed_with("empty-page", CART_EMPTY_DOC);
+    let snapshots: HashMap<PathBuf, String> = r
         .files
         .iter()
-        .flat_map(|f| f.diagnostics.iter().map(move |d| (&f.source_path, d)))
-        .filter(|(_, d)| d.severity == bynk_syntax::error::Severity::Error)
+        .map(|f| (f.source_path.clone(), f.text.clone()))
         .collect();
-    assert!(diags.is_empty(), "{diags:?}");
+    let (rel, _) = file(&r, "shop/cart.bynk");
+    let wire = bynk_lsp::documentation_request::documentation_model_for(
+        rel,
+        &snapshots,
+        &r.unit_sources,
+        &root,
+    )
+    .expect("a page");
+    assert_eq!(
+        wire.unit_doc.as_deref(),
+        Some("The shop: carts and payments.")
+    );
 }
 
 /// The header name in `cart.bynk` shows the module doc that lives in its
@@ -233,22 +302,9 @@ fn the_documentation_page_merges_a_multi_file_context() {
         assert_eq!(names, ["catalog", "CartId", "Amount"], "{name}");
         let amount = wire.entries.iter().find(|e| e.name == "Amount").unwrap();
         let cart_id = wire.entries.iter().find(|e| e.name == "CartId").unwrap();
+        assert!(amount.uri.path().ends_with("shop/pay.bynk"), "{amount:?}");
         assert!(
-            amount
-                .uri
-                .as_ref()
-                .unwrap()
-                .path()
-                .ends_with("shop/pay.bynk"),
-            "{amount:?}"
-        );
-        assert!(
-            cart_id
-                .uri
-                .as_ref()
-                .unwrap()
-                .path()
-                .ends_with("shop/cart.bynk"),
+            cart_id.uri.path().ends_with("shop/cart.bynk"),
             "{cart_id:?}"
         );
         // Each range is against the entry's own file: `type Amount` is on

@@ -48,7 +48,6 @@ function wireDocLinks(container: HTMLElement): void {
 
 function renderEntry(
   md: ReturnType<typeof createMarkdownRenderer>,
-  uri: string,
   entry: DocEntry,
 ): HTMLElement {
   const section = document.createElement("section");
@@ -64,9 +63,9 @@ function renderEntry(
   name.className = "name";
   name.textContent = entry.name;
   heading.append(badge, name);
-  // #1885: on a page merged from a multi-file unit, an entry names its own
-  // file; otherwise it is in the requested document.
-  const entryUri = entry.uri ?? uri;
+  // #1885: the page merges a unit's files, so each entry names the file
+  // its range is in, which may not be the requested document.
+  const entryUri = entry.uri;
   makeClickable(heading, entryUri, entry.range);
   section.append(heading);
 
@@ -145,7 +144,7 @@ function main(): void {
   }
 
   for (const entry of model.entries) {
-    root.append(renderEntry(md, uri, entry));
+    root.append(renderEntry(md, entry));
   }
 }
 

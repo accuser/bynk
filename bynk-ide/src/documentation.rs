@@ -133,6 +133,12 @@ fn parse(text: &str) -> Option<SourceUnit> {
 /// when the file has no recognisable unit header, or is a test suite (`suite`
 /// units are not a documentation unit in Tier 1 — their `case`/`stub` members
 /// have no `describe_*` renderer, and a doc page for tests is out of scope).
+///
+/// Since #1885 the language server serves [`documentation_model_merged`]
+/// instead, so this has no production caller. It stays as the file-scoped
+/// core that needs no project: this module's unit tests pin each declaration
+/// kind's entry through it, and a host with a lone buffer (no project to merge
+/// across) can still build a page from one text.
 pub fn documentation_model(text: &str) -> Option<DocModel> {
     let unit = parse(text)?;
     let (unit_kind, unit_name, unit_span, unit_doc, items) = page_parts(&unit)?;
@@ -180,14 +186,14 @@ pub fn documentation_model_merged<'a>(
         let Some(unit) = parse(text) else {
             continue;
         };
-        let Some((kind, name, _, doc, items)) = page_parts(&unit) else {
+        let Some((kind, name, _, _, items)) = page_parts(&unit) else {
             continue;
         };
         if kind != unit_kind || name != unit_name {
             continue;
         }
         if unit_doc.is_none() {
-            unit_doc = doc.clone();
+            unit_doc = unit.module_doc().map(str::to_string);
         }
         let start = entries.len();
         for item in items {

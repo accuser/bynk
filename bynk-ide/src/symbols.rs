@@ -628,7 +628,7 @@ pub fn describe_unit<'s>(sources: impl IntoIterator<Item = &'s str>, name: &str)
         }
         kind.get_or_insert(unit.kind_name());
         if doc.is_none() {
-            doc = unit.documentation().map(str::to_string);
+            doc = unit.module_doc().map(str::to_string);
         }
         if doc.is_some() {
             break;

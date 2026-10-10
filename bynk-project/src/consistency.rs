@@ -200,7 +200,7 @@ pub fn check_group_module_docs(
         let mut documented: Vec<usize> = indices
             .iter()
             .copied()
-            .filter(|&i| parsed[i].unit.documentation().is_some())
+            .filter(|&i| parsed[i].unit.module_doc().is_some())
             .collect();
         if documented.len() < 2 {
             continue;
