@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0446](0446-consumed-unexported-type-codecs.md) | **A consumer generates a consumed context's unexported boundary types' codecs under a qualified name** (v0.315.1) — Unexported types an export reaches get local codecs named `<ns>__<Type>`, typed by the callee's namespace | Accepted (v0.315.1) |
 | [0445](0445-uses-reaches-hidden-types.md) | **An imported declaration's types resolve in its declaring scope; a type reached only that way is resolvable but not nameable** (v0.314) — close_reachable_types adds the types imported declarations reach as hidden types; a naming gate keeps uses one level for naming | Accepted (v0.314) |
 | [0444](0444-a-fault-is-claimed-not-caught.md) | **A stub's injected fault is a fault, and a case observes it with `expect <call> faults`** (v0.313) — `fails` throws and never surfaces as an `Err`; `expect <call> faults` is the test-only claim that a call throws | Accepted (v0.313) |
 | [0443](0443-agents-declared-as-durable-object-exports.md) | **Durable Object classes are declared in `exports`, not migrations** (v0.312.1) — The generated config declares every agent and fan-out class in Cloudflare's tagless `exports` map; key-value-backed Workers from ≤ 0.309.10 are a documented pre-1.0 break | Accepted (v0.312.1) |
