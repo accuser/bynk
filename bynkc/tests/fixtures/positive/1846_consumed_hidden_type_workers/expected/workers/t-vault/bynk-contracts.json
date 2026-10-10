@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "fetch": "b6c615871c2a456a"
+  },
+  "expects": {}
+}
