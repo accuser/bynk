@@ -1,0 +1,15 @@
+-- #1882 review: an exported capability with no provider is the `exports`
+-- error alone, not that and `bynk.capability.not_provided`.
+context shop.mail
+
+exports capability { Mailer }
+
+capability Mailer {
+	fn send(to: String) -> Effect[()]
+}
+
+service notify {
+	on call(to: String) -> Effect[()] given Mailer {
+		Mailer.send(to)
+	}
+}

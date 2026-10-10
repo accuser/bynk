@@ -1,1 +1,4 @@
 bynk.capability.not_provided capability `Mailer` is required here but has no provider in context `shop.mail`
+bynk.capability.not_provided capability `Clock` is required here but has no provider in context `shop.mail`
+bynk.capability.not_provided capability `Store` is required here but has no provider in context `shop.mail`
+# exact

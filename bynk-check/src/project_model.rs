@@ -2464,9 +2464,10 @@ pub fn phase_validate_capability_exports(
                                     n.name, name
                                 ),
                             )
-                            .with_note(
-                                "add a `provides {n} = …` declaration so the capability can be wired into consumers",
-                            ),
+                            .with_note(format!(
+                                "add a `provides {} = …` declaration so the capability can be wired into consumers",
+                                n.name
+                            )),
                         );
                     }
                 }
@@ -3120,6 +3121,9 @@ pub fn phase_workers_unprovided_capabilities(
         let Some(table) = unit_tables.get(name) else {
             continue;
         };
+        // #1882 review: once per capability, at its first `given`, however
+        // many handlers require it.
+        let mut reported: HashSet<String> = HashSet::new();
         for &i in indices {
             let SourceUnit::Context(ctx) = &parsed[i].unit() else {
                 continue;
@@ -3138,9 +3142,14 @@ pub fn phase_workers_unprovided_capabilities(
                 }
             }
             for cap in givens {
+                // An exported capability with no provider is already
+                // `bynk.exports.capability_not_provided` (#1882 review: no
+                // second error for the same gap).
                 if cap.context.is_some()
                     || !table.capabilities.contains_key(&cap.name.name)
                     || table.providers.contains_key(&cap.name.name)
+                    || table.exported_capabilities.contains(&cap.name.name)
+                    || !reported.insert(cap.name.name.clone())
                 {
                     continue;
                 }

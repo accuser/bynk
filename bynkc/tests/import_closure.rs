@@ -85,10 +85,21 @@ fn record(
     modules
 }
 
-/// Compiles a project fixture for `target`. `None` when a Workers build is
-/// refused only because a capability is left to the host
-/// (`bynk.capability.not_provided`, #1822): a bundle program whose host
-/// supplies the capability through `__makeSurface(deps)` is no Workers one.
+/// The bundle programs whose host supplies a capability through
+/// `__makeSurface(deps)` (#1822): a Workers build refuses them with
+/// `bynk.capability.not_provided`, so they are checked on bundle only. Named,
+/// so a new fixture refused for the same reason fails loudly instead.
+const HOST_SUPPLIED: &[&str] = &[
+    "217_field_op_index",
+    "219_given_unused_capability_warns",
+    "86_service_with_given",
+    "87_service_chained_effects",
+    "88_service_with_result_propagation",
+];
+
+/// Compiles a project fixture for `target`. `None` for a [`HOST_SUPPLIED`]
+/// fixture's Workers build, refused only because a capability is left to the
+/// host.
 fn compile_project_fixture(dir: &Path, target: BuildTarget) -> Option<bynkc::ProjectOutput> {
     let options = if dir.join("bynk.toml").exists() {
         let paths = bynkc::try_read_project_paths(dir).expect("well-formed fixture manifest");
@@ -100,7 +111,9 @@ fn compile_project_fixture(dir: &Path, target: BuildTarget) -> Option<bynkc::Pro
         Ok(out) => Some(out),
         Err(f) => {
             let errors = f.flatten();
+            let name = dir.file_name().unwrap_or_default().to_string_lossy();
             if target == BuildTarget::Workers
+                && HOST_SUPPLIED.contains(&name.as_ref())
                 && errors
                     .iter()
                     .all(|e| e.category == "bynk.capability.not_provided")

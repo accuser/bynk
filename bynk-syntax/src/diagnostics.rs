@@ -390,7 +390,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.capability.not_provided",
         "On the Workers target, a capability a context requires has no provider in it.",
-        &["capability_decl"],
+        &["given_clause"],
     ),
     dg(
         "bynk.capability.op_arity",
