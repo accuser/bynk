@@ -46,7 +46,8 @@ reference.
   doc comment are clickable via [document links](/docs/tooling/bynk-lsp/#capabilities).
   Toggle with `bynk.inlineDocRendering.enable`.
 - **Show Documentation** — the **Bynk: Show Documentation** command opens a
-  webview rendering the current file's declarations as a reference page ("live
+  webview rendering the current unit's declarations (every file of a multi-file
+  unit, under its module doc) as a reference page ("live
   rustdoc for Bynk"): each declaration's heading, signature, and doc comment
   rendered as Markdown, in outline order and hierarchy, each heading clickable
   back to its source. Undocumented declarations appear with a *No documentation*

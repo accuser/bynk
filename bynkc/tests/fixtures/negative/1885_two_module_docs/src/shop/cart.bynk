@@ -1,0 +1,6 @@
+---
+The shop: carts and checkout.
+---
+context shop
+
+type CartId = String
