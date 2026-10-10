@@ -1,0 +1,12 @@
+---
+#1814: `t.web` reaches `Repo` only through `t.model`'s `Run`. A suite over
+it is checked in the same closed view, so an `Int` for the field and an `Int`
+read of it are rejected (both used to compile).
+---
+suite t.web {
+  case "reads" {
+    let r = Run { repo: 42 }
+    let n: Int = r.repo
+    expect n == 1
+  }
+}

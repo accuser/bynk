@@ -1,0 +1,9 @@
+---
+#1814: a unit suite over a commons, which reaches `Repo` the same way.
+---
+suite t.page
+
+case "a commons suite reads a reached refined field" {
+  let s: String = queued().repo
+  expect s == "q"
+}

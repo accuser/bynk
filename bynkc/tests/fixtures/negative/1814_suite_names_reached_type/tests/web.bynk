@@ -1,0 +1,11 @@
+---
+#1814: a suite's view resolves `Repo`, which `t.web` reaches through
+`t.model`'s `Run`, but a suite may no more name it than `t.web` may.
+---
+suite t.web {
+  case "names" {
+    let r = Run { repo: "x" }
+    let n: Repo = r.repo
+    expect n == r.repo
+  }
+}

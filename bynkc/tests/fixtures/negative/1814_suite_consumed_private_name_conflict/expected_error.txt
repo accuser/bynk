@@ -1,0 +1,2 @@
+bynk.uses.name_conflict `t.model` brings in declarations that use type `Repo` from `t.core`, but `Repo` in this suite names `t.vault`'s unexported type
+# exact

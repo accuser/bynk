@@ -1,0 +1,17 @@
+---
+#1814: the system tier. The harness view is the suite's `uses` plus the
+participants, closed over the types they reach, so `Tag.repo` is checked and
+read as `t.core`'s `Repo`, which the suite reaches only through `t.model`.
+The integration module imports `Repo` from `t.core`.
+---
+suite t.web as system {
+  uses t.model
+
+  case "a system suite reads a reached refined field" {
+    let r <- api.GET("/first")
+    expect r is Ok(_)
+    let t = Tag { repo: "s" }
+    let s: String = t.repo
+    expect s == "s"
+  }
+}

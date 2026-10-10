@@ -1,0 +1,24 @@
+---
+#1814: a unit suite over a context. Its view reaches `Repo` and `Status`
+through `t.model`'s `Run`, which the cases build, read, map and match.
+---
+suite t.web
+
+case "a suite maps a reached refined field" {
+  let runs = [Run { repo: "a", status: Pending }, Run { repo: "b", status: Done }]
+  expect runs.map((r) => r.repo).map((n) => n.shout()) == ["a!", "b!"]
+}
+
+case "a suite reads a reached field through an imported fn" {
+  let r = first([Run { repo: "x", status: Done }])
+  expect r.map((n) => n.shout()) == Some("x!")
+}
+
+case "a suite matches a reached sum" {
+  let r = Run { repo: "y", status: Done }
+  let done = match r.status {
+    Pending => false,
+    Done => true,
+  }
+  expect done
+}

@@ -1,0 +1,15 @@
+---
+#1814: the system tier's harness view resolves `Repo`, which its `uses
+t.model` reaches through `Run`, but the suite may not name it without
+`uses t.core`.
+---
+suite t.web as system {
+  uses t.model
+
+  case "names" {
+    let r = Run { repo: "x" }
+    let n: Repo = r.repo
+    let p <- api.GET("/ping")
+    expect p is Ok(_)
+  }
+}
