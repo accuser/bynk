@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "provides": {
+    "place": "11c4467184ce05e7",
+    "refund": "4c4f93dc5021498c"
+  },
+  "expects": {
+    "shop.payment": {
+      "authorise": "b5e747de6448afda"
+    }
+  }
+}
