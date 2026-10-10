@@ -405,6 +405,12 @@ const EXCLUDED_PARSE_TIME_CATEGORIES: &[(&str, &str)] = &[
          which no production over the token stream can see (#1885)",
     ),
     (
+        "bynk.parse.doc_forms_mixed",
+        "inexpressible: both doc forms are extras (`doc_block`, `doc_line`), \
+         which no production sees, so neither their adjacency nor which \
+         declaration they document is in the tree (#1888)",
+    ),
+    (
         "bynk.parse.empty_agent",
         "declined: a cardinality rule (at least one handler) on a body whose \
          members interleave; expressible as `repeat1` over handlers, but that \

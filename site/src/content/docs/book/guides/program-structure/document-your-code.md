@@ -7,11 +7,13 @@ Bynk has two kinds of comment, and they do different jobs:
 
 - A **line comment**, `-- …`, is a note for whoever edits the code. It runs to
   the end of the line, and the tools ignore it.
-- A **doc-block**, `--- … ---`, is documentation. It attaches to the
-  declaration that follows it. Hover shows it, and so does the editor's
-  **Bynk: Show Documentation** page.
+- A **doc** is documentation. It attaches to the declaration (or member) that
+  follows it. Hover shows it, and so do completion and the editor's
+  **Bynk: Show Documentation** page. A doc comes in two forms:
+  - **doc lines**, `--| …`, for a sentence or two;
+  - a **doc-block**, `--- … ---`, for anything with structure.
 
-Use `--` for remarks about how the code works, and `---` for what a reader of
+Use `--` for remarks about how the code works, and a doc for what a reader of
 the API needs to know.
 
 ## Document a declaration
@@ -35,6 +37,74 @@ Any declaration can carry one: a type, a function, a capability and its
 operations, a service, an agent and their handlers, an actor, an event, a
 message bundle. Hover on `Repo` anywhere it is used, and you see its signature
 with this doc below it.
+
+## Write a one-line doc
+
+Most docs are a sentence. For those, a doc-block spends three lines on one.
+Write **doc lines** instead: `--|` at the start of a line, then the text.
+
+```bynk
+--| A repository, as `owner/name`.
+type Repo = String
+
+--| The number of open issues in `repo`.
+--|
+--| Zero when it has none, or when the repository is archived.
+fn openIssues(repo: Repo) -> Int { 0 }
+```
+
+Doc lines on consecutive lines are one doc, and a bare `--|` line starts a new
+paragraph. `--|` is a doc only at the start of a line: after code on the same
+line, it is an ordinary `--` comment.
+
+A declaration takes one form or the other, never both. A `--|` doc directly
+above or below a doc-block on the same declaration is the error
+`bynk.parse.doc_forms_mixed`. `bynk fmt` keeps each doc in the form you wrote:
+it never turns doc lines into a doc-block, or the other way round.
+
+## Document fields and variants
+
+A record is often a wire contract, and each field deserves its own
+explanation. Put a doc above the field:
+
+```bynk
+--| One canary result, exactly the body of `POST /runs`.
+type Run = {
+	--| The repository, as `owner/name`.
+	repo: String,
+	--| The Bynk release the checks ran against.
+	version: String,
+	-- Only an editor needs this note; hover never shows it.
+	passed: Int,
+}
+```
+
+Hover on `repo`, where it is declared, where it is read (`run.repo`), or where
+it is set in a record literal, and you see its doc. Completion shows it too,
+and the documentation page lists each documented field under its type.
+
+Variants take docs the same way, in both sum forms, and so does each field of a
+variant's payload and each entry of a message bundle:
+
+```bynk
+type Outcome = enum {
+	--| Every canary check passed.
+	Pass,
+	--| At least one check failed; the run URL has the details.
+	Fail,
+}
+
+type Shape =
+--| A circle.
+| Circle(
+	--| The radius, in pixels.
+	radius: Int,
+)
+| Dot
+```
+
+A `--` comment above a field stays a comment. Only a doc documents. Function
+and handler parameters are documented in the function's own doc.
 
 ## Document a module
 
@@ -170,11 +240,12 @@ The `---` lines inside are content, because only a `----` line closes this
 block. [Spec §3.3.2](/book/spec/lexical-grammar/#332-doc-blocks) has the exact
 rule.
 
-## `--` or `---`?
+## `--`, `--|` or `---`?
 
 | You want to… | Write |
 |---|---|
-| Explain what a declaration or a unit is, for its users | a `---` doc-block above it |
+| Explain a declaration, a member or a unit in a sentence or two | `--|` doc lines above it |
+| Explain it with structure: lists, code, headings | a `---` doc-block above it |
 | Leave a note for someone editing the code | a `--` line comment |
 | Separate sections of a file | a `--` comment with text, such as `-- Helpers --` |
 | Disable code temporarily | `--` at the start of each line |

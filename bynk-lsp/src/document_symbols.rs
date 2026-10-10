@@ -329,7 +329,7 @@ fn handler_symbol(pm: &PositionMap, h: &Handler) -> DocumentSymbol {
     )
 }
 
-fn detail_from_doc(doc: &Option<String>) -> Option<String> {
+fn detail_from_doc(doc: &Option<Doc>) -> Option<String> {
     doc.as_ref().and_then(|d| {
         let first = d
             .lines()

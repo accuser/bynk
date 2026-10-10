@@ -360,6 +360,13 @@ type Order = {
 Records emit a TypeScript `interface` with `readonly` fields. A record field may
 not directly be of the record's own type (`bynk.resolve.recursive_record_field`).
 
+### Documenting fields and variants
+
+A record field, a sum variant, a variant's payload field and a `messages` entry
+each take a doc on the lines above them, as a `--|` line or a `---` block.
+Hover, completion and the documentation page show it. See
+[Document fields and variants](/book/guides/program-structure/document-your-code/#document-fields-and-variants).
+
 ## Generic record types
 
 A record type may take **type parameters** — an unconstrained, bound-free name
@@ -479,6 +486,8 @@ Reach for the pipe form only when a variant needs a payload.
 
 - **Construct** by naming a variant: `Pending`, `Shipped("1Z…")`.
 - **Consume** with [`match`](#matching) or [`is`](/book/reference/operators/).
+- **Document** a variant, or a payload field, with a doc on the lines above it,
+  as a [record field](#documenting-fields-and-variants) is.
 
 Sum types emit a discriminated union keyed on a `tag` field. As JSON, a variant
 is a flat object whose `kind` key names the variant (`{"kind": "Shipped",

@@ -117,10 +117,37 @@ marker has **as many hyphens as the opening one**, so a `----` block can hold
 `---` lines. There is no standalone `---` divider (an unclosed marker is
 `bynk.lex.unclosed_doc_block`), and a block whose content, outside Markdown code
 fences, parses as declarations is `bynk.parse.doc_block_contains_code`. A
-doc-block, whitespace, and line comments are the trivia ignored between tokens
-(see the appendix's [Tokens & trivia](/book/reference/grammar-appendix/#tokens--trivia)).
+doc-block, doc lines, whitespace, and line comments are the trivia ignored
+between tokens (see the appendix's [Tokens & trivia](/book/reference/grammar-appendix/#tokens--trivia)).
 
 **See also.** [Keywords](/book/reference/keywords/).
+
+### doc_line {#rule-doc_line}
+
+{{#grammar doc_line}}
+
+The one-line doc form (#1888). A `--|` that is the **first thing on its line**
+opens a doc line; after code on the same line it is an ordinary `--` comment.
+Doc lines on consecutive lines form one doc, joined with line breaks, so a bare
+`--|` separates Markdown paragraphs. A doc of either form, a run of `--|` lines
+or a `---` block, documents the declaration below it and also a record field, a
+sum variant, a variant's payload field or a `messages` entry
+(spec [§3.3.3](/book/spec/lexical-grammar/#333-doc_line)).
+
+```bynk
+--| A full commit SHA.
+type Commit = String
+
+type Outcome = enum {
+	--| Every canary check passed.
+	Pass,
+	Fail,
+}
+```
+
+A declaration or member carries one form, not both
+(`bynk.parse.doc_forms_mixed`). For which form to use, see
+[Document your code](/book/guides/program-structure/document-your-code/).
 
 ## Top-level & modules
 

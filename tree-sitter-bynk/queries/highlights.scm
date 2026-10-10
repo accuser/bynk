@@ -240,6 +240,7 @@
 
 (line_comment) @comment
 (doc_block) @comment.documentation
+(doc_line) @comment.documentation
 
 ; -- Errors (tree-sitter recovery) --
 

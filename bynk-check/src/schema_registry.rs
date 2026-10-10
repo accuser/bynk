@@ -411,6 +411,7 @@ mod tests {
 
     fn field(name: &str, ty: TypeRef, has_default: bool) -> bynk_syntax::ast::RecordField {
         bynk_syntax::ast::RecordField {
+            documentation: None,
             trivia: Default::default(),
             name: ident(name),
             type_ref: ty,
