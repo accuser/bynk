@@ -2052,7 +2052,10 @@ fn lower_method_call(
     {
         match cx.commons().expr_ty(e.id).as_deref() {
             Some(Ty::List(t)) => {
-                return pre.finish(format!("([] as readonly {}[])", ts_ty(*t, tys)));
+                return pre.finish(format!(
+                    "([] as readonly {}[])",
+                    ts_array_elem(&ts_ty(*t, tys))
+                ));
             }
             Some(Ty::Map(k, v)) => {
                 return pre.finish(format!(
@@ -3306,6 +3309,7 @@ fn lower_list_kernel(
     let tys = cx.commons().tys();
     let mut pre = Pre::new();
     let elem_ts = ts_ty(elem, tys);
+    let elem_el = ts_array_elem(&elem_ts);
     let text: Option<String> = match (method.name.as_str(), args) {
         ("length", []) => {
             let recv = pre.lower(receiver, cx);
@@ -3315,7 +3319,7 @@ fn lower_list_kernel(
             let recv = pre.lower(receiver, cx);
             let idx = pre.lower(index, cx);
             Some(format!(
-                "((__xs: readonly {elem_ts}[], __i: number) => __i >= 0 && __i < __xs.length ? Some(__xs[__i] as {elem_ts}) : None)({recv}, {idx})"
+                "((__xs: readonly {elem_el}[], __i: number) => __i >= 0 && __i < __xs.length ? Some(__xs[__i] as {elem_ts}) : None)({recv}, {idx})"
             ))
         }
         ("prepend", [head]) => {
@@ -3341,7 +3345,7 @@ fn lower_list_kernel(
             let init = pre.lower(init, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "((__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => {acc_ts}) => {{ for (const __x of __xs) __acc = __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
+                "((__xs: readonly {elem_el}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => {acc_ts}) => {{ for (const __x of __xs) __acc = __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
             ))
         }
         (FOLD_EFF, [init, f]) => {
@@ -3360,7 +3364,7 @@ fn lower_list_kernel(
             let init = pre.lower(init, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => globalThis.Promise<{acc_ts}>) => {{ for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
+                "(async (__xs: readonly {elem_el}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => globalThis.Promise<{acc_ts}>) => {{ for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
             ))
         }
         // v0.146 (ADR 0170): `forEach` — run an effectful step per element in
@@ -3370,7 +3374,7 @@ fn lower_list_kernel(
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__xs: readonly {elem_ts}[]) => {{ for (const __x of __xs) {{ await ({f})(__x); }} }})({recv})"
+                "(async (__xs: readonly {elem_el}[]) => {{ for (const __x of __xs) {{ await ({f})(__x); }} }})({recv})"
             ))
         }
         // v0.147 (ADR 0171): `parTraverse` — issue the effectful fn over every
@@ -3381,7 +3385,7 @@ fn lower_list_kernel(
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__xs: readonly {elem_ts}[]) => {{ await globalThis.Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); }})({recv})"
+                "(async (__xs: readonly {elem_el}[]) => {{ await globalThis.Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); }})({recv})"
             ))
         }
         // v0.148 (ADR 0172): the collect-all iterators — every element's
@@ -3404,17 +3408,18 @@ fn lower_list_kernel(
                     e.span
                 ),
             };
+            let res_el = ts_array_elem(&res_ts);
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__xs: readonly {elem_ts}[]) => {{ const __out: {res_ts}[] = []; for (const __x of __xs) {{ __out.push(await ({f})(__x)); }} return __out; }})({recv})"
+                "(async (__xs: readonly {elem_el}[]) => {{ const __out: {res_el}[] = []; for (const __x of __xs) {{ __out.push(await ({f})(__x)); }} return __out; }})({recv})"
             ))
         }
         (PAR_TRAVERSE_ALL, [f]) => {
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__xs: readonly {elem_ts}[]) => await globalThis.Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))))({recv})"
+                "(async (__xs: readonly {elem_el}[]) => await globalThis.Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))))({recv})"
             ))
         }
         // v0.150 (ADR 0174): the short-circuit collect iterators — stop at the
@@ -3423,18 +3428,20 @@ fn lower_list_kernel(
         // issues all at once, then scans the resolved `Result`s in input order.
         (TRAVERSE_TRY, [f]) => {
             let u_ts = list_ok_elem_ts(cx.commons().expr_types.get(&e.id).map(|te| te.ty), tys);
+            let u_el = ts_array_elem(&u_ts);
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__xs: readonly {elem_ts}[]) => {{ const __out: {u_ts}[] = []; for (const __x of __xs) {{ const __r = await ({f})(__x); if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
+                "(async (__xs: readonly {elem_el}[]) => {{ const __out: {u_el}[] = []; for (const __x of __xs) {{ const __r = await ({f})(__x); if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
             ))
         }
         (PAR_TRAVERSE_TRY, [f]) => {
             let u_ts = list_ok_elem_ts(cx.commons().expr_types.get(&e.id).map(|te| te.ty), tys);
+            let u_el = ts_array_elem(&u_ts);
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
-                "(async (__xs: readonly {elem_ts}[]) => {{ const __rs = await globalThis.Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
+                "(async (__xs: readonly {elem_el}[]) => {{ const __rs = await globalThis.Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); const __out: {u_el}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
             ))
         }
         // v0.88 (ADR 0116): the eager builder/terminal vocabulary. Most lower
@@ -3487,20 +3494,20 @@ fn lower_list_kernel(
             let recv = pre.lower(receiver, cx);
             let step = pre.lower(step, cx);
             Some(format!(
-                "((__xs: readonly {elem_ts}[], __s: {elem_ts}) => __xs.slice(0, __xs.indexOf(__s)))({recv}, {step})"
+                "((__xs: readonly {elem_el}[], __s: {elem_ts}) => __xs.slice(0, __xs.indexOf(__s)))({recv}, {step})"
             ))
         }
         ("first", []) => {
             let recv = pre.lower(receiver, cx);
             Some(format!(
-                "((__xs: readonly {elem_ts}[]) => __xs.length > 0 ? Some(__xs[0]) : None)({recv})"
+                "((__xs: readonly {elem_el}[]) => __xs.length > 0 ? Some(__xs[0]) : None)({recv})"
             ))
         }
         ("firstOrElse", [default]) => {
             let recv = pre.lower(receiver, cx);
             let default = pre.lower(default, cx);
             Some(format!(
-                "((__xs: readonly {elem_ts}[], __d: {elem_ts}) => __xs.length > 0 ? __xs[0] : __d)({recv}, {default})"
+                "((__xs: readonly {elem_el}[], __d: {elem_ts}) => __xs.length > 0 ? __xs[0] : __d)({recv}, {default})"
             ))
         }
         // v0.88 (ADR 0116 D2/D3/D4): ordering + aggregates. The comparator
@@ -3521,7 +3528,7 @@ fn lower_list_kernel(
             let recv = pre.lower(receiver, cx);
             let key = pre.lower(key, cx);
             Some(format!(
-                "((__xs: readonly {elem_ts}[]) => {{ const __seen = new globalThis.Set(); const __out: {elem_ts}[] = []; for (const __x of __xs) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})({recv})"
+                "((__xs: readonly {elem_el}[]) => {{ const __seen = new globalThis.Set(); const __out: {elem_el}[] = []; for (const __x of __xs) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})({recv})"
             ))
         }
         ("sum", [key]) => {
@@ -3536,7 +3543,7 @@ fn lower_list_kernel(
             let recv = pre.lower(receiver, cx);
             let key = pre.lower(key, cx);
             Some(format!(
-                "((__xs: readonly {elem_ts}[]) => {{ if (__xs.length === 0) return None; let __m = ({key})(__xs[0]); for (const __x of __xs) {{ const __k = ({key})(__x); if (__k {cmp} __m) __m = __k; }} return Some(__m); }})({recv})"
+                "((__xs: readonly {elem_el}[]) => {{ if (__xs.length === 0) return None; let __m = ({key})(__xs[0]); for (const __x of __xs) {{ const __k = ({key})(__x); if (__k {cmp} __m) __m = __k; }} return Some(__m); }})({recv})"
             ))
         }
         ("average", [key]) => {
@@ -3553,7 +3560,7 @@ fn lower_list_kernel(
             let recv = pre.lower(receiver, cx);
             let key = pre.lower(key, cx);
             Some(format!(
-                "((__xs: readonly {elem_ts}[]) => {{ if (__xs.length === 0) return None; let __s = 0; for (const __x of __xs) __s += ({key})(__x); return Some({mean}); }})({recv})"
+                "((__xs: readonly {elem_el}[]) => {{ if (__xs.length === 0) return None; let __s = 0; for (const __x of __xs) __s += ({key})(__x); return Some({mean}); }})({recv})"
             ))
         }
         // v0.94 (ADR 0116/0120): joins & grouping. Hash on a stringified key
@@ -3566,33 +3573,36 @@ fn lower_list_kernel(
         ("joinOn", [other, left, right, into]) => {
             let recv = pre.lower(receiver, cx);
             let u_ts = join_other_elem_ts(args, cx);
+            let u_el = ts_array_elem(&u_ts);
             let other = pre.lower(other, cx);
             let left = pre.lower(left, cx);
             let right = pre.lower(right, cx);
             let into = pre.lower(into, cx);
             Some(format!(
-                "(() => {{ const __h: globalThis.Record<string, {u_ts}[]> = globalThis.Object.create(null); for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {u_ts}) => ({into})(__t, __u)); }}); }})()"
+                "(() => {{ const __h: globalThis.Record<string, {u_el}[]> = globalThis.Object.create(null); for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {u_ts}) => ({into})(__t, __u)); }}); }})()"
             ))
         }
         ("leftJoin", [other, left, right, into]) => {
             let recv = pre.lower(receiver, cx);
             let u_ts = join_other_elem_ts(args, cx);
+            let u_el = ts_array_elem(&u_ts);
             let other = pre.lower(other, cx);
             let left = pre.lower(left, cx);
             let right = pre.lower(right, cx);
             let into = pre.lower(into, cx);
             Some(format!(
-                "(() => {{ const __h: globalThis.Record<string, {u_ts}[]> = globalThis.Object.create(null); for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {u_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }})()"
+                "(() => {{ const __h: globalThis.Record<string, {u_el}[]> = globalThis.Object.create(null); for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {u_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }})()"
             ))
         }
         ("join", [other, on, into]) => {
             let recv = pre.lower(receiver, cx);
             let u_ts = join_other_elem_ts(args, cx);
+            let u_el = ts_array_elem(&u_ts);
             let other = pre.lower(other, cx);
             let on = pre.lower(on, cx);
             let into = pre.lower(into, cx);
             Some(format!(
-                "(() => {{ const __b: readonly {u_ts}[] = {other}; return ({recv}).flatMap((__t: {elem_ts}) => __b.filter((__u: {u_ts}) => ({on})(__t, __u)).map((__u: {u_ts}) => ({into})(__t, __u))); }})()"
+                "(() => {{ const __b: readonly {u_el}[] = {other}; return ({recv}).flatMap((__t: {elem_ts}) => __b.filter((__u: {u_ts}) => ({on})(__t, __u)).map((__u: {u_ts}) => ({into})(__t, __u))); }})()"
             ))
         }
         ("groupBy", [key, into]) => {
@@ -3600,7 +3610,7 @@ fn lower_list_kernel(
             let key = pre.lower(key, cx);
             let into = pre.lower(into, cx);
             Some(format!(
-                "(() => {{ const __h: globalThis.Record<string, {elem_ts}[]> = globalThis.Object.create(null); const __order: string[] = []; for (const __t of {recv}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }})()"
+                "(() => {{ const __h: globalThis.Record<string, {elem_el}[]> = globalThis.Object.create(null); const __order: string[] = []; for (const __t of {recv}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }})()"
             ))
         }
         _ => None,
@@ -3686,6 +3696,8 @@ fn lower_query_method(
     other_elem_ts: &str,
     tys: &Arc<Types>,
 ) -> Option<String> {
+    let elem_el = ts_array_elem(elem_ts);
+    let other_elem_el = ts_array_elem(other_elem_ts);
     let thunk = |body: String| format!("(() => {body})");
     Some(match (method.name.as_str(), a) {
         // -- builders → a deferred thunk over the narrowed source --
@@ -3711,7 +3723,7 @@ fn lower_query_method(
         // (the `List[T]` sibling, `lower_list_kernel`, already does this for
         // its own `distinctBy`/`joinOn`/`leftJoin`/`groupBy`).
         ("distinctBy", [key]) => thunk(format!(
-            "(() => {{ const __seen = new globalThis.Set(); const __out: {elem_ts}[] = []; for (const __x of {source}) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})()"
+            "(() => {{ const __seen = new globalThis.Set(); const __out: {elem_el}[] = []; for (const __x of {source}) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})()"
         )),
         // v0.94 (ADR 0116/0120): joins & grouping over storage queries — lazy
         // builders. `other` is itself a `Query` thunk, invoked to materialise the
@@ -3726,10 +3738,10 @@ fn lower_query_method(
         // re-derived, and threaded as a param rather than called here to
         // keep this function's own argument count under clippy's lint.
         ("joinOn", [other, left, right, into]) => thunk(format!(
-            "{{ const __h: globalThis.Record<string, {other_elem_ts}[]> = globalThis.Object.create(null); for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {other_elem_ts}) => ({into})(__t, __u)); }}); }}"
+            "{{ const __h: globalThis.Record<string, {other_elem_el}[]> = globalThis.Object.create(null); for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {other_elem_ts}) => ({into})(__t, __u)); }}); }}"
         )),
         ("leftJoin", [other, left, right, into]) => thunk(format!(
-            "{{ const __h: globalThis.Record<string, {other_elem_ts}[]> = globalThis.Object.create(null); for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {other_elem_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }}"
+            "{{ const __h: globalThis.Record<string, {other_elem_el}[]> = globalThis.Object.create(null); for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {other_elem_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }}"
         )),
         ("join", [other, on, into]) => thunk(format!(
             "{{ const __b = ({other})(); return {source}.flatMap((__t) => __b.filter((__u) => ({on})(__t, __u)).map((__u) => ({into})(__t, __u))); }}"
@@ -3738,7 +3750,7 @@ fn lower_query_method(
         // (`elem_ts`), the receiver's element type — same as `distinctBy`
         // above, not `other`-derived (`groupBy` has no `other` argument).
         ("groupBy", [key, into]) => thunk(format!(
-            "{{ const __h: globalThis.Record<string, {elem_ts}[]> = globalThis.Object.create(null); const __order: string[] = []; for (const __t of {source}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }}"
+            "{{ const __h: globalThis.Record<string, {elem_el}[]> = globalThis.Object.create(null); const __order: string[] = []; for (const __t of {source}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }}"
         )),
         // -- terminals → read the source array (awaited at the `<-`) --
         ("collect", []) => source,
@@ -3799,8 +3811,9 @@ fn lower_query_method(
                 },
                 _ => "any".to_string(),
             };
+            let res_el = ts_array_elem(&res_ts);
             format!(
-                "(async () => {{ const __out: {res_ts}[] = []; for (const __x of {source}) {{ __out.push(await ({f})(__x)); }} return __out; }})()"
+                "(async () => {{ const __out: {res_el}[] = []; for (const __x of {source}) {{ __out.push(await ({f})(__x)); }} return __out; }})()"
             )
         }
         ("parTraverseAll", [f]) => {
@@ -3812,14 +3825,16 @@ fn lower_query_method(
         // first `Err`, returning `Result[List[U], E]`.
         ("traverseTry", [f]) => {
             let u_ts = list_ok_elem_ts(result_ty, tys);
+            let u_el = ts_array_elem(&u_ts);
             format!(
-                "(async () => {{ const __out: {u_ts}[] = []; for (const __x of {source}) {{ const __r = await ({f})(__x); if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
+                "(async () => {{ const __out: {u_el}[] = []; for (const __x of {source}) {{ const __r = await ({f})(__x); if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
             )
         }
         ("parTraverseTry", [f]) => {
             let u_ts = list_ok_elem_ts(result_ty, tys);
+            let u_el = ts_array_elem(&u_ts);
             format!(
-                "(async () => {{ const __rs = await globalThis.Promise.all({source}.map((__x) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
+                "(async () => {{ const __rs = await globalThis.Promise.all({source}.map((__x) => ({f})(__x))); const __out: {u_el}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
             )
         }
         _ => return None,

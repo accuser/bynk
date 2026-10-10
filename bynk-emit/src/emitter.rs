@@ -5429,6 +5429,27 @@ fn ts_ty(t: TyId, tys: &Arc<Types>) -> String {
     bynk_ts::print_type(&ts_ty_to_ts_type(t, tys))
 }
 
+/// `elem_ts` (a [`ts_ty`] rendering) made safe to suffix with `[]`, for the
+/// kernel lowerings that `format!` an array type around an element's text
+/// rather than building a [`TsType::Array`]. `[]` binds tighter than a prefix
+/// `readonly`, a function arrow, `|` and `&`, so `readonly readonly T[][]`
+/// (TS1354) or `(a0: T) => T[]` would be misread; such an element is
+/// parenthesised. The check is on text, so it is conservative — an operator
+/// nested inside a generic argument parenthesises too, which is redundant but
+/// still valid TypeScript. The printer's own `TsType::Array` arm applies the
+/// exact structural rule.
+fn ts_array_elem(elem_ts: &str) -> String {
+    if elem_ts.starts_with("readonly ")
+        || elem_ts.contains("=>")
+        || elem_ts.contains('|')
+        || elem_ts.contains('&')
+    {
+        format!("({elem_ts})")
+    } else {
+        elem_ts.to_string()
+    }
+}
+
 fn ts_ty_to_ts_type(t: TyId, tys: &Arc<Types>) -> TsType {
     match &*tys.get(t) {
         // bynk internal error (finding #28, R4.3): `Ty::Error` records a
@@ -5589,6 +5610,14 @@ mod ts_ty_tests {
             args: vec![],
         });
         assert_eq!(ts_ty(tys.intern(Ty::List(order)), &tys), "readonly Order[]");
+        // A nested list's inner readonly array is parenthesised (TS1354).
+        let orders = tys.intern(Ty::List(order));
+        assert_eq!(
+            ts_ty(tys.intern(Ty::List(orders)), &tys),
+            "readonly (readonly Order[])[]"
+        );
+        assert_eq!(ts_array_elem(&ts_ty(orders, &tys)), "(readonly Order[])");
+        assert_eq!(ts_array_elem(&ts_ty(order, &tys)), "Order");
 
         let s = tys.intern(Ty::Base(BaseType::String));
         assert_eq!(
