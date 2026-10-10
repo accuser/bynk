@@ -856,7 +856,7 @@ impl<'a> Parser<'a> {
         let open = self.expect(TokenKind::LBrace, "to open the test case body")?;
         let mut stubs = Vec::new();
         while self.peek_kind() == Some(TokenKind::Stub) {
-            let (mut leading, item_doc) = self.collect_item_lead();
+            let (mut leading, item_doc) = self.collect_body_item_lead();
             let next_span = self.peek().unwrap().span;
             let doc = self.finalize_doc(item_doc, next_span, &mut leading);
             let mut p = self.parse_stub_clause()?;
@@ -1718,7 +1718,7 @@ impl<'a> Parser<'a> {
         // #1756: comments (and an orphaned doc block) before the closing `}`.
         let trailing_comments: Vec<Comment>;
         loop {
-            let (mut leading, item_doc) = self.collect_item_lead();
+            let (mut leading, item_doc) = self.collect_body_item_lead();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
                     if let Some(doc) = item_doc {
@@ -2470,7 +2470,7 @@ impl<'a> Parser<'a> {
         )?;
         let mut fields = Vec::new();
         let trailing_comments = loop {
-            let (mut leading, item_doc) = self.collect_item_lead();
+            let (mut leading, item_doc) = self.collect_body_item_lead();
             if let Some(doc) = item_doc {
                 self.warnings.push(CompileError::new(
                     "bynk.parse.orphan_doc_block",
@@ -2857,6 +2857,10 @@ impl<'a> Parser<'a> {
                     }
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span, &mut leading);
+                    // Store fields print with no blank line between them, so a
+                    // comment's blank line goes (#1884). The invariants,
+                    // transitions and handlers below are set apart and keep it.
+                    leading.retain(|c| *c != Comment::Blank);
                     let mut sf = self.parse_store_field()?;
                     sf.documentation = doc;
                     sf.trivia.leading = leading;

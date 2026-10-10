@@ -532,7 +532,8 @@ impl<'a> Formatter<'a> {
         self.at_line_start = true;
     }
 
-    #[allow(dead_code)]
+    /// End the current line if it is open, then leave a blank line unless the
+    /// output already ends with one.
     fn blank_line(&mut self) {
         if !self.out.ends_with('\n') {
             self.out.push('\n');
@@ -643,22 +644,26 @@ impl<'a> Formatter<'a> {
     // -- Line-comment trivia (v1.1) --
 
     /// Emit a sequence of leading comments, each on its own line at the
-    /// current indent. `--` lines have no blank lines between them; an orphaned
-    /// doc block (#1756) prints as a doc block and is followed by a blank line,
-    /// which is what keeps it from attaching to the declaration below.
+    /// current indent. `--` lines have no blank lines between them, except
+    /// where a unit-level declaration's comments keep one (#1884,
+    /// [`Comment::Blank`]); an orphaned doc block (#1756) prints as a doc block
+    /// and is followed by a blank line, which is what keeps it from attaching
+    /// to the declaration below.
     fn emit_leading_comments(&mut self, comments: &[Comment]) {
         self.emit_comments(comments, true);
     }
 
     /// Emit the comments that close a body or file. As
-    /// [`Self::emit_leading_comments`], except that an orphaned doc block that
-    /// is the last entry needs no blank line: nothing follows it to attach to.
+    /// [`Self::emit_leading_comments`], except that a blank line after the
+    /// last entry is not printed: nothing follows it to keep apart, and the
+    /// body's `}` comes straight after its last line.
     fn emit_trailing_comments(&mut self, comments: &[Comment]) {
         self.emit_comments(comments, false);
     }
 
-    fn emit_comments(&mut self, comments: &[Comment], blank_after_last_orphan: bool) {
+    fn emit_comments(&mut self, comments: &[Comment], blank_after_last: bool) {
         for (i, comment) in comments.iter().enumerate() {
+            let blank_after = i + 1 < comments.len() || blank_after_last;
             match comment {
                 Comment::Line(body) => {
                     self.push("--");
@@ -667,10 +672,12 @@ impl<'a> Formatter<'a> {
                 }
                 Comment::OrphanDoc(doc) => {
                     self.emit_doc(doc);
-                    if i + 1 < comments.len() || blank_after_last_orphan {
+                    if blank_after {
                         self.newline();
                     }
                 }
+                Comment::Blank if blank_after => self.blank_line(),
+                Comment::Blank => {}
             }
         }
     }
