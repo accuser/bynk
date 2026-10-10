@@ -398,6 +398,11 @@ export interface RehydrationViolation {
 
 export function rehydrationViolation(agent: string, detail: BoundaryError): Error {
   const path = "path" in detail ? detail.path : "<root>";
+  // #1827: logged here, where every load-time gate builds it, as the
+  // `InvariantViolation` line is logged before its throw: the agent, the field
+  // path and the kind of failure. Never `detail` itself, which can carry the
+  // offending value (a `RefinementViolation`'s `violation.value`).
+  globalThis.console.error(`RehydrationViolation ${agent}`, { agent, path, kind: detail.kind });
   const e = new Error(`RehydrationViolation: ${agent} ${detail.kind} at ${path}`);
   // #1825 review: non-enumerable, as `boundaryError`'s, so a logged error
   // doesn't print `detail` (it can carry the offending value).

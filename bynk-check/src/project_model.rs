@@ -1226,6 +1226,9 @@ pub fn phase_resolve_consumes(
         let kind = *kinds.get(name).unwrap();
         let mut consumes_targets: Vec<String> = Vec::new();
         let mut flattened: HashMap<String, String> = HashMap::new();
+        // #1857: the file that first selected each flattened capability, so a
+        // file of a split context may repeat another file's selection.
+        let mut flattened_in: HashMap<String, usize> = HashMap::new();
         let local_caps: HashSet<String> = unit_tables
             .get(name)
             .map(|t| t.capabilities.keys().cloned().collect())
@@ -1354,6 +1357,17 @@ pub fn phase_resolve_consumes(
                             continue;
                         }
                         if let Some(prev) = flattened.get(&cap.name) {
+                            // #1857: the same selection, repeated in another
+                            // file of the context, is one selection.
+                            if *prev == target && flattened_in.get(&cap.name) != Some(&i) {
+                                refs.record_in_unit(
+                                    cap.span,
+                                    SymbolKind::Capability,
+                                    &cap.name,
+                                    &target,
+                                );
+                                continue;
+                            }
                             errors.push_for(Some(&parsed[i].identity_path()), CompileError::new(
                                 "bynk.consumes.capability_name_clash",
                                 cap.span,
@@ -1368,6 +1382,7 @@ pub fn phase_resolve_consumes(
                         // the consumed unit (clause-position reference).
                         refs.record_in_unit(cap.span, SymbolKind::Capability, &cap.name, &target);
                         flattened.insert(cap.name.clone(), target.clone());
+                        flattened_in.insert(cap.name.clone(), i);
                     }
                 }
                 if !consumes_targets.contains(&target) {
@@ -1399,7 +1414,13 @@ pub fn phase_consumes_aliases(
             continue;
         }
         let mut aliases: HashMap<String, String> = HashMap::new();
-        let mut alias_spans: HashMap<String, Span> = HashMap::new();
+        // #1857: where each alias, and each aliased target, was first seen:
+        // `(the other half of the pair, file index, alias span)`. A context's
+        // `consumes` clauses apply to all its files, so a file may repeat one
+        // another file states, as it repeats `context`; only a pair that
+        // disagrees is a conflict.
+        let mut by_alias: HashMap<String, (String, usize, Span)> = HashMap::new();
+        let mut by_target: HashMap<String, (String, usize, Span)> = HashMap::new();
         for &i in indices {
             for c in parsed[i].consumes() {
                 let Some(alias) = &c.alias else { continue };
@@ -1408,25 +1429,71 @@ pub fn phase_consumes_aliases(
                     // Already reported as unknown context above.
                     continue;
                 }
-                if let Some(prev_span) = alias_spans.get(&alias.name) {
-                    errors.push_for(Some(&parsed[i].identity_path()),
-                        CompileError::new(
-                            "bynk.consumes.alias_conflict",
-                            alias.span,
-                            format!(
-                                "alias `{}` is used by more than one `consumes` clause in context `{}`",
-                                alias.name, name
-                            ),
+                // #1857: a repeat is fine in *another* file; twice in one file
+                // is still a conflict.
+                let first = by_alias
+                    .get(&alias.name)
+                    .filter(|(t, f, _)| *t != target || *f == i)
+                    .map(|(t, f, sp)| {
+                        let what = if *t == target {
+                            "the same clause appears earlier in this file".to_string()
+                        } else {
+                            format!("alias `{}` already names `{t}`", alias.name)
+                        };
+                        (what, *f, *sp)
+                    })
+                    .or_else(|| {
+                        by_target
+                            .get(&target)
+                            .filter(|(a, _, _)| *a != alias.name)
+                            .map(|(a, f, sp)| {
+                                (format!("`{target}` is already consumed as `{a}`"), *f, *sp)
+                            })
+                    });
+                if let Some((what, prev_file, prev_span)) = first {
+                    // A label can point only into this file; another file's
+                    // clause is named in the message.
+                    let where_ = if prev_file == i {
+                        String::new()
+                    } else {
+                        // `/`-separated on every platform, as the project
+                        // layout is written (a Windows `display()` uses `\`).
+                        format!(
+                            " (first stated in `{}`)",
+                            parsed[prev_file]
+                                .identity_path()
+                                .components()
+                                .map(|c| c.as_os_str().to_string_lossy())
+                                .collect::<Vec<_>>()
+                                .join("/")
                         )
-                        .with_label(*prev_span, "previously defined here")
-                        .with_note(
-                            "each `consumes` clause may introduce at most one alias, and aliases must be unique within a context",
+                    };
+                    let mut err = CompileError::new(
+                        "bynk.consumes.alias_conflict",
+                        alias.span,
+                        format!(
+                            "`consumes {target} as {}` conflicts with another `consumes` clause in context `{name}`: {what}{where_}",
+                            alias.name
+                        ),
+                    );
+                    if prev_file == i {
+                        err = err.with_label(prev_span, "previously defined here");
+                    }
+                    errors.push_for(
+                        Some(&parsed[i].identity_path()),
+                        err.with_note(
+                            "a context may consume a unit under one alias, and an alias may name one unit; repeating the same clause in another file is fine",
                         ),
                     );
                     continue;
                 }
-                aliases.insert(alias.name.clone(), target);
-                alias_spans.insert(alias.name.clone(), alias.span);
+                if by_alias.contains_key(&alias.name) {
+                    // #1857: the same clause, repeated in another file.
+                    continue;
+                }
+                aliases.insert(alias.name.clone(), target.clone());
+                by_alias.insert(alias.name.clone(), (target.clone(), i, alias.span));
+                by_target.insert(target, (alias.name.clone(), i, alias.span));
             }
         }
         unit_consumes_aliases.insert(name.clone(), aliases);
