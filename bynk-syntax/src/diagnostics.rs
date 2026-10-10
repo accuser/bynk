@@ -1302,6 +1302,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["sum_variant", "enum_type"],
     ),
     d(
+        "bynk.project.duplicate_module_doc",
+        "More than one file of a multi-file unit carries a module doc.",
+    ),
+    d(
         "bynk.project.file_and_directory",
         "A unit exists as both a file and a directory.",
     ),

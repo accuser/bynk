@@ -42,8 +42,10 @@ Test-ness is a property of a **declaration**, not of a file or directory
 its qualified name: a `context commerce.orders` MUST live at
 `commerce/orders.bynk` under an `include` root. A path that does not match the
 declared name is rejected (`bynk.project.inconsistent_commons_name`), as is a name
-declared as both a `commons` and a `context` (`bynk.project.kind_conflict`). The
-source tree therefore mirrors the program's architecture. A **`suite`** carries no
+declared as both a `commons` and a `context` (`bynk.project.kind_conflict`). A unit
+split across files carries at most one module doc
+([§5.1a](/book/spec/static-semantics/#module-docs),
+`bynk.project.duplicate_module_doc`). The source tree therefore mirrors the program's architecture. A **`suite`** carries no
 such requirement — it names its target and is legal in any file (see below).
 
 ### §8.3.1 Structural test-ness

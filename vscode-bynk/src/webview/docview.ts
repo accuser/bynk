@@ -64,7 +64,10 @@ function renderEntry(
   name.className = "name";
   name.textContent = entry.name;
   heading.append(badge, name);
-  makeClickable(heading, uri, entry.range);
+  // #1885: on a page merged from a multi-file unit, an entry names its own
+  // file; otherwise it is in the requested document.
+  const entryUri = entry.uri ?? uri;
+  makeClickable(heading, entryUri, entry.range);
   section.append(heading);
 
   // The entry Markdown is a fenced `bynk` signature plus (when documented) the
@@ -76,7 +79,7 @@ function renderEntry(
   // The signature code block is also a click-to-code target (issue: "headings
   // and signatures are clickable").
   const sig = body.querySelector("pre");
-  if (sig instanceof HTMLElement) makeClickable(sig, uri, entry.range);
+  if (sig instanceof HTMLElement) makeClickable(sig, entryUri, entry.range);
   section.append(body);
 
   if (!entry.documented) {

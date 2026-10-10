@@ -34,7 +34,7 @@ mod diagnostics;
 
 pub use consistency::{
     check_directory_kind_consistency, check_directory_name_consistency,
-    check_group_kind_consistency, check_path_name_alignment,
+    check_group_kind_consistency, check_group_module_docs, check_path_name_alignment,
 };
 pub use diagnostics::AttributedError;
 pub use discovery::{

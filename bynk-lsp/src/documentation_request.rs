@@ -6,13 +6,20 @@
 //! request each time "Bynk: Show Documentation" fires (Decision D).
 //!
 //! Unlike `bynk/sequenceModel`, the request carries **no cursor position**: a
-//! documentation page is the *whole file's* declarations (Decision A,
-//! file-scoped), so the params are a bare `TextDocumentIdentifier`. The wire
-//! shape is a plain serde mirror of [`bynk_ide::documentation::DocModel`], each
-//! `Span` lowered to an LSP `Range` against the committed snapshot text the
-//! caller already holds — the same convention `sequence_request`/`SerKey` use.
+//! documentation page is the *whole unit's* declarations, so the params are a
+//! bare `TextDocumentIdentifier`. The page was file-scoped (Decision A) until
+//! #1885, which merges every file of a multi-file unit
+//! ([`documentation_model_for`]). The wire shape is a plain serde mirror of
+//! [`bynk_ide::documentation::DocModel`], each `Span` lowered to an LSP `Range`
+//! against the committed snapshot text of the file it is in — the same
+//! convention `sequence_request`/`SerKey` use — with a per-entry `uri` naming
+//! that file (the `{uri, range}` pattern `architecture_request` uses).
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use bynk_ide::documentation::{self, DocModel};
+use tower_lsp::lsp_types::Url;
 
 /// Build the documentation model for `text` (a committed snapshot). `None` for
 /// a unit with no doc page — a `suite`, or a file with no recognisable header.
@@ -58,6 +65,11 @@ pub struct WireDocEntry {
     pub markdown: String,
     pub documented: bool,
     pub range: tower_lsp::lsp_types::Range,
+    /// #1885: the document `range` is in, on a page merged from a multi-file
+    /// unit. Absent on a single-file page, where every range is in the
+    /// requested document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<tower_lsp::lsp_types::Url>,
 }
 
 pub fn to_wire(model: &DocModel, text: &str) -> WireDocModel {
@@ -76,7 +88,46 @@ pub fn to_wire(model: &DocModel, text: &str) -> WireDocModel {
                 markdown: e.markdown.clone(),
                 documented: e.documented,
                 range: crate::position::span_to_range(text, e.span),
+                uri: None,
             })
             .collect(),
     }
+}
+
+/// #1885: the wire page for the document at `rel` (project-relative), merged
+/// across every file of its unit. The unit's files come from the round's
+/// `unit_sources` (qualified name → project-relative paths) and their text
+/// from `snapshots`; each entry's range is lowered against *its own* file and
+/// carries that file's `file://` URI, so click-to-code opens the right one.
+/// An entry whose file has no snapshot or no URI is dropped rather than sent
+/// with a wrong location. `None` for a `suite`, a file with no header, or a
+/// `rel` with no snapshot.
+pub fn documentation_model_for(
+    rel: &Path,
+    snapshots: &HashMap<PathBuf, String>,
+    unit_sources: &HashMap<String, Vec<PathBuf>>,
+    project_root: &Path,
+) -> Option<WireDocModel> {
+    let text = snapshots.get(rel)?;
+    let siblings: Vec<(&Path, &str)> = bynk_ide::symbols::own_declaration_name(text)
+        .and_then(|(name, _)| unit_sources.get(&name))
+        .into_iter()
+        .flatten()
+        .filter_map(|p| snapshots.get(p).map(|t| (p.as_path(), t.as_str())))
+        .collect();
+    let model = documentation::documentation_model_merged((rel, text.as_str()), siblings)?;
+    let mut wire = to_wire(&model, text);
+    wire.entries = model
+        .entries
+        .iter()
+        .zip(wire.entries)
+        .filter_map(|(e, mut w)| {
+            let file = e.file.as_deref().unwrap_or(rel);
+            let file_text = snapshots.get(file)?;
+            w.range = crate::position::span_to_range(file_text, e.span);
+            w.uri = Some(Url::from_file_path(project_root.join(file)).ok()?);
+            Some(w)
+        })
+        .collect();
+    Some(wire)
 }

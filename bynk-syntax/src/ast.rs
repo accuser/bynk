@@ -253,6 +253,18 @@ impl SourceUnit {
         }
     }
 
+    /// The doc-block above this file's unit header, if it carries one. For a
+    /// `commons`/`context`/`adapter` this is the unit's *module doc* (#1885);
+    /// for a `suite` it is the suite's own doc.
+    pub fn documentation(&self) -> Option<&str> {
+        match self {
+            SourceUnit::Commons(c) => c.documentation.as_deref(),
+            SourceUnit::Context(c) => c.documentation.as_deref(),
+            SourceUnit::Suite(t) => t.documentation.as_deref(),
+            SourceUnit::Adapter(a) => a.documentation.as_deref(),
+        }
+    }
+
     pub fn kind_name(&self) -> &'static str {
         match self {
             SourceUnit::Commons(_) => "commons",

@@ -21,12 +21,14 @@
 //! 3. a local/param/`self`;
 //! 4. #855: a handler's HEADER (`on`, the method/kind token, the route
 //!    literal) — guarded to that byte range so it cannot shadow rung 1;
-//! 5. a top-level declaration by name (lexical, first live-buffer rung);
-//! 6. the `key`/`store` contextual keywords and agent-state references;
-//! 7. a handler-position `@cache` annotation;
-//! 8. a `Recv.member` name-receiver access;
-//! 9. a project-wide name scan;
-//! 10. the embedded first-party sources.
+//! 5. #1885: a unit name — the header's, or a `uses`/`consumes`/suite target —
+//!    shown with the unit's module doc (lexical, first live-buffer rung);
+//! 6. a top-level declaration by name;
+//! 7. the `key`/`store` contextual keywords and agent-state references;
+//! 8. a handler-position `@cache` annotation;
+//! 9. a `Recv.member` name-receiver access;
+//! 10. a project-wide name scan;
+//! 11. the embedded first-party sources.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -205,30 +207,54 @@ pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
         // job, not this fallback's.
         return crate::symbols::describe_keyword_at(text, offset).map(str::to_string);
     };
-    // 5. A top-level declaration in this file (fast path).
+    // 5. #1885: a unit name — the file's own header name, or a `uses` /
+    //    `consumes` / suite target path — shows the unit's module doc. Guarded
+    //    to those names' byte ranges, which hold only unit-path segments and
+    //    never an index symbol, so it cannot shadow rung 1; and it runs before
+    //    the bare-name rungs below, which would otherwise answer a segment
+    //    (`model` in `uses compat.model`) with any declaration named `model`.
+    //    A context's doc may live in a sibling file, so the search covers the
+    //    project's other files: the caller's content map, or else the analysed
+    //    round's snapshots, in path order so the answer is deterministic.
+    let mut others: Vec<(&PathBuf, &str)> = match (input.files, &input.analysis) {
+        (Some(files), _) => files.iter().map(|(p, t)| (p, t.as_str())).collect(),
+        (None, Some(a)) => a
+            .snapshots
+            .iter()
+            .filter(|(p, _)| p.as_path() != a.rel)
+            .map(|(p, t)| (p, t.as_str()))
+            .collect(),
+        (None, None) => Vec::new(),
+    };
+    others.sort_by(|a, b| a.0.cmp(b.0));
+    let others = others.into_iter().map(|(_, t)| t);
+    if let Some(content) = crate::symbols::describe_unit_at(text, span.start, others) {
+        return Some(content);
+    }
+    // 6. A top-level declaration in this file (fast path).
     if let Some(content) = crate::symbols::describe_symbol(text, &name) {
         return Some(content);
     }
-    // 6. v0.137.0 (ADR 0161) + #611 (gap A): the `key`/`store` contextual
+    // 7. v0.137.0 (ADR 0161) + #611 (gap A): the `key`/`store` contextual
     //    keywords, the agent state fields they declare, and — since #611 — a
     //    *reference* to one from the agent's body. Single-file-local, so it
     //    resolves before any project-wide scan.
     if let Some(content) = crate::symbols::describe_agent_state_at(text, span.start) {
         return Some(content);
     }
-    // 7. v0.140 (ADR 0163): a handler-position `@cache` annotation — not a symbol
+    // 8. v0.140 (ADR 0163): a handler-position `@cache` annotation — not a symbol
     //    and no local, so it resolves here beside the agent state.
     if let Some(content) = crate::symbols::describe_handler_annotation_at(text, span.start) {
         return Some(content);
     }
-    // 8. v0.123 (slice 2, DECISION B): a `Recv.member` name-receiver access — a
+    // 9. v0.123 (slice 2, DECISION B): a `Recv.member` name-receiver access — a
     //    capability op (`Clock.now`), a refined/opaque `of`/`unsafe`, or a type
     //    static — via the same path signature help uses, over the project and the
     //    embedded surface. Before the cross-file / first-party name scans.
     crate::symbols::qualified_callee_at(text, span)
         .and_then(|callee| crate::signature_help::resolve_label(&callee, text, input.files))
         .map(|sig| format!("```bynk\n{sig}\n```"))
-        // 9. A project-wide scan (v1.1), then 10. the embedded first-party
+        // 10. A project-wide scan (v1.1), then 11. the embedded first-party
         //    sources (slice 9) — so `uses`/`consumes` names resolve across
         //    file boundaries (§3.4) and stdlib/surface symbols surface too.
         //    Content-ownership track (#1086) slice 1: `describe_symbol_cross_file`
