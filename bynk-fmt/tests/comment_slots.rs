@@ -59,7 +59,7 @@ use bynk_syntax::parser::parse_units;
 
 /// Refusals in the default sample, per insertion kind: `(trailing, own line,
 /// split, own line with a blank after)`.
-const REFUSED: (usize, usize, usize, usize) = (811, 509, 469, 0);
+const REFUSED: (usize, usize, usize, usize) = (826, 519, 478, 0);
 
 /// Where a comment was inserted: the line it went on or before, the line
 /// above that, and the construct a closing line ends (the nearest line above
