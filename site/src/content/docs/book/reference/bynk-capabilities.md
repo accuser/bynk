@@ -37,6 +37,13 @@ environment), so code that stays on this surface is portable.
 | **`Idempotency`** | `dedup[T](key: String) -> Effect[Option[T]]` · `remember[T](key: String, value: T, expiresAfter: Duration) -> Effect[()]` — mechanical dedup for at-least-once delivery. See below. |
 | **`Events`** | `emit[E](event: E) -> Effect[()]` — emit an `event` declared by the calling context, fire-and-forget. See below. |
 
+`Fetch` sends a request over the public internet. On Cloudflare that holds even
+when the URL is another Worker on the same account, such as a sibling Bynk
+service's `workers.dev` address, because every emitted Worker carries the
+`global_fetch_strictly_public` compatibility flag (see
+[`[workers]`](/docs/manifest/#workers)). Contexts in the same project don't
+need `Fetch` for each other: `consumes` reaches them through Service Bindings.
+
 ### The `Idempotency` capability
 
 `Idempotency` makes at-least-once delivery (a retried command, a replayed event) safe:
