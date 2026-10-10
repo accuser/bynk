@@ -305,9 +305,11 @@ where
     /// is one.
     fn params_of(&self, e: &Expr, arity: usize) -> Vec<(usize, Option<Position<'s>>)> {
         if let Some((f, unit, vars)) = self.imported_fn(e) {
-            // A method's `self` is the receiver, not an argument.
-            let params = &f.params[usize::from(f.has_self).min(f.params.len())..];
-            return params
+            // `params` holds no `self` (the parser keeps it as `has_self`),
+            // so a method's arguments line up with them one to one (#1879
+            // review).
+            return f
+                .params
                 .iter()
                 .take(arity)
                 .enumerate()
@@ -480,7 +482,9 @@ mod tests {
                          fn keep(r: Repo) -> Repo { r }\n\n\
                          fn first(r: Run) -> Repo { r.repo }\n\n\
                          fn count(r: Run) -> Int { r.n }\n\n\
-                         fn Run.repoOf(self) -> Repo { self.repo }\n";
+                         fn Run.repoOf(self) -> Repo { self.repo }\n\n\
+                         fn Run.withRepo(self, repo: Repo, k: Int) -> Run { Run { repo: repo, n: k } }\n\n\
+                         fn Run.make(repo: Repo) -> Run { Run { repo: repo, n: 0 } }\n";
 
     /// The `bynk.uses.name_conflict` messages for a `t.app` that shadows
     /// `t.core`'s `Repo` and declares `body`. Any other error fails the test.
@@ -617,6 +621,26 @@ mod tests {
         );
     }
 
+    /// #1879 review: a method's explicit parameters line up with its
+    /// arguments (`params` holds no `self`), so the first is checked too.
+    #[test]
+    fn a_method_parameter_is_checked() {
+        let got = conflicts("fn re(r: Run) -> Run { r.withRepo(42, 1) }");
+        assert!(
+            got.len() == 1 && got[0].contains("parameter `repo`"),
+            "expected one conflict at `repo`, got {got:#?}"
+        );
+    }
+
+    #[test]
+    fn a_static_parameter_is_checked() {
+        let got = conflicts("fn mk() -> Run { Run.make(42) }");
+        assert!(
+            got.len() == 1 && got[0].contains("parameter `repo`"),
+            "expected one conflict at `repo`, got {got:#?}"
+        );
+    }
+
     #[test]
     fn a_handler_body_is_checked() {
         let a = analyse(&[
@@ -629,5 +653,35 @@ mod tests {
             ),
         ]);
         a.assert_reports("bynk.uses.name_conflict");
+    }
+
+    /// #1879 review: provider operations and agent handlers are walked too.
+    #[test]
+    fn provider_ops_and_agent_handlers_are_checked() {
+        for (name, body) in [
+            (
+                "provider op",
+                "capability Reader {\n  fn read(r: Run) -> Effect[Int]\n}\n\n\
+                 provides Reader = Plain {\n  fn read(r: Run) -> Effect[Int] {\n    r.repo + 1\n  }\n}\n",
+            ),
+            (
+                "agent handler",
+                "agent Holder {\n  key id: String\n\n  store hits: Cell[Int]\n\n  \
+                 on call read(r: Run) -> Effect[Int] {\n    r.repo + 1\n  }\n}\n",
+            ),
+        ] {
+            let src =
+                format!("context t.web\n\nuses t.core\nuses t.model\n\ntype Repo = Int\n\n{body}");
+            let a = analyse(&[
+                ("t/core.bynk", CORE),
+                ("t/model.bynk", MODEL),
+                ("src/t/web.bynk", &src),
+            ]);
+            assert!(
+                a.error_categories().contains(&"bynk.uses.name_conflict"),
+                "{name}: expected a conflict:\n{}",
+                a.render()
+            );
+        }
     }
 }
