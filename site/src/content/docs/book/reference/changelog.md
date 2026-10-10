@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.314**.
+written against **v0.315**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.315.0** | "A unit's own type that shadows a directly used commons' type is `bynk.uses.name_conflict` where a value crosses between the unit's code and an imported declaration's position of that type (`Run { repo: 42 }`, `r.repo + 1`, a method or function argument); passing one such position straight to another stays legal (#1824). Before, such a program passed `check` and failed `tsc`. The rule is conservative: a value routed between two such positions through a `let`, a shorthand field or an imported generic is rejected too, though its TypeScript was correct; pass it directly, or rename the local type" |
 | **v0.314.23** | "Extract-variable no longer hoists an expression out of the scope of the bindings it reads (#1819). In an expression-bodied match arm (`Some(x) => x + 1`), a lambda body (`(v) => v * 2`), the right of an `is` test's `&&` or `implies` (`r is Ok(n) && n > 0`) or an observation's `with` predicate, the `let` it inserted above the statement read a name not bound there. Such a selection is now declined, as extract-function declines what it cannot lift soundly; one that reads none of those names, or sits in a block body where the `let` lands inside their scope, still extracts" |
 | **v0.314.22** | "Contract skew is now logged on both sides (#1826). A callee that refuses a mismatched `X-Bynk-Contract` logs `ContractMismatch <context> call <service>` with the service and both hashes before its `409` (the caller-supplied hash bounded to 16 characters, since nothing about the request is trusted yet), and the caller's `callService` logs the mismatch before it throws `BoundaryError: ContractMismatch`. Before, neither side logged anything, and a skewed deployment looked like any other unexplained `500`" |
 | **v0.314.21** | "A Workers entry point now logs a fault before it answers `500` (#1825). An HTTP route, `on call` service, event delivery or WebSocket upgrade that faulted (an adapter that threw, a host exception, a failed cross-context call) was caught by a bare `catch` and left no log line, and being caught it was no uncaught exception the platform would record. The catch now runs `console.error` with the context, the dispatch (a route's pattern, `call <service>`, `event <service>`, `ws <service>`) and the error, never the request, then answers the same `500`. A boundary or rehydration fault's payload is no longer an enumerable property of the error, so logging the error doesn't print a callee's response body or an offending value" |
