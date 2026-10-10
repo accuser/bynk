@@ -86,6 +86,33 @@ test("callService: a 409 ContractMismatch surfaces as the named error", async ()
   );
 });
 
+// #1826: the caller logs the skew, with both hashes, before it faults; a
+// 409 that is not ours logs nothing.
+test("callService: a 409 ContractMismatch is logged before it throws", async () => {
+  const detail = {
+    kind: "ContractMismatch",
+    service: "whoami",
+    expected: "317bdd3de84d2176",
+    actual: "0000000000000000",
+  };
+  const logged: unknown[][] = [];
+  const original = globalThis.console.error;
+  globalThis.console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  try {
+    await assert.rejects(() =>
+      callService(bindingReturning(detail, { status: 409 }), "whoami", null, deser<string, string>(), "app.a", "0000000000000000"),
+    );
+    await assert.rejects(() =>
+      callService(bindingReturning({ kind: "SomethingElse" }, { status: 409 }), "whoami", null, deser<string, string>()),
+    );
+  } finally {
+    globalThis.console.error = original;
+  }
+  assert.deepEqual(logged, [["ContractMismatch app.a -> whoami", detail]]);
+});
+
 // The body stream is consumed on first read, so reading it twice throws
 // `TypeError: Body is unusable`. A 409 that is *not* ours must still produce a
 // `Transport` error naming the status — replacing that with an opaque TypeError

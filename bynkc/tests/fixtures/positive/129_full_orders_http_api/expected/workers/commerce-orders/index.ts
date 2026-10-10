@@ -20,7 +20,10 @@ export default {
           case "placement": {
             __route = "call placement";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "76925704cff4e061") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "placement", expected: "76925704cff4e061", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "76925704cff4e061") {
+              globalThis.console.error("ContractMismatch commerce.orders call placement", { service: "placement", expected: "76925704cff4e061", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "placement", expected: "76925704cff4e061", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_total = handlers.__deserialise_Money(args, "$");
             if (__r_total.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_total.error), { status: 400, headers: { "content-type": "application/json" } });

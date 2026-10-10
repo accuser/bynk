@@ -19,7 +19,10 @@ export default {
           case "api": {
             __route = "call api";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "f094bffb7e346b6c") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "api", expected: "f094bffb7e346b6c", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "f094bffb7e346b6c") {
+              globalThis.console.error("ContractMismatch demo call api", { service: "api", expected: "f094bffb7e346b6c", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "api", expected: "f094bffb7e346b6c", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_key = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(args);
             if (__r_key.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_key.error), { status: 400, headers: { "content-type": "application/json" } });

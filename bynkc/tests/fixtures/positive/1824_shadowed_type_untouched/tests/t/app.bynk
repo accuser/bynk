@@ -1,0 +1,10 @@
+suite t.app
+
+case "an imported repo passes through untouched" {
+  expect label(retag(sample())) == "bynk"
+  expect size(retag(sample())) == 2
+}
+
+case "the local repo keeps its own meaning" {
+  expect mine() == 7
+}

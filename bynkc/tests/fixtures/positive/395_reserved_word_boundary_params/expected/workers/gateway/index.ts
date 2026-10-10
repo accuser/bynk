@@ -22,7 +22,10 @@ export default {
           case "echo": {
             __route = "call echo";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "d99db46e9a4cfb5e") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "echo", expected: "d99db46e9a4cfb5e", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "d99db46e9a4cfb5e") {
+              globalThis.console.error("ContractMismatch gateway call echo", { service: "echo", expected: "d99db46e9a4cfb5e", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "echo", expected: "d99db46e9a4cfb5e", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_void = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(args);
             if (__r_void.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_void.error), { status: 400, headers: { "content-type": "application/json" } });
@@ -34,7 +37,10 @@ export default {
           case "registry": {
             __route = "call registry";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "4410b6f9918570a9") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "registry", expected: "4410b6f9918570a9", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "4410b6f9918570a9") {
+              globalThis.console.error("ContractMismatch gateway call registry", { service: "registry", expected: "4410b6f9918570a9", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "registry", expected: "4410b6f9918570a9", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             if (typeof args !== "object" || args === null || globalThis.Array.isArray(args)) return new globalThis.Response(globalThis.JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
             const argsObj = args as { [k: string]: __JsonValue };
