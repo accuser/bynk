@@ -11,6 +11,8 @@
 //! - ```bynk           → must compile:
 //!     * a block starting `commons …` is compiled as a single file;
 //!     * a block starting `context …` is compiled as a one-file project;
+//!     * (a leading doc-block — a module doc above the header — is skipped
+//!       when reading the "starting" line, #1885);
 //!     * anything else (declarations shown on their own) is compiled inside a
 //!       synthetic `commons doc`, or failing that a `context doc`.
 //! - ```bynk,fail      → must FAIL to compile (negative examples);
@@ -121,6 +123,28 @@ fn first_line(body: &str) -> &str {
         .unwrap_or("")
 }
 
+/// #1885: the line that decides how a block is compiled — its first non-blank
+/// line that is not trivia, skipping any leading doc-blocks and `--` line
+/// comments. A module doc (or a header comment) sits above the unit header, so
+/// a block that opens `--- … --- commons x` is a `commons` block, not
+/// declarations to wrap in a synthetic unit. Falls back to the first non-blank
+/// line when the block is all trivia (or a doc-block is unclosed).
+fn header_line(body: &str) -> &str {
+    let mut lines = body.lines().map(str::trim).filter(|l| !l.is_empty());
+    let first = first_line(body);
+    while let Some(l) = lines.next() {
+        if l.len() >= 3 && l.bytes().all(|b| b == b'-') {
+            // A doc-block marker: skip to the marker that closes it.
+            if !lines.by_ref().any(|c| c == l) {
+                break;
+            }
+        } else if !l.starts_with("--") {
+            return l;
+        }
+    }
+    first
+}
+
 /// #1661 (Decision A): an un-headed block — the declarations a page shows on
 /// their own — compiled inside a synthetic unit. A `commons` is tried first; a
 /// block declaring context-only items (an agent, a service, a capability) is
@@ -217,7 +241,7 @@ fn parses_as_fragment(body: &str) -> Result<(), String> {
 
 /// Compile a `context …` block as a one-file project under a unique temp dir.
 fn compile_context(body: &str, idx: usize) -> Result<(), String> {
-    let first = first_line(body);
+    let first = header_line(body);
     let name = first
         .strip_prefix("context")
         .unwrap_or("")
@@ -278,7 +302,7 @@ fn every_doc_example_compiles() {
             continue;
         }
         let expect_fail = b.info.contains("fail");
-        let first = first_line(&b.body);
+        let first = header_line(&b.body);
 
         // An explicitly marked fragment is parsed, not compiled — even a headed
         // one (a context that consumes another the page declares separately).

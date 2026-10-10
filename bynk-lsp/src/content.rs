@@ -5,7 +5,7 @@
 //! (slice 0's `Backend::project_files`, bare paths, was deleted once slice 1
 //! migrated its last callers) — feeds `bynk-ide`'s content-supplying
 //! `for_each_unit`/`resolve_label`/cross-file symbol lookups (completion,
-//! signature help, hover rungs 8 and 9, go-to-declaration). No code in this
+//! signature help, hover rungs 5, 9 and 10, go-to-declaration). No code in this
 //! crate reads a project file straight off disk itself any more; an unsaved
 //! edit to file A is visible from file B everywhere, closing the staleness
 //! this track exists to fix.

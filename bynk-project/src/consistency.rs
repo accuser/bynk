@@ -181,3 +181,62 @@ pub fn check_group_kind_consistency(
         Err(errors)
     }
 }
+
+/// #1885 (DECISION D): a unit split across files carries **at most one**
+/// module doc — the doc-block above its header. Two or more would have to be
+/// joined in some file order, which readers would not expect, so each file
+/// that carries one gets `bynk.project.duplicate_module_doc`, naming every
+/// such file (paths `/`-joined on every platform).
+///
+/// `groups` holds production units only (`suite` files are grouped
+/// separately), so a suite's doc is never counted. The rule is kind-agnostic:
+/// a `commons` may be multi-file too, and the same ambiguity applies to it.
+pub fn check_group_module_docs(
+    parsed: &[ParsedFile],
+    groups: &BTreeMap<String, Vec<usize>>,
+) -> Result<(), Vec<(PathBuf, CompileError)>> {
+    let mut errors: Vec<(PathBuf, CompileError)> = Vec::new();
+    for (name, indices) in groups {
+        let mut documented: Vec<usize> = indices
+            .iter()
+            .copied()
+            .filter(|&i| parsed[i].unit.module_doc().is_some())
+            .collect();
+        if documented.len() < 2 {
+            continue;
+        }
+        documented.sort_by(|&a, &b| parsed[a].identity_path.cmp(&parsed[b].identity_path));
+        let files = documented
+            .iter()
+            .map(|&i| {
+                format!(
+                    "`{}`",
+                    parsed[i].identity_path.to_string_lossy().replace('\\', "/")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        for &i in &documented {
+            let pf = &parsed[i];
+            errors.push((
+                pf.identity_path.clone(),
+                CompileError::new(
+                    "bynk.project.duplicate_module_doc",
+                    pf.unit.name().span,
+                    format!(
+                        "{} `{name}` has a module doc in more than one file: {files}",
+                        pf.unit.kind_name(),
+                    ),
+                )
+                .with_note(
+                    "a unit carries at most one module doc (the doc-block above its header); keep it in one file and turn the others into `--` comments",
+                ),
+            ));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}

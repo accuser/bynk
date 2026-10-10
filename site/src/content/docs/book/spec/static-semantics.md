@@ -81,6 +81,25 @@ types is not a crossing. If `t.app` declares `type Repo = Int` beside `uses
 t.core` and `uses t.model`, then `Run { repo: first(r) }` is legal in `t.app`,
 and `Run { repo: 42 }` and `r.repo + 1` are not.
 
+### §5.1a Module documentation {#module-docs}
+
+A doc-block ([§3.3.2](/book/spec/lexical-grammar/#332-doc-blocks)) immediately
+above a `commons`, `context` or `adapter` header is that unit's **module doc**.
+A unit whose files share its qualified name
+([§8.3](/book/spec/compilation-model/#83-source-layout-and-test-ness)) MUST carry
+at most one module doc across all of them: when two or more of its files carry
+one, each such file is rejected (`bynk.project.duplicate_module_doc`), and the
+diagnostic names every such file. A `suite` is not part of the unit it targets,
+so a suite's own doc-block is not counted. Nor is a doc-block whose content is
+empty or only whitespace: it documents nothing, so it is not a module doc.
+
+> [!NOTE]
+> The rule exists so that a unit's documentation is one piece of prose,
+> independent of file order. The tooling shows the module doc on hover over the
+> unit's name (its header, a `uses` target, a `consumes` target) and as the lede
+> of the unit's documentation page, which merges every file of a multi-file
+> unit. This note is informative.
+
 ## §5.2 Well-typedness
 
 Every expression MUST have the type its position requires. A function or method

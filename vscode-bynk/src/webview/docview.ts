@@ -48,7 +48,6 @@ function wireDocLinks(container: HTMLElement): void {
 
 function renderEntry(
   md: ReturnType<typeof createMarkdownRenderer>,
-  uri: string,
   entry: DocEntry,
 ): HTMLElement {
   const section = document.createElement("section");
@@ -64,7 +63,10 @@ function renderEntry(
   name.className = "name";
   name.textContent = entry.name;
   heading.append(badge, name);
-  makeClickable(heading, uri, entry.range);
+  // #1885: the page merges a unit's files, so each entry names the file
+  // its range is in, which may not be the requested document.
+  const entryUri = entry.uri;
+  makeClickable(heading, entryUri, entry.range);
   section.append(heading);
 
   // The entry Markdown is a fenced `bynk` signature plus (when documented) the
@@ -76,7 +78,7 @@ function renderEntry(
   // The signature code block is also a click-to-code target (issue: "headings
   // and signatures are clickable").
   const sig = body.querySelector("pre");
-  if (sig instanceof HTMLElement) makeClickable(sig, uri, entry.range);
+  if (sig instanceof HTMLElement) makeClickable(sig, entryUri, entry.range);
   section.append(body);
 
   if (!entry.documented) {
@@ -142,7 +144,7 @@ function main(): void {
   }
 
   for (const entry of model.entries) {
-    root.append(renderEntry(md, uri, entry));
+    root.append(renderEntry(md, entry));
   }
 }
 
