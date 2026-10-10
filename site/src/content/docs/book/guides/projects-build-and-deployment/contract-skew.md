@@ -55,6 +55,18 @@ they differ, it refuses:
 The caller sees a `ContractMismatch`, not a mangled result. The skew became a
 loud, nameable failure instead of a silent one.
 
+Both sides log it, so the name reaches your Worker logs and `wrangler tail`, not
+just a response body passed between two Workers. `payment` logs it as it
+refuses, and `orders` logs it before the call faults:
+
+```text
+ContractMismatch shop.payment call authorise { service: 'authorise', expected: '9f2c41ab73e05d18', actual: '317bdd3de84d2176' }
+ContractMismatch shop.orders -> authorise { kind: 'ContractMismatch', service: 'authorise', … }
+```
+
+The fault itself answers `orders`'s own caller with a bare `500`, logged as
+`shop.orders <route> faulted`, like any other fault.
+
 ### Why it refuses before reading the body
 
 Once the two sides disagree about what the contract *is*, the body's meaning is

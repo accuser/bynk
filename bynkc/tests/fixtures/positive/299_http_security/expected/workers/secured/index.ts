@@ -14,6 +14,7 @@ export default {
     const __security_admin: __SecurityPolicy = { nosniff: false, hstsMaxAgeSecs: null };
     const __security_health: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
     const __security_store: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: 15552000 };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
@@ -25,6 +26,7 @@ export default {
 
       {
         if ((method === "GET" || method === "HEAD") && path === "/admin/stats") {
+          __route = "GET /admin/stats";
           const result = await surface.http_GET_admin_stats();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_admin);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -32,6 +34,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/health") {
+          __route = "GET /health";
           const result = await surface.http_GET_health();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_health);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -40,6 +43,7 @@ export default {
       {
         const __m = __matchPath("/admin/item/:code", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /admin/item/:code";
           const __raw_code = __m.params["code"];
           const __r_code = handlers.ShortCode.of(__raw_code);
           if (__r_code.tag === "Err") return __applySecurityHeaders(new globalThis.Response(globalThis.JSON.stringify({ kind: "RefinementViolation", path: "path.code", violation: __r_code.error }), { status: 400, headers: { "content-type": "application/json" } }), __security_admin);
@@ -52,6 +56,7 @@ export default {
       {
         const __m = __matchPath("/products/:id", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /products/:id";
           const __raw_id = __m.params["id"];
           const id = __raw_id;
           const result = await surface.http_GET_products_Param_id(id);
@@ -62,6 +67,7 @@ export default {
       {
         const __m = __matchPath("/store/:code", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /store/:code";
           const __raw_code = __m.params["code"];
           const __r_code = handlers.ShortCode.of(__raw_code);
           if (__r_code.tag === "Err") return __applySecurityHeaders(new globalThis.Response(globalThis.JSON.stringify({ kind: "RefinementViolation", path: "path.code", violation: __r_code.error }), { status: 400, headers: { "content-type": "application/json" } }), __security_store);
@@ -97,7 +103,8 @@ export default {
         return __applySecurityHeaders(__res, __security_store);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`secured ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },
