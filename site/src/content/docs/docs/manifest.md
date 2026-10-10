@@ -48,9 +48,10 @@ equivalent to an empty `bynk.toml`, which is equivalent to `[project]` alone.
 `bynk.toml` holds the five tables below, and nothing else. An unknown table, a
 key outside any table (including a table's own name given a plain value, such
 as `paths = "src"`), or an unknown key in `[project]`, `[paths]`, `[lsp]` or
-`[workers]` is an error. `bynkc` and `bynk` report it, with the nearest name when there is
-one, and build nothing. An unknown `[fmt]` key is reported by the formatter
-(`bynkc fmt`, `bynk fmt`), which owns that table, not by `check` or `compile`:
+`[workers]` is an error. `bynkc` and `bynk` report it, with the nearest name
+when there is one, and build nothing. An unknown `[fmt]` key is reported by the
+formatter (`bynkc fmt`, `bynk fmt`), which owns that table, not by `check` or
+`compile`:
 
 ```text
 bynkc: `bynk.toml` has no table named `[pahts]` — did you mean `[paths]`?
@@ -153,7 +154,9 @@ Language-server settings, consumed by `bynkc-lsp`. See the
 ## `[workers]`
 
 Settings for the Cloudflare Workers a Workers build emits (`bynkc compile
---target workers`, `bynk dev`, `bynk deploy`). A bundle build ignores them.
+--target workers`, `bynk dev`, `bynk deploy`). A bundle build emits no
+`wrangler.toml`, so the flags have no effect there, but the table is still
+checked, and the duplicate warning below still appears.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -180,9 +183,11 @@ compatibility_flags = ["global_fetch_strictly_public", "nodejs_compat"]
 ```
 
 Flag names aren't checked, so a flag newer than the compiler works, and a
-misspelt one is left for Wrangler and the Workers runtime to reject. A flag listed twice, or one that is
-already on by default, is dropped with a `bynk.project.duplicate_compatibility_flag`
-warning. Anything but a list of strings is an error.
+misspelt one is left for Wrangler and the Workers runtime to reject. A flag
+listed twice, or one that is already on by default, is dropped with a
+`bynk.project.duplicate_compatibility_flag` warning, which `check`, `compile`,
+`dev` and `deploy` all report, once per build. Anything but a list of strings
+is an error.
 
 ## Legacy mode
 

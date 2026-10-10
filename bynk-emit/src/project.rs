@@ -603,7 +603,12 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
         | RunChecks::Checked {
             errors, snapshots, ..
         } => ProjectCheck {
-            errors: errors.into_all(),
+            // #1890: the manifest's duplicate-flag warnings, as a build reports.
+            errors: errors
+                .into_all()
+                .into_iter()
+                .chain(compatibility_flag_warnings(&options.compatibility_flags))
+                .collect(),
             snapshots,
             display_root: options.roots.project_root().to_path_buf(),
         },
@@ -800,6 +805,28 @@ fn in_memory_logical_path(source: &str) -> PathBuf {
     }
 }
 
+/// #1890: one `bynk.project.duplicate_compatibility_flag` warning per
+/// duplicate in the manifest's `[workers] compatibility_flags` (`extra`),
+/// shared by [`finish_build`] and [`check_project`] so `compile` and `check`
+/// report the same thing. Attributed to `bynk.toml` by its root-relative
+/// identity path, like every other [`AttributedError`]; the manifest is never
+/// a snapshot, so renderers print that path (or none) rather than a source
+/// excerpt, and the message names `bynk.toml` itself.
+fn compatibility_flag_warnings(extra: &[String]) -> Vec<AttributedError> {
+    let (_, duplicates) = crate::compatibility_flags(extra);
+    duplicates
+        .into_iter()
+        .map(|flag| {
+            let default = crate::DEFAULT_COMPATIBILITY_FLAGS.contains(&flag.as_str());
+            bynk_project::duplicate_compatibility_flag_warning(
+                &flag,
+                default,
+                PathBuf::from("bynk.toml"),
+            )
+        })
+        .collect()
+}
+
 /// Assemble a finished [`ProjectOutput`] (or a [`ProjectFailure`]) from a
 /// [`RunChecks`] result — the shared tail of `compile_project` and
 /// `compile_in_memory`.
@@ -807,23 +834,16 @@ fn in_memory_logical_path(source: &str) -> PathBuf {
 /// #1890: `compatibility_flags` is the manifest's `[workers]` list
 /// ([`CompileOptions::compatibility_flags`]). It is merged with the defaults
 /// once here, for every Worker, and each duplicate it held becomes one
-/// `bynk.project.duplicate_compatibility_flag` warning against `bynk.toml`,
-/// whatever the build target: the duplicate is a fact about the manifest.
+/// [`compatibility_flag_warnings`] warning, whatever the build target: the
+/// duplicate is a fact about the manifest.
 fn finish_build(
     run: RunChecks,
     import_ext: ImportExt,
     display_root: &Path,
     compatibility_flags: &[String],
 ) -> Result<ProjectOutput, ProjectFailure> {
-    let (flags, duplicates) = crate::compatibility_flags(compatibility_flags);
-    let flag_warnings = duplicates.into_iter().map(|flag| {
-        let default = crate::DEFAULT_COMPATIBILITY_FLAGS.contains(&flag.as_str());
-        bynk_project::duplicate_compatibility_flag_warning(
-            &flag,
-            default,
-            display_root.join("bynk.toml"),
-        )
-    });
+    let (flags, _) = crate::compatibility_flags(compatibility_flags);
+    let flag_warnings = compatibility_flag_warnings(compatibility_flags);
     match run {
         RunChecks::Bailed {
             errors, snapshots, ..

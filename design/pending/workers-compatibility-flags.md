@@ -42,7 +42,9 @@ outside, and the only workaround was passing `--compatibility-flags` to
    than the compiler. A misspelt name is left for Wrangler and the runtime to
    reject. A flag listed twice, or one already in the default set, is dropped
    with a `bynk.project.duplicate_compatibility_flag` warning against
-   `bynk.toml`, once per build rather than once per Worker. A non-string entry,
+   `bynk.toml`, once per build rather than once per Worker, and `check`
+   reports it as `compile` does. It fires whatever the build target, since the
+   duplicate is a fact about the manifest. A non-string entry,
    or a value that isn't a list (including a bare string), is a manifest error,
    reported with the other `bynk.toml` errors.
 4. **No per-environment copy.** `bynk deploy --env` appends an `[env.<name>]`

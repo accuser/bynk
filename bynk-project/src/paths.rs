@@ -152,8 +152,9 @@ const PLANNED_TABLES: &[(&str, &str)] = &[
     ("deploy", "#551"),
 ];
 
-/// The manifest's tables as `` `[project]`, `[paths]`, `[fmt]` <conj> `[lsp]` ``,
-/// from [`MANIFEST_TABLES`], so a message can't fall behind it.
+/// The manifest's tables as
+/// `` `[project]`, `[paths]`, `[fmt]`, `[lsp]` <conj> `[workers]` ``, from
+/// [`MANIFEST_TABLES`], so a message can't fall behind it.
 fn table_list(conj: &str) -> String {
     let names: Vec<String> = MANIFEST_TABLES
         .iter()
@@ -436,10 +437,10 @@ pub fn duplicate_compatibility_flag_warning(
 ) -> crate::AttributedError {
     let message = if default {
         format!(
-            "`[workers] compatibility_flags` lists `{flag}`, which every Bynk Worker already has"
+            "`bynk.toml`'s `[workers] compatibility_flags` lists `{flag}`, which every Bynk Worker already has"
         )
     } else {
-        format!("`[workers] compatibility_flags` lists `{flag}` more than once")
+        format!("`bynk.toml`'s `[workers] compatibility_flags` lists `{flag}` more than once")
     };
     let mut error = bynk_syntax::CompileError::new(
         "bynk.project.duplicate_compatibility_flag",

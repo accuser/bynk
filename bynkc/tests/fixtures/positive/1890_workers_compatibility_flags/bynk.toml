@@ -2,6 +2,7 @@
 name = "workers-compatibility-flags"
 version = "0.1.0"
 
-# #1890: appended after the default `global_fetch_strictly_public`.
+# #1890: appended after the default `global_fetch_strictly_public`. The repeat
+# is dropped with one warning for the build, not one per Worker (two here).
 [workers]
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "nodejs_compat"]
