@@ -119,8 +119,8 @@ A doc is Markdown. Headings, lists, emphasis, links and code all render on
 hover and on the documentation page. A `[Name]` link to another declaration
 becomes a link you can follow.
 
-To show an example in a doc, put it in a code fence. Prefer `~~~` fences, which
-read clearly inside Bynk source:
+To show an example in a doc, put it in a code fence. This guide uses `~~~`
+fences; backtick fences work the same:
 
 ```bynk
 ---

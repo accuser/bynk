@@ -53,7 +53,8 @@ type OrderId = String
 
 /// A scratch project on disk, analysed. Returns the analysis and the root.
 fn analysed(tag: &str) -> (ProjectDiagnostics, PathBuf) {
-    let root = std::env::temp_dir().join(format!("bynk-module-docs-{tag}-{}", std::process::id()));
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("bynk-module-docs-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     for (rel, text) in [
         ("shop/cart.bynk", CART),
