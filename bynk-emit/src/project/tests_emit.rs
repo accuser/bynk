@@ -195,11 +195,10 @@ pub(crate) fn process_integration_tests(
     let mut outputs: Vec<StagedFile> = Vec::new();
     let mut runnables: Vec<RunnableTest> = Vec::new();
 
-    let _ = kinds;
-
     let ready = test_suites::phase_integration_bodies(
         integration_groups,
         parsed,
+        kinds,
         unit_tables,
         unit_consumes,
         unit_consumes_aliases,
@@ -223,7 +222,8 @@ pub(crate) fn process_integration_tests(
         // target's transitive `consumes` closure (no `wires` list).
         let suite_target = decl.target.joined();
         let suite_name = suite_target.clone();
-        let participants = test_suites::infer_participants(&suite_target, unit_consumes);
+        // #1856: contexts only; a capability-only unit is provided in-process.
+        let participants = test_suites::infer_participants(&suite_target, unit_consumes, kinds);
         // `ready` only contains groups `phase_integration_bodies` built a
         // harness cross-context view for — this lookup cannot miss.
         let cross_context = ready
@@ -1279,7 +1279,9 @@ fn emit_integration_harness(
         if let Some(deps) = unit_consumes.get(p) {
             let mut deps_sorted = deps.clone();
             deps_sorted.sort();
-            for d in &deps_sorted {
+            // #1856: a consumed unit that is no participant (no Worker) has
+            // no Service Binding to wire.
+            for d in deps_sorted.iter().filter(|d| participants.contains(d)) {
                 let dns = test_ns(d);
                 let binding = crate::emitter::wrangler::consumed_binding_name(d);
                 body.push(TsStmt::assign(
