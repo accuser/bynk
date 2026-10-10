@@ -1,6 +1,6 @@
 ---
 level: minor
-changelog: "Resolves #1889: the `List[T]` kernel gains `append(x: T) -> List[T]` and `concat(other: List[T]) -> List[T]`, both pure and non-mutating, so a `fold` or `foldEff` builds a list in order without `prepend` and `reverse`. They emit as the spreads `[...xs, x]` and `[...xs, ...ys]`, and like `prepend` they pass an expected list type down to their receiver, so `let xs: List[Int] = [].append(1)` infers. Supersedes ADR 0036's \"never append\" clause."
+changelog: "Resolves #1889: the `List[T]` kernel gains `append(x: T) -> List[T]` and `concat(other: List[T]) -> List[T]`, both pure and non-mutating, so a `fold` or `foldEff` builds a list in order without `prepend` and `reverse`. They emit as the spreads `[...xs, x]` and `[...xs, ...ys]`, and like `prepend` they pass an expected list type down to their receiver, so `let xs: List[Int] = [].append(1)` infers. Supersedes ADR 0036's never-append clause."
 ---
 
 ## ADR: list-concat-append
