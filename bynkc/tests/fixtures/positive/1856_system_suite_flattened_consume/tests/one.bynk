@@ -1,0 +1,6 @@
+suite shop.one as system {
+  case "reads the clock" {
+    let t <- shop.one.now()
+    expect t == 1
+  }
+}
