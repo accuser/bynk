@@ -1,6 +1,9 @@
 # 0036 — The collection kernel: `prepend` as the builder, `fold` + `foldEff` as iteration
 
-- **Status:** Accepted (v0.20b)
+- **Status:** Accepted (v0.20b). **The "never `[...acc, x]` append" clause is
+  superseded by the `list-concat-append` ADR from #1889**: the kernel now has
+  `append(x)` and `concat(other)`, so an order-preserving fold builds with
+  them and needs no `reverse`. The rest of this decision stands.
 - **Spec:** §5.10, §7.3.7
 
 ## Context

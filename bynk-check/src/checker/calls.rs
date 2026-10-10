@@ -2369,10 +2369,13 @@ pub(crate) fn check_method_call(
     }
     // v0.20b: `insert`/`prepend` return their receiver's collection type —
     // propagate an expected collection type down the chain so
-    // `let m: Map[String, Int] = Map.empty().insert("a", 1)` infers.
+    // `let m: Map[String, Int] = Map.empty().insert("a", 1)` infers. #1889:
+    // `append`/`concat` return their receiver's list type too.
     let recv_expected = match (expected, method.name.as_str()) {
         (Some(t), "insert") => peel_to_map(t, tys).map(|(k, v)| tys.intern(Ty::Map(k, v))),
-        (Some(t), "prepend") => peel_to_list(t, tys).map(|e| tys.intern(Ty::List(e))),
+        (Some(t), "prepend" | "append" | "concat") => {
+            peel_to_list(t, tys).map(|e| tys.intern(Ty::List(e)))
+        }
         _ => None,
     };
     let recv_ty = type_of(receiver, recv_expected, ctx)?;

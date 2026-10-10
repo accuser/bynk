@@ -395,6 +395,26 @@ pub(crate) fn check_list_kernel_method(
             check_arg(&args[0], elem, "the `List.prepend` element", ctx);
             Some(tys.intern(Ty::List(elem)))
         }
+        // #1889: `append(x)` mirrors `prepend`, putting the item on the end.
+        // Pure and non-mutating: it returns a new list.
+        "append" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            check_arg(&args[0], elem, "the `List.append` element", ctx);
+            Some(tys.intern(Ty::List(elem)))
+        }
+        // #1889: `concat(other)` joins two lists of one element type, the
+        // receiver's elements first. `other` checks against the receiver's
+        // `List[T]`, so an empty `[]` argument takes its `T` from it.
+        "concat" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let list = tys.intern(Ty::List(elem));
+            check_arg(&args[0], list, "the `List.concat` argument", ctx);
+            Some(list)
+        }
         "fold" => {
             if !arity(2, ctx) {
                 return None;
@@ -2621,6 +2641,8 @@ fn probe(s: String, n: Int, xs: List[Int], m: Map[String, Int], o: Option[Int], 
   let d = xs.get(0)
   let e = xs.fold(0, (acc, x) => acc + x)
   let f = xs.prepend(1)
+  let f2 = xs.append(4)
+  let f3 = xs.concat([5, 6])
   let g = m.keys()
   let h = m.get(\"k\")
   let i = m.insert(\"k\", 1)
@@ -2643,6 +2665,8 @@ fn probe(s: String, n: Int, xs: List[Int], m: Map[String, Int], o: Option[Int], 
             ("xs.get(0)", "Option[Int]"),
             ("xs.fold(0, (acc, x) => acc + x)", "Int"),
             ("xs.prepend(1)", "List[Int]"),
+            ("xs.append(4)", "List[Int]"),
+            ("xs.concat([5, 6])", "List[Int]"),
             ("m.keys()", "List[String]"),
             ("m.get(\"k\")", "Option[Int]"),
             ("m.insert(\"k\", 1)", "Map[String, Int]"),
@@ -2681,6 +2705,55 @@ fn probe(s: String, n: Int, xs: List[Int], m: Map[String, Int], o: Option[Int], 
     fn a_kernel_method_argument_of_the_wrong_type_is_a_mismatch() {
         reports(
             "fn f(s: String) -> Bool { s.contains(1) }\n",
+            "bynk.types.type_mismatch",
+        );
+    }
+
+    /// #1889: `append` checks its item against the receiver's element type.
+    #[test]
+    fn appending_an_item_of_the_wrong_type_is_a_mismatch() {
+        reports(
+            "fn f(xs: List[Int]) -> List[Int] { xs.append(\"s\") }\n",
+            "bynk.types.type_mismatch",
+        );
+    }
+
+    /// #1889: `concat` joins lists of one element type only.
+    #[test]
+    fn concatenating_a_list_of_another_element_type_is_a_mismatch() {
+        reports(
+            "fn f(xs: List[Int], ys: List[String]) -> List[Int] { xs.concat(ys) }\n",
+            "bynk.types.type_mismatch",
+        );
+    }
+
+    /// #1889: an empty receiver or argument takes its element type from the
+    /// context, so a fold can start from `[]` and build in order.
+    #[test]
+    fn append_and_concat_infer_through_empty_lists() {
+        let a = analyse(&[(
+            "demo.bynk",
+            "commons demo\n\n\
+fn f(xs: List[Int]) -> List[Int] {
+  let a: List[Int] = [].append(1)
+  let b: List[Int] = [].concat([2])
+  let c = xs.concat([])
+  let d = xs.fold(a, (acc, x) => acc.append(x))
+  let e = xs.fold(b, (acc, x) => acc.concat([x]))
+  c.concat(d).concat(e)
+}
+",
+        )]);
+        a.assert_clean();
+        assert_eq!(a.type_at("demo.bynk", "xs.concat([])"), "List[Int]");
+    }
+
+    /// #1889: inside a fold, the accumulator's element type fixes what
+    /// `append` accepts, so appending a `String` to a `List[Int]` is caught.
+    #[test]
+    fn a_wrong_typed_append_inside_a_fold_is_a_mismatch() {
+        reports(
+            "fn f(xs: List[Int]) -> List[Int] { xs.fold([0], (acc, x) => acc.append(x.toString())) }\n",
             "bynk.types.type_mismatch",
         );
     }

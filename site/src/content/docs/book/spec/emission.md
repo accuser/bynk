@@ -623,7 +623,9 @@ platform adapter locks the deployment unit to its platform
 
 Kernel operations emit **inline** — typed IIFEs and spreads, no runtime
 imports — so a module that never touches collections emits byte-identically
-to v0.20a. `prepend` is the spread `[x, ...xs]`; `insert` copies
+to v0.20a. `prepend` is the spread `[x, ...xs]`, evaluating the argument first; `append`
+is `[...xs, x]` and `concat` is `[...xs, ...ys]`, each evaluating the receiver
+before the argument, as written; `insert` copies
 (`new Map(m).set(k, v)`) — the emitted value is never mutated in place.
 **`fold`, `foldEff`, `forEach`, `parTraverse`, `traverseAll`, and
 `parTraverseAll` emit as a single loop** (an IIFE; `async` for the effectful
