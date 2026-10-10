@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "**An `Option` decodes from absent, `null` or a bare value** ([#1887](https://github.com/accuser/bynk/issues/1887)). Decoding an `Option[U]` now accepts an absent key and `null` as `None`, and a bare value as `Some`, checked and refinement-checked as `U`, as well as Bynk's tagged `{\"kind\": \"Some\", \"value\": …}` / `{\"kind\": \"None\"}`. It is the one `Option` codec, so the rule holds for `Json.decode`, HTTP request bodies, cross-context calls, agent-store rehydration and WebSocket frames. Encoding is unchanged, so contract hashes do not move and every payload Bynk wrote still decodes; a hand-written tagged object with extra keys, such as `{\"kind\": \"Some\", \"value\": \"d\", \"note\": \"x\"}`, is now read as a bare value. The tagged forms win where a value could be read both ways, so whatever the encoder writes decodes back to itself."
----
+# 0450 — An Option decodes leniently from absent, null, a bare value or the tagged form
 
-## ADR: lenient-option-decode
-title: An Option decodes leniently from absent, null, a bare value or the tagged form
-summary: Amends 0045; Option decoding accepts the forms non-Bynk JSON uses, tagged forms first
+- **Status:** Accepted (v0.322)
 
 **Context.** [ADR 0045](0045-typed-json-codec.md) made `Json.decode[T]` a
 compiler-backed static over the per-type boundary codecs. Those codecs decoded
