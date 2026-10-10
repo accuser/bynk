@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "A Worker that decodes a consumed context's export now generates the codec of every type the export reaches, including one the callee does not export (#1846). `Ticket.code`, typed by `t.vault`'s unexported `Code`, was decoded through a `__deserialise_Code` that was neither generated nor imported (TS2552), and a consumer declaring its own `Code` would have reached its own codec instead. Such a type's codecs and instantiations are generated under a callee-qualified name (`__serialise_t_vault__Code`, `__serialise_Option_t_vault__Code`), so they can't collide with the consumer's, while their TS type stays the callee's (`t_vault.Code`) and a refined one still validates inline"
----
+# 0446 — A consumer generates a consumed context's unexported boundary types' codecs under a qualified name
 
-## ADR: consumed-unexported-type-codecs
-title: A consumer generates a consumed context's unexported boundary types' codecs under a qualified name
-summary: Unexported types an export reaches get local codecs named `<ns>__<Type>`, typed by the callee's namespace
+- **Status:** Accepted (v0.315.1)
 
 **Context.** A consumer decodes a consumed context's exports with codecs it generates locally (#661): the codec function names stay bare, and their TS types reach through the callee's type-only namespace (`import type * as t_vault`). Only the callee's *exported* types were generated. A type an export reaches without being exported, like `Ticket.code: Code`, was classed as foreign and expected from a commons import, which never applies to it. So the consumer called a codec that didn't exist (#1846). The consumer can't name that type, so it may declare its own `Code`. Generating the callee's codec under the bare name would then collide with the consumer's, or the dedupe against `emitted_names` would silently decode the callee's `Code` with the consumer's codec.
 
