@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "**Module docs** ([#1885](https://github.com/accuser/bynk/issues/1885)). A doc-block above a `commons`/`context`/`adapter` header is the unit's module doc. A unit split across files carries at most one: two or more is `bynk.project.duplicate_module_doc`, naming every file that carries one. Hover on a unit name (its header, a `uses` target, a `consumes` target) shows the unit's module doc, found in whichever of its files has it, and the documentation page merges every file of a multi-file unit under that doc. New guide: [Document your code](/book/guides/program-structure/document-your-code/); spec [§5.1a](/book/spec/static-semantics/#module-docs)."
----
+# 0452 — A unit split across files carries at most one module doc
 
-## ADR: one-module-doc-per-unit
-title: A unit split across files carries at most one module doc
-summary: Two module docs on one unit are an error naming every file; hover and the documentation page read the one there is
+- **Status:** Accepted (v0.324)
 
 **Context.** A doc-block above a unit header has been parsed and stored as the
 unit's documentation (`Context.documentation`, `Commons.documentation`) since
