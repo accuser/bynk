@@ -42,8 +42,12 @@ reviewing bynk-lang/compat-board (#1885):
   prose. It runs only when the content lexes and contains a declaration keyword,
   so ordinary prose costs one tokenize at most, and prose that starts like a
   declaration ("type of the thing", "fn is used here") fails the parse and is
-  not flagged. Doc-blocks inside the probed content are not themselves checked.
-  The note suggests `-- Helpers --` for a divider and a code fence for an
+  not flagged. Because A makes nesting legal, code can hide one level down: a
+  doc-block inside the content lexes to one opaque token, so the probe recurses
+  into each inner block's content (up to four levels) and reports any finding on
+  the outer block. Content that fails to lex because it holds a lone `---` (a
+  Markdown rule) is probed again with its marker lines blanked out. The
+  probe's own parser reports nothing on inner blocks. The note suggests `-- Helpers --` for a divider and a code fence for an
   example. This catches the divider pair whether or not a declaration follows it,
   which upgrading `orphan_doc_block` to an error would not (the attached shape is
   the worse one), and avoids a first-line keyword heuristic's false positives.
@@ -64,8 +68,14 @@ reviewing bynk-lang/compat-board (#1885):
   extension's inline doc rendering all pair markers by length.
 
 **Consequences.** A doc can carry any Markdown, and code between dividers is no
-longer lost silently. The probe does not see a suite's members (`case`,
-`property`, `stub`) or a whole unit header inside a doc; neither is a
-declaration-swallowing shape in practice. Module docs (one per context, hover on
+longer lost silently. The probe's ceilings:
+
+- It does not see a suite's members (`case`, `property`, `stub`) or a whole unit
+  header inside a doc; neither is a declaration-swallowing shape in practice.
+- It flags content only when all of it parses as declarations, so prose followed
+  by code is documentation, as the rule says.
+- It stops at four nested levels.
+- Content that fails to lex for any reason other than a stray marker line is not
+  probed. Module docs (one per context, hover on
 unit names, the documentation page merge) are the second half of #1885, in a
 later increment.

@@ -1161,12 +1161,44 @@ const DECLARATION_KEYWORDS: &[TokenKind] = &[
 /// item a context or commons does, plus `binding`, and leaves placement to the
 /// checker. Success means the whole content parsed and declared something; a
 /// content that only holds another doc block (front matter, say) is prose.
-/// Doc blocks inside the content are not themselves checked (`doc_probe`).
+///
+/// Nesting is legal since #1885, so code can hide one level down: a doc block
+/// inside the content lexes to one opaque token, and its content is probed in
+/// turn (up to [`DOC_PROBE_MAX_DEPTH`] levels), the outer block reporting what
+/// any level finds. The probe parser itself does not report on those blocks
+/// (`doc_probe`). Content that does not lex because it holds a lone `---` (a
+/// Markdown rule) is probed again with its marker lines blanked out.
 fn doc_content_is_code(content: &str) -> bool {
+    doc_content_is_code_at(content, 0)
+}
+
+/// How many levels of nested doc blocks [`doc_content_is_code`] looks into.
+/// Doc blocks nested this deep are written on purpose; the bound only keeps
+/// adversarial input from costing a parse per level without end.
+const DOC_PROBE_MAX_DEPTH: usize = 4;
+
+fn doc_content_is_code_at(content: &str, depth: usize) -> bool {
     let stripped = strip_code_fences(content);
-    let Ok(tokens) = crate::lexer::tokenize(&stripped) else {
-        return false;
+    let tokens = match crate::lexer::tokenize(&stripped) {
+        Ok(tokens) => tokens,
+        Err(_) => {
+            // A lone `---` rule leaves the content unlexable; without the
+            // marker lines it may still be nothing but declarations.
+            let unmarked = blank_marker_lines(&stripped);
+            if unmarked == stripped {
+                return false;
+            }
+            return doc_content_is_code_at(&unmarked, depth);
+        }
     };
+    if depth < DOC_PROBE_MAX_DEPTH
+        && tokens.iter().any(|t| {
+            t.kind == TokenKind::DocBlock
+                && doc_content_is_code_at(&doc_block_content(&stripped, t.span), depth + 1)
+        })
+    {
+        return true;
+    }
     if !tokens
         .iter()
         .any(|t| DECLARATION_KEYWORDS.contains(&t.kind))
@@ -1193,6 +1225,20 @@ fn doc_content_is_code(content: &str) -> bool {
         }
         Err(_) => false,
     }
+}
+
+/// `content` with every doc-block marker line (three or more dashes alone on
+/// the line) blanked out, line for line.
+fn blank_marker_lines(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !(trimmed.len() >= 3 && trimmed.bytes().all(|b| b == b'-')) {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// `content` with every Markdown fenced code block (```` ``` ```` or `~~~`,
@@ -2893,6 +2939,36 @@ mod tests {
         ] {
             assert!(doc_content_is_code(doc), "{doc:?} not read as code");
         }
+    }
+
+    /// #1894 review: code one level down, inside a nested doc block, or
+    /// beside a lone `---` rule that keeps the content from lexing, is still
+    /// code; prose at either level is not.
+    #[test]
+    fn code_inside_a_nested_doc_or_beside_a_rule_is_code() {
+        let nested =
+            "commons m\n\n----\n---\nfn helper() -> Int { 1 }\n---\n----\nfn f() -> Int { 2 }\n";
+        assert_eq!(strict_codes(nested), ["bynk.parse.doc_block_contains_code"]);
+        let ruled = "commons m\n\n----\n---\nfn helper() -> Int { 1 }\n----\nfn f() -> Int { 2 }\n";
+        assert_eq!(strict_codes(ruled), ["bynk.parse.doc_block_contains_code"]);
+        // Two levels down.
+        assert!(doc_content_is_code(
+            "----\n---\nfn helper() -> Int { 1 }\n---\n----"
+        ));
+        for doc in [
+            "---\nAn inner doc.\n---",
+            "Intro.\n\n---\n\nfn is used here",
+            "---\n```\nfn helper() -> Int { 1 }\n```\n---",
+        ] {
+            assert!(!doc_content_is_code(doc), "{doc:?} read as code");
+        }
+        // Deeper than the bound, the probe stops looking.
+        let mut deep = "fn helper() -> Int { 1 }".to_string();
+        for n in (3..3 + DOC_PROBE_MAX_DEPTH + 1).rev() {
+            let fence = "-".repeat(n);
+            deep = format!("{fence}\n{deep}\n{fence}");
+        }
+        assert!(!doc_content_is_code(&deep));
     }
 
     /// A `----` doc holding a nested doc example in a code fence attaches to
