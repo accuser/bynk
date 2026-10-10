@@ -81,7 +81,7 @@ export const lookup = {
 
 export const relay = {
   async call(url: string, deps: { Fetch: bynk.Fetch }): globalThis.Promise<number> {
-    const res = await deps.Fetch.send({ method: Method.Get, url: url, contentType: None, authorization: None, body: None });
+    const res = await deps.Fetch.send({ method: Method.Get, url: url, contentType: None, authorization: None, headers: new globalThis.Map(new globalThis.Map<string, string>()).set("user-agent", "bynk-demo/1.0"), body: None });
     switch (res.tag) {
       case "Ok": {
         const r = res.value;

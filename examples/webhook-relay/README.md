@@ -39,7 +39,7 @@ observes the calls:
 ```bynk,ignore
 case "a configured target forwards the event and logs it" {
   stub Secrets.get("RELAY_TARGET_URL") returns Some("https://upstream.test/hook")
-  stub Fetch.send(_) returns Ok(Response { status: 202, body: "" })
+  stub Fetch.send(_) returns Ok(Response { status: 202, headers: Map.empty(), body: "" })
   let r <- api.POST("/hooks/event", Event { id: "evt_1", kind: "order.created" }) by Webhook
   expect r is Ok(_)
   expect Fetch.send called once with req.url == "https://upstream.test/hook"

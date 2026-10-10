@@ -308,7 +308,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 | [0019](0019-adapter-dependencies.md) | Adapter-to-adapter dependencies via braced `consumes` + `given` | Accepted (v0.18) |
 | [0020](0020-adapter-dependency-trust.md) | Adapter npm-dependency trust policy | **Open** |
 | [0021](0021-secrets-env-source.md) | Secrets: optional injected env + `globalThis` probe | Accepted (v0.18) |
-| [0022](0022-fetch-minimal-typed-core.md) | Fetch ships a minimal typed core pending sequence types | Accepted (v0.18) |
+| [0022](0022-fetch-minimal-typed-core.md) | Fetch ships a minimal typed core pending sequence types | Accepted (v0.18); header deferral superseded by the `fetch-headers` ADR (#1886) |
 | [0023](0023-platform-adapter-before-stdlib.md) | The Cloudflare adapter lands before the standard library | Accepted (post-v0.18) |
 | [0024](0024-platform-native-via-first-party-metadata.md) | Platform-native marking is first-party metadata, not syntax | Accepted (v0.19) |
 | [0025](0025-env-threading-for-platform-resources.md) | Platform resources reach bindings via threaded env, both targets | Accepted (v0.19) |

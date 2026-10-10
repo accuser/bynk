@@ -123,18 +123,20 @@ The `bynk` unit also exports the transparent types these operations use:
 ```bynk
 type Uuid       = String where Matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 type Method     = enum { Get, Post, Put, Delete }
-type FetchError = enum { Network, Timeout }
+type FetchError = enum { Network, Timeout, InvalidHeader }
 
 type Request = {
   method: Method,
   url: String,
   contentType: Option[String],
   authorization: Option[String],
+  headers: Map[String, String],
   body: Option[String],
 }
 
 type Response = {
   status: Int,
+  headers: Map[String, String],
   body: String,
 }
 
@@ -148,6 +150,52 @@ type EventEnvelope = {
 
 `EventEnvelope` is an `on event` handler's optional second parameter — see
 [Understand events](/book/guides/events/understand-events/#the-envelope-and-idempotent-handling).
+
+### Request and response headers
+
+`contentType` and `authorization` are typed slots for the two common request
+headers. Any other header goes in `headers`; a record field has no default, so a
+request that sends none says so with `headers: Map.empty()`:
+
+```bynk,fragment
+let req = Request {
+  method:        Get,
+  url:           "https://api.github.com/repos/accuser/bynk",
+  contentType:   None,
+  authorization: None,
+  headers:       Map.empty()
+                   .insert("user-agent", "bynk-examples/1.0")
+                   .insert("accept", "application/vnd.github+json"),
+  body:          None,
+}
+```
+
+Header names are case-insensitive. `Fetch.send` returns `Err(InvalidHeader)`
+without sending anything when `headers`:
+
+- names `Content-Type` or `Authorization` while the matching typed slot is
+  `Some` — neither silently wins. While the slot is `None`, `headers` may
+  supply that header itself;
+- names a header the platform owns: `host`, `content-length`, `connection`,
+  `keep-alive`, `te`, `trailer`, `transfer-encoding`, `upgrade` or `expect`;
+- names the same header twice in different case (`X-Id` and `x-id`); or
+- holds a name or value that is not a legal HTTP header (a newline in a value,
+  say).
+
+A typed slot whose value is not a legal header value (a secret read with a
+stray newline) is `Err(InvalidHeader)` too, even with an empty `headers`.
+Retrying cannot fix any of these, which is why they are not `Network`.
+
+`Response.headers` carries the response's headers with lowercased keys, so
+`res.headers.get("etag")` or `res.headers.get("retry-after")` reads one
+whatever case the server sent; a header the server repeated arrives as one
+value, joined with `", "`. That includes `set-cookie`, and there the join is
+lossy: a cookie's `Expires` attribute contains a comma
+(`Expires=Wed, 09 Jun 2027 10:18:14 GMT`), so a joined `set-cookie` cannot be
+split back into its cookies reliably. A `stub Fetch.send(_) returns Ok(Response { … })` in a test
+gives it `headers: Map.empty()` (or the headers the case needs), and an
+`expect Fetch.send called once with req.headers.get("user-agent") == Some("…")`
+matches on what was sent.
 
 ## The Cloudflare surface — `bynk.cloudflare`
 
