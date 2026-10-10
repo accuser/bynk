@@ -12,6 +12,7 @@ export default {
     const method = request.method;
     const surface = compose(env);
     const __security_api: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
@@ -24,6 +25,7 @@ export default {
       {
         const __m = __matchPath("/items/:id", path);
         if (method === "PUT" && __m) {
+          __route = "PUT /items/:id";
           const __raw_id = __m.params["id"];
           const __r_id = handlers.ItemId.of(__raw_id);
           if (__r_id.tag === "Err") return __applySecurityHeaders(new globalThis.Response(globalThis.JSON.stringify({ kind: "RefinementViolation", path: "path.id", violation: __r_id.error }), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
@@ -47,7 +49,8 @@ export default {
         return __applySecurityHeaders(__res, __security_api);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`items ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

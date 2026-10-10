@@ -11,13 +11,18 @@ export default {
     const path = url.pathname;
     const method = request.method;
     const surface = compose(env);
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "probe": {
+            __route = "call probe";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "889ebeb7fd4a518b") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "probe", expected: "889ebeb7fd4a518b", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "889ebeb7fd4a518b") {
+              globalThis.console.error("ContractMismatch t.desk call probe", { service: "probe", expected: "889ebeb7fd4a518b", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "probe", expected: "889ebeb7fd4a518b", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_c = handlers.__deserialise_Code(args, "$");
             if (__r_c.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_c.error), { status: 400, headers: { "content-type": "application/json" } });
@@ -32,7 +37,8 @@ export default {
       }
 
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`t.desk ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

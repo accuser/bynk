@@ -54,7 +54,16 @@ export function boundaryError(error: CallError): Error {
   const e = new Error(`BoundaryError: ${error.kind}`) as Error & {
     boundaryError?: CallError;
   };
-  e.boundaryError = error;
+  // #1825 review: non-enumerable, so a logged error (`console.error(..., e)`
+  // in a Worker's fault catch) doesn't print the payload, which can carry a
+  // value: a callee's response body, a refinement's offending value. Reading
+  // `e.boundaryError` is unchanged.
+  globalThis.Object.defineProperty(e, "boundaryError", {
+    value: error,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
   return e;
 }
 
@@ -77,12 +86,19 @@ export interface RehydrationViolation {
 export function rehydrationViolation(agent: string, detail: BoundaryError): Error {
   const path = "path" in detail ? detail.path : "<root>";
   const e = new Error(`RehydrationViolation: ${agent} ${detail.kind} at ${path}`);
-  (e as { rehydrationViolation?: RehydrationViolation }).rehydrationViolation = {
-    kind: "RehydrationViolation",
-    agent,
-    path,
-    detail,
-  };
+  // #1825 review: non-enumerable, as `boundaryError`'s, so a logged error
+  // doesn't print `detail` (it can carry the offending value).
+  globalThis.Object.defineProperty(e, "rehydrationViolation", {
+    value: {
+      kind: "RehydrationViolation",
+      agent,
+      path,
+      detail,
+    } satisfies RehydrationViolation,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
   return e;
 }
 
@@ -142,7 +158,12 @@ export async function callService<R>(
       } catch {
         // Not a Bynk 409; fall through to `Transport`.
       }
-      if (detail && detail.kind === "ContractMismatch") throw boundaryError(detail);
+      if (detail && detail.kind === "ContractMismatch") {
+        // #1826: logged on the caller's side too, with both hashes, before the
+        // fault: the caller's catch reports only `BoundaryError: ContractMismatch`.
+        globalThis.console.error(`ContractMismatch ${callerContext} -> ${servicePath}`, detail);
+        throw boundaryError(detail);
+      }
     }
     throw boundaryError({
       kind: "Transport",

@@ -86,6 +86,33 @@ test("callService: a 409 ContractMismatch surfaces as the named error", async ()
   );
 });
 
+// #1826: the caller logs the skew, with both hashes, before it faults; a
+// 409 that is not ours logs nothing.
+test("callService: a 409 ContractMismatch is logged before it throws", async () => {
+  const detail = {
+    kind: "ContractMismatch",
+    service: "whoami",
+    expected: "317bdd3de84d2176",
+    actual: "0000000000000000",
+  };
+  const logged: unknown[][] = [];
+  const original = globalThis.console.error;
+  globalThis.console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  try {
+    await assert.rejects(() =>
+      callService(bindingReturning(detail, { status: 409 }), "whoami", null, deser<string, string>(), "app.a", "0000000000000000"),
+    );
+    await assert.rejects(() =>
+      callService(bindingReturning({ kind: "SomethingElse" }, { status: 409 }), "whoami", null, deser<string, string>()),
+    );
+  } finally {
+    globalThis.console.error = original;
+  }
+  assert.deepEqual(logged, [["ContractMismatch app.a -> whoami", detail]]);
+});
+
 // The body stream is consumed on first read, so reading it twice throws
 // `TypeError: Body is unusable`. A 409 that is *not* ours must still produce a
 // `Transport` error naming the status — replacing that with an opaque TypeError
@@ -175,4 +202,20 @@ test("deserialiseEventEnvelope: rejects a missing schemaVersion", () => {
 test("deserialiseEventEnvelope: reports the custom path prefix on failure", () => {
   const r = deserialiseEventEnvelope("nope", "$.envelope");
   assert.equal((r as { error: BoundaryError & { path: string } }).error.path, "$.envelope");
+});
+
+// #1825 review: a fault's payload is non-enumerable, so logging the error
+// object (a Worker's fault catch) prints neither a callee's body nor a value.
+test("boundaryError: the payload is readable but not enumerable", async () => {
+  const { inspect } = await import("node:util");
+  const binding = { fetch: async () => new Response("secret-body", { status: 502 }) };
+  await assert.rejects(
+    () => callService(binding, "svc", null, deser<number, string>()),
+    (e: Error) => {
+      assert.equal((e as { boundaryError?: { kind: string } }).boundaryError?.kind, "Transport");
+      assert.ok(!Object.keys(e).includes("boundaryError"));
+      assert.ok(!inspect(e).includes("secret-body"), inspect(e));
+      return true;
+    },
+  );
 });
