@@ -11,13 +11,18 @@ export default {
     const path = url.pathname;
     const method = request.method;
     const surface = compose(env);
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "authorise": {
+            __route = "call authorise";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "3042f1b7519e621d") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "authorise", expected: "3042f1b7519e621d", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "3042f1b7519e621d") {
+              globalThis.console.error("ContractMismatch shop.ledger call authorise", { service: "authorise", expected: "3042f1b7519e621d", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "authorise", expected: "3042f1b7519e621d", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_amount = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(args);
             if (__r_amount.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_amount.error), { status: 400, headers: { "content-type": "application/json" } });
@@ -27,8 +32,12 @@ export default {
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "refund": {
+            __route = "call refund";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "76f043eaef234a7f") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "refund", expected: "76f043eaef234a7f", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "76f043eaef234a7f") {
+              globalThis.console.error("ContractMismatch shop.ledger call refund", { service: "refund", expected: "76f043eaef234a7f", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "refund", expected: "76f043eaef234a7f", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __r_reference = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(args);
             if (__r_reference.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_reference.error), { status: 400, headers: { "content-type": "application/json" } });
@@ -43,7 +52,8 @@ export default {
       }
 
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`shop.ledger ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

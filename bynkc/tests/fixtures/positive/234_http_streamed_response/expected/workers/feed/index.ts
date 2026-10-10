@@ -12,6 +12,7 @@ export default {
     const method = request.method;
     const surface = compose(env);
     const __security_Feed: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
@@ -23,6 +24,7 @@ export default {
 
       {
         if ((method === "GET" || method === "HEAD") && path === "/ticks") {
+          __route = "GET /ticks";
           const result = await surface.http_GET_ticks();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: void) => null, { weakEtag: true }), request), __security_Feed);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -31,6 +33,7 @@ export default {
       {
         const __m = __matchPath("/feed/:mode", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /feed/:mode";
           const __raw_mode = __m.params["mode"];
           const mode = __raw_mode;
           const result = await surface.http_GET_feed_Param_mode(mode);
@@ -49,7 +52,8 @@ export default {
         return __applySecurityHeaders(__res, __security_Feed);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`feed ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },
