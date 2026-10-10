@@ -41,9 +41,12 @@ pub use output::{write_document, write_output};
 /// directory) — [`discovery::DiscoveryError`], not a panic.
 pub fn project_options(input: &Path) -> Result<CompileOptions, discovery::DiscoveryError> {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
-        let paths = try_read_project_paths_with(input, &manifest_overlay(input))
+        let overlay = manifest_overlay(input);
+        let paths = try_read_project_paths_with(input, &overlay)
             .unwrap_or_else(|_| project::ProjectPaths::conventional(input));
-        options_for_split(input, paths)
+        // #1890: degrades like `[paths]` above; `try_project_options` refuses.
+        let workers = project::try_read_workers_config_with(input, &overlay).unwrap_or_default();
+        Ok(options_for_split(input, paths)?.compatibility_flags(workers.compatibility_flags))
     } else {
         let sources = discovery::read_bynk_tree_single(input)?;
         Ok(CompileOptions::single(input.to_path_buf()).sources(sources))
@@ -55,10 +58,17 @@ pub fn project_options(input: &Path) -> Result<CompileOptions, discovery::Discov
 /// hand-edits that the compiler otherwise reads without checking, after which
 /// a cascade of `bynk.uses.unknown_target` errors points at units that
 /// plainly exist on disk.
+///
+/// #1890: project mode also reads `[workers] compatibility_flags` into the
+/// options, so every CLI build (`bynkc compile`, `bynk dev`/`deploy`, which
+/// all come through here) writes the project's flags into `wrangler.toml`.
 pub fn try_project_options(input: &Path) -> Result<CompileOptions, ProjectOptionsError> {
     Ok(match project_sources(input)? {
         (Some(paths), sources) => {
-            CompileOptions::split(input.to_path_buf(), paths).sources(sources)
+            let workers = project::try_read_workers_config_with(input, &manifest_overlay(input))?;
+            CompileOptions::split(input.to_path_buf(), paths)
+                .sources(sources)
+                .compatibility_flags(workers.compatibility_flags)
         }
         (None, sources) => CompileOptions::single(input.to_path_buf()).sources(sources),
     })
@@ -1253,6 +1263,84 @@ mod tests {
             err.to_string().contains("not yet supported (#843)"),
             "{err}"
         );
+    }
+
+    /// A one-context project with `bynk.toml` `manifest`, for the #1890 tests.
+    fn workers_project(name: &str, manifest: &str) -> Scratch {
+        let dir = scratch_dir(name);
+        fs::write(dir.0.join("bynk.toml"), manifest).unwrap();
+        fs::create_dir_all(dir.0.join("src")).unwrap();
+        fs::write(
+            dir.0.join("src/greet.bynk"),
+            "context greet\n\nservice hello {\n  on call(name: String) -> Effect[Result[String, ()]] {\n    Ok(name)\n  }\n}\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    /// The `wrangler.toml` a Workers build of `options` writes for `greet`,
+    /// and the build's warnings' codes.
+    fn greet_wrangler(options: CompileOptions) -> (String, Vec<&'static str>) {
+        let out = project::compile_project(&options.target(project::BuildTarget::Workers))
+            .unwrap_or_else(|f| {
+                let msgs: Vec<&str> = f.errors.iter().map(|e| e.error.message.as_str()).collect();
+                panic!("builds: {msgs:?}")
+            });
+        let text = out.artefacts.docs[Path::new("workers/greet/wrangler.toml")].text();
+        (
+            text,
+            out.warnings.iter().map(|w| w.error.category).collect(),
+        )
+    }
+
+    /// #1890: `[workers] compatibility_flags` reaches every emitted
+    /// `wrangler.toml`, after the default, from both option builders. A flag
+    /// already on by default is dropped with a warning.
+    #[test]
+    fn manifest_compatibility_flags_reach_wrangler_toml() {
+        let dir = workers_project(
+            "compat_flags_1890",
+            "[workers]\ncompatibility_flags = [\"nodejs_compat\", \"global_fetch_strictly_public\"]\n",
+        );
+        let want = "compatibility_flags = [\"global_fetch_strictly_public\", \"nodejs_compat\"]\n";
+        for options in [
+            try_project_options(&dir.0).expect("reads"),
+            project_options(&dir.0).expect("reads"),
+        ] {
+            let (text, warnings) = greet_wrangler(options);
+            assert!(text.contains(want), "{text}");
+            assert_eq!(
+                warnings,
+                ["bynk.project.duplicate_compatibility_flag"],
+                "the repeated default is reported"
+            );
+        }
+    }
+
+    /// #1890: with no `[workers]` table, a Worker still gets the default flag.
+    #[test]
+    fn a_worker_gets_the_default_compatibility_flag_without_a_workers_table() {
+        let dir = workers_project("compat_flags_default_1890", "[project]\nname = \"p\"\n");
+        let (text, warnings) = greet_wrangler(try_project_options(&dir.0).expect("reads"));
+        assert!(
+            text.contains("compatibility_flags = [\"global_fetch_strictly_public\"]\n"),
+            "{text}"
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    /// #1890: a non-string flag is refused on the CLIs' strict path.
+    #[test]
+    fn try_project_options_refuses_a_non_string_compatibility_flag() {
+        let dir = workers_project(
+            "compat_flags_bad_1890",
+            "[workers]\ncompatibility_flags = [\"nodejs_compat\", 2]\n",
+        );
+        match try_project_options(&dir.0) {
+            Err(ProjectOptionsError::Paths(ProjectPathsError::NotAStringList { .. })) => {}
+            Err(e) => panic!("wrong error: {e:?}"),
+            Ok(_) => panic!("a non-string flag must be refused"),
+        }
     }
 }
 
