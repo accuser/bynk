@@ -135,14 +135,40 @@ it is `0`.
 fn major(version: String) -> Int { 0 }
 ```
 
-Keep code in a fence. Bynk code outside a fence in a doc-block reads as code
-that was turned into documentation by mistake.
+Keep code in a fence. If a doc-block's text, with its code fences set aside,
+parses as declarations, the compiler rejects it
+(`bynk.parse.doc_block_contains_code`): that is almost always code that was
+turned into documentation by mistake.
 
-A line of dashes on its own is a doc-block **marker**, never a divider. So a
-doc that needs a `---` line of its own, such as a Markdown horizontal rule or a
-Bynk example with its own doc-block, must open with a marker that line cannot
-close. [Spec §3.3.2](/book/spec/lexical-grammar/#332-doc-blocks) gives the exact
-rule for which marker closes a block.
+### Put `---` lines inside a doc
+
+A line of dashes on its own is a doc-block **marker**, never a divider. A block
+closes only at a marker with **as many dashes as the one that opened it**, as a
+Markdown code fence does. So to put a `---` line inside a doc, such as a
+Markdown horizontal rule or a Bynk example with its own doc-block, open and
+close the block with a longer marker:
+
+```bynk
+----
+Pick the board's colour for an outcome.
+
+---
+
+An example of a documented outcome:
+
+~~~bynk
+---
+Whether the canary checks passed.
+---
+type Outcome = String
+~~~
+----
+fn colour(passed: Bool) -> String { if passed { "green" } else { "red" } }
+```
+
+The `---` lines inside are content, because only a `----` line closes this
+block. [Spec §3.3.2](/book/spec/lexical-grammar/#332-doc-blocks) has the exact
+rule.
 
 ## `--` or `---`?
 
@@ -153,8 +179,18 @@ rule for which marker closes a block.
 | Separate sections of a file | a `--` comment with text, such as `-- Helpers --` |
 | Disable code temporarily | `--` at the start of each line |
 
-Don't use a line of dashes as a divider. It opens a doc-block, and the code
-below it becomes documentation.
+Don't use a line of dashes as a divider. It opens a doc-block, so a pair of
+dividers around code would turn that code into documentation. The compiler
+rejects that:
+
+```bynk,fail=bynk.parse.doc_block_contains_code
+--------------------------------
+fn helper() -> Int { 1 }
+--------------------------------
+fn total() -> Int { 2 }
+```
+
+Write `-- Helpers --` instead.
 
 **See also:** [Spec §3.3 — Comments and
 doc-blocks](/book/spec/lexical-grammar/#33-comments-and-doc-blocks),

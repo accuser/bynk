@@ -1427,9 +1427,11 @@ element is `bynk.types.list_element_mismatch`. With no expected type, the
 first element fixes the element type. An **empty `[]` MUST have an expected
 type** (`bynk.types.uninferable_element_type`); the qualified statics
 `List.empty()` and `Map.empty()` obey exactly the same rule — an expected
-type is their only source of type arguments. `insert` and `prepend`
-propagate an expected collection type down their receiver chain, so
-`let m: Map[String, Int] = Map.empty().insert("a", 1)` infers.
+type is their only source of type arguments. `insert`, `prepend`, `append`,
+and `concat` propagate an expected collection type down their receiver chain,
+so `let m: Map[String, Int] = Map.empty().insert("a", 1)` infers, and so does
+`let xs: List[Int] = [].append(1)`. `concat`'s argument checks against the
+receiver's `List[T]`, so `xs.concat([])` needs no annotation.
 
 **The kernel.** The built-in operations are compiler-known special forms,
 dispatched on the receiver's checked type before declared-method lookup;
@@ -1441,6 +1443,8 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `length()` | `Int` |
 | `List[T]` | `get(i: Int)` | `Option[T]` |
 | `List[T]` | `prepend(x: T)` | `List[T]` |
+| `List[T]` | `append(x: T)` | `List[T]` |
+| `List[T]` | `concat(other: List[T])` | `List[T]` |
 | `List[T]` | `fold(init: A, f: (A, T) -> A)` | `A` |
 | `List[T]` | `foldEff(init: A, f: (A, T) -> Effect[A])` | `Effect[A]` |
 | `List[T]` | `forEach(f: T -> Effect[()])` | `Effect[()]` |

@@ -87,10 +87,17 @@ pub struct DocEntry {
 }
 
 /// A parsed unit's page-relevant parts: its kind keyword, name, name span,
-/// module doc and items. `None` for a `suite`.
-fn page_parts(
-    unit: &SourceUnit,
-) -> Option<(&'static str, String, Span, &Option<String>, &[CommonsItem])> {
+/// module doc and items.
+type PageParts<'u> = (
+    &'static str,
+    String,
+    Span,
+    &'u Option<String>,
+    &'u [CommonsItem],
+);
+
+/// The [`PageParts`] of `unit`; `None` for a `suite`.
+fn page_parts(unit: &SourceUnit) -> Option<PageParts<'_>> {
     match unit {
         SourceUnit::Commons(c) => Some((
             "commons",

@@ -1099,6 +1099,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.dangling_handler_annotation",
         "A handler-position annotation (e.g. `@cache`) is not followed by an `on` handler.",
     ),
+    d(
+        "bynk.parse.doc_block_contains_code",
+        "A documentation block's content (outside Markdown code fences) parses as declarations, so a pair of dash dividers has turned code into documentation.",
+    ),
     dg(
         "bynk.parse.duplicate_cors",
         "A service declares more than one `cors { }` policy.",
