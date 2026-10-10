@@ -70,6 +70,17 @@ reached type's name when that type's commons is not one the unit `uses`
 (`bynk.uses.name_conflict`), since the imported declaration would then be typed
 by the wrong one.
 
+A unit's own declaration MAY shadow a type of a commons it `uses` directly. An
+imported declaration that names the shadowed type still means its own commons'
+type, so a value MUST NOT cross between the unit's code and such a position
+(`bynk.uses.name_conflict`, at the crossing): a value the unit supplies for a
+record field, a parameter or a variant payload declared with that type, and a
+value the unit takes from one (a field read, a call's result, a bound payload).
+A value moved from one such position directly into another that names the same
+types is not a crossing. If `t.app` declares `type Repo = Int` beside `uses
+t.core` and `uses t.model`, then `Run { repo: first(r) }` is legal in `t.app`,
+and `Run { repo: 42 }` and `r.repo + 1` are not.
+
 ## §5.2 Well-typedness
 
 Every expression MUST have the type its position requires. A function or method
