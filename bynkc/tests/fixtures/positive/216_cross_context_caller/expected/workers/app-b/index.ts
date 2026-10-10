@@ -11,13 +11,18 @@ export default {
     const path = url.pathname;
     const method = request.method;
     const surface = compose(env);
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "whoami": {
+            __route = "call whoami";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "317bdd3de84d2176") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "whoami", expected: "317bdd3de84d2176", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "317bdd3de84d2176") {
+              globalThis.console.error("ContractMismatch app.b call whoami", { service: "whoami", expected: "317bdd3de84d2176", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "whoami", expected: "317bdd3de84d2176", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             const __caller = request.headers.get("X-Bynk-Caller");
             if (__caller === null || __caller === "") return new globalThis.Response(globalThis.JSON.stringify({ kind: "Unauthorized", details: "missing caller identity" }), { status: 401, headers: { "content-type": "application/json" } });
@@ -34,7 +39,8 @@ export default {
       }
 
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`app.b ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

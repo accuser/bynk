@@ -1,0 +1,22 @@
+-- #1855: a system case passes `Line { sku: "o1", qty: 2 }`, a literal at the
+-- refined field `sku`. The lowering reads the case's checked types, so it
+-- brands the literal as a unit case does.
+context shop.orders
+
+consumes shop.payment as Payment
+
+type OrderId = String where NonEmpty
+
+type Line = { sku: OrderId, qty: Int }
+
+service place {
+  on call(line: Line) -> Effect[Bool] { Payment.authorise(line.qty) }
+}
+
+service echo {
+  on call(line: Line) -> Effect[Line] { Effect.pure(line) }
+}
+
+service blob {
+  on call(text: String) -> Effect[Bytes] { Effect.pure(Bytes.fromUtf8(text)) }
+}

@@ -12,6 +12,7 @@ export default {
     const method = request.method;
     const surface = compose(env);
     const __security_routes: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
@@ -23,6 +24,7 @@ export default {
 
       {
         if ((method === "GET" || method === "HEAD") && path === "/badrequest") {
+          __route = "GET /badrequest";
           const result = await surface.http_GET_badrequest();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -30,6 +32,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/conflict") {
+          __route = "GET /conflict";
           const result = await surface.http_GET_conflict();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -37,6 +40,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/created") {
+          __route = "GET /created";
           const result = await surface.http_GET_created();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -44,6 +48,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/forbidden") {
+          __route = "GET /forbidden";
           const result = await surface.http_GET_forbidden();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -51,6 +56,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/nocontent") {
+          __route = "GET /nocontent";
           const result = await surface.http_GET_nocontent();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -58,6 +64,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/notfound") {
+          __route = "GET /notfound";
           const result = await surface.http_GET_notfound();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -65,6 +72,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/servererror") {
+          __route = "GET /servererror";
           const result = await surface.http_GET_servererror();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -72,6 +80,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/unauthorized") {
+          __route = "GET /unauthorized";
           const result = await surface.http_GET_unauthorized();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -79,6 +88,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/unprocessable") {
+          __route = "GET /unprocessable";
           const result = await surface.http_GET_unprocessable();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -130,7 +140,8 @@ export default {
         return __applySecurityHeaders(__res, __security_routes);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`api ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

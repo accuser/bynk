@@ -12,13 +12,18 @@ export default {
     const method = request.method;
     const surface = compose(env);
     const __security_api: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "now": {
+            __route = "call now";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "ef47617dbcfc7e86") return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "now", expected: "ef47617dbcfc7e86", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "ef47617dbcfc7e86") {
+              globalThis.console.error("ContractMismatch shop.one call now", { service: "now", expected: "ef47617dbcfc7e86", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "now", expected: "ef47617dbcfc7e86", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
             const args = await request.json() as __JsonValue;
             if (typeof args !== "object" || args === null || globalThis.Array.isArray(args)) return new globalThis.Response(globalThis.JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
             const argsObj = args as { [k: string]: __JsonValue };
@@ -33,6 +38,7 @@ export default {
 
       {
         if ((method === "GET" || method === "HEAD") && path === "/") {
+          __route = "GET /";
           const result = await surface.http_GET();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_api);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -44,7 +50,8 @@ export default {
         return __applySecurityHeaders(__res, __security_api);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`shop.one ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },

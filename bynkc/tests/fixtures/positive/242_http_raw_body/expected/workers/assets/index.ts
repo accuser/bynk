@@ -12,6 +12,7 @@ export default {
     const method = request.method;
     const surface = compose(env);
     const __security_Assets: __SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+    let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
         const servicePath = path.slice("/_bynk/call/".length);
@@ -23,6 +24,7 @@ export default {
 
       {
         if ((method === "GET" || method === "HEAD") && path === "/pixel.png") {
+          __route = "GET /pixel.png";
           const result = await surface.http_GET_pixel_png();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: void) => null, { weakEtag: true }), request), __security_Assets);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -30,6 +32,7 @@ export default {
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/sitemap.xml") {
+          __route = "GET /sitemap.xml";
           const result = await surface.http_GET_sitemap_xml();
           const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: void) => null, { weakEtag: true }), request), __security_Assets);
           return method === "HEAD" ? __headResponse(__response) : __response;
@@ -38,6 +41,7 @@ export default {
       {
         const __m = __matchPath("/robots/:mode", path);
         if ((method === "GET" || method === "HEAD") && __m) {
+          __route = "GET /robots/:mode";
           const __raw_mode = __m.params["mode"];
           const mode = __raw_mode;
           const result = await surface.http_GET_robots_Param_mode(mode);
@@ -61,7 +65,8 @@ export default {
         return __applySecurityHeaders(__res, __security_Assets);
       }
       return new globalThis.Response("Not Found", { status: 404 });
-    } catch {
+    } catch (e) {
+      globalThis.console.error(`assets ${__route} faulted`, e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },
