@@ -1731,7 +1731,13 @@ fn render_type(out: &mut String, ty: &TsType) {
             if *readonly {
                 out.push_str("readonly ");
             }
-            render_type(out, element);
+            if needs_parens_as_array_element(element) {
+                out.push('(');
+                render_type(out, element);
+                out.push(')');
+            } else {
+                render_type(out, element);
+            }
             out.push_str("[]");
         }
         TsType::Object(members) => {
@@ -1823,6 +1829,22 @@ fn render_type(out: &mut String, ty: &TsType) {
             }
         }
     }
+}
+
+/// Whether `element` must be parenthesised before a postfix `[]`. `[]` binds
+/// tighter than every prefix or infix type operator, so a readonly array
+/// (`readonly T[][]` reads as `readonly (T[][])`, which tsc rejects with
+/// TS1354), a function type (`() => T[]` returns the array) and a union or
+/// intersection (`A | B[]`) would each be misread bare. A mutable array, a
+/// named type and an object literal are postfix-safe as they are.
+fn needs_parens_as_array_element(element: &TsType) -> bool {
+    matches!(
+        element,
+        TsType::Array { readonly: true, .. }
+            | TsType::Fn { .. }
+            | TsType::Union { .. }
+            | TsType::Intersection(_)
+    )
 }
 
 /// One [`TsTypeMember`] rendered inline (no leading indent, no trailing
@@ -3771,6 +3793,42 @@ mod tests {
         assert_eq!(
             print_type(&TsType::array(TsType::named("Order"))),
             "Order[]"
+        );
+    }
+
+    /// A readonly array, function, union or intersection element is
+    /// parenthesised before `[]`; a bare `readonly readonly T[][]` is TS1354.
+    #[test]
+    fn print_type_parenthesises_a_non_postfix_safe_array_element() {
+        let order = || TsType::named("Order");
+        assert_eq!(
+            print_type(&TsType::readonly_array(TsType::readonly_array(order()))),
+            "readonly (readonly Order[])[]"
+        );
+        assert_eq!(
+            print_type(&TsType::readonly_array(TsType::array(order()))),
+            "readonly Order[][]"
+        );
+        assert_eq!(
+            print_type(&TsType::readonly_array(TsType::Fn {
+                params: vec![order()],
+                ret: Box::new(order()),
+            })),
+            "readonly ((a0: Order) => Order)[]"
+        );
+        assert_eq!(
+            print_type(&TsType::array(TsType::Union {
+                members: vec![order(), TsType::named("null")],
+                multiline: false,
+            })),
+            "(Order | null)[]"
+        );
+        assert_eq!(
+            print_type(&TsType::array(TsType::Intersection(vec![
+                order(),
+                TsType::named("Tagged"),
+            ]))),
+            "(Order & Tagged)[]"
         );
     }
 
