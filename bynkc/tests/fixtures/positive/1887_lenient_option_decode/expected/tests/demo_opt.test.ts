@@ -33,7 +33,7 @@ function __makeTestDeps() {
 async function test_the_issue_s_five_rows_decode() {
   try {
     const deps = {};
-    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
+    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedError, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
     type Boxed = __ns_demo_opt.Boxed;
     type Holder = __ns_demo_opt.Holder;
     type Name = __ns_demo_opt.Name;
@@ -60,7 +60,7 @@ async function test_the_issue_s_five_rows_decode() {
 async function test_a_bare_value_is_checked_as_the_inner_type() {
   try {
     const deps = {};
-    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
+    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedError, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
     type Boxed = __ns_demo_opt.Boxed;
     type Holder = __ns_demo_opt.Holder;
     type Name = __ns_demo_opt.Name;
@@ -86,7 +86,7 @@ async function test_a_bare_value_is_checked_as_the_inner_type() {
 async function test_a_failed_bare_value_names_every_Option_form() {
   try {
     const deps = {};
-    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
+    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedError, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
     type Boxed = __ns_demo_opt.Boxed;
     type Holder = __ns_demo_opt.Holder;
     type Name = __ns_demo_opt.Name;
@@ -97,6 +97,7 @@ async function test_a_failed_bare_value_names_every_Option_form() {
     type Wrapped = __ns_demo_opt.Wrapped;
     if (!(repoError("{\"repo\": \"a\", \"description\": 7}") === "$.description: expected string | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}, got number")) { throw __bynkExpectFailure("tests/demo/opt.bynk:22:10", 1027, 1194, "expect repoError(\"{\\\"repo\\\": \\\"a\\\", \\\"description\\\": 7}\") == \"$.description: expected string | null | {\\\"kind\\\": \\\"None\\\"} | {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": ...}, got number\"\n  expected: repoError(\"{\\\"repo\\\": \\\"a\\\", \\\"description\\\": 7}\") == \"$.description: expected string | null | {\\\"kind\\\": \\\"None\\\"} | {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": ...}, got number\"\n  actual:   " + __bynkShow((repoError("{\"repo\": \"a\", \"description\": 7}"))) + " == " + __bynkShow(("$.description: expected string | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}, got number"))); }
     if (!(repoError("{\"repo\": \"a\", \"description\": {\"kind\": \"Some\", \"value\": 7}}") === "$.description.value: expected string, got number")) { throw __bynkExpectFailure("tests/demo/opt.bynk:23:10", 1204, 1341, "expect repoError(\"{\\\"repo\\\": \\\"a\\\", \\\"description\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 7}}\") == \"$.description.value: expected string, got number\"\n  expected: repoError(\"{\\\"repo\\\": \\\"a\\\", \\\"description\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 7}}\") == \"$.description.value: expected string, got number\"\n  actual:   " + __bynkShow((repoError("{\"repo\": \"a\", \"description\": {\"kind\": \"Some\", \"value\": 7}}"))) + " == " + __bynkShow(("$.description.value: expected string, got number"))); }
+    if (!(nestedError("{\"n\": \"x\"}") === "$.n: expected number | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}, got string")) { throw __bynkExpectFailure("tests/demo/opt.bynk:24:10", 1351, 1487, "expect nestedError(\"{\\\"n\\\": \\\"x\\\"}\") == \"$.n: expected number | null | {\\\"kind\\\": \\\"None\\\"} | {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": ...}, got string\"\n  expected: nestedError(\"{\\\"n\\\": \\\"x\\\"}\") == \"$.n: expected number | null | {\\\"kind\\\": \\\"None\\\"} | {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": ...}, got string\"\n  actual:   " + __bynkShow((nestedError("{\"n\": \"x\"}"))) + " == " + __bynkShow(("$.n: expected number | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}, got string"))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -110,7 +111,7 @@ async function test_a_failed_bare_value_names_every_Option_form() {
 async function test_Option_Option_Int____tagged_forms_win__bare_forms_nest() {
   try {
     const deps = {};
-    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
+    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedError, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
     type Boxed = __ns_demo_opt.Boxed;
     type Holder = __ns_demo_opt.Holder;
     type Name = __ns_demo_opt.Name;
@@ -119,13 +120,13 @@ async function test_Option_Option_Int____tagged_forms_win__bare_forms_nest() {
     type Pair = __ns_demo_opt.Pair;
     type Repo = __ns_demo_opt.Repo;
     type Wrapped = __ns_demo_opt.Wrapped;
-    if (!(__bynkEq(nested("{}"), Some({ n: None })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:27:10", 1418, 1458, "expect nested(\"{}\") == Some(Nested { n: None })\n  expected: nested(\"{}\") == Some(Nested { n: None })\n  actual:   " + __bynkShow((nested("{}"))) + " == " + __bynkShow((Some({ n: None })))); }
-    if (!(__bynkEq(nested("{\"n\": null}"), Some({ n: None })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:28:10", 1468, 1519, "expect nested(\"{\\\"n\\\": null}\") == Some(Nested { n: None })\n  expected: nested(\"{\\\"n\\\": null}\") == Some(Nested { n: None })\n  actual:   " + __bynkShow((nested("{\"n\": null}"))) + " == " + __bynkShow((Some({ n: None })))); }
-    if (!(__bynkEq(nested("{\"n\": 1}"), Some({ n: Some(Some(1)) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:29:10", 1529, 1586, "expect nested(\"{\\\"n\\\": 1}\") == Some(Nested { n: Some(Some(1)) })\n  expected: nested(\"{\\\"n\\\": 1}\") == Some(Nested { n: Some(Some(1)) })\n  actual:   " + __bynkShow((nested("{\"n\": 1}"))) + " == " + __bynkShow((Some({ n: Some(Some(1)) })))); }
-    if (!(__bynkEq(nested("{\"n\": {\"kind\": \"None\"}}"), Some({ n: None })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:30:10", 1596, 1663, "expect nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"None\\\"}}\") == Some(Nested { n: None })\n  expected: nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"None\\\"}}\") == Some(Nested { n: None })\n  actual:   " + __bynkShow((nested("{\"n\": {\"kind\": \"None\"}}"))) + " == " + __bynkShow((Some({ n: None })))); }
-    if (!(__bynkEq(nested("{\"n\": {\"kind\": \"Some\", \"value\": {\"kind\": \"None\"}}}"), Some({ n: Some(None) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:31:10", 1673, 1779, "expect nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"None\\\"}}}\") == Some(Nested { n: Some(None) })\n  expected: nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"None\\\"}}}\") == Some(Nested { n: Some(None) })\n  actual:   " + __bynkShow((nested("{\"n\": {\"kind\": \"Some\", \"value\": {\"kind\": \"None\"}}}"))) + " == " + __bynkShow((Some({ n: Some(None) })))); }
-    if (!(__bynkEq(nested("{\"n\": {\"kind\": \"Some\", \"value\": null}}"), Some({ n: Some(None) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:32:10", 1789, 1879, "expect nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": null}}\") == Some(Nested { n: Some(None) })\n  expected: nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": null}}\") == Some(Nested { n: Some(None) })\n  actual:   " + __bynkShow((nested("{\"n\": {\"kind\": \"Some\", \"value\": null}}"))) + " == " + __bynkShow((Some({ n: Some(None) })))); }
-    if (!(__bynkEq(nested("{\"n\": {\"kind\": \"Some\", \"value\": 1}}"), Some({ n: Some(Some(1)) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:33:10", 1889, 1979, "expect nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}\") == Some(Nested { n: Some(Some(1)) })\n  expected: nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}\") == Some(Nested { n: Some(Some(1)) })\n  actual:   " + __bynkShow((nested("{\"n\": {\"kind\": \"Some\", \"value\": 1}}"))) + " == " + __bynkShow((Some({ n: Some(Some(1)) })))); }
+    if (!(__bynkEq(nested("{}"), Some({ n: None })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:28:10", 1564, 1604, "expect nested(\"{}\") == Some(Nested { n: None })\n  expected: nested(\"{}\") == Some(Nested { n: None })\n  actual:   " + __bynkShow((nested("{}"))) + " == " + __bynkShow((Some({ n: None })))); }
+    if (!(__bynkEq(nested("{\"n\": null}"), Some({ n: None })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:29:10", 1614, 1665, "expect nested(\"{\\\"n\\\": null}\") == Some(Nested { n: None })\n  expected: nested(\"{\\\"n\\\": null}\") == Some(Nested { n: None })\n  actual:   " + __bynkShow((nested("{\"n\": null}"))) + " == " + __bynkShow((Some({ n: None })))); }
+    if (!(__bynkEq(nested("{\"n\": 1}"), Some({ n: Some(Some(1)) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:30:10", 1675, 1732, "expect nested(\"{\\\"n\\\": 1}\") == Some(Nested { n: Some(Some(1)) })\n  expected: nested(\"{\\\"n\\\": 1}\") == Some(Nested { n: Some(Some(1)) })\n  actual:   " + __bynkShow((nested("{\"n\": 1}"))) + " == " + __bynkShow((Some({ n: Some(Some(1)) })))); }
+    if (!(__bynkEq(nested("{\"n\": {\"kind\": \"None\"}}"), Some({ n: None })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:31:10", 1742, 1809, "expect nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"None\\\"}}\") == Some(Nested { n: None })\n  expected: nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"None\\\"}}\") == Some(Nested { n: None })\n  actual:   " + __bynkShow((nested("{\"n\": {\"kind\": \"None\"}}"))) + " == " + __bynkShow((Some({ n: None })))); }
+    if (!(__bynkEq(nested("{\"n\": {\"kind\": \"Some\", \"value\": {\"kind\": \"None\"}}}"), Some({ n: Some(None) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:32:10", 1819, 1925, "expect nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"None\\\"}}}\") == Some(Nested { n: Some(None) })\n  expected: nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"None\\\"}}}\") == Some(Nested { n: Some(None) })\n  actual:   " + __bynkShow((nested("{\"n\": {\"kind\": \"Some\", \"value\": {\"kind\": \"None\"}}}"))) + " == " + __bynkShow((Some({ n: Some(None) })))); }
+    if (!(__bynkEq(nested("{\"n\": {\"kind\": \"Some\", \"value\": null}}"), Some({ n: Some(None) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:33:10", 1935, 2025, "expect nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": null}}\") == Some(Nested { n: Some(None) })\n  expected: nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": null}}\") == Some(Nested { n: Some(None) })\n  actual:   " + __bynkShow((nested("{\"n\": {\"kind\": \"Some\", \"value\": null}}"))) + " == " + __bynkShow((Some({ n: Some(None) })))); }
+    if (!(__bynkEq(nested("{\"n\": {\"kind\": \"Some\", \"value\": 1}}"), Some({ n: Some(Some(1)) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:34:10", 2035, 2125, "expect nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}\") == Some(Nested { n: Some(Some(1)) })\n  expected: nested(\"{\\\"n\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}\") == Some(Nested { n: Some(Some(1)) })\n  actual:   " + __bynkShow((nested("{\"n\": {\"kind\": \"Some\", \"value\": 1}}"))) + " == " + __bynkShow((Some({ n: Some(Some(1)) })))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -139,7 +140,7 @@ async function test_Option_Option_Int____tagged_forms_win__bare_forms_nest() {
 async function test_a_record_with_kind_and_value_fields__the_tagged_reading_wins() {
   try {
     const deps = {};
-    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
+    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedError, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
     type Boxed = __ns_demo_opt.Boxed;
     type Holder = __ns_demo_opt.Holder;
     type Name = __ns_demo_opt.Name;
@@ -148,9 +149,9 @@ async function test_a_record_with_kind_and_value_fields__the_tagged_reading_wins
     type Pair = __ns_demo_opt.Pair;
     type Repo = __ns_demo_opt.Repo;
     type Wrapped = __ns_demo_opt.Wrapped;
-    if (!(__bynkEq(boxed("{\"p\": {\"kind\": \"x\", \"value\": 1}}"), Some({ p: Some({ kind: "x", value: 1 }) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:37:10", 2062, 2168, "expect boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"x\\\", \\\"value\\\": 1}}\") == Some(Boxed { p: Some(Pair { kind: \"x\", value: 1 }) })\n  expected: boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"x\\\", \\\"value\\\": 1}}\") == Some(Boxed { p: Some(Pair { kind: \"x\", value: 1 }) })\n  actual:   " + __bynkShow((boxed("{\"p\": {\"kind\": \"x\", \"value\": 1}}"))) + " == " + __bynkShow((Some({ p: Some({ kind: "x", value: 1 }) })))); }
-    if (!(__bynkEq(boxed("{\"p\": {\"kind\": \"Some\", \"value\": 1}}"), None))) { throw __bynkExpectFailure("tests/demo/opt.bynk:38:10", 2178, 2238, "expect boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}\") == None\n  expected: boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}\") == None\n  actual:   " + __bynkShow((boxed("{\"p\": {\"kind\": \"Some\", \"value\": 1}}"))) + " == " + __bynkShow((None))); }
-    if (!(__bynkEq(boxed("{\"p\": {\"kind\": \"Some\", \"value\": {\"kind\": \"Some\", \"value\": 1}}}"), Some({ p: Some({ kind: "Some", value: 1 }) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:39:10", 2248, 2393, "expect boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}}\") == Some(Boxed { p: Some(Pair { kind: \"Some\", value: 1 }) })\n  expected: boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}}\") == Some(Boxed { p: Some(Pair { kind: \"Some\", value: 1 }) })\n  actual:   " + __bynkShow((boxed("{\"p\": {\"kind\": \"Some\", \"value\": {\"kind\": \"Some\", \"value\": 1}}}"))) + " == " + __bynkShow((Some({ p: Some({ kind: "Some", value: 1 }) })))); }
+    if (!(__bynkEq(boxed("{\"p\": {\"kind\": \"x\", \"value\": 1}}"), Some({ p: Some({ kind: "x", value: 1 }) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:38:10", 2208, 2314, "expect boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"x\\\", \\\"value\\\": 1}}\") == Some(Boxed { p: Some(Pair { kind: \"x\", value: 1 }) })\n  expected: boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"x\\\", \\\"value\\\": 1}}\") == Some(Boxed { p: Some(Pair { kind: \"x\", value: 1 }) })\n  actual:   " + __bynkShow((boxed("{\"p\": {\"kind\": \"x\", \"value\": 1}}"))) + " == " + __bynkShow((Some({ p: Some({ kind: "x", value: 1 }) })))); }
+    if (!(__bynkEq(boxed("{\"p\": {\"kind\": \"Some\", \"value\": 1}}"), None))) { throw __bynkExpectFailure("tests/demo/opt.bynk:39:10", 2324, 2384, "expect boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}\") == None\n  expected: boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}\") == None\n  actual:   " + __bynkShow((boxed("{\"p\": {\"kind\": \"Some\", \"value\": 1}}"))) + " == " + __bynkShow((None))); }
+    if (!(__bynkEq(boxed("{\"p\": {\"kind\": \"Some\", \"value\": {\"kind\": \"Some\", \"value\": 1}}}"), Some({ p: Some({ kind: "Some", value: 1 }) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:40:10", 2394, 2539, "expect boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}}\") == Some(Boxed { p: Some(Pair { kind: \"Some\", value: 1 }) })\n  expected: boxed(\"{\\\"p\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": 1}}}\") == Some(Boxed { p: Some(Pair { kind: \"Some\", value: 1 }) })\n  actual:   " + __bynkShow((boxed("{\"p\": {\"kind\": \"Some\", \"value\": {\"kind\": \"Some\", \"value\": 1}}}"))) + " == " + __bynkShow((Some({ p: Some({ kind: "Some", value: 1 }) })))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -164,7 +165,7 @@ async function test_a_record_with_kind_and_value_fields__the_tagged_reading_wins
 async function test_a_kind_tagged_sum_decodes_bare_or_tagged() {
   try {
     const deps = {};
-    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
+    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedError, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
     type Boxed = __ns_demo_opt.Boxed;
     type Holder = __ns_demo_opt.Holder;
     type Name = __ns_demo_opt.Name;
@@ -173,9 +174,9 @@ async function test_a_kind_tagged_sum_decodes_bare_or_tagged() {
     type Pair = __ns_demo_opt.Pair;
     type Repo = __ns_demo_opt.Repo;
     type Wrapped = __ns_demo_opt.Wrapped;
-    if (!(__bynkEq(holder("{\"w\": {\"kind\": \"Wrap\", \"value\": 3}}"), Some({ w: Some(Wrapped.Wrap(3)) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:43:10", 2456, 2546, "expect holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Wrap\\\", \\\"value\\\": 3}}\") == Some(Holder { w: Some(Wrap(3)) })\n  expected: holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Wrap\\\", \\\"value\\\": 3}}\") == Some(Holder { w: Some(Wrap(3)) })\n  actual:   " + __bynkShow((holder("{\"w\": {\"kind\": \"Wrap\", \"value\": 3}}"))) + " == " + __bynkShow((Some({ w: Some(Wrapped.Wrap(3)) })))); }
-    if (!(__bynkEq(holder("{\"w\": {\"kind\": \"Empty\"}}"), Some({ w: Some(Wrapped.Empty) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:44:10", 2556, 2631, "expect holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Empty\\\"}}\") == Some(Holder { w: Some(Empty) })\n  expected: holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Empty\\\"}}\") == Some(Holder { w: Some(Empty) })\n  actual:   " + __bynkShow((holder("{\"w\": {\"kind\": \"Empty\"}}"))) + " == " + __bynkShow((Some({ w: Some(Wrapped.Empty) })))); }
-    if (!(__bynkEq(holder("{\"w\": {\"kind\": \"Some\", \"value\": {\"kind\": \"Wrap\", \"value\": 3}}}"), Some({ w: Some(Wrapped.Wrap(3)) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:45:10", 2641, 2764, "expect holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"Wrap\\\", \\\"value\\\": 3}}}\") == Some(Holder { w: Some(Wrap(3)) })\n  expected: holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"Wrap\\\", \\\"value\\\": 3}}}\") == Some(Holder { w: Some(Wrap(3)) })\n  actual:   " + __bynkShow((holder("{\"w\": {\"kind\": \"Some\", \"value\": {\"kind\": \"Wrap\", \"value\": 3}}}"))) + " == " + __bynkShow((Some({ w: Some(Wrapped.Wrap(3)) })))); }
+    if (!(__bynkEq(holder("{\"w\": {\"kind\": \"Wrap\", \"value\": 3}}"), Some({ w: Some(Wrapped.Wrap(3)) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:44:10", 2602, 2692, "expect holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Wrap\\\", \\\"value\\\": 3}}\") == Some(Holder { w: Some(Wrap(3)) })\n  expected: holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Wrap\\\", \\\"value\\\": 3}}\") == Some(Holder { w: Some(Wrap(3)) })\n  actual:   " + __bynkShow((holder("{\"w\": {\"kind\": \"Wrap\", \"value\": 3}}"))) + " == " + __bynkShow((Some({ w: Some(Wrapped.Wrap(3)) })))); }
+    if (!(__bynkEq(holder("{\"w\": {\"kind\": \"Empty\"}}"), Some({ w: Some(Wrapped.Empty) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:45:10", 2702, 2777, "expect holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Empty\\\"}}\") == Some(Holder { w: Some(Empty) })\n  expected: holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Empty\\\"}}\") == Some(Holder { w: Some(Empty) })\n  actual:   " + __bynkShow((holder("{\"w\": {\"kind\": \"Empty\"}}"))) + " == " + __bynkShow((Some({ w: Some(Wrapped.Empty) })))); }
+    if (!(__bynkEq(holder("{\"w\": {\"kind\": \"Some\", \"value\": {\"kind\": \"Wrap\", \"value\": 3}}}"), Some({ w: Some(Wrapped.Wrap(3)) })))) { throw __bynkExpectFailure("tests/demo/opt.bynk:46:10", 2787, 2910, "expect holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"Wrap\\\", \\\"value\\\": 3}}}\") == Some(Holder { w: Some(Wrap(3)) })\n  expected: holder(\"{\\\"w\\\": {\\\"kind\\\": \\\"Some\\\", \\\"value\\\": {\\\"kind\\\": \\\"Wrap\\\", \\\"value\\\": 3}}}\") == Some(Holder { w: Some(Wrap(3)) })\n  actual:   " + __bynkShow((holder("{\"w\": {\"kind\": \"Some\", \"value\": {\"kind\": \"Wrap\", \"value\": 3}}}"))) + " == " + __bynkShow((Some({ w: Some(Wrapped.Wrap(3)) })))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -189,7 +190,7 @@ async function test_a_kind_tagged_sum_decodes_bare_or_tagged() {
 async function test_what_Json_encode_writes_decodes_back_to_the_same_value() {
   try {
     const deps = {};
-    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
+    const { Boxed, Holder, Name, Named, Nested, Pair, Repo, Wrapped, boxed, boxedRoundTrips, holder, holderRoundTrips, named, nested, nestedError, nestedRoundTrips, repo, repoError } = __ns_demo_opt;
     type Boxed = __ns_demo_opt.Boxed;
     type Holder = __ns_demo_opt.Holder;
     type Name = __ns_demo_opt.Name;
@@ -198,15 +199,15 @@ async function test_what_Json_encode_writes_decodes_back_to_the_same_value() {
     type Pair = __ns_demo_opt.Pair;
     type Repo = __ns_demo_opt.Repo;
     type Wrapped = __ns_demo_opt.Wrapped;
-    if (!(nestedRoundTrips({ n: None }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:49:10", 2841, 2877, "expect nestedRoundTrips(Nested { n: None })"); }
-    if (!(nestedRoundTrips({ n: Some(None) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:50:10", 2887, 2929, "expect nestedRoundTrips(Nested { n: Some(None) })"); }
-    if (!(nestedRoundTrips({ n: Some(Some(1)) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:51:10", 2939, 2984, "expect nestedRoundTrips(Nested { n: Some(Some(1)) })"); }
-    if (!(boxedRoundTrips({ p: None }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:52:10", 2994, 3028, "expect boxedRoundTrips(Boxed { p: None })"); }
-    if (!(boxedRoundTrips({ p: Some({ kind: "Some", value: 1 }) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:53:10", 3038, 3105, "expect boxedRoundTrips(Boxed { p: Some(Pair { kind: \"Some\", value: 1 }) })"); }
-    if (!(boxedRoundTrips({ p: Some({ kind: "None", value: 2 }) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:54:10", 3115, 3182, "expect boxedRoundTrips(Boxed { p: Some(Pair { kind: \"None\", value: 2 }) })"); }
-    if (!(holderRoundTrips({ w: None }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:55:10", 3192, 3228, "expect holderRoundTrips(Holder { w: None })"); }
-    if (!(holderRoundTrips({ w: Some(Wrapped.Wrap(3)) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:56:10", 3238, 3283, "expect holderRoundTrips(Holder { w: Some(Wrap(3)) })"); }
-    if (!(holderRoundTrips({ w: Some(Wrapped.Empty) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:57:10", 3293, 3336, "expect holderRoundTrips(Holder { w: Some(Empty) })"); }
+    if (!(nestedRoundTrips({ n: None }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:50:10", 2987, 3023, "expect nestedRoundTrips(Nested { n: None })"); }
+    if (!(nestedRoundTrips({ n: Some(None) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:51:10", 3033, 3075, "expect nestedRoundTrips(Nested { n: Some(None) })"); }
+    if (!(nestedRoundTrips({ n: Some(Some(1)) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:52:10", 3085, 3130, "expect nestedRoundTrips(Nested { n: Some(Some(1)) })"); }
+    if (!(boxedRoundTrips({ p: None }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:53:10", 3140, 3174, "expect boxedRoundTrips(Boxed { p: None })"); }
+    if (!(boxedRoundTrips({ p: Some({ kind: "Some", value: 1 }) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:54:10", 3184, 3251, "expect boxedRoundTrips(Boxed { p: Some(Pair { kind: \"Some\", value: 1 }) })"); }
+    if (!(boxedRoundTrips({ p: Some({ kind: "None", value: 2 }) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:55:10", 3261, 3328, "expect boxedRoundTrips(Boxed { p: Some(Pair { kind: \"None\", value: 2 }) })"); }
+    if (!(holderRoundTrips({ w: None }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:56:10", 3338, 3374, "expect holderRoundTrips(Holder { w: None })"); }
+    if (!(holderRoundTrips({ w: Some(Wrapped.Wrap(3)) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:57:10", 3384, 3429, "expect holderRoundTrips(Holder { w: Some(Wrap(3)) })"); }
+    if (!(holderRoundTrips({ w: Some(Wrapped.Empty) }))) { throw __bynkExpectFailure("tests/demo/opt.bynk:58:10", 3439, 3482, "expect holderRoundTrips(Holder { w: Some(Empty) })"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

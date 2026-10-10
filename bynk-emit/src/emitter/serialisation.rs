@@ -2992,13 +2992,21 @@ fn lenient_option_decode_body(
             strict_eq(member(ident("__b"), "tag"), str_lit("Ok")),
             block(vec![ok_option(some_of("__b"), option_ty)]),
         ),
+        // The suffix is appended once: for an `Option[Option[T]]` the inner
+        // decoder has already extended an error at this same path.
         if_(
             and_expr(
-                strict_eq(
-                    member(bare_error.clone(), "kind"),
-                    str_lit("StructuralMismatch"),
+                and_expr(
+                    strict_eq(
+                        member(bare_error.clone(), "kind"),
+                        str_lit("StructuralMismatch"),
+                    ),
+                    strict_eq(member(bare_error.clone(), "path"), ident("path")),
                 ),
-                strict_eq(member(bare_error.clone(), "path"), ident("path")),
+                not_expr(call(
+                    member(member(bare_error.clone(), "expected"), "endsWith"),
+                    vec![str_lit(OPTION_FORMS_SUFFIX)],
+                )),
             ),
             block(vec![return_(call(
                 ident("Err"),
@@ -3951,7 +3959,7 @@ mod lenient_option_decode_tests {
         let inner = function_body(&text, "__deserialise_Option_Int");
         at(
             inner,
-            "if (__b.error.kind === \"StructuralMismatch\" && __b.error.path === path) {",
+            "if (__b.error.kind === \"StructuralMismatch\" && __b.error.path === path && !__b.error.expected.endsWith(",
         );
         at(inner, &super::OPTION_FORMS_SUFFIX.replace('"', "\\\""));
     }

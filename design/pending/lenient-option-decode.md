@@ -66,7 +66,7 @@ has.
 *Errors.* A bare value that fails as a `StructuralMismatch` at the `Option`'s
 own path has its `expected` extended with every accepted form, for example
 `expected string | null | {"kind": "None"} | {"kind": "Some", "value": ...},
-got number`. A deeper error, or a `RefinementViolation`, is returned as `U`
+got number`. The suffix is added once, so an `Option[Option[T]]` does not repeat it. A deeper error, or a `RefinementViolation`, is returned as `U`
 reported it, because rewriting it would point at the wrong place.
 
 *Emission.* `U`'s checks are emitted once, in a module-local

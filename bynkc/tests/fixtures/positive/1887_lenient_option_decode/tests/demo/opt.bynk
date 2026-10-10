@@ -21,6 +21,7 @@ case "a bare value is checked as the inner type" {
 case "a failed bare value names every Option form" {
   expect repoError("{\"repo\": \"a\", \"description\": 7}") == "$.description: expected string | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}, got number"
   expect repoError("{\"repo\": \"a\", \"description\": {\"kind\": \"Some\", \"value\": 7}}") == "$.description.value: expected string, got number"
+  expect nestedError("{\"n\": \"x\"}") == "$.n: expected number | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}, got string"
 }
 
 case "Option[Option[Int]]: tagged forms win, bare forms nest" {

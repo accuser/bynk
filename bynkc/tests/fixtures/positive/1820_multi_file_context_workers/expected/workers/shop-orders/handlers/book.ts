@@ -149,7 +149,7 @@ export function __deserialise_Option_Line(json: __JsonValue, path: string = "$")
   if (__b.tag === "Ok") {
     return Ok(Some(__b.value as Line) as Option<Line>);
   }
-  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path) {
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
     return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
   }
   return __b;

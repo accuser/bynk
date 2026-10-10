@@ -158,6 +158,20 @@ export function repoError(s: string): string {
   throw new globalThis.Error("non-exhaustive match");
 }
 
+export function nestedError(s: string): string {
+  const __r0 = ((__s: string): Result<Nested, JsonError> => { let __j: __JsonValue; try { __j = globalThis.JSON.parse(__s) as __JsonValue; } catch (__e) { return Err({ kind: "Malformed", path: "$", message: String(__e) }); } const __r = __deserialise_Nested(__j, "$"); if (__r.tag === "Ok") return Ok(__r.value as Nested); const __be = __r.error; return Err({ kind: __be.kind, path: (__be.kind === "StructuralMismatch" || __be.kind === "RefinementViolation") ? __be.path : "$", message: __be.kind === "StructuralMismatch" ? `expected ${__be.expected}, got ${String(__be.actual)}` : __be.kind === "RefinementViolation" ? __be.violation.message : __be.details }); })(s);
+  switch (__r0.tag) {
+    case "Ok": {
+      return "decoded";
+    }
+    case "Err": {
+      const e = __r0.error;
+      return e.path.concat(": ").concat(e.message);
+    }
+  }
+  throw new globalThis.Error("non-exhaustive match");
+}
+
 export function nestedRoundTrips(v: Nested): boolean {
   return __bynkEq(nested(globalThis.JSON.stringify(__serialise_Nested(v))), Some(v));
 }
@@ -372,7 +386,7 @@ export function __deserialise_Option_Pair(json: __JsonValue, path: string = "$")
   if (__b.tag === "Ok") {
     return Ok(Some(__b.value as Pair) as Option<Pair>);
   }
-  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path) {
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
     return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
   }
   return __b;
@@ -412,7 +426,7 @@ export function __deserialise_Option_Wrapped(json: __JsonValue, path: string = "
   if (__b.tag === "Ok") {
     return Ok(Some(__b.value as Wrapped) as Option<Wrapped>);
   }
-  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path) {
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
     return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
   }
   return __b;
@@ -452,7 +466,7 @@ export function __deserialise_Option_Name(json: __JsonValue, path: string = "$")
   if (__b.tag === "Ok") {
     return Ok(Some(__b.value as Name) as Option<Name>);
   }
-  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path) {
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
     return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
   }
   return __b;
@@ -492,7 +506,7 @@ export function __deserialise_Option_Option_Int(json: __JsonValue, path: string 
   if (__b.tag === "Ok") {
     return Ok(Some(__b.value as Option<number>) as Option<Option<number>>);
   }
-  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path) {
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
     return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
   }
   return __b;
@@ -536,7 +550,7 @@ export function __deserialise_Option_Int(json: __JsonValue, path: string = "$"):
   if (__b.tag === "Ok") {
     return Ok(Some(__b.value as number) as Option<number>);
   }
-  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path) {
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
     return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
   }
   return __b;
@@ -577,7 +591,7 @@ export function __deserialise_Option_String(json: __JsonValue, path: string = "$
   if (__b.tag === "Ok") {
     return Ok(Some(__b.value as string) as Option<string>);
   }
-  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path) {
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
     return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
   }
   return __b;
