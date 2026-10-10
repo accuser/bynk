@@ -1456,9 +1456,16 @@ pub fn phase_consumes_aliases(
                     let where_ = if prev_file == i {
                         String::new()
                     } else {
+                        // `/`-separated on every platform, as the project
+                        // layout is written (a Windows `display()` uses `\`).
                         format!(
                             " (first stated in `{}`)",
-                            parsed[prev_file].identity_path().display()
+                            parsed[prev_file]
+                                .identity_path()
+                                .components()
+                                .map(|c| c.as_os_str().to_string_lossy())
+                                .collect::<Vec<_>>()
+                                .join("/")
                         )
                     };
                     let mut err = CompileError::new(
