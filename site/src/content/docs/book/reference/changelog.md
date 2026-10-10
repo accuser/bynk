@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.315**.
+written against **v0.316**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.316.0** | "A `consumes` clause repeated in another file of a context split across files is accepted (#1857), aliased (`consumes shop.payment as Payment`) or as a `{ Cap }` selection; both were rejected, though the unaliased repeat was accepted, and the alias diagnostic's \"previously defined here\" pointed at the wrong file. The same clause twice in one file is still an error. `alias_conflict` reports a true conflict, an alias naming two units or a unit consumed under two aliases (the latter newly rejected), labelling the earlier clause in the same file or naming its file in the message" |
 | **v0.315.2** | "A `RehydrationViolation` is now logged, as the docs said it was (#1827). The load-time gate threw it without a log line, unlike an `InvariantViolation`, and an HTTP or `on call` entry point then caught it. `rehydrationViolation` now logs `RehydrationViolation <Agent>` with the agent, the field path and the kind of failure (never the key or the offending value) wherever a gate builds it" |
 | **v0.315.1** | "A Worker that decodes a consumed context's export now generates the codec of every type the export reaches, including one the callee does not export (#1846). `Ticket.code`, typed by `t.vault`'s unexported `Code`, was decoded through a `__deserialise_Code` that was neither generated nor imported (TS2552), and a consumer declaring its own `Code` would have reached its own codec instead. Such a type's codecs and instantiations are generated under a callee-qualified name (`__serialise_t_vault__Code`, `__serialise_Option_t_vault__Code`), so they can't collide with the consumer's, while their TS type stays the callee's (`t_vault.Code`) and a refined one still validates inline" |
 | **v0.315.0** | "A unit's own type that shadows a directly used commons' type is `bynk.uses.name_conflict` where a value crosses between the unit's code and an imported declaration's position of that type (`Run { repo: 42 }`, `r.repo + 1`, a method or function argument); passing one such position straight to another stays legal (#1824). Before, such a program passed `check` and failed `tsc`. The rule is conservative: a value routed between two such positions through a `let`, a shorthand field or an imported generic is rejected too, though its TypeScript was correct; pass it directly, or rename the local type" |
