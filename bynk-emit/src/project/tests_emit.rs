@@ -7040,6 +7040,7 @@ mod tests {
                 variants: variants
                     .into_iter()
                     .map(|(vname, fields)| bynk_syntax::ast::Variant {
+                        documentation: None,
                         name: Ident {
                             name: vname.to_string(),
                             span: Span::default(),
@@ -7047,6 +7048,7 @@ mod tests {
                         payload: fields
                             .into_iter()
                             .map(|(fname, type_ref)| bynk_syntax::ast::VariantField {
+                                documentation: None,
                                 name: Ident {
                                     name: fname.to_string(),
                                     span: Span::default(),

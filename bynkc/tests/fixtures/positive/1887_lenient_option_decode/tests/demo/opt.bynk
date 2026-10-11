@@ -1,0 +1,65 @@
+---
+#1887: the lenient `Option` decoder, proved at runtime.
+---
+suite demo.opt
+
+case "the issue's five rows decode" {
+  expect repo("{\"repo\": \"a\"}") == Some(Repo { repo: "a", description: None })
+  expect repo("{\"repo\": \"a\", \"description\": null}") == Some(Repo { repo: "a", description: None })
+  expect repo("{\"repo\": \"a\", \"description\": \"d\"}") == Some(Repo { repo: "a", description: Some("d") })
+  expect repo("{\"repo\": \"a\", \"description\": {\"kind\": \"Some\", \"value\": \"d\"}}") == Some(Repo { repo: "a", description: Some("d") })
+  expect repo("{\"repo\": \"a\", \"description\": {\"kind\": \"None\"}}") == Some(Repo { repo: "a", description: None })
+}
+
+case "a bare value is checked as the inner type" {
+  expect repo("{\"repo\": \"a\", \"description\": 7}") == None
+  expect named("{\"name\": \"x\"}").isSome()
+  expect named("{\"name\": \"\"}") == None
+  expect named("{\"name\": {\"kind\": \"Some\", \"value\": \"\"}}") == None
+}
+
+case "a failed bare value names every Option form" {
+  expect repoError("{\"repo\": \"a\", \"description\": 7}") == "$.description: expected string | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}, got number"
+  expect repoError("{\"repo\": \"a\", \"description\": {\"kind\": \"Some\", \"value\": 7}}") == "$.description.value: expected string, got number"
+  expect nestedError("{\"n\": \"x\"}") == "$.n: expected number | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}, got string"
+}
+
+case "a tagged object with an extra key is a bare value" {
+  -- Recognition is exact: only `kind`, or only `kind` and `value`. Anything
+  -- more is read as a bare `U`, which an `Option[String]` rejects.
+  expect repoError("{\"repo\": \"a\", \"description\": {\"kind\": \"Some\", \"value\": \"d\", \"note\": \"x\"}}") == "$.description: expected string | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}, got object"
+}
+
+case "Option[Option[Int]]: tagged forms win, bare forms nest" {
+  expect nested("{}") == Some(Nested { n: None })
+  expect nested("{\"n\": null}") == Some(Nested { n: None })
+  expect nested("{\"n\": 1}") == Some(Nested { n: Some(Some(1)) })
+  expect nested("{\"n\": {\"kind\": \"None\"}}") == Some(Nested { n: None })
+  expect nested("{\"n\": {\"kind\": \"Some\", \"value\": {\"kind\": \"None\"}}}") == Some(Nested { n: Some(None) })
+  expect nested("{\"n\": {\"kind\": \"Some\", \"value\": null}}") == Some(Nested { n: Some(None) })
+  expect nested("{\"n\": {\"kind\": \"Some\", \"value\": 1}}") == Some(Nested { n: Some(Some(1)) })
+}
+
+case "a record with kind and value fields: the tagged reading wins" {
+  expect boxed("{\"p\": {\"kind\": \"x\", \"value\": 1}}") == Some(Boxed { p: Some(Pair { kind: "x", value: 1 }) })
+  expect boxed("{\"p\": {\"kind\": \"Some\", \"value\": 1}}") == None
+  expect boxed("{\"p\": {\"kind\": \"Some\", \"value\": {\"kind\": \"Some\", \"value\": 1}}}") == Some(Boxed { p: Some(Pair { kind: "Some", value: 1 }) })
+}
+
+case "a kind-tagged sum decodes bare or tagged" {
+  expect holder("{\"w\": {\"kind\": \"Wrap\", \"value\": 3}}") == Some(Holder { w: Some(Wrap(3)) })
+  expect holder("{\"w\": {\"kind\": \"Empty\"}}") == Some(Holder { w: Some(Empty) })
+  expect holder("{\"w\": {\"kind\": \"Some\", \"value\": {\"kind\": \"Wrap\", \"value\": 3}}}") == Some(Holder { w: Some(Wrap(3)) })
+}
+
+case "what Json.encode writes decodes back to the same value" {
+  expect nestedRoundTrips(Nested { n: None })
+  expect nestedRoundTrips(Nested { n: Some(None) })
+  expect nestedRoundTrips(Nested { n: Some(Some(1)) })
+  expect boxedRoundTrips(Boxed { p: None })
+  expect boxedRoundTrips(Boxed { p: Some(Pair { kind: "Some", value: 1 }) })
+  expect boxedRoundTrips(Boxed { p: Some(Pair { kind: "None", value: 2 }) })
+  expect holderRoundTrips(Holder { w: None })
+  expect holderRoundTrips(Holder { w: Some(Wrap(3)) })
+  expect holderRoundTrips(Holder { w: Some(Empty) })
+}

@@ -7,7 +7,9 @@
 
 use crate::ast::*;
 use crate::error::CompileError;
-use crate::lexer::{Token, TokenKind, comment_body, doc_block_content, has_blank_line_between};
+use crate::lexer::{
+    Token, TokenKind, comment_body, doc_block_content, doc_line_text, has_blank_line_between,
+};
 use crate::span::Span;
 mod declarations;
 mod expressions;
@@ -24,22 +26,25 @@ mod types;
 /// [`TriviaTable::take_trailing`] as it recognises declarations.
 #[derive(Debug, Default)]
 struct TriviaTable {
-    /// `leading[i]` holds the comment-body texts that appear immediately
-    /// before content token `i` (zero or more `--` lines, in source order,
-    /// not separated from the token by another content token).
-    leading: Vec<Vec<String>>,
+    /// `leading[i]` holds the comments that appear immediately before content
+    /// token `i` (zero or more `--` lines, in source order, not separated from
+    /// the token by another content token). A comment on its own line is
+    /// followed by a [`Comment::Blank`] when a blank line comes after it
+    /// (#1884).
+    leading: Vec<Vec<Comment>>,
     /// `trailing[i]` holds an optional comment on the same source line as
     /// content token `i`. Only one trailing comment is recorded per token
     /// because a single `--` consumes the rest of the line. A doc block or an
     /// opening `{` never has one: see [`split_trivia`].
     trailing: Vec<Option<String>>,
     /// Any pending leading comments at end-of-file (no content token
-    /// followed). Used to preserve file-trailing comments.
-    epilogue: Vec<String>,
+    /// followed), shaped as a `leading` entry. Used to preserve file-trailing
+    /// comments.
+    epilogue: Vec<Comment>,
 }
 
 impl TriviaTable {
-    fn take_leading(&mut self, index: usize) -> Vec<String> {
+    fn take_leading(&mut self, index: usize) -> Vec<Comment> {
         match self.leading.get_mut(index) {
             Some(v) => std::mem::take(v),
             None => Vec::new(),
@@ -50,7 +55,7 @@ impl TriviaTable {
         self.trailing.get_mut(index).and_then(|s| s.take())
     }
 
-    fn take_epilogue(&mut self) -> Vec<String> {
+    fn take_epilogue(&mut self) -> Vec<Comment> {
         std::mem::take(&mut self.epilogue)
     }
 
@@ -93,12 +98,30 @@ impl TriviaTable {
 /// on the same source line as the preceding content token is recorded as
 /// that token's *trailing* trivia, unless that token is a doc block or an
 /// opening `{`; everything else is *leading* for the next content token.
+///
+/// A blank line after a leading comment on its own line, before the next
+/// comment or content token, is recorded as a [`Comment::Blank`] (#1884). Only
+/// a declaration that canonical style sets apart with blank lines keeps it: see
+/// [`Parser::take_leading_trivia`].
 fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
     let mut filtered: Vec<Token> = Vec::with_capacity(tokens.len());
     let mut table = TriviaTable::default();
-    let mut pending_leading: Vec<String> = Vec::new();
+    let mut pending_leading: Vec<Comment> = Vec::new();
     let mut last_content_end: Option<usize> = None;
+    // Where the last comment in `pending_leading` ends, if it has a line to
+    // itself: the gap from there to the next token says whether a blank line
+    // follows it. A comment's span stops before its newline, so a blank line
+    // is two newlines. A comment that leads only because it sits on a `{` line
+    // has no blank line of its own: the one below it was between the `{` and
+    // the first item.
+    let mut last_leading_end: Option<usize> = None;
     for tok in tokens {
+        if !pending_leading.is_empty()
+            && let Some(end) = last_leading_end
+            && source[end..tok.span.start].matches('\n').count() >= 2
+        {
+            pending_leading.push(Comment::Blank);
+        }
         if tok.kind == TokenKind::Comment {
             let body = comment_body(source, tok.span).to_string();
             // If nothing has been buffered as leading for the next token and
@@ -107,13 +130,17 @@ fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
             // trailing comment: its token ends past the newline after the
             // closing `---`, so a `--` line directly under it would otherwise
             // look same-line and be binned where nothing collects it (#1756).
+            // A `--|` doc line (#1888) ends past its newline the same way.
             // Nor does an opening `{`: no parser collects trivia right after
             // one, so its comment leads whatever follows instead, the first
             // item or the `}` of an empty body (#1788).
             if pending_leading.is_empty()
-                && filtered
-                    .last()
-                    .is_some_and(|t| !matches!(t.kind, TokenKind::DocBlock | TokenKind::LBrace))
+                && filtered.last().is_some_and(|t| {
+                    !matches!(
+                        t.kind,
+                        TokenKind::DocBlock | TokenKind::DocLine | TokenKind::LBrace
+                    )
+                })
                 && let Some(prev_end) = last_content_end
                 && !source[prev_end..tok.span.start].contains('\n')
             {
@@ -125,13 +152,23 @@ fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
                     continue;
                 }
             }
-            pending_leading.push(body);
+            // A doc block's token ends past its closing line's newline, so a
+            // comment under it is on its own line with no newline between. A
+            // `--|` doc line's token does too (#1888).
+            let own_line = !pending_leading.is_empty()
+                || filtered
+                    .last()
+                    .is_none_or(|t| matches!(t.kind, TokenKind::DocBlock | TokenKind::DocLine))
+                || last_content_end.is_some_and(|end| source[end..tok.span.start].contains('\n'));
+            pending_leading.push(Comment::Line(body));
+            last_leading_end = own_line.then_some(tok.span.end);
             continue;
         }
         filtered.push(*tok);
         table.leading.push(std::mem::take(&mut pending_leading));
         table.trailing.push(None);
         last_content_end = Some(tok.span.end);
+        last_leading_end = None;
     }
     table.epilogue = pending_leading;
     (filtered, table)
@@ -290,6 +327,7 @@ pub fn parse_units_recovering_from(tokens: &[Token], source: &str, next_id: &mut
     let broken_decl_names = std::mem::take(&mut p.broken_decl_names);
     *next_id = p.next_expr_id;
     let mut all_errors = p.recovered_errors;
+    all_errors.append(&mut p.doc_errors);
     all_errors.append(&mut warnings);
     Recovered {
         units,
@@ -354,6 +392,16 @@ pub fn parse_unit_with_warnings_from(
             }
         }
         Err(e) => Err(vec![e]),
+    };
+    // #1885: a doc block that holds code fails the parse, after any error the
+    // parse itself hit.
+    let result = match (result, std::mem::take(&mut p.doc_errors)) {
+        (r, docs) if docs.is_empty() => r,
+        (Ok(_), docs) => Err(docs),
+        (Err(mut errs), mut docs) => {
+            errs.append(&mut docs);
+            Err(errs)
+        }
     };
     *next_id = p.next_expr_id;
     // ADR 0117: warnings (e.g. orphan doc blocks) ride alongside a successful
@@ -454,6 +502,8 @@ pub fn parse_units_with_drain_check_from(
             }
         }
     }
+    // #1885: a doc block that holds code fails the parse.
+    errors.append(&mut p.doc_errors);
     *next_id = p.next_expr_id;
     let eof = p.eof_span();
     let fully_drained = p.trivia.is_fully_drained();
@@ -557,6 +607,15 @@ struct Parser<'a> {
     /// [`Self::alloc_expr_id`], the sole allocation point every `Expr`
     /// construction site in this parser calls.
     next_expr_id: u32,
+    /// #1885: `bynk.parse.doc_block_contains_code` errors found by
+    /// [`Self::take_doc_block`]. Kept apart from the item `Result` path so a
+    /// doc block, which every item loop reads before its recovery point, never
+    /// aborts the body it sits in; each entry point turns them into errors.
+    doc_errors: Vec<CompileError>,
+    /// #1885: true for the parser [`doc_content_is_code`] runs over a doc
+    /// block's content. It skips the code check on doc blocks inside that
+    /// content, so the probe stays a plain parse.
+    doc_probe: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -581,6 +640,8 @@ impl<'a> Parser<'a> {
             brace_depth: 0,
             item_loop_baseline: Vec::new(),
             next_expr_id: 0,
+            doc_errors: Vec::new(),
+            doc_probe: false,
         }
     }
 
@@ -701,21 +762,28 @@ impl<'a> Parser<'a> {
     /// Comments immediately preceding the current peek position. Consumed
     /// (the table entry is cleared) so the same comments are not attached
     /// to two nodes.
+    ///
+    /// For a slot in a body: canonical style has no blank lines there, so a
+    /// [`Comment::Blank`] is dropped and the comments stay attached to what
+    /// follows. A declaration set apart by blank lines (one at unit level, or a
+    /// service's or agent's section or handler) keeps it, through
+    /// [`Self::take_unit_leading_trivia`].
     fn take_leading_trivia(&mut self) -> Vec<Comment> {
-        self.trivia
-            .take_leading(self.pos)
-            .into_iter()
-            .map(Comment::Line)
-            .collect()
+        let mut comments = self.take_unit_leading_trivia();
+        comments.retain(|c| *c != Comment::Blank);
+        comments
     }
 
-    /// The comments after the last token, as [`Comment::Line`]s.
+    /// [`Self::take_leading_trivia`] for a slot set apart by blank lines, keeping each
+    /// [`Comment::Blank`] (#1884).
+    fn take_unit_leading_trivia(&mut self) -> Vec<Comment> {
+        self.trivia.take_leading(self.pos)
+    }
+
+    /// The comments after the last token, which close the file at unit level,
+    /// so a [`Comment::Blank`] between them is kept.
     fn take_epilogue_trivia(&mut self) -> Vec<Comment> {
-        self.trivia
-            .take_epilogue()
-            .into_iter()
-            .map(Comment::Line)
-            .collect()
+        self.trivia.take_epilogue()
     }
 
     /// Trailing comment, if any, on the same source line as the most
@@ -1008,16 +1076,67 @@ impl<'a> Parser<'a> {
 
     // -- top level --
 
-    /// Consume an optional doc block at the current position, returning the
-    /// (content, end-of-doc span) pair. Returns None if the next token is not
-    /// a doc block.
-    fn take_doc_block(&mut self) -> Option<(String, Span)> {
-        if self.peek_kind() == Some(TokenKind::DocBlock) {
-            let t = self.bump().unwrap();
-            let body = doc_block_content(self.source, t.span);
-            return Some((body, t.span));
+    /// Consume an optional doc at the current position, in either form,
+    /// returning the doc and its span (through the end of its last line).
+    /// Returns None if the next token is not a doc.
+    ///
+    /// #1885: a doc block whose content is code (see [`doc_content_is_code`])
+    /// records `bynk.parse.doc_block_contains_code` in [`Self::doc_errors`];
+    /// the block is still returned, so parsing carries on around it. A run of
+    /// `--|` lines is not probed: each line is marked as a doc on purpose, so
+    /// it cannot swallow code by accident the way a pair of dividers can.
+    ///
+    /// #1888: a doc of one form directly followed by a doc of the other (no
+    /// blank line between) records `bynk.parse.doc_forms_mixed` the same way;
+    /// both are consumed and the first is returned.
+    fn take_doc_block(&mut self) -> Option<(Doc, Span)> {
+        let (doc, span) = self.take_one_doc()?;
+        if let Some(next) = self.peek()
+            && next.kind != doc_token_kind(doc.form)
+            && matches!(next.kind, TokenKind::DocBlock | TokenKind::DocLine)
+            && !has_blank_line_between(self.source, span.end, next.span.start)
+        {
+            let (_, other) = self.take_one_doc().expect("a doc token was peeked");
+            if !self.doc_probe {
+                self.doc_errors.push(doc_forms_mixed(span, other));
+            }
         }
-        None
+        Some((doc, span))
+    }
+
+    /// One doc of one form: a `---` block, or a run of `--|` lines, each on
+    /// the line right after the last (#1888, DECISION B). The run's text keeps
+    /// its line breaks, so a bare `--|` separates Markdown paragraphs.
+    fn take_one_doc(&mut self) -> Option<(Doc, Span)> {
+        match self.peek_kind()? {
+            TokenKind::DocBlock => {
+                let t = self.bump().unwrap();
+                let body = doc_block_content(self.source, t.span);
+                if !self.doc_probe && doc_content_is_code(&body) {
+                    self.doc_errors.push(doc_block_contains_code(t.span));
+                }
+                Some((Doc::new(body, DocForm::Block), t.span))
+            }
+            TokenKind::DocLine => {
+                let first = self.bump().unwrap();
+                let mut span = first.span;
+                let mut lines = vec![doc_line_text(self.source, first.span)];
+                // A doc line's span ends past its newline, so the next line of
+                // the run starts after indentation alone.
+                while let Some(next) = self.peek()
+                    && next.kind == TokenKind::DocLine
+                    && self.source[span.end..next.span.start]
+                        .bytes()
+                        .all(|b| matches!(b, b' ' | b'\t' | b'\r'))
+                {
+                    let t = self.bump().unwrap();
+                    lines.push(doc_line_text(self.source, t.span));
+                    span = span.merge(t.span);
+                }
+                Some((Doc::new(lines.join("\n"), DocForm::Lines), span))
+            }
+            _ => None,
+        }
     }
 
     /// Collect all line-comment trivia leading the next declaration plus
@@ -1027,17 +1146,75 @@ impl<'a> Parser<'a> {
     ///
     /// The doc comes back as a [`DocLead`], which records where it sat among
     /// the comments, so an orphan can be kept in place ([`keep_orphan`]).
+    ///
+    /// For a declaration set apart by blank lines (a unit-level one, or a
+    /// service's or agent's section or handler), which keeps a blank line after
+    /// a comment (#1884); [`Self::collect_body_item_lead`] is the form for a
+    /// body whose items have no blank lines between them.
     fn collect_item_lead(&mut self) -> (Vec<Comment>, Option<DocLead>) {
-        let mut leading = self.take_leading_trivia();
+        self.collect_lead(Self::take_unit_leading_trivia)
+    }
+
+    /// [`Self::collect_item_lead`] for a declaration in a body, which drops a
+    /// [`Comment::Blank`] as [`Self::take_leading_trivia`] does.
+    fn collect_body_item_lead(&mut self) -> (Vec<Comment>, Option<DocLead>) {
+        self.collect_lead(Self::take_leading_trivia)
+    }
+
+    fn collect_lead(
+        &mut self,
+        take: fn(&mut Self) -> Vec<Comment>,
+    ) -> (Vec<Comment>, Option<DocLead>) {
+        let mut leading = take(self);
         let doc = self.take_doc_block().map(|(content, span)| DocLead {
             content,
             span,
             at: leading.len(),
         });
         if doc.is_some() {
-            leading.extend(self.take_leading_trivia());
+            leading.extend(take(self));
         }
         (leading, doc)
+    }
+
+    /// #1888: the comments and doc above a member: a record field, a variant,
+    /// a variant's payload field or a message entry. As
+    /// [`Self::collect_body_item_lead`] and [`Self::finalize_doc`] together, so
+    /// a blank line orphans a member's doc as it does a declaration's, and a
+    /// [`Comment::Blank`] is dropped, as in any body (#1884). A doc with
+    /// `close` (the body's closing token) next documents nothing: it is warned
+    /// about and kept among the comments, which the caller then takes as the
+    /// body's closing comments.
+    fn collect_member_lead(&mut self, close: TokenKind) -> (Vec<Comment>, Option<Doc>) {
+        let (mut leading, doc) = self.collect_body_item_lead();
+        let Some(doc) = doc else {
+            return (leading, None);
+        };
+        match self.peek() {
+            Some(t) if t.kind != close => {
+                let doc = self.finalize_doc(Some(doc), t.span, &mut leading);
+                (leading, doc)
+            }
+            _ => {
+                self.warnings.push(CompileError::new(
+                    "bynk.parse.orphan_doc_block",
+                    doc.span,
+                    "documentation has no following member to attach to",
+                ));
+                keep_orphan(&mut leading, doc);
+                (leading, None)
+            }
+        }
+    }
+
+    /// #1888: the kind of the first token after any doc tokens at the cursor,
+    /// so a member loop can tell a doc on its next member from a doc on the
+    /// declaration after the body (a pipe-form sum has no closing token).
+    fn peek_past_docs(&self) -> Option<TokenKind> {
+        self.tokens[self.pos.min(self.tokens.len())..]
+            .iter()
+            .map(|t| t.kind)
+            .find(|k| !matches!(k, TokenKind::DocBlock | TokenKind::DocLine))
     }
 
     /// Attach a parsed doc block to a following declaration unless a blank
@@ -1048,7 +1225,7 @@ impl<'a> Parser<'a> {
         doc: Option<DocLead>,
         next_span: Span,
         leading: &mut Vec<Comment>,
-    ) -> Option<String> {
+    ) -> Option<Doc> {
         let doc = doc?;
         let doc_span = doc.span;
         // A blank line between the doc and the next decl orphans the doc.
@@ -1075,7 +1252,7 @@ impl<'a> Parser<'a> {
 /// normalised content, its span, and its index among the leading comments
 /// collected with it.
 pub(crate) struct DocLead {
-    pub(crate) content: String,
+    pub(crate) content: Doc,
     pub(crate) span: Span,
     pub(crate) at: usize,
 }
@@ -1086,6 +1263,179 @@ pub(crate) struct DocLead {
 fn keep_orphan(leading: &mut Vec<Comment>, doc: DocLead) {
     let at = doc.at.min(leading.len());
     leading.insert(at, Comment::OrphanDoc(doc.content));
+}
+
+/// #1888: the token kind a doc of `form` is written with.
+fn doc_token_kind(form: DocForm) -> TokenKind {
+    match form {
+        DocForm::Block => TokenKind::DocBlock,
+        DocForm::Lines => TokenKind::DocLine,
+    }
+}
+
+/// #1888 (DECISION C): the `bynk.parse.doc_forms_mixed` error for a doc at
+/// `first` directly followed by one of the other form at `second`.
+fn doc_forms_mixed(first: Span, second: Span) -> CompileError {
+    CompileError::new(
+        "bynk.parse.doc_forms_mixed",
+        second,
+        "this declaration or member has a doc in both forms, a `---` block and `--|` lines",
+    )
+    .with_label(first, "the other doc is here")
+    .with_note(
+        "write a doc in one form: `--|` lines for a sentence or two, a `---` block for \
+         anything with structure (lists, code, headings)",
+    )
+}
+
+/// #1885: the `bynk.parse.doc_block_contains_code` error for the doc block at
+/// `span`.
+fn doc_block_contains_code(span: Span) -> CompileError {
+    CompileError::new(
+        "bynk.parse.doc_block_contains_code",
+        span,
+        "this documentation block contains declarations, so they are not compiled",
+    )
+    .with_note(
+        "a line of three or more dashes opens or closes a doc block, so two dash \
+         dividers turn the code between them into documentation; for a divider use a \
+         line comment with text, such as `-- Helpers --`, and to show code in a doc \
+         block put it in a Markdown code fence (```)",
+    )
+}
+
+/// The keywords that open a declaration in a unit body. A doc block's content
+/// is probed as code only when it lexes and holds one of these, so prose (which
+/// usually fails to lex, or has none) costs one tokenize at most.
+const DECLARATION_KEYWORDS: &[TokenKind] = &[
+    TokenKind::Type,
+    TokenKind::Fn,
+    TokenKind::Capability,
+    TokenKind::Provides,
+    TokenKind::Service,
+    TokenKind::Agent,
+    TokenKind::Actor,
+    TokenKind::Messages,
+    TokenKind::Event,
+    TokenKind::Uses,
+    TokenKind::Consumes,
+    TokenKind::Exports,
+    TokenKind::Binding,
+];
+
+/// #1885 (ADR: doc-fence-matched-length): true when a doc block's `content`,
+/// with its Markdown code fences removed, parses as one or more declarations.
+///
+/// The probe is an `adapter` body in fragment form: an adapter accepts every
+/// item a context or commons does, plus `binding`, and leaves placement to the
+/// checker. Success means the whole content parsed and declared something; a
+/// content that only holds another doc block (front matter, say) is prose.
+///
+/// Nesting is legal since #1885, so code can hide one level down: a doc block
+/// inside the content lexes to one opaque token, and its content is probed in
+/// turn (up to [`DOC_PROBE_MAX_DEPTH`] levels), the outer block reporting what
+/// any level finds. The probe parser itself does not report on those blocks
+/// (`doc_probe`). Content that does not lex because it holds a lone `---` (a
+/// Markdown rule) is probed again with its marker lines blanked out.
+fn doc_content_is_code(content: &str) -> bool {
+    doc_content_is_code_at(content, 0)
+}
+
+/// How many levels of nested doc blocks [`doc_content_is_code`] looks into.
+/// Doc blocks nested this deep are written on purpose; the bound only keeps
+/// adversarial input from costing a parse per level without end.
+const DOC_PROBE_MAX_DEPTH: usize = 4;
+
+fn doc_content_is_code_at(content: &str, depth: usize) -> bool {
+    let stripped = strip_code_fences(content);
+    let tokens = match crate::lexer::tokenize(&stripped) {
+        Ok(tokens) => tokens,
+        Err(_) => {
+            // A lone `---` rule leaves the content unlexable; without the
+            // marker lines it may still be nothing but declarations.
+            let unmarked = blank_marker_lines(&stripped);
+            if unmarked == stripped {
+                return false;
+            }
+            return doc_content_is_code_at(&unmarked, depth);
+        }
+    };
+    if depth < DOC_PROBE_MAX_DEPTH
+        && tokens.iter().any(|t| {
+            t.kind == TokenKind::DocBlock
+                && doc_content_is_code_at(&doc_block_content(&stripped, t.span), depth + 1)
+        })
+    {
+        return true;
+    }
+    if !tokens
+        .iter()
+        .any(|t| DECLARATION_KEYWORDS.contains(&t.kind))
+    {
+        return false;
+    }
+    let (filtered, trivia) = split_trivia(&tokens, &stripped);
+    let mut warnings = Vec::new();
+    let mut p = Parser::new(&filtered, &stripped, trivia, &mut warnings);
+    p.doc_probe = true;
+    let at = Span::new(0, 0);
+    let name = QualifiedName {
+        parts: Vec::new(),
+        span: at,
+    };
+    match p.parse_adapter_body(at, name, None, false) {
+        Ok(a) => {
+            p.peek().is_none()
+                && (!a.items.is_empty()
+                    || !a.uses.is_empty()
+                    || !a.consumes.is_empty()
+                    || !a.exports.is_empty()
+                    || a.binding.is_some())
+        }
+        Err(_) => false,
+    }
+}
+
+/// `content` with every doc-block marker line (three or more dashes alone on
+/// the line) blanked out, line for line.
+fn blank_marker_lines(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !(trimmed.len() >= 3 && trimmed.bytes().all(|b| b == b'-')) {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// `content` with every Markdown fenced code block (```` ``` ```` or `~~~`,
+/// three or more, closed by a fence of the same character at least as long)
+/// blanked out, line for line. An unclosed fence runs to the end, as in
+/// Markdown. Code shown in a fence is an example, not swallowed code.
+fn strip_code_fences(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut open: Option<(char, usize)> = None;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let fence = ['`', '~'].into_iter().find_map(|c| {
+            let n = trimmed.chars().take_while(|&x| x == c).count();
+            (n >= 3).then_some((c, n))
+        });
+        match (open, fence) {
+            (None, Some(f)) => open = Some(f),
+            (Some((c, n)), Some((fc, fnum)))
+                if fc == c && fnum >= n && trimmed.len() == fnum * c.len_utf8() =>
+            {
+                open = None;
+            }
+            (None, None) => out.push_str(line),
+            (Some(_), _) => {}
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// Parse the body of a lexed double-quoted string literal (the lexeme,
@@ -2679,5 +3029,289 @@ mod tests {
             );
         };
         assert!(matches!(&inner.kind, ExprKind::RecordConstruction { .. }));
+    }
+
+    /// The codes a strict multi-unit parse (the build's path) reports.
+    fn strict_codes(src: &str) -> Vec<&'static str> {
+        let toks = tokenize(src).unwrap();
+        match parse_units_with_warnings(&toks, src) {
+            Ok((_, warnings)) => warnings.iter().map(|e| e.category).collect(),
+            Err(errs) => errs.iter().map(|e| e.category).collect(),
+        }
+    }
+
+    /// #1885 (DECISION B): a divider pair around a declaration, attached to
+    /// the next one, swallowed `helper` silently. Every parse entry point now
+    /// reports it.
+    #[test]
+    fn a_divider_pair_around_code_is_doc_block_contains_code() {
+        let src =
+            "commons m\n\n--------\nfn helper() -> Int { 1 }\n--------\nfn f() -> Int { 2 }\n";
+        assert_eq!(strict_codes(src), ["bynk.parse.doc_block_contains_code"]);
+        let errs = parse_str(src).unwrap_err();
+        assert_eq!(errs[0].category, "bynk.parse.doc_block_contains_code");
+        // The span is the whole doc block.
+        assert_eq!(
+            &src[errs[0].span.range()],
+            "--------\nfn helper() -> Int { 1 }\n--------\n"
+        );
+        let (unit, errs) = parse_recover_str(src);
+        assert!(unit.is_some(), "recovery keeps the unit");
+        assert!(
+            errs.iter()
+                .any(|e| e.category == "bynk.parse.doc_block_contains_code"),
+            "{errs:?}"
+        );
+    }
+
+    /// The orphan shape (a blank line before `fn f`) is the same error, beside
+    /// the orphan warning; and so is a pair with nothing after it.
+    #[test]
+    fn an_orphaned_or_trailing_divider_pair_is_doc_block_contains_code() {
+        let orphan = "commons m\n\n---\nfn helper() -> Int { 1 }\n---\n\nfn f() -> Int { 2 }\n";
+        let codes = strict_codes(orphan);
+        assert!(
+            codes.contains(&"bynk.parse.doc_block_contains_code"),
+            "{codes:?}"
+        );
+        let trailing = "commons m\n\nfn f() -> Int { 2 }\n\n---\ntype Id = Int\n---\n";
+        let codes = strict_codes(trailing);
+        assert!(
+            codes.contains(&"bynk.parse.doc_block_contains_code"),
+            "{codes:?}"
+        );
+    }
+
+    /// Prose that only starts like a declaration, a doc whose code sits in a
+    /// Markdown fence, and a doc that holds only a nested doc example are all
+    /// documentation.
+    #[test]
+    fn near_miss_prose_and_fenced_code_are_not_code() {
+        for doc in [
+            "type of the thing",
+            "fn is used here",
+            "The type Id is an Int.",
+            "uses the clock",
+            "Event handler.\nfn helper() -> Int { 1 }",
+            "Example:\n```bynk\nfn helper() -> Int { 1 }\n```",
+            "~~~~\ntype Id = Int\n~~~~",
+            "---\nA nested doc.\n---",
+            "",
+        ] {
+            assert!(!doc_content_is_code(doc), "{doc:?} read as code");
+        }
+        for doc in [
+            "fn helper() -> Int { 1 }",
+            "type Id = Int\nfn f() -> Int { 1 }",
+            "```\nan example\n```\nfn helper() -> Int { 1 }",
+            "---\nA nested doc.\n---\nfn helper() -> Int { 1 }",
+        ] {
+            assert!(doc_content_is_code(doc), "{doc:?} not read as code");
+        }
+    }
+
+    /// #1894 review: code one level down, inside a nested doc block, or
+    /// beside a lone `---` rule that keeps the content from lexing, is still
+    /// code; prose at either level is not.
+    #[test]
+    fn code_inside_a_nested_doc_or_beside_a_rule_is_code() {
+        let nested =
+            "commons m\n\n----\n---\nfn helper() -> Int { 1 }\n---\n----\nfn f() -> Int { 2 }\n";
+        assert_eq!(strict_codes(nested), ["bynk.parse.doc_block_contains_code"]);
+        let ruled = "commons m\n\n----\n---\nfn helper() -> Int { 1 }\n----\nfn f() -> Int { 2 }\n";
+        assert_eq!(strict_codes(ruled), ["bynk.parse.doc_block_contains_code"]);
+        // Two levels down.
+        assert!(doc_content_is_code(
+            "----\n---\nfn helper() -> Int { 1 }\n---\n----"
+        ));
+        for doc in [
+            "---\nAn inner doc.\n---",
+            "Intro.\n\n---\n\nfn is used here",
+            "---\n```\nfn helper() -> Int { 1 }\n```\n---",
+        ] {
+            assert!(!doc_content_is_code(doc), "{doc:?} read as code");
+        }
+        // Deeper than the bound, the probe stops looking.
+        let mut deep = "fn helper() -> Int { 1 }".to_string();
+        for n in (3..3 + DOC_PROBE_MAX_DEPTH + 1).rev() {
+            let fence = "-".repeat(n);
+            deep = format!("{fence}\n{deep}\n{fence}");
+        }
+        assert!(!doc_content_is_code(&deep));
+    }
+
+    /// A `----` doc holding a nested doc example in a code fence attaches to
+    /// its declaration with no diagnostic.
+    #[test]
+    fn a_fenced_nested_doc_example_parses_clean() {
+        let src = "commons m\n\n----\nShows a doc.\n\n```bynk\n---\nInner.\n---\nfn example() -> Int { 1 }\n```\n----\nfn f() -> Int { 2 }\n";
+        assert!(strict_codes(src).is_empty(), "{:?}", strict_codes(src));
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!("expected fn")
+        };
+        assert!(
+            f.documentation
+                .as_deref()
+                .is_some_and(|d| d.contains("---\nInner.\n---")),
+            "{:?}",
+            f.documentation
+        );
+    }
+
+    /// The `TypeDecl` at `items[i]`.
+    fn type_at(c: &Commons, i: usize) -> &TypeDecl {
+        let CommonsItem::Type(t) = &c.items[i] else {
+            panic!("expected a type at {i}")
+        };
+        t
+    }
+
+    fn doc_of(d: &Option<Doc>) -> Option<(&str, DocForm)> {
+        // An indented `---` block keeps a trailing newline (its closing
+        // marker's indent survives the marker trim); it prints the same.
+        d.as_ref().map(|d| (d.as_str().trim_end(), d.form))
+    }
+
+    /// #1888 (DECISIONS A, B): `--|` lines document a declaration; a run
+    /// joins with its line breaks kept, and a bare `--|` is a blank line.
+    #[test]
+    fn doc_lines_document_a_declaration() {
+        let src = "commons m\n\n--| A commit SHA.\ntype Commit = String\n\n--| First.\n--|\n--|   Indented.\nfn f() -> Int { 1 }\n";
+        let c = parse_str(src).unwrap();
+        assert_eq!(
+            doc_of(&type_at(&c, 0).documentation),
+            Some(("A commit SHA.", DocForm::Lines))
+        );
+        let CommonsItem::Fn(f) = &c.items[1] else {
+            panic!("expected fn")
+        };
+        assert_eq!(
+            doc_of(&f.documentation),
+            Some(("First.\n\n  Indented.", DocForm::Lines))
+        );
+        assert!(strict_codes(src).is_empty(), "{:?}", strict_codes(src));
+    }
+
+    /// #1888 (DECISION D): record fields, both sum forms' variants, payload
+    /// fields and message entries take a doc in either form; a `--` comment
+    /// above a field stays a comment, and so does a `--|` after code on the
+    /// line (DECISION E).
+    #[test]
+    fn members_take_docs_in_either_form() {
+        let src = "commons m\n\ntype Run = {\n  --| The repository.\n  repo: String,\n  ---\n  The version.\n  ---\n  version: String,\n  -- a note\n  sha: String, --| trailing\n}\n\ntype Outcome = enum {\n  --| Passed.\n  Pass,\n  Fail,\n}\n\ntype Shape =\n  --| Round.\n  | Circle(\n    --| The radius.\n    r: Int,\n  )\n  | Dot\n\n--| After the sum.\nfn f() -> Int { 1 }\n\nmessages \"en\" @reference {\n  --| Greets.\n  \"hi\" => \"Hello\"\n}\n";
+        assert!(strict_codes(src).is_empty(), "{:?}", strict_codes(src));
+        let c = parse_str(src).unwrap();
+        let TypeBody::Record(r) = &type_at(&c, 0).body else {
+            panic!("record")
+        };
+        assert_eq!(
+            doc_of(&r.fields[0].documentation),
+            Some(("The repository.", DocForm::Lines))
+        );
+        assert_eq!(
+            doc_of(&r.fields[1].documentation),
+            Some(("The version.", DocForm::Block))
+        );
+        assert_eq!(r.fields[2].documentation, None);
+        assert_eq!(
+            r.fields[2].trivia.leading,
+            vec![Comment::Line(" a note".into())]
+        );
+        assert_eq!(r.fields[2].trivia.trailing.as_deref(), Some("| trailing"));
+        let TypeBody::Sum(e) = &type_at(&c, 1).body else {
+            panic!("enum")
+        };
+        assert_eq!(
+            doc_of(&e.variants[0].documentation),
+            Some(("Passed.", DocForm::Lines))
+        );
+        assert_eq!(e.variants[1].documentation, None);
+        let TypeBody::Sum(p) = &type_at(&c, 2).body else {
+            panic!("sum")
+        };
+        assert_eq!(
+            doc_of(&p.variants[0].documentation),
+            Some(("Round.", DocForm::Lines))
+        );
+        assert_eq!(
+            doc_of(&p.variants[0].payload[0].documentation),
+            Some(("The radius.", DocForm::Lines))
+        );
+        assert_eq!(p.variants[1].documentation, None);
+        // The doc after the last variant is the next declaration's.
+        let CommonsItem::Fn(f) = &c.items[3] else {
+            panic!("expected fn")
+        };
+        assert_eq!(
+            doc_of(&f.documentation),
+            Some(("After the sum.", DocForm::Lines))
+        );
+        let CommonsItem::Messages(m) = &c.items[4] else {
+            panic!("expected messages")
+        };
+        assert_eq!(
+            doc_of(&m.entries[0].documentation),
+            Some(("Greets.", DocForm::Lines))
+        );
+    }
+
+    /// #1888 (DECISION C): a doc in one form directly followed by one in the
+    /// other is `bynk.parse.doc_forms_mixed`, on a declaration and on a member,
+    /// in either order; the recovering parse keeps the unit.
+    #[test]
+    fn both_doc_forms_on_one_target_is_doc_forms_mixed() {
+        for src in [
+            "commons m\n\n---\nBlock.\n---\n--| Lines.\nfn f() -> Int { 1 }\n",
+            "commons m\n\n--| Lines.\n---\nBlock.\n---\nfn f() -> Int { 1 }\n",
+            "commons m\n\ntype R = {\n  --| Lines.\n  ---\n  Block.\n  ---\n  a: Int,\n}\n",
+        ] {
+            assert_eq!(strict_codes(src), ["bynk.parse.doc_forms_mixed"], "{src}");
+            let (unit, errs) = parse_recover_str(src);
+            assert!(unit.is_some());
+            assert!(
+                errs.iter()
+                    .any(|e| e.category == "bynk.parse.doc_forms_mixed")
+            );
+        }
+    }
+
+    /// #1888 review: a doc with only a payload's `)` after it is an orphan
+    /// warning, and the variant still parses with its field.
+    #[test]
+    fn a_dangling_doc_before_a_payload_close_is_only_an_orphan() {
+        let src =
+            "commons m\n\ntype S =\n  | Circle(\n    r: Int,\n    --| dangling\n  )\n  | Dot\n";
+        assert_eq!(strict_codes(src), ["bynk.parse.orphan_doc_block"]);
+        let c = parse_str(src).unwrap();
+        let TypeBody::Sum(s) = &type_at(&c, 0).body else {
+            panic!("sum")
+        };
+        assert_eq!(s.variants[0].payload.len(), 1);
+        assert_eq!(s.variants[0].payload[0].documentation, None);
+    }
+
+    /// #1888: a member doc follows the declaration rules: a blank line
+    /// orphans it (a warning, kept in place), as does the body's end.
+    #[test]
+    fn an_unattached_member_doc_is_an_orphan() {
+        let src = "commons m\n\ntype R = {\n  --| Spaced.\n\n  a: Int,\n  --| Dangling.\n}\n";
+        assert_eq!(
+            strict_codes(src),
+            ["bynk.parse.orphan_doc_block", "bynk.parse.orphan_doc_block"]
+        );
+        let c = parse_str(src).unwrap();
+        let TypeBody::Record(r) = &type_at(&c, 0).body else {
+            panic!("record")
+        };
+        assert_eq!(r.fields[0].documentation, None);
+        assert!(matches!(
+            &r.fields[0].trivia.leading[..],
+            [Comment::OrphanDoc(d)] if d.as_str() == "Spaced." && d.form == DocForm::Lines
+        ));
+        assert!(matches!(
+            &r.trailing_comments[..],
+            [Comment::OrphanDoc(d)] if d.as_str() == "Dangling."
+        ));
     }
 }

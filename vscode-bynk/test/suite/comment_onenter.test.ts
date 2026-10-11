@@ -60,6 +60,11 @@ describe("Bynk onEnterRules — comment continuation (#306)", () => {
     );
   });
 
+  it("continues a `--|` doc line as a doc line (#1888)", async () => {
+    const doc = await pressEnterAt("--| A doc.", 0, "--| A doc.".length);
+    assert.strictEqual(doc.lineAt(1).text, "--| ", "the new line starts a fresh doc line");
+  });
+
   it("keeps indentation steady across an indented `---` fence", async () => {
     const doc = await pressEnterAt("  ---", 0, "  ---".length);
     assert.strictEqual(doc.lineAt(1).text, "  ", "the new line keeps the fence's indentation");

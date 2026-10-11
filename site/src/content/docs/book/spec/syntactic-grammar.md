@@ -133,7 +133,8 @@ rule are well-formedness: §5.11.
 One `"code" => "template"` entry in a `messages` block. Both sides are plain
 string literals: an interpolated string (`"…\(x)…"`) is a parse error here. A
 template's `{name}` placeholders are ICU MessageFormat, not Bynk syntax; they
-are checked by §5.11, not parsed by the grammar.
+are checked by §5.11, not parsed by the grammar. A doc on the lines above an
+entry documents it (#1888).
 
 ### §4.1.15 qualified_name
 
@@ -227,7 +228,9 @@ trailing comma.
 {{#grammar record_field}}
 
 A field name, `:`, a type, an optional inline `where` refinement, and an optional
-`=` default expression. Well-formedness: §5.
+`=` default expression. Well-formedness: §5. A doc (a doc-block or a run of doc
+lines, [§3.3](/book/spec/lexical-grammar/#33-comments-and-doc-blocks)) on the
+lines above a field documents it (#1888).
 
 ### §4.2.7 sum_type
 
@@ -244,20 +247,41 @@ keywords here. Well-formedness: §5.
 
 {{#grammar sum_variant}}
 
-A `|`, a constant name, and an optional parenthesised payload.
+A `|`, a constant name, and an optional parenthesised payload. A doc on the lines
+above the `|` documents the variant (#1888); the first variant's doc follows the
+`=`.
 
 ### §4.2.9 variant_payload_field
 
 {{#grammar variant_payload_field}}
 
-A named field in a sum-variant payload: an identifier, `:`, and a type.
+A named field in a sum-variant payload: an identifier, `:`, and a type. A doc on
+the lines above it, inside the parentheses, documents it (#1888).
 
 ### §4.2.10 enum_type
 
 {{#grammar enum_type}}
 
 `enum` and a brace-delimited list of constant names — a sum type whose variants
-all carry no payload.
+all carry no payload. A doc on the lines above a name documents that variant
+(#1888).
+
+```bynk
+type Shape =
+--| A circle.
+| Circle(
+	--| The radius, in pixels.
+	radius: Int,
+)
+--| A single point.
+| Dot
+
+type Outcome = enum {
+	--| Every check passed.
+	Pass,
+	Fail,
+}
+```
 
 ### §4.2.11 refinement
 

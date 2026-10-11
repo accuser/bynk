@@ -64,7 +64,15 @@ impl<'a> Parser<'a> {
                 let span = r.span;
                 (TypeBody::Record(r), span)
             }
+            // #1888: a doc on the first variant comes before its `|`.
             Some(TokenKind::Pipe) => {
+                let s = self.parse_sum_body_pipe()?;
+                let span = s.span;
+                (TypeBody::Sum(s), span)
+            }
+            Some(TokenKind::DocBlock | TokenKind::DocLine)
+                if self.peek_past_docs() == Some(TokenKind::Pipe) =>
+            {
                 let s = self.parse_sum_body_pipe()?;
                 let span = s.span;
                 (TypeBody::Sum(s), span)
@@ -154,13 +162,21 @@ impl<'a> Parser<'a> {
     /// Parse the body of a record type: `{ field, field, ... }`.
     /// Each field is `name : type-ref (where refinement)?`; trailing
     /// comma after the last field is allowed.
+    ///
+    /// #1888: a field may carry a doc above it, in either form.
     fn parse_record_body(&mut self) -> Result<RecordBody, CompileError> {
         let open = self.expect(TokenKind::LBrace, "to open the record body")?;
         let mut fields = Vec::new();
+        let mut trailing_comments = Vec::new();
         while self.peek_kind() != Some(TokenKind::RBrace) {
-            let leading = self.take_leading_trivia();
+            let (leading, documentation) = self.collect_member_lead(TokenKind::RBrace);
+            if self.peek_kind() == Some(TokenKind::RBrace) {
+                trailing_comments = leading;
+                break;
+            }
             let mut field = self.parse_record_field()?;
             let comma = self.eat(TokenKind::Comma);
+            field.documentation = documentation;
             field.trivia = Trivia {
                 leading,
                 trailing: self.take_trailing_trivia(),
@@ -170,7 +186,7 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        let trailing_comments = self.take_leading_trivia();
+        trailing_comments.extend(self.take_leading_trivia());
         let close = self.expect(TokenKind::RBrace, "to close the record body")?;
         Ok(RecordBody {
             fields,
@@ -205,6 +221,8 @@ impl<'a> Parser<'a> {
             refinement,
             init,
             span: name.span.merge(end_span),
+            // The caller takes a field's doc, as it does its comments.
+            documentation: None,
             // The caller harvests a field's comments: the end-of-line one sits
             // after the `,` this function does not consume.
             trivia: Trivia::default(),
@@ -248,6 +266,10 @@ impl<'a> Parser<'a> {
     /// last, the one at the end of its line. The last variant's end-of-line
     /// comment is left for `parse_type_decl` to take as the type's own, as it
     /// always was, unless an `embeds` clause follows.
+    ///
+    /// #1888: a variant may carry a doc above its `|`. A doc after the last
+    /// variant is not followed by a `|`, so it is left for the next
+    /// declaration.
     fn parse_sum_body_pipe(&mut self) -> Result<SumBody, CompileError> {
         let mut variants = Vec::new();
         let mut span: Option<Span> = None;
@@ -258,22 +280,29 @@ impl<'a> Parser<'a> {
             .map(Comment::Line)
             .into_iter()
             .collect();
-        while self.peek_kind() == Some(TokenKind::Pipe) {
+        while self.at_pipe_variant() {
             let mut leading = std::mem::take(&mut eq_line);
-            leading.extend(self.take_leading_trivia());
-            let bar = self.bump().unwrap();
+            let (lead, documentation) = self.collect_member_lead(TokenKind::RBrace);
+            leading.extend(lead);
+            let bar = self.expect(TokenKind::Pipe, "to start a sum variant")?;
             let name = self.expect_variant_name("after `|` in a sum variant")?;
             let mut payload = Vec::new();
             let mut end_span = name.span;
             if self.peek_kind() == Some(TokenKind::LParen) {
                 self.bump();
-                if self.peek_kind() != Some(TokenKind::RParen) {
-                    payload.push(self.parse_variant_field()?);
-                    while self.eat(TokenKind::Comma).is_some() {
-                        if self.peek_kind() == Some(TokenKind::RParen) {
-                            break;
-                        }
-                        payload.push(self.parse_variant_field()?);
+                // #1888: a payload field may carry a doc above it. The lead is
+                // taken here, as `parse_record_body` does, so a doc with only
+                // the `)` after it is an orphan warning, not a parse error.
+                while self.peek_kind() != Some(TokenKind::RParen) {
+                    let (_, documentation) = self.collect_member_lead(TokenKind::RParen);
+                    if self.peek_kind() == Some(TokenKind::RParen) {
+                        break;
+                    }
+                    let mut field = self.parse_variant_field()?;
+                    field.documentation = documentation;
+                    payload.push(field);
+                    if self.eat(TokenKind::Comma).is_none() {
+                        break;
                     }
                 }
                 let close =
@@ -281,7 +310,7 @@ impl<'a> Parser<'a> {
                 end_span = close.span;
             }
             let v_span = bar.span.merge(end_span);
-            let trailing = if self.peek_kind() == Some(TokenKind::Pipe) || self.at_embeds() {
+            let trailing = if self.at_pipe_variant() || self.at_embeds() {
                 self.take_trailing_trivia()
             } else {
                 None
@@ -290,6 +319,7 @@ impl<'a> Parser<'a> {
                 name,
                 payload,
                 span: v_span,
+                documentation,
                 trivia: Trivia { leading, trailing },
             });
             span = Some(match span {
@@ -317,6 +347,18 @@ impl<'a> Parser<'a> {
             span,
             trailing_comments,
         })
+    }
+
+    /// #1888: whether a pipe-form variant comes next: a `|`, or a doc above
+    /// one.
+    fn at_pipe_variant(&self) -> bool {
+        match self.peek_kind() {
+            Some(TokenKind::Pipe) => true,
+            Some(TokenKind::DocBlock | TokenKind::DocLine) => {
+                self.peek_past_docs() == Some(TokenKind::Pipe)
+            }
+            _ => false,
+        }
     }
 
     /// Whether the next token is the contextual `embeds` keyword that opens a
@@ -374,7 +416,12 @@ impl<'a> Parser<'a> {
         let mut variants = Vec::new();
         while self.peek_kind() != Some(TokenKind::RBrace) {
             let mut leading = std::mem::take(&mut eq_line);
-            leading.extend(self.take_leading_trivia());
+            let (lead, documentation) = self.collect_member_lead(TokenKind::RBrace);
+            leading.extend(lead);
+            if self.peek_kind() == Some(TokenKind::RBrace) {
+                eq_line = leading;
+                break;
+            }
             let name = self.expect_variant_name("as an enum tag name")?;
             let span = name.span;
             let comma = self.eat(TokenKind::Comma);
@@ -382,6 +429,7 @@ impl<'a> Parser<'a> {
                 name,
                 payload: Vec::new(),
                 span,
+                documentation,
                 trivia: Trivia {
                     leading,
                     trailing: self.take_trailing_trivia(),
@@ -404,6 +452,10 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// One payload field, `name: Type`. The caller takes the doc above it
+    /// (#1888). A payload field keeps no comments; one above it is dropped
+    /// with the lead, and `bynk fmt`'s comment-loss guard refuses rather than
+    /// lose it.
     fn parse_variant_field(&mut self) -> Result<VariantField, CompileError> {
         let name = self.expect_ident("as a variant payload field name")?;
         self.expect(TokenKind::Colon, "after the variant payload field name")?;
@@ -413,6 +465,8 @@ impl<'a> Parser<'a> {
             name,
             type_ref,
             span,
+            // The payload loop attaches the doc above the field.
+            documentation: None,
         })
     }
 

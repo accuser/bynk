@@ -23,4 +23,10 @@ commons inventory {
   fn keyList(m: Map[String, Int]) -> List[String] {
     m.keys()
   }
+
+  -- #1889: `append` and `concat` build a list in order, no `reverse`.
+  fn inOrder(xs: List[Int]) -> List[Int] {
+    let none: List[Int] = []
+    xs.fold(none, (acc, x) => acc.append(x)).concat([0])
+  }
 }

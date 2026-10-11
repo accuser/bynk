@@ -137,7 +137,7 @@ impl<'a> Parser<'a> {
         &mut self,
         start: Span,
         name: QualifiedName,
-        documentation: Option<String>,
+        documentation: Option<Doc>,
         brace: bool,
     ) -> Result<Commons, CompileError> {
         if brace {
@@ -527,7 +527,7 @@ impl<'a> Parser<'a> {
         &mut self,
         start: Span,
         target: QualifiedName,
-        documentation: Option<String>,
+        documentation: Option<Doc>,
         tier: Option<TestTier>,
         brace: bool,
     ) -> Result<SuiteDecl, CompileError> {
@@ -856,7 +856,7 @@ impl<'a> Parser<'a> {
         let open = self.expect(TokenKind::LBrace, "to open the test case body")?;
         let mut stubs = Vec::new();
         while self.peek_kind() == Some(TokenKind::Stub) {
-            let (mut leading, item_doc) = self.collect_item_lead();
+            let (mut leading, item_doc) = self.collect_body_item_lead();
             let next_span = self.peek().unwrap().span;
             let doc = self.finalize_doc(item_doc, next_span, &mut leading);
             let mut p = self.parse_stub_clause()?;
@@ -965,7 +965,7 @@ impl<'a> Parser<'a> {
         &mut self,
         start: Span,
         name: QualifiedName,
-        documentation: Option<String>,
+        documentation: Option<Doc>,
         brace: bool,
     ) -> Result<Context, CompileError> {
         if brace {
@@ -1326,11 +1326,11 @@ impl<'a> Parser<'a> {
     /// bodied-provider placement is validated by the checker, not rejected
     /// here, so the diagnostics can be precise. v0.18 admits `consumes`
     /// (braced form, adapter targets — also checked semantically).
-    fn parse_adapter_body(
+    pub(super) fn parse_adapter_body(
         &mut self,
         start: Span,
         name: QualifiedName,
-        documentation: Option<String>,
+        documentation: Option<Doc>,
         brace: bool,
     ) -> Result<AdapterDecl, CompileError> {
         if brace {
@@ -1718,7 +1718,7 @@ impl<'a> Parser<'a> {
         // #1756: comments (and an orphaned doc block) before the closing `}`.
         let trailing_comments: Vec<Comment>;
         loop {
-            let (mut leading, item_doc) = self.collect_item_lead();
+            let (mut leading, item_doc) = self.collect_body_item_lead();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
                     if let Some(doc) = item_doc {
@@ -2470,7 +2470,7 @@ impl<'a> Parser<'a> {
         )?;
         let mut fields = Vec::new();
         let trailing_comments = loop {
-            let (mut leading, item_doc) = self.collect_item_lead();
+            let (mut leading, item_doc) = self.collect_body_item_lead();
             if let Some(doc) = item_doc {
                 self.warnings.push(CompileError::new(
                     "bynk.parse.orphan_doc_block",
@@ -2857,6 +2857,10 @@ impl<'a> Parser<'a> {
                     }
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span, &mut leading);
+                    // Store fields print with no blank line between them, so a
+                    // comment's blank line goes (#1884). The invariants,
+                    // transitions and handlers below are set apart and keep it.
+                    leading.retain(|c| *c != Comment::Blank);
                     let mut sf = self.parse_store_field()?;
                     sf.documentation = doc;
                     sf.trivia.leading = leading;
@@ -3189,7 +3193,16 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace, "to open the messages body")?;
         let mut entries = Vec::new();
         while self.peek_kind() != Some(TokenKind::RBrace) {
-            entries.push(self.parse_message_entry()?);
+            // #1888: an entry may carry a doc above it. Entries keep no
+            // comments, so an orphaned doc before the `}` is dropped here; the
+            // build warns about it and `bynk fmt`'s doc-loss guard refuses.
+            let (_, documentation) = self.collect_member_lead(TokenKind::RBrace);
+            if self.peek_kind() == Some(TokenKind::RBrace) {
+                break;
+            }
+            let mut entry = self.parse_message_entry()?;
+            entry.documentation = documentation;
+            entries.push(entry);
             let _ = self.eat(TokenKind::Comma);
         }
         let close = self.expect(TokenKind::RBrace, "to close the messages body")?;
@@ -3218,6 +3231,7 @@ impl<'a> Parser<'a> {
             template,
             template_span,
             span: code_span.merge(template_span),
+            documentation: None,
         })
     }
 

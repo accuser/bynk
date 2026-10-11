@@ -162,10 +162,11 @@ string_interpolation ::= "\(" expression ")"
 boolean_literal ::= "true" | "false"
 unit_literal ::= "(" ")"
 line_comment ::= "--" /[^\n]*/
+doc_line ::= "--|" /[^\n]*/
 ```
 
 ## Tokens & trivia
 
 - **Word token:** `identifier`
-- **Ignored between tokens:** `/\s+/`, `line_comment`, `doc_block`
+- **Ignored between tokens:** `/\s+/`, `doc_line`, `line_comment`, `doc_block`
 - **External tokens:** `doc_block`

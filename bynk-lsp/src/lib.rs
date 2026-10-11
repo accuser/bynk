@@ -1770,7 +1770,8 @@ impl Backend {
         // labels), classified as `decorator`. Parsed from the snapshot here, off
         // the index-read path (mirroring how locals are precomputed).
         let dt = crate::symbols::handler_annotation_token_spans(text);
-        crate::index_queries::semantic_tokens(&analysis.index, &lt, &dt, &rel, text, span)
+        let docs = crate::index_queries::doc_line_token_spans(text);
+        crate::index_queries::semantic_tokens(&analysis.index, &lt, &dt, &docs, &rel, text, span)
     }
 
     /// The (analysis, rel-path, snapshot byte offset) for a request
@@ -1861,13 +1862,14 @@ impl Backend {
     }
 
     /// #847: `bynk/documentationModel` — the documentation-view query for the
-    /// whole file under the request. This server's second custom request,
+    /// unit under the request. This server's second custom request,
     /// registered via `custom_method` in [`run`] (like `sequence_model`).
     /// Served from the committed round (#733), on-demand: no cursor position
-    /// (the page is the whole file, Decision A) and no refresh nudge (Decision
-    /// D — see the `documentation_request` module doc, and #846's for why a
-    /// custom method needs none). A non-project file / no committed round →
-    /// `None` (empty page).
+    /// (the page is the whole unit — every file of a multi-file unit since
+    /// #1885) and no refresh nudge (Decision D — see the
+    /// `documentation_request` module doc, and #846's for why a custom method
+    /// needs none). A non-project file / no committed round → `None` (empty
+    /// page).
     async fn documentation_model(
         &self,
         params: documentation_request::DocumentationModelParams,
@@ -1879,11 +1881,12 @@ impl Backend {
         let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
             return Ok(None);
         };
-        let Some(text) = analysis.snapshots.get(&rel) else {
-            return Ok(None);
-        };
-        let model = documentation_request::documentation_model_at(text);
-        Ok(model.map(|m| documentation_request::to_wire(&m, text)))
+        Ok(documentation_request::documentation_model_for(
+            &rel,
+            &analysis.snapshots,
+            &analysis.unit_sources,
+            &analysis.project_root,
+        ))
     }
 
     /// #851: `bynk/architectureModel` — the whole-project architecture-map
@@ -4173,6 +4176,13 @@ fn to_completion_item(c: completion::Completion) -> CompletionItem {
         insert_text: c.insert_text,
         label: c.label,
         detail: c.detail,
+        // #1888: a field's or variant's doc, rendered as Markdown.
+        documentation: c.documentation.map(|value| {
+            Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value,
+            })
+        }),
         ..Default::default()
     }
 }

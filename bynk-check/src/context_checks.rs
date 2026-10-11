@@ -2949,6 +2949,7 @@ fn check_agent_decls(
             .iter()
             .filter(|f| f.kind.head.name == "Cell" && f.kind.args.len() == 1)
             .map(|f| RecordField {
+                documentation: None,
                 trivia: Default::default(),
                 name: f.name.clone(),
                 type_ref: f.kind.args[0].clone(),
@@ -3056,6 +3057,7 @@ fn check_agent_decls(
             body: TypeBody::Record(RecordBody {
                 trailing_comments: Default::default(),
                 fields: vec![RecordField {
+                    documentation: None,
                     trivia: Default::default(),
                     name: Ident {
                         name: agent.key_name.name.clone(),

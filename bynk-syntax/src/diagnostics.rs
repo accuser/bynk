@@ -37,7 +37,7 @@ pub struct DiagnosticInfo {
     /// instead of hardcoding its own copy of the (small) warning set —
     /// `tests/diagnostics_registry.rs` asserts the two never drift apart.
     /// Defaults to `Error` via the crate-private `d`/`dg` constructors; only
-    /// the crate-private `warn` helper's six call sites override it.
+    /// the crate-private `warn` helper's call sites override it.
     pub severity: Severity,
 }
 
@@ -1099,6 +1099,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.dangling_handler_annotation",
         "A handler-position annotation (e.g. `@cache`) is not followed by an `on` handler.",
     ),
+    d(
+        "bynk.parse.doc_block_contains_code",
+        "A documentation block's content (outside Markdown code fences) parses as declarations, so a pair of dash dividers has turned code into documentation.",
+    ),
+    d(
+        "bynk.parse.doc_forms_mixed",
+        "A declaration or member carries both a `---` doc block and `--|` doc lines; a doc is written in one form.",
+    ),
     dg(
         "bynk.parse.duplicate_cors",
         "A service declares more than one `cors { }` policy.",
@@ -1300,6 +1308,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.variant_name_case",
         "A sum-type or enum variant name is not capitalised.",
         &["sum_variant", "enum_type"],
+    ),
+    warn(d(
+        "bynk.project.duplicate_compatibility_flag",
+        "`bynk.toml`'s `[workers] compatibility_flags` lists a flag twice, or one every Bynk Worker already has; the duplicate is dropped (warning).",
+    )),
+    d(
+        "bynk.project.duplicate_module_doc",
+        "More than one file of a multi-file unit carries a module doc.",
     ),
     d(
         "bynk.project.file_and_directory",
@@ -2363,7 +2379,7 @@ const fn dg(
 }
 
 /// Downgrades a [`d`]/[`dg`]-built entry to `Warning` severity (ADR 0117) —
-/// non-failing, surfaced alongside a clean build. The seven call sites here are
+/// non-failing, surfaced alongside a clean build. Its call sites here are
 /// the single source of truth [`crate::error::Severity::for_error`] reads.
 const fn warn(mut info: DiagnosticInfo) -> DiagnosticInfo {
     info.severity = Severity::Warning;

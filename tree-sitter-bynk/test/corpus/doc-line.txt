@@ -1,0 +1,48 @@
+=====================================|||
+one-line `--|` docs on declarations and members (#1888)
+=====================================|||
+
+commons m
+
+--| A run.
+--|
+--| Second paragraph.
+type Run = {
+	--| The repository.
+	repo: String,
+	-- A comment, not a doc.
+	passed: Int,
+}
+
+type Outcome = enum {
+	--| Passed.
+	Pass,
+	Fail,
+}
+
+-------------------------------------|||
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (doc_line)
+    (doc_line)
+    (doc_line)
+    (type_decl
+      name: (identifier)
+      body: (record_type
+        (doc_line)
+        (record_field
+          name: (identifier)
+          type: (base_type))
+        (line_comment)
+        (record_field
+          name: (identifier)
+          type: (base_type))))
+    (type_decl
+      name: (identifier)
+      body: (enum_type
+        (doc_line)
+        variant: (constant_name)
+        variant: (constant_name)))))

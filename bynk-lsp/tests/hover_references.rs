@@ -493,3 +493,73 @@ fn the_todo_example_analyses_cleanly() {
     );
     assert!(!r.index.symbols.is_empty(), "the index is populated");
 }
+
+/// #1888 — a documented record field hovers with its own doc in place of "A
+/// field of `Run`.", wherever field hover resolves: at its declaration, at a
+/// field access (`r.repo`) and at a record-construction label. Read from the
+/// real analysis of the `1888_one_line_docs` fixture; the offsets are found
+/// by text, so the re-parsed spans' `FileId` never enters into it.
+#[test]
+fn a_documented_field_hovers_with_its_doc_everywhere() {
+    let (r, rel, text, root) = analysed(
+        "../bynkc/tests/fixtures/positive/1888_one_line_docs/src",
+        "model.bynk",
+    );
+    for (anchor, needle) in [
+        ("\trepo: String", "repo"),
+        ("r.repo", "repo"),
+        ("Run { repo: repo", "repo"),
+    ] {
+        let hover = hover_at(&r, &rel, &text, &root, at(&text, anchor, needle))
+            .unwrap_or_else(|| panic!("no hover on `{needle}` at `{anchor}`"));
+        assert!(
+            hover.contains("repo: String")
+                && hover.contains("The repository, as `owner/name`.")
+                && !hover.contains("A field of"),
+            "`{anchor}` should hover the documented field, got:\n{hover}"
+        );
+    }
+    // A `---` doc on a field shows the same way; a `--` comment above one is
+    // not a doc, so that field keeps the generic line.
+    let version = hover_at(
+        &r,
+        &rel,
+        &text,
+        &root,
+        at(&text, "version: \"1.0\"", "version"),
+    )
+    .expect("hover on the `version` label");
+    assert!(
+        version.contains("The Bynk release the checks ran against."),
+        "{version}"
+    );
+    let passed = hover_at(&r, &rel, &text, &root, at(&text, "passed: 0", "passed"))
+        .expect("hover on the `passed` label");
+    assert!(
+        passed.contains("A field of `Run`.") && !passed.contains("comment"),
+        "{passed}"
+    );
+}
+
+/// #1888 — a sum variant hovers with its doc, and its documented payload
+/// field's: at its declaration and as a match pattern.
+#[test]
+fn a_documented_variant_hovers_with_its_doc() {
+    let (r, rel, text, root) = analysed(
+        "../bynkc/tests/fixtures/positive/1888_one_line_docs/src",
+        "model.bynk",
+    );
+    for anchor in ["| Circle(", "Circle(radius) =>"] {
+        let hover = hover_at(&r, &rel, &text, &root, at(&text, anchor, "Circle"))
+            .unwrap_or_else(|| panic!("no hover on `Circle` at `{anchor}`"));
+        assert!(
+            hover.contains("| Circle(radius: Int)")
+                && hover.contains("A circle.")
+                && hover.contains("`radius`: The radius, in pixels."),
+            "`{anchor}` should hover the documented variant, got:\n{hover}"
+        );
+    }
+    let pass = hover_at(&r, &rel, &text, &root, at(&text, "\tPass,", "Pass"))
+        .expect("hover on the `Pass` declaration");
+    assert!(pass.contains("Every canary check passed."), "{pass}");
+}

@@ -1,0 +1,3 @@
+# #1890: the repeated flag, once for the build (count pinned by
+# `tests/compatibility_flags_cli.rs`).
+bynk.project.duplicate_compatibility_flag `bynk.toml`'s `[workers] compatibility_flags` lists `nodejs_compat` more than once

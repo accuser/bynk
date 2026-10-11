@@ -51,7 +51,8 @@ service checks from cron {
     do targets.forEach((t: Target) => {
       let res <- Fetch.send(Request {
         method: Get, url: t.url,
-        contentType: None, authorization: None, body: None,
+        contentType: None, authorization: None,
+        headers: Map.empty(), body: None,
       })
       let code = match res {
         Ok(r)  => r.status

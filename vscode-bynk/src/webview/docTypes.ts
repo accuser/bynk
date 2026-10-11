@@ -23,6 +23,9 @@ export interface DocEntry {
   markdown: string;
   documented: boolean;
   range: Range;
+  /** #1885: the document `range` is in. Always sent: the page merges a
+   *  unit's files, so it may differ from the payload's `uri`. */
+  uri: string;
 }
 
 export interface DocModel {
@@ -34,7 +37,7 @@ export interface DocModel {
 }
 
 /** The payload the extension host embeds into the webview — the model plus the
- *  document URI every range in it is relative to. */
+ *  document URI its ranges are relative to (except an entry's own `uri`). */
 export interface DocPayload {
   model: DocModel;
   uri: string;

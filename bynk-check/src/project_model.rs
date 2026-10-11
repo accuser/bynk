@@ -49,8 +49,9 @@ use crate::symbols::{
 use bynk_project::{
     AttributedError, ParsedFile, UnitKind, check_directory_kind_consistency,
     check_directory_name_consistency, check_file_directory_conflicts, check_group_kind_consistency,
-    check_path_name_alignment, detect_consumes_cycles, discover_bynk_files, is_unpinned_range,
-    normalize_rel, parse_sources, parse_sources_recovering, read_adapter_binding, read_source,
+    check_group_module_docs, check_path_name_alignment, detect_consumes_cycles,
+    discover_bynk_files, is_unpinned_range, normalize_rel, parse_sources, parse_sources_recovering,
+    read_adapter_binding, read_source,
 };
 use bynk_syntax::ast::*;
 /// P6.49 (design/tracks/the-ir.md §6b), following P6.27's `ExprId` precedent
@@ -728,6 +729,13 @@ pub fn phase_group(
     // A group must agree on kind across all its files (different name but
     // same kind is fine; same name but different kind is an error).
     if let Err(e) = check_group_kind_consistency(parsed, &groups) {
+        for (path, err) in e {
+            errors.push_for(Some(&path), err);
+        }
+    }
+    // #1885 (DECISION D): a unit split across files carries at most one
+    // module doc.
+    if let Err(e) = check_group_module_docs(parsed, &groups) {
         for (path, err) in e {
             errors.push_for(Some(&path), err);
         }

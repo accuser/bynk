@@ -180,8 +180,14 @@ fn compile_fixture(
         );
         let paths =
             bynkc::try_read_project_paths(fixture_root).expect("well-formed fixture manifest");
+        // #1890: a fixture's `[workers] compatibility_flags` reaches its
+        // `wrangler.toml`, as `bynk-driver`'s option builders arrange.
+        let workers =
+            bynkc::try_read_workers_config(fixture_root).expect("well-formed fixture manifest");
         bynkc::compile_project(
-            &bynk_testkit::compile_options_split(fixture_root.to_path_buf(), paths).target(target),
+            &bynk_testkit::compile_options_split(fixture_root.to_path_buf(), paths)
+                .target(target)
+                .compatibility_flags(workers.compatibility_flags),
         )
     } else {
         let src_dir = fixture_root.join("src");

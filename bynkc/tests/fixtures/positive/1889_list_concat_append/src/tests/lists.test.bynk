@@ -1,0 +1,41 @@
+suite demo.lists {
+  -- #1889: each case pins an exact sequence, so a lowering that put the new
+  -- items at the front would fail here, not only in a golden.
+  case "a fold with append builds the list in order" {
+    expect appendAll([1, 2, 3]) == [1, 2, 3]
+  }
+
+  case "a fold with concat joins the lists in order" {
+    expect concatPairs([1, 3]) == [1, 2, 3, 4]
+  }
+
+  case "a foldEff with concat builds the list in order" {
+    let ys <- concatAllEff([1, 2, 3])
+    expect ys == [10, 20, 30]
+  }
+
+  case "a foldEff with append builds the list in order" {
+    let ys <- appendAllEff([1, 2, 3])
+    expect ys == [100, 200, 300]
+  }
+
+  case "append onto an empty list" {
+    expect appendToEmpty() == [7]
+  }
+
+  case "concat with an empty other is the receiver" {
+    expect concatEmptyOther([1, 2]) == [1, 2]
+  }
+
+  case "concat onto an empty receiver is the other" {
+    expect concatOntoEmpty([1, 2]) == [1, 2]
+  }
+
+  case "concat of two empty lists is empty" {
+    expect concatBothEmpty().length() == 0
+  }
+
+  case "append and concat leave the receiver unchanged" {
+    expect receiverUnchanged([1, 2])
+  }
+}

@@ -1,0 +1,24 @@
+---
+#1887: an event field default rescues only an absent key. An explicit `null`
+or `{"kind": "None"}` was sent, so it decodes to `None`, not the default.
+---
+context demo.evt
+
+event Placed = {
+  id: String,
+  region: Option[String] = Some("eu"),
+}
+
+fn placed(s: String) -> Option[Placed] {
+  match Json.decode[Placed](s) {
+    Ok(p) => Some(p)
+    Err(_) => None
+  }
+}
+
+fn region(s: String) -> Option[String] {
+  match placed(s) {
+    Some(p) => p.region
+    None => Some("<undecodable>")
+  }
+}

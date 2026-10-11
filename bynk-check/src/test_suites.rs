@@ -1642,6 +1642,7 @@ pub fn register_call_record_types(
                 .params
                 .iter()
                 .map(|p| RecordField {
+                    documentation: None,
                     trivia: Default::default(),
                     name: p.name.clone(),
                     type_ref: p.type_ref.clone(),
@@ -2480,6 +2481,7 @@ pub fn check_history_binding(
         .iter()
         .filter(|f| f.kind.head.name == "Cell" && f.kind.args.len() == 1)
         .map(|f| RecordField {
+            documentation: None,
             trivia: Default::default(),
             name: f.name.clone(),
             type_ref: f.kind.args[0].clone(),
@@ -2514,6 +2516,7 @@ pub fn check_history_binding(
         .map(|h| {
             let hname = h.method_name.as_ref().expect("call handler has a name");
             Variant {
+                documentation: None,
                 trivia: Default::default(),
                 name: Ident {
                     name: history_variant_name(&hname.name),
@@ -2523,6 +2526,7 @@ pub fn check_history_binding(
                     .params
                     .iter()
                     .map(|p| VariantField {
+                        documentation: None,
                         name: p.name.clone(),
                         type_ref: p.type_ref.clone(),
                         span: p.span,
@@ -2556,6 +2560,7 @@ pub fn check_history_binding(
     // (`.accepted`), and the committed `old` → `new` state pair.
     let step_fields = vec![
         RecordField {
+            documentation: None,
             trivia: Default::default(),
             name: Ident {
                 name: "call".to_string(),
@@ -2570,6 +2575,7 @@ pub fn check_history_binding(
             span,
         },
         RecordField {
+            documentation: None,
             trivia: Default::default(),
             name: Ident {
                 name: "accepted".to_string(),
@@ -2581,6 +2587,7 @@ pub fn check_history_binding(
             span,
         },
         RecordField {
+            documentation: None,
             trivia: Default::default(),
             name: Ident {
                 name: "old".to_string(),
@@ -2595,6 +2602,7 @@ pub fn check_history_binding(
             span,
         },
         RecordField {
+            documentation: None,
             trivia: Default::default(),
             name: Ident {
                 name: "new".to_string(),

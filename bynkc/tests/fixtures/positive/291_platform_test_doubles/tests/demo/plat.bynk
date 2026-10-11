@@ -67,10 +67,18 @@ case "a stubbed operation answers; the rest reach the double" {
 }
 
 case "a stubbed fetch answers for the network" {
-  stub Fetch.send(_) returns Ok(Response { status: 204, body: "" })
+  stub Fetch.send(_) returns Ok(Response { status: 204, headers: Map.empty(), body: "" })
   let s <- relay.call("https://example.test")
   expect s == 204
   expect Fetch.send called once with req.url == "https://example.test"
+}
+
+-- #1886: a double matches on the request's extra headers like any other field.
+case "a fetch double sees the request's headers" {
+  stub Fetch.send(_) returns Ok(Response { status: 200, headers: Map.empty(), body: "" })
+  let s <- relay.call("https://example.test")
+  expect s == 200
+  expect Fetch.send called once with req.headers.get("user-agent") == Some("bynk-demo/1.0")
 }
 
 case "an unstubbed fetch faults rather than reach the network" {

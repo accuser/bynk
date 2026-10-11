@@ -1,0 +1,104 @@
+commons grid {
+  -- A nested list renders as `readonly (readonly number[])[]`; the bare
+  -- `readonly readonly number[][]` is rejected by tsc (TS1354).
+  fn transposeFirst(rows: List[List[Int]]) -> List[List[Int]] {
+    rows.map((row) => row.take(1))
+  }
+
+  fn total(rows: List[List[Int]]) -> Int {
+    rows.fold(0, (acc, row) => acc + row.fold(0, (a, x) => a + x))
+  }
+
+  fn firstRow(rows: List[List[Int]]) -> List[Int] {
+    match rows.get(0) {
+      Some(row) => row
+      None => []
+    }
+  }
+
+  fn headRow(rows: List[List[Int]]) -> Option[List[Int]] {
+    rows.first()
+  }
+
+  fn noRows() -> List[List[Int]] {
+    List.empty()
+  }
+
+  fn adders() -> List[Int -> Int] {
+    [(x) => x + 1, (x) => x * 2]
+  }
+
+  -- The kernel lowerings' own inline annotations over a nested-list element:
+  -- each `readonly {elem}[]` / `Record<string, {elem}[]>` site parenthesises.
+  type Bucket = {
+    size: Int,
+    rows: List[List[Int]],
+  }
+
+  type Pair = {
+    left: List[Int],
+    right: List[Int],
+  }
+
+  type Lopsided = {
+    left: List[Int],
+    right: Option[List[Int]],
+  }
+
+  fn bySize(rows: List[List[Int]]) -> List[Bucket] {
+    rows.groupBy((r) => r.length(), (n, rs) => Bucket { size: n, rows: rs })
+  }
+
+  fn uniqueBySize(rows: List[List[Int]]) -> List[List[Int]] {
+    rows.distinctBy((r) => r.length())
+  }
+
+  fn pairBySize(a: List[List[Int]], b: List[List[Int]]) -> List[Pair] {
+    a.joinOn(b, (l) => l.length(), (r) => r.length(), (l, r) => Pair { left: l, right: r })
+  }
+
+  fn pairOrNot(a: List[List[Int]], b: List[List[Int]]) -> List[Lopsided] {
+    a.leftJoin(b, (l) => l.length(), (r) => r.length(), (l, r) => Lopsided { left: l, right: r })
+  }
+
+  fn longest(rows: List[List[Int]]) -> Option[Int] {
+    rows.max((r) => r.length())
+  }
+
+  fn shortest(rows: List[List[Int]]) -> Option[Int] {
+    rows.min((r) => r.length())
+  }
+
+  fn headOrEmpty(rows: List[List[Int]]) -> List[Int] {
+    rows.firstOrElse([])
+  }
+
+  fn grown(rows: List[List[Int]], row: List[Int]) -> List[List[Int]] {
+    rows.append(row).concat(rows)
+  }
+
+  fn checkRow(r: List[Int]) -> Effect[Result[List[Int], String]] {
+    if r.length() > 0 {
+      Effect.pure(Ok(r))
+    } else {
+      Effect.pure(Err("empty row"))
+    }
+  }
+
+  fn checkAll(rows: List[List[Int]]) -> Effect[List[Result[List[Int], String]]] {
+    rows.traverseAll((r: List[Int]) => checkRow(r))
+  }
+
+  fn checkEach(rows: List[List[Int]]) -> Effect[Result[List[List[Int]], String]] {
+    rows.traverseTry((r: List[Int]) => checkRow(r))
+  }
+
+  fn visit(rows: List[List[Int]]) -> Effect[()] {
+    rows.forEach((r: List[Int]) => Effect.pure(()))
+  }
+
+  fn demo() -> Int {
+    let rows = [[1, 2], [3, 4]]
+    total(transposeFirst(rows)) + firstRow(rows).length() + noRows().length() + adders().length()
+  }
+}

@@ -33,6 +33,9 @@ pub const LIST_METHODS: &[KernelMethod] = &[
     m("length", "length() -> Int"),
     m("get", "get(index: Int) -> Option[T]"),
     m("prepend", "prepend(item: T) -> List[T]"),
+    // #1889: the end-of-list counterparts of `prepend`.
+    m("append", "append(item: T) -> List[T]"),
+    m("concat", "concat(other: List[T]) -> List[T]"),
     m("fold", "fold(init: U, step: (U, T) -> U) -> U"),
     m(
         "foldEff",

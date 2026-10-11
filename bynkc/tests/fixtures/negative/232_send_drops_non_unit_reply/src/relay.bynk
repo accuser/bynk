@@ -6,7 +6,7 @@ service api from http {
   on GET("/") () -> Effect[HttpResult[String]] by Visitor given Fetch {
     -- `~>` drops the reply, but Fetch.send returns Effect[Result[Response, FetchError]]
     -- — its error would vanish, so the error gate rejects this.
-    ~> Fetch.send(Request { method: Get, url: "https://example.com", contentType: None, authorization: None, body: None })
+    ~> Fetch.send(Request { method: Get, url: "https://example.com", contentType: None, authorization: None, headers: Map.empty(), body: None })
     Ok("ok")
   }
 }

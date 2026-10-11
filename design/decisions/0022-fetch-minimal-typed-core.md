@@ -1,6 +1,6 @@
 # 0022 — Fetch ships a minimal typed core; the header list waits for sequence types
 
-- **Status:** Accepted (v0.18)
+- **Status:** Accepted (v0.18). **The header deferral is superseded by the `fetch-headers` ADR (#1886)**: `Request` gains `headers: Map[String, String]`.
 - **Spec:** §7.3.6 (the surface set)
 
 ## Context

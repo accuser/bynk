@@ -11355,6 +11355,11 @@
     "extra": true
   },
   {
+    "type": "doc_line",
+    "named": true,
+    "extra": true
+  },
+  {
     "type": "each",
     "named": false
   },

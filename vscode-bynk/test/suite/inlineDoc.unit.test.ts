@@ -64,8 +64,35 @@ describe("docDecorations — block scoping", () => {
   });
 
   it("accepts markers with extra dashes and surrounding whitespace", () => {
-    const text = ["  ----  ", "*hi*", "-----"].join("\n");
+    const text = ["  ----  ", "*hi*", "----"].join("\n");
     assert.deepStrictEqual(decos(text), ["emphasis@1:0-4"]);
+  });
+
+  it("closes only on a marker of the opener's length (#1885)", () => {
+    // The `---` lines are body text of the `----` block, so the heading after
+    // them is still doc; the code after the `----` close is not.
+    const text = ["----", "---", "# Inner", "---", "----", "**code**"].join(
+      "\n",
+    );
+    assert.deepStrictEqual(decos(text), ["heading@2:0-7"]);
+  });
+
+  it("treats a block whose closer has another length as unclosed", () => {
+    const text = ["----", "# Dropped", "---"].join("\n");
+    assert.deepStrictEqual(decos(text), []);
+  });
+});
+
+describe("docDecorations — `--|` doc lines (#1888)", () => {
+  it("decorates a doc line's text at its own columns", () => {
+    // `  --| ` is a 6-column prefix; `**hi**` follows it.
+    assert.deepStrictEqual(decos("  --| **hi** there"), ["strong@0:6-12"]);
+    assert.deepStrictEqual(decos("--| # Title"), ["heading@0:4-11"]);
+  });
+
+  it("leaves a `--` comment and a `--|` after code alone", () => {
+    assert.deepStrictEqual(decos("-- **not a doc**"), []);
+    assert.deepStrictEqual(decos("x: Int, --| **not a doc**"), []);
   });
 });
 

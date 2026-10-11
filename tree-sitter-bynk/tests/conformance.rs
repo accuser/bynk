@@ -399,6 +399,18 @@ const EXCLUDED_PARSE_TIME_CATEGORIES: &[(&str, &str)] = &[
          guard tying the two together",
     ),
     (
+        "bynk.parse.doc_block_contains_code",
+        "inexpressible: a doc-block is one opaque external-scanner token; the \
+         rule re-parses its content (code fences removed) as declarations, \
+         which no production over the token stream can see (#1885)",
+    ),
+    (
+        "bynk.parse.doc_forms_mixed",
+        "inexpressible: both doc forms are extras (`doc_block`, `doc_line`), \
+         which no production sees, so neither their adjacency nor which \
+         declaration they document is in the tree (#1888)",
+    ),
+    (
         "bynk.parse.empty_agent",
         "declined: a cardinality rule (at least one handler) on a body whose \
          members interleave; expressible as `repeat1` over handlers, but that \

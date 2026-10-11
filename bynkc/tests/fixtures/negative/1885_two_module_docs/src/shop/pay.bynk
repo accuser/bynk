@@ -1,0 +1,6 @@
+---
+Payments for the shop.
+---
+context shop
+
+type Amount = Int

@@ -10,6 +10,9 @@
   lexes as `a - -b`; a lone `---` is a doc-block marker, never a horizontal rule.
 - **Relates:** none load-bearing beyond the lexer; the doc-block external token
   and `bynk.lex.unclosed_doc_block` pre-date this ADR.
+- **Superseded in part:** D4 by the `doc-fence-matched-length` ADR (#1885). A
+  marker line still always opens or closes a doc-block, but it closes only a
+  block whose opener has the same number of dashes.
 
 ## Context
 

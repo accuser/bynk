@@ -19,6 +19,7 @@ its layout. Its keys:
 | | `out` | the default output directory |
 | `[fmt]` | `indent`, `indent_width`, `max_line_width`, `trailing_comma` | formatter settings (read by `bynkc fmt` / `bynk fmt` and by format-on-save; CLI flags override them) |
 | `[lsp]` | `diagnostics_mode` | language-server settings |
+| `[workers]` | `compatibility_flags` | extra Cloudflare compatibility flags for every emitted `wrangler.toml`, after the default `global_fetch_strictly_public` (array of strings) |
 
 ## §8.2 Project and legacy modes
 
@@ -42,8 +43,10 @@ Test-ness is a property of a **declaration**, not of a file or directory
 its qualified name: a `context commerce.orders` MUST live at
 `commerce/orders.bynk` under an `include` root. A path that does not match the
 declared name is rejected (`bynk.project.inconsistent_commons_name`), as is a name
-declared as both a `commons` and a `context` (`bynk.project.kind_conflict`). The
-source tree therefore mirrors the program's architecture. A **`suite`** carries no
+declared as both a `commons` and a `context` (`bynk.project.kind_conflict`). A unit
+split across files carries at most one module doc
+([§5.1a](/book/spec/static-semantics/#module-docs),
+`bynk.project.duplicate_module_doc`). The source tree therefore mirrors the program's architecture. A **`suite`** carries no
 such requirement — it names its target and is legal in any file (see below).
 
 ### §8.3.1 Structural test-ness

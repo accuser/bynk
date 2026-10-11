@@ -79,6 +79,9 @@ pub struct Completion {
     /// LSP snippet text (with `${n:…}`/`$0` tab stops) for `Snippet` items;
     /// `None` means insert the label verbatim.
     pub insert_text: Option<String>,
+    /// #1888: the candidate's doc, as Markdown: a record field's or a
+    /// variant's own doc, in either form.
+    pub documentation: Option<String>,
 }
 
 impl Completion {
@@ -88,7 +91,14 @@ impl Completion {
             kind,
             detail,
             insert_text: None,
+            documentation: None,
         }
+    }
+
+    /// #1888: this candidate with `doc` as its documentation.
+    fn with_doc(mut self, doc: Option<&str>) -> Self {
+        self.documentation = doc.map(str::to_owned);
+        self
     }
 
     fn snippet(label: &str, body: &str) -> Self {
@@ -97,6 +107,7 @@ impl Completion {
             kind: CompletionKind::Snippet,
             detail: Some(format!("{label} scaffold")),
             insert_text: Some(body.to_string()),
+            documentation: None,
         }
     }
 }
@@ -761,11 +772,14 @@ fn record_field_names(
             {
                 found = true;
                 for f in &r.fields {
-                    out.push(Completion::item(
-                        f.name.name.clone(),
-                        CompletionKind::Field,
-                        Some(format!("field of `{name}`")),
-                    ));
+                    out.push(
+                        Completion::item(
+                            f.name.name.clone(),
+                            CompletionKind::Field,
+                            Some(format!("field of `{name}`")),
+                        )
+                        .with_doc(f.documentation.as_deref()),
+                    );
                 }
                 return;
             }
@@ -805,11 +819,14 @@ pub fn sum_type_variants(
             {
                 found = true;
                 for v in &s.variants {
-                    out.push(Completion::item(
-                        v.name.name.clone(),
-                        CompletionKind::Variant,
-                        Some(format!("variant of `{name}`")),
-                    ));
+                    out.push(
+                        Completion::item(
+                            v.name.name.clone(),
+                            CompletionKind::Variant,
+                            Some(format!("variant of `{name}`")),
+                        )
+                        .with_doc(v.documentation.as_deref()),
+                    );
                 }
                 return;
             }
@@ -1105,11 +1122,14 @@ fn member_candidates(
                     bynk_syntax::ast::TypeBody::Sum(s) => {
                         for v in &s.variants {
                             if seen.insert(v.name.name.clone()) {
-                                out.push(Completion::item(
-                                    v.name.name.clone(),
-                                    CompletionKind::Variant,
-                                    Some(format!("variant of `{receiver}`")),
-                                ));
+                                out.push(
+                                    Completion::item(
+                                        v.name.name.clone(),
+                                        CompletionKind::Variant,
+                                        Some(format!("variant of `{receiver}`")),
+                                    )
+                                    .with_doc(v.documentation.as_deref()),
+                                );
                             }
                         }
                     }
@@ -1767,11 +1787,14 @@ pub fn value_member_candidates(
                 {
                     for f in &r.fields {
                         if seen.insert(f.name.name.clone()) {
-                            out.push(Completion::item(
-                                f.name.name.clone(),
-                                CompletionKind::Field,
-                                Some(format!("field of `{name}`")),
-                            ));
+                            out.push(
+                                Completion::item(
+                                    f.name.name.clone(),
+                                    CompletionKind::Field,
+                                    Some(format!("field of `{name}`")),
+                                )
+                                .with_doc(f.documentation.as_deref()),
+                            );
                         }
                     }
                 }
@@ -2627,6 +2650,37 @@ mod tests {
             .collect();
         assert!(got.contains(&"Pending".to_string()), "{got:?}");
         assert!(got.contains(&"Shipped".to_string()), "{got:?}");
+    }
+
+    /// #1888: a field's and a variant's doc ride on their completion items;
+    /// an undocumented one has none.
+    #[test]
+    fn member_completions_carry_their_docs() {
+        let doc = "commons m\n\ntype Rec = {\n  --| The id.\n  id: Int,\n  n: Int,\n}\n\ntype Status = enum {\n  ---\n  Waiting.\n  ---\n  Pending,\n  Shipped,\n}\n";
+        let docs = |items: Vec<Completion>| -> Vec<(String, Option<String>)> {
+            items
+                .into_iter()
+                .map(|c| (c.label, c.documentation.map(|d| d.trim_end().to_string())))
+                .collect()
+        };
+        assert_eq!(
+            docs(record_field_names("Rec", doc, None)),
+            [("id".into(), Some("The id.".into())), ("n".into(), None)]
+        );
+        assert_eq!(
+            docs(sum_type_variants("Status", doc, None)),
+            [
+                ("Pending".into(), Some("Waiting.".into())),
+                ("Shipped".into(), None)
+            ]
+        );
+        assert_eq!(
+            docs(member_candidates("Status", doc, None))
+                .into_iter()
+                .filter(|(l, _)| l == "Pending")
+                .collect::<Vec<_>>(),
+            [("Pending".into(), Some("Waiting.".into()))]
+        );
     }
 
     #[test]

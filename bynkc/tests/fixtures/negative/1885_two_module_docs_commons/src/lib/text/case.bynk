@@ -1,0 +1,6 @@
+---
+Text helpers: changing case.
+---
+commons lib.text
+
+fn shout(s: String) -> String { s }

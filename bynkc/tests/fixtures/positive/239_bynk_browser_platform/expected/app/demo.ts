@@ -14,7 +14,7 @@ export const demo = {
     const __r2 = await deps.Random.uuid();
     const n = await deps.Random.int(0, 10);
     const tok = await deps.Secrets.get("TOKEN");
-    const req = { method: Method.Get, url: url, contentType: None, authorization: tok, body: None };
+    const req = { method: Method.Get, url: url, contentType: None, authorization: tok, headers: new globalThis.Map<string, string>(), body: None };
     const res = await deps.Fetch.send(req);
     switch (res.tag) {
       case "Ok": {

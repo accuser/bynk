@@ -1,0 +1,6 @@
+---
+Text helpers: trimming.
+---
+commons lib.text
+
+fn tidy(s: String) -> String { s }

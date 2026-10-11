@@ -11,6 +11,7 @@ What it shows:
   parameter (epoch-ms).
 - **Outbound HTTP** — `Fetch.send(Request { method: Get, … })` returns a
   `Result[Response, FetchError]`; a network failure is a value, not an exception.
+  The request sends no extra headers (`headers: Map.empty()`).
 - **Capabilities live on handlers** — the effectful fetch/store work stays in the
   cron handler (a free function can't hold `given`, and `Request` can only be
   built where it's used); the pure health policy (`isHealthy`) and key helper

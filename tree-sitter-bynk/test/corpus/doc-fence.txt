@@ -1,0 +1,45 @@
+=====================================|||
+doc block closes only on a marker of its opener's length (#1885)
+=====================================|||
+
+commons m
+
+----
+Holds a `---` rule:
+
+---
+
+and a nested doc example:
+
+```bynk
+---
+Inner.
+---
+fn example() -> Int { 1 }
+```
+----
+fn f() -> Int { 1 }
+
+---
+Plain.
+---
+fn g() -> Int { 2 }
+
+-------------------------------------|||
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (doc_block)
+    (fn_decl
+      name: (identifier)
+      return_type: (base_type)
+      body: (block
+        tail: (number_literal)))
+    (doc_block)
+    (fn_decl
+      name: (identifier)
+      return_type: (base_type)
+      body: (block
+        tail: (number_literal)))))

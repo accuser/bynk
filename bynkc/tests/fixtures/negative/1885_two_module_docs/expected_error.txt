@@ -1,0 +1,6 @@
+bynk.project.duplicate_module_doc
+# exact
+# One diagnostic per file that carries a module doc (both pinned by
+# expected_diagnostics.txt), each naming every such file; `stock.bynk` (a `--`
+# comment, not a doc) is not named.
+bynk.project.duplicate_module_doc context `shop` has a module doc in more than one file: `shop/cart.bynk`, `shop/pay.bynk`

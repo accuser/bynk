@@ -81,6 +81,25 @@ types is not a crossing. If `t.app` declares `type Repo = Int` beside `uses
 t.core` and `uses t.model`, then `Run { repo: first(r) }` is legal in `t.app`,
 and `Run { repo: 42 }` and `r.repo + 1` are not.
 
+### §5.1a Module documentation {#module-docs}
+
+A doc-block ([§3.3.2](/book/spec/lexical-grammar/#332-doc-blocks)) immediately
+above a `commons`, `context` or `adapter` header is that unit's **module doc**.
+A unit whose files share its qualified name
+([§8.3](/book/spec/compilation-model/#83-source-layout-and-test-ness)) MUST carry
+at most one module doc across all of them: when two or more of its files carry
+one, each such file is rejected (`bynk.project.duplicate_module_doc`), and the
+diagnostic names every such file. A `suite` is not part of the unit it targets,
+so a suite's own doc-block is not counted. Nor is a doc-block whose content is
+empty or only whitespace: it documents nothing, so it is not a module doc.
+
+> [!NOTE]
+> The rule exists so that a unit's documentation is one piece of prose,
+> independent of file order. The tooling shows the module doc on hover over the
+> unit's name (its header, a `uses` target, a `consumes` target) and as the lede
+> of the unit's documentation page, which merges every file of a multi-file
+> unit. This note is informative.
+
 ## §5.2 Well-typedness
 
 Every expression MUST have the type its position requires. A function or method
@@ -1409,9 +1428,11 @@ element is `bynk.types.list_element_mismatch`. With no expected type, the
 first element fixes the element type. An **empty `[]` MUST have an expected
 type** (`bynk.types.uninferable_element_type`); the qualified statics
 `List.empty()` and `Map.empty()` obey exactly the same rule — an expected
-type is their only source of type arguments. `insert` and `prepend`
-propagate an expected collection type down their receiver chain, so
-`let m: Map[String, Int] = Map.empty().insert("a", 1)` infers.
+type is their only source of type arguments. `insert`, `prepend`, `append`,
+and `concat` propagate an expected collection type down their receiver chain,
+so `let m: Map[String, Int] = Map.empty().insert("a", 1)` infers, and so does
+`let xs: List[Int] = [].append(1)`. `concat`'s argument checks against the
+receiver's `List[T]`, so `xs.concat([])` needs no annotation.
 
 **The kernel.** The built-in operations are compiler-known special forms,
 dispatched on the receiver's checked type before declared-method lookup;
@@ -1423,6 +1444,8 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `length()` | `Int` |
 | `List[T]` | `get(i: Int)` | `Option[T]` |
 | `List[T]` | `prepend(x: T)` | `List[T]` |
+| `List[T]` | `append(x: T)` | `List[T]` |
+| `List[T]` | `concat(other: List[T])` | `List[T]` |
 | `List[T]` | `fold(init: A, f: (A, T) -> A)` | `A` |
 | `List[T]` | `foldEff(init: A, f: (A, T) -> Effect[A])` | `Effect[A]` |
 | `List[T]` | `forEach(f: T -> Effect[()])` | `Effect[()]` |

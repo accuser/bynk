@@ -195,12 +195,17 @@ rejected — it exists specifically for an event's wire-evolution story, which
 an ordinary record doesn't have.
 
 **A default only rescues an absent key, not a present-but-different one.**
-This matters for `Option[T]` fields in particular: a wire event with no
-`region` key at all uses the default, but one that explicitly carries `{
-"kind": "None" }` deserialises to a real `None` — the field was sent, just
-empty, which is a different fact from "this field didn't exist yet." A field
-with no default still fails with a structural-mismatch error if its key is
-missing, exactly as before.
+This matters for `Option[T]` fields in particular. For an `Option` field with a
+default:
+
+- a wire event with no key for the field uses the default;
+- a key set to `null` is a real `None`, not the default;
+- a key set to `{ "kind": "None" }` is a real `None` too.
+
+In the last two cases the field was sent, just empty, which is a different fact
+from "this field didn't exist yet." An `Option` field with no default decodes an
+absent key as `None`. Any other field with no default still fails with a
+structural-mismatch error if its key is missing, exactly as before.
 
 ## The schema registry: automatic versions, verified
 

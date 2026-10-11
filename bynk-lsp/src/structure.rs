@@ -203,22 +203,28 @@ fn comment_folds(source: &str, positions: &PositionMap) -> Vec<FoldingRange> {
     let Ok(tokens) = tokenize(source) else {
         return Vec::new();
     };
-    let comments: Vec<Span> = tokens
+    // #1888: a run of `--|` doc lines folds the same way, as its own run (a
+    // doc line's span runs through its newline, so it is trimmed to the line).
+    let comments: Vec<(TokenKind, Span)> = tokens
         .iter()
-        .filter(|t| t.kind == TokenKind::Comment)
-        .map(|t| t.span)
+        .filter(|t| matches!(t.kind, TokenKind::Comment | TokenKind::DocLine))
+        .map(|t| {
+            let line = source[t.span.range()].trim_end_matches(['\n', '\r']);
+            (t.kind, Span::new(t.span.start, t.span.start + line.len()))
+        })
         .collect();
     let mut out = Vec::new();
     let mut i = 0;
     while i < comments.len() {
-        let start = positions.position(comments[i].start).line;
-        let mut end = positions.position(comments[i].end).line;
+        let (kind, first) = comments[i];
+        let start = positions.position(first.start).line;
+        let mut end = positions.position(first.end).line;
         let mut j = i;
-        while j + 1 < comments.len() {
-            let next = positions.position(comments[j + 1].start).line;
+        while j + 1 < comments.len() && comments[j + 1].0 == kind {
+            let next = positions.position(comments[j + 1].1.start).line;
             if next == end + 1 {
                 j += 1;
-                end = positions.position(comments[j].end).line;
+                end = positions.position(comments[j].1.end).line;
             } else {
                 break;
             }
@@ -317,6 +323,19 @@ mod tests {
     fn line_of(needle: &str) -> u32 {
         let off = SRC.find(needle).expect("substring present");
         offset_to_position(SRC, off).line
+    }
+
+    /// #1888: a run of `--|` doc lines folds as a comment, apart from a `--`
+    /// run beside it, and ends on its own last line.
+    #[test]
+    fn a_doc_line_run_folds_apart_from_comments() {
+        let src = "commons m\n\n-- one\n-- two\n--| Doc one.\n--| Doc two.\ntype T = Int\n";
+        let folds: Vec<(u32, u32)> = folding_ranges(src)
+            .iter()
+            .filter(|f| f.kind == Some(FoldingRangeKind::Comment))
+            .map(|f| (f.start_line, f.end_line))
+            .collect();
+        assert_eq!(folds, [(2, 3), (4, 5)]);
     }
 
     #[test]

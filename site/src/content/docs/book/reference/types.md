@@ -202,6 +202,26 @@ combinator vocabulary as kernel methods, so a chain reads
 **Builders** (return a `List`): `map`, `filter`, `flatMap`, `sortBy`, `take`,
 `skip`, `distinct`, `distinctBy`.
 
+**Adding items** (return a new `List`; the receiver is unchanged): `prepend(x)`
+puts `x` at the front, `append(x)` puts it at the end, and `concat(other)`
+joins `other` after the receiver. A fold that builds a list in order uses
+`append` (or `concat`), with no `reverse` afterwards:
+
+```bynk
+fn labels(ns: List[Int]) -> List[String] {
+  let none: List[String] = []
+  ns.fold(none, (acc, n) => acc.append(n.toString()))
+}
+
+fn withTotal(ns: List[Int]) -> List[Int] {
+  ns.concat([ns.fold(0, (acc, n) => acc + n)])
+}
+```
+
+`labels([1, 2, 3])` is `["1", "2", "3"]`, and `withTotal([1, 2])` is
+`[1, 2, 3]`. `foldEff` builds in order the same way, its step returning
+`Effect.pure(acc.append(x))`.
+
 **Terminals**: `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`,
 `average`.
 
@@ -289,6 +309,28 @@ program only as a fully-checked value. `JsonError` is the error it returns
 (malformed JSON, or a structural/refinement mismatch). See the guide
 [Decode untrusted JSON into a typed value](/book/guides/type-system/decode-json/).
 
+`Json.encode` writes an `Option[U]` in Bynk's tagged form:
+`{"kind": "Some", "value": …}` or `{"kind": "None"}`. `Json.decode` accepts
+that form and also the forms other JSON producers use for an optional value:
+
+| JSON for an `Option[U]` | Decodes to |
+|---|---|
+| the key is absent from its record | `None` |
+| `null` | `None` |
+| `{"kind": "None"}`, with no other keys | `None` |
+| `{"kind": "Some", "value": v}`, with no other keys | `Some(v)`, `v` checked as `U` |
+| any other value `v` | `Some(v)`, `v` checked as `U` |
+
+The tagged forms are tried first, so whatever `Json.encode` writes decodes back
+to the same value, even for an `Option[Option[T]]`. The same decoder runs at
+every boundary, so an HTTP request body, a cross-context call and a stored agent
+field accept these forms too.
+
+The tagged forms are recognised only when the object has exactly those keys.
+Every payload Bynk wrote decodes as before, but a hand-written tagged object
+with an extra key, such as `{"kind": "Some", "value": "d", "note": "x"}`, is
+read as a bare value, so it fails for an `Option[String]`.
+
 ## Type aliases
 
 ```bynk
@@ -317,6 +359,13 @@ type Order = {
 
 Records emit a TypeScript `interface` with `readonly` fields. A record field may
 not directly be of the record's own type (`bynk.resolve.recursive_record_field`).
+
+### Documenting fields and variants
+
+A record field, a sum variant, a variant's payload field and a `messages` entry
+each take a doc on the lines above them, as a `--|` line or a `---` block.
+Hover, completion and the documentation page show it. See
+[Document fields and variants](/book/guides/program-structure/document-your-code/#document-fields-and-variants).
 
 ## Generic record types
 
@@ -437,6 +486,8 @@ Reach for the pipe form only when a variant needs a payload.
 
 - **Construct** by naming a variant: `Pending`, `Shipped("1Z…")`.
 - **Consume** with [`match`](#matching) or [`is`](/book/reference/operators/).
+- **Document** a variant, or a payload field, with a doc on the lines above it,
+  as a [record field](#documenting-fields-and-variants) is.
 
 Sum types emit a discriminated union keyed on a `tag` field. As JSON, a variant
 is a flat object whose `kind` key names the variant (`{"kind": "Shipped",
