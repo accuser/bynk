@@ -1,0 +1,32 @@
+context shelf.store
+
+-- The `Query` lowerings' inline annotations over a nested-list element: a
+-- store of `List[Int]` values, so each `Record<string, {elem}[]>` and
+-- `const __out: {elem}[]` in the query path parenthesises.
+type Bucket = {
+  size: Int,
+  rows: List[List[Int]],
+}
+
+type Pair = {
+  left: List[Int],
+  right: List[Int],
+}
+
+agent Shelf {
+  key k: String
+  store rows: Map[String, List[Int]]
+  store spare: Map[String, List[Int]]
+
+  on call bySize() -> Effect[List[Bucket]] {
+    rows.groupBy((r) => r.length(), (n, rs) => Bucket { size: n, rows: rs }).collect()
+  }
+
+  on call unique() -> Effect[List[List[Int]]] {
+    rows.distinctBy((r) => r.length()).collect()
+  }
+
+  on call paired() -> Effect[List[Pair]] {
+    rows.joinOn(spare, (l) => l.length(), (r) => r.length(), (l, r) => Pair { left: l, right: r }).collect()
+  }
+}

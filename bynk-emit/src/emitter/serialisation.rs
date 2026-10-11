@@ -1355,7 +1355,8 @@ fn emit_record_codec(
     // `deps`/`{ns}Deps` objects already carry). TS-parse-identical either
     // way — documented rather than silently changed, the same "name a real,
     // unreachable-today formatting hazard rather than fix it inline"
-    // precedent P7.9's own `Array`-over-`Union` hazard already set.
+    // precedent P7.9's own `Array`-over-`Union` hazard already set (that one
+    // since closed, #1898).
     body.push(return_(call(
         ident("Ok"),
         vec![as_expr(
