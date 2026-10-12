@@ -1,11 +1,6 @@
----
-level: minor
-changelog: '`asset` declarations build: each Worker serves its files from `assets/` at a content-hashed `.url`, through an `[assets]` block and an immutable `_headers`; new `bynk.asset.outside_assets_dir`, `bynk.asset.missing_file`, `bynk.asset.needs_project`, and the `bynk.asset.not_served` warning for a deployable Bundle build (static assets, slice 1b)'
----
+# 0456 — Static assets build from the project's `assets/` folder, at content-hashed URLs, per Worker
 
-## ADR: static-assets-emission
-title: Static assets build from the project's `assets/` folder, at content-hashed URLs, per Worker
-summary: Files come only from `assets/`; `.url` is `/_assets/<stem>.<fnv64>.<ext>`; a Worker ships its transitive `uses` closure's files
+- **Status:** Accepted (v0.328)
 
 **Context.** Slice 1a checked `asset` declarations but refused to build them
 (#1883). Building one needs answers the checker never had to give: where the

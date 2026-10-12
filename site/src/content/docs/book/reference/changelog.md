@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.327**.
+written against **v0.328**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.328.0** | '`asset` declarations build: each Worker serves its files from `assets/` at a content-hashed `.url`, through an `[assets]` block and an immutable `_headers`; new `bynk.asset.outside_assets_dir`, `bynk.asset.missing_file`, `bynk.asset.needs_project`, and the `bynk.asset.not_served` warning for a deployable Bundle build (static assets, slice 1b)' |
 | **v0.327.0** | A context or commons declares a static file with `asset name = "path"`, a value of the new built-in type `Asset` whose `.url` is a `String`; declarations are checked, and a build refuses them with `bynk.asset.not_yet_emitted` until they can be emitted (static assets, slice 1a) |
 | **v0.326.2** | Build output can carry binary static assets, written byte-for-byte and pruned from a Worker's compiler-owned assets directory (static assets, slice 0) |
 | **v0.326.1** | "**A nested list type is valid TypeScript** ([#1898](https://github.com/accuser/bynk/issues/1898)). `List[List[Int]]` now emits `readonly (readonly number[])[]` instead of `readonly readonly number[][]`, which `tsc` rejected (TS1354); a function-typed element (`List[Int -> Int]`) is parenthesised the same way. Covers both declared types and the List/Query kernel lowerings' inline annotations." |

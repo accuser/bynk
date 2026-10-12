@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0456](0456-static-assets-emission.md) | **Static assets build from the project's `assets/` folder, at content-hashed URLs, per Worker** (v0.328) — Files come only from `assets/`; `.url` is `/_assets/<stem>.<fnv64>.<ext>`; a Worker ships its transitive `uses` closure's files | Accepted (v0.328) |
 | [0455](0455-static-assets-in-the-language.md) | **Static assets are declared in the language, as values of a built-in `Asset` type** (v0.327) — `asset name = "path"` in a context or commons; the name is an `Asset` whose `.url` is the content-hashed URL | Accepted (v0.327) |
 | [0454](0454-one-line-docs.md) | **A one-line doc form, `--|`, and docs on record fields and variants** (v0.326) — `--|` doc lines (line-leading only), consecutive lines join, both forms on one target is `bynk.parse.doc_forms_mixed`, docs on fields, variants, payload fields and message entries, and the formatter keeps each form | Accepted (v0.326) |
 | [0453](0453-fetch-headers.md) | **Fetch requests and responses carry a header map; conflicting and platform-owned headers are refused** (v0.325) — Request/Response gain headers: Map[String, String] (lowercased response keys); a typed-slot conflict or forbidden name is Err(InvalidHeader), unsent | Accepted (v0.325) |
