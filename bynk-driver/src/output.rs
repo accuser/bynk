@@ -9,16 +9,19 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use bynk_emit::project::{Document, ProjectOutput, sibling_path};
+use bynk_emit::project::{Document, ProjectOutput, is_worker_asset_path, sibling_path};
 
 /// Write a [`ProjectOutput`]'s artefacts under `dir`, creating parent
 /// directories as needed. The shared writer behind both `bynkc`'s
 /// `compile`/`test` paths and `bynk dev`'s in-process build (slice 7) — so
 /// the on-disk result is identical however the build was driven.
 ///
-/// Reconciles `dir` against `out.artefacts.docs` first: a `.ts`/`.js`/
+/// Reconciles `dir` against `out.artefacts` first: a `.ts`/`.js`/
 /// `.map`/`.json`/`.toml` file already on disk that no longer corresponds to
-/// anything in `out.artefacts.docs` is deleted, along with any directory
+/// anything in `out.artefacts.docs` is deleted — as is any file at all under
+/// a Worker's compiler-owned assets directory (#1883, slice 0;
+/// [`bynk_emit::project::WORKER_ASSETS_DIR`]) that is not in
+/// `out.artefacts.assets` — along with any directory
 /// that becomes empty as a result — otherwise a deleted `.bynk` unit's
 /// emitted `.ts` lingers on disk, still type-checked by the emitted
 /// `tsconfig.json`'s `include: **/*.ts`, so `tsc` fails against a module the
@@ -31,7 +34,22 @@ pub fn write_output(out: &ProjectOutput, dir: &Path) -> std::io::Result<()> {
     for (path, doc) in &out.artefacts.docs {
         write_document(path, doc, &out.artefacts.docs, dir)?;
     }
+    for (path, bytes) in &out.artefacts.assets {
+        write_asset(path, bytes, dir)?;
+    }
     Ok(())
+}
+
+/// #1883, slice 0: write one static asset's bytes under `dir`, verbatim. The
+/// binary-safe counterpart of [`write_document`] — an asset is not a
+/// [`Document`] (see `bynk_emit::project::Artefacts::assets` for why), so it
+/// gets no printer, no source-map trailer and no text conversion.
+fn write_asset(path: &Path, bytes: &[u8], dir: &Path) -> std::io::Result<()> {
+    let target = dir.join(path);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&target, bytes)
 }
 
 /// Write one [`Document`] under `dir` — the real, typed write boundary
@@ -97,11 +115,17 @@ pub fn write_document(
 }
 
 /// The project-relative paths [`write_output`] will have written once this
-/// `ProjectOutput` lands on disk — exactly `out.artefacts.docs`'s own keys,
-/// since `bynk-emit::project::build_output`'s own tail already splits every
-/// `.map`/`.bynkdbg.json` sidecar into its own entry there (Decision C).
+/// `ProjectOutput` lands on disk — exactly `out.artefacts.docs`'s own keys
+/// (`bynk-emit::project::build_output`'s own tail already splits every
+/// `.map`/`.bynkdbg.json` sidecar into its own entry there, Decision C), plus
+/// `out.artefacts.assets`'s (#1883, slice 0).
 fn expected_output_paths(out: &ProjectOutput) -> std::collections::HashSet<PathBuf> {
-    out.artefacts.docs.keys().cloned().collect()
+    out.artefacts
+        .docs
+        .keys()
+        .chain(out.artefacts.assets.keys())
+        .cloned()
+        .collect()
 }
 
 /// Extensions the compiler ever writes under a build-output directory — the
@@ -153,7 +177,12 @@ fn prune_stale_output_dir(
         } else if file_type.is_file() {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let rel = path.strip_prefix(root).unwrap_or(&path);
-            if is_prunable_output_extension(ext) && !expected.contains(rel) {
+            // #1883, slice 0: the compiler owns a Worker's assets directory
+            // outright, so there the extension filter does not apply — an
+            // asset keeps its source's extension (`.css`, `.png`, …) and the
+            // platform's `_headers` file has none.
+            let prunable = is_prunable_output_extension(ext) || is_worker_asset_path(rel);
+            if prunable && !expected.contains(rel) {
                 std::fs::remove_file(&path)?;
             }
         }

@@ -167,8 +167,13 @@ pub fn strip_project_to_js(
             }
         }
     }
+    // #1883, slice 0: static assets are served as-is by the platform; type
+    // stripping has nothing to do to them.
     Ok(bynk_emit::project::ProjectOutput {
-        artefacts: Artefacts { docs },
+        artefacts: Artefacts {
+            docs,
+            assets: out.artefacts.assets,
+        },
         ..out
     })
 }
@@ -328,5 +333,29 @@ mod tests {
             "the stripped output must not keep the pre-strip .ts path: {:?}",
             stripped.artefacts.docs.keys().collect::<Vec<_>>()
         );
+    }
+
+    /// #1883, slice 0: static assets are served as-is, so stripping a
+    /// project's types must hand `Artefacts.assets` through byte-for-byte —
+    /// `bynkc compile --emit js` strips before it writes, and an asset dropped
+    /// here would be missing from that output. Nothing produces an asset until slice 1, so one is
+    /// added to a real build's output by hand.
+    #[test]
+    fn strip_project_to_js_passes_static_assets_through_unchanged() {
+        use bynk_emit::project::{BuildTarget, compile_in_memory, worker_assets_dir};
+
+        let mut out = compile_in_memory(
+            "commons only\n\nfn f() -> Int {\n  1\n}\n",
+            BuildTarget::Workers,
+            Default::default(),
+        )
+        .unwrap_or_else(|f| panic!("fixture should compile: {:?}", f.flatten()));
+        let path = worker_assets_dir("only").join("_assets/icon.9b1d4e.png");
+        let bytes = vec![0x89, b'P', b'N', b'G', 0xff, 0x00];
+        out.artefacts.assets.insert(path.clone(), bytes.clone());
+
+        let stripped = strip_project_to_js(out).expect("strips cleanly");
+        assert_eq!(stripped.artefacts.assets.len(), 1);
+        assert_eq!(stripped.artefacts.assets.get(&path), Some(&bytes));
     }
 }

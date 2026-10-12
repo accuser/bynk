@@ -106,6 +106,55 @@ pub use diagnostics::{ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis,
 /// being stringified at construction (Decision E).
 pub struct Artefacts {
     pub docs: BTreeMap<PathBuf, Document>,
+    /// #1883, slice 0 (the binary-safe emission path the 2026-10-10 comment
+    /// names as a prerequisite): static-asset files, as raw bytes, keyed the
+    /// same way as `docs` (output-root-relative). Every key lies under a
+    /// Worker's [`WORKER_ASSETS_DIR`] ([`is_worker_asset_path`]).
+    ///
+    /// A sibling map rather than a `Document::Bytes` variant: every
+    /// `Document` has a text rendering ([`Document::text`], which golden
+    /// fixtures, `bynk-strip` and `bynk-wasm` all call), and an asset such as
+    /// a PNG has none. Keeping bytes out of `Document` means no caller of
+    /// `text()` has to decide what a binary file's text is. `bynk-strip`
+    /// passes this map through untouched; `bynk-driver::output::write_output`
+    /// writes and reconciles it alongside `docs`.
+    ///
+    /// Always empty until slice 1 adds the `asset` declaration that fills it.
+    pub assets: BTreeMap<PathBuf, Vec<u8>>,
+}
+
+/// #1883, slice 0: the name of the directory, inside a Worker's own
+/// `workers/<dashes>/` output directory, that holds its static assets — the
+/// directory the generated `wrangler.toml`'s `[assets] directory` will name
+/// (slice 1). Separate from the Worker's own output so the compiled Worker and
+/// its source maps are never served as public assets.
+///
+/// The compiler owns everything under it: `bynk-driver::output::write_output`
+/// prunes any file there that the current build did not produce, whatever
+/// its extension (an asset keeps its source's extension, and the platform's
+/// `_headers` file has none). Shared by the producer and the pruner through
+/// [`worker_assets_dir`] / [`is_worker_asset_path`] so the two can't drift.
+pub const WORKER_ASSETS_DIR: &str = "assets";
+
+/// #1883, slice 0: `workers/<dashes>/<WORKER_ASSETS_DIR>`, the output-root-
+/// relative directory holding one Worker's static assets.
+pub fn worker_assets_dir(dashes: &str) -> PathBuf {
+    PathBuf::from("workers")
+        .join(dashes)
+        .join(WORKER_ASSETS_DIR)
+}
+
+/// #1883, slice 0: whether `rel` (output-root-relative) names a file inside
+/// some Worker's assets directory — `workers/<dashes>/<WORKER_ASSETS_DIR>/…`,
+/// at any depth. The ownership rule `bynk-driver::output`'s reconciliation
+/// applies regardless of extension.
+pub fn is_worker_asset_path(rel: &Path) -> bool {
+    use std::path::Component;
+    let mut parts = rel.components();
+    matches!(parts.next(), Some(Component::Normal(w)) if w == "workers")
+        && matches!(parts.next(), Some(Component::Normal(_)))
+        && matches!(parts.next(), Some(Component::Normal(a)) if a == WORKER_ASSETS_DIR)
+        && parts.next().is_some()
 }
 
 /// One typed output document. No `String` at construction for TypeScript or
@@ -2772,7 +2821,10 @@ fn build_output(
         docs.insert(f.output_path, f.document);
     }
     ProjectOutput {
-        artefacts: Artefacts { docs },
+        artefacts: Artefacts {
+            docs,
+            assets: BTreeMap::new(),
+        },
         discovered,
         // Populated by `compile_project` from the run's warning sink (ADR 0117).
         warnings: Vec::new(),
@@ -3972,6 +4024,38 @@ fn called_cross_context_services(
 mod tests {
     use super::*;
     use std::fs;
+
+    /// #1883, slice 0: the ownership rule `write_output`'s reconciliation
+    /// prunes by. Only files *inside* a Worker's assets directory qualify —
+    /// not the directory itself, not a same-named directory at another depth,
+    /// and not a sibling of it in the Worker's own output.
+    #[test]
+    fn is_worker_asset_path_matches_only_files_inside_a_worker_assets_dir() {
+        let owned = [
+            "workers/compat-board/assets/_headers",
+            "workers/compat-board/assets/_assets/board.3f9c2a.css",
+        ];
+        for p in owned {
+            assert!(is_worker_asset_path(Path::new(p)), "{p} is owned");
+        }
+        let not_owned = [
+            "workers/compat-board/assets",
+            "workers/compat-board/wrangler.toml",
+            "workers/compat-board/notes.css",
+            "workers/assets/x.css",
+            "assets/x.css",
+            "compat/assets/x.css",
+            "workers/compat-board/sub/assets/x.css",
+        ];
+        for p in not_owned {
+            assert!(!is_worker_asset_path(Path::new(p)), "{p} is not owned");
+        }
+        assert_eq!(
+            worker_assets_dir("compat-board").join("_headers"),
+            PathBuf::from(owned[0]),
+            "the producer's directory and the pruner's rule agree"
+        );
+    }
 
     /// Review of #1328: the pre-conversion code sorted the fully rendered
     /// `"{key}: {value}"` text, so a key that is a strict prefix of another
