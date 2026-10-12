@@ -194,6 +194,34 @@ mod tests {
         a.assert_reports("bynk.uses.name_conflict");
     }
 
+    /// A unit split across files has one asset namespace: a second
+    /// declaration in a sibling file is a duplicate, reported once, and a
+    /// sibling's asset is visible without any `uses`.
+    #[test]
+    fn a_multi_file_unit_shares_one_asset_namespace() {
+        let dup = analyse(&[
+            ("c/a.bynk", "context c\n\nasset style = \"a.css\"\n"),
+            ("c/b.bynk", "context c\n\nasset style = \"b.css\"\n"),
+        ]);
+        assert_eq!(
+            dup.categories()
+                .iter()
+                .filter(|c| **c == "bynk.asset.duplicate")
+                .count(),
+            1,
+            "{}",
+            dup.render()
+        );
+        let shared = analyse(&[
+            ("c/a.bynk", "context c\n\nasset style = \"a.css\"\n"),
+            (
+                "c/b.bynk",
+                "context c\n\nfn f() -> String {\n  style.url\n}\n",
+            ),
+        ]);
+        shared.assert_clean();
+    }
+
     #[test]
     fn an_asset_has_only_a_url_field() {
         let a = analyse(&[(
