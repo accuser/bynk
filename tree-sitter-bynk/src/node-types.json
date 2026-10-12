@@ -237,6 +237,10 @@
           "named": true
         },
         {
+          "type": "asset_decl",
+          "named": true
+        },
+        {
           "type": "binding_decl",
           "named": true
         },
@@ -531,6 +535,32 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "asset_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "path": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
             "named": true
           }
         ]
@@ -1810,6 +1840,10 @@
           "named": true
         },
         {
+          "type": "asset_decl",
+          "named": true
+        },
+        {
           "type": "capability_decl",
           "named": true
         },
@@ -1905,6 +1939,10 @@
         },
         {
           "type": "agent_decl",
+          "named": true
+        },
+        {
+          "type": "asset_decl",
           "named": true
         },
         {
@@ -8969,6 +9007,10 @@
           "named": true
         },
         {
+          "type": "asset_decl",
+          "named": true
+        },
+        {
           "type": "assign_stmt",
           "named": true
         },
@@ -11279,6 +11321,10 @@
   },
   {
     "type": "as",
+    "named": false
+  },
+  {
+    "type": "asset",
     "named": false
   },
   {

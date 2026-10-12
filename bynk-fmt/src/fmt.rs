@@ -1294,7 +1294,22 @@ impl<'a> Formatter<'a> {
             CommonsItem::Actor(a) => self.format_actor(a),
             CommonsItem::Messages(m) => self.format_messages(m),
             CommonsItem::Event(e) => self.format_event_decl(e),
+            CommonsItem::Asset(a) => self.format_asset_decl(a),
         }
+    }
+
+    /// #1883, slice 1a: `asset name = "path"` on one line.
+    fn format_asset_decl(&mut self, a: &AssetDecl) {
+        self.emit_leading_comments(&a.trivia.leading);
+        if let Some(doc) = &a.documentation {
+            self.emit_doc(doc);
+        }
+        self.push(&format!(
+            "asset {} = \"{}\"",
+            a.name.name,
+            escape_string(&a.path)
+        ));
+        self.emit_trailing_comment_or_newline(a.trivia.trailing.as_deref());
     }
 
     fn format_event_decl(&mut self, e: &EventDecl) {
@@ -3057,6 +3072,7 @@ fn type_ref_to_string(t: &TypeRef) -> String {
         TypeRef::Effect(t, _) => format!("Effect[{}]", type_ref_to_string(t)),
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", type_ref_to_string(t)),
         TypeRef::QueueResult(_) => "QueueResult".to_string(),
+        TypeRef::Asset(_) => "Asset".to_string(),
         TypeRef::List(t, _) => format!("List[{}]", type_ref_to_string(t)),
         TypeRef::Query(t, _) => format!("Query[{}]", type_ref_to_string(t)),
         TypeRef::Stream(t, _) => format!("Stream[{}]", type_ref_to_string(t)),

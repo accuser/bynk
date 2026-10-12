@@ -252,6 +252,9 @@ pub fn check_file_core(
             CommonsItem::Event(e) => {
                 emit_items.push(CommonsItem::Event(e.clone()));
             }
+            CommonsItem::Asset(a) => {
+                emit_items.push(CommonsItem::Asset(a.clone()));
+            }
         }
     }
     for type_name in &types_in_this_file {
@@ -347,7 +350,9 @@ pub fn check_file_core(
         imported_from.clone(),
         kind == UnitKind::Context,
         ctx.uses_commons_type_names.clone(),
-    );
+    )
+    // #1883, slice 1a: this unit's assets plus its `uses`d commons' ([DECISION G]).
+    .with_assets(crate::assets::compose_unit_assets(name, unit_info));
     refs.enter_file(&pf.identity_path(), name, pf.is_synthetic());
     // v0.27: synthetic and test/integration files record no hints — neither
     // surfaces in an editor (the `assemble_index` rule).

@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **477** codes in total.
+There are **482** codes in total.
 
 ## Agents
 
@@ -512,6 +512,15 @@ There are **477** codes in total.
 | `bynk.service.websocket_open_arity` | A `from websocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii). |  | — |
 | `bynk.service.websocket_param_not_stringy` | A `from websocket` service's `on open` parameter has a type not constructible from `String`; it arrives as a query-string value (#1657). |  | — |
 
+## Static assets
+
+| Code | Summary | Construct | Severity |
+|---|---|---|---|
+| `bynk.asset.duplicate` | An `asset` name is declared more than once in the same unit. |  | — |
+| `bynk.asset.not_yet_emitted` | A build met an `asset` declaration, which this compiler checks but cannot yet build. |  | — |
+| `bynk.asset.outside_context_or_commons` | An `asset` declaration appears outside a context or commons. |  | — |
+| `bynk.asset.unsafe_path` | An `asset` path is empty, absolute, or contains a `..` segment. |  | — |
+
 ## Suites and cases
 
 | Code | Summary | Construct | Severity |
@@ -534,6 +543,7 @@ There are **477** codes in total.
 | Code | Summary | Construct | Severity |
 |---|---|---|---|
 | `bynk.types.argument_mismatch` | A call, method, capability, or constructor argument has the wrong type. | [`call`](/book/reference/grammar/#rule-call) | — |
+| `bynk.types.asset_at_boundary` | An `Asset` type appears in a record field, boundary or store position; pass its `.url` instead. |  | — |
 | `bynk.types.call_arity` | A function value was applied with the wrong number of arguments. | [`call`](/book/reference/grammar/#rule-call) | — |
 | `bynk.types.cannot_infer_option_type_param` | The value type of `None` could not be inferred. | [`none_expr`](/book/reference/grammar/#rule-none_expr) | — |
 | `bynk.types.cannot_infer_result_type_params` | The type parameters of a `Result` could not be inferred. |  | — |

@@ -302,6 +302,7 @@ fn unchecked_reason_str(r: UncheckedReason) -> &'static str {
         UncheckedReason::JsonError => "JsonError",
         UncheckedReason::HttpResult => "HttpResult",
         UncheckedReason::QueueResult => "QueueResult",
+        UncheckedReason::Asset => "Asset",
     }
 }
 

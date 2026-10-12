@@ -1,0 +1,2 @@
+bynk.asset.unsafe_path asset `passwd` has an unsafe path: the path is absolute
+bynk.asset.unsafe_path asset `secret` has an unsafe path: the path contains a `..` segment

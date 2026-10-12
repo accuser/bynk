@@ -197,6 +197,11 @@ pub struct ResolvedCommons {
     /// every ordinary type). Private for the same reason as
     /// `local_type_names`; read via [`ResolvedCommons::is_local_event`].
     pub(crate) event_type_names: std::collections::HashSet<String>,
+    /// #1883, slice 1a: every `asset` visible in this unit — its own and its
+    /// `uses`d commons' ([`crate::assets::compose_unit_assets`]). An asset
+    /// name is a value of type `Asset`. Empty unless set with
+    /// [`ResolvedCommons::with_assets`].
+    pub assets: HashMap<String, AssetDecl>,
 }
 
 /// Static information about the consuming context: the set of contexts it
@@ -394,7 +399,17 @@ impl ResolvedCommons {
             imported_from,
             is_context,
             uses_commons_type_names,
+            assets: HashMap::new(),
         }
+    }
+
+    /// #1883, slice 1a: the assets visible in this unit. A builder rather
+    /// than a [`ResolvedCommons::new`] parameter, so the constructions that
+    /// can never see an asset (a synthetic test scaffold) need not mention
+    /// them.
+    pub fn with_assets(mut self, assets: HashMap<String, AssetDecl>) -> Self {
+        self.assets = assets;
+        self
     }
 }
 
@@ -437,7 +452,10 @@ pub fn resolve_recovering(commons: Commons) -> (ResolvedCommons, Vec<CompileErro
             // `messages` entries are plain string literals with no type refs
             // to resolve here; commons-only legality and the reference/
             // duplicate-code checks live in bynk-emit's project validation.
-            | CommonsItem::Messages(_) => {}
+            | CommonsItem::Messages(_)
+            // #1883, slice 1a: an asset's placement, path and name checks
+            // live in `symbols::build_unit_table`; it has no type refs.
+            | CommonsItem::Asset(_) => {}
             CommonsItem::Type(t) => {
                 if let Some(prev) = types.get(&t.name.name) {
                     errors.push(
@@ -601,6 +619,17 @@ pub fn resolve_recovering(commons: Commons) -> (ResolvedCommons, Vec<CompileErro
         }
     }
 
+    // #1883, slice 1a: single-file mode has no `uses`, so the visible assets
+    // are exactly the ones declared here.
+    let local_assets: HashMap<String, AssetDecl> = commons
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            CommonsItem::Asset(a) => Some((a.name.name.clone(), a.clone())),
+            _ => None,
+        })
+        .collect();
+
     // Second pass: validate references inside type-refs and function bodies.
     let mut refs = RefSink::new(); // single-file mode: no recording context.
     let mut sinks = Sinks {
@@ -617,7 +646,7 @@ pub fn resolve_recovering(commons: Commons) -> (ResolvedCommons, Vec<CompileErro
                 check_type_decl_refs(&e.as_type_decl(), &types, &mut sinks);
             }
             CommonsItem::Fn(f) => {
-                check_fn_refs(f, &types, &fns, &methods, &mut sinks);
+                check_fn_refs(f, &types, &fns, &methods, &local_assets, &mut sinks);
             }
             // v0.5 items' bodies are resolved via a separate context-level
             // pass; their signatures here (#1679).
@@ -631,7 +660,8 @@ pub fn resolve_recovering(commons: Commons) -> (ResolvedCommons, Vec<CompileErro
             // `messages` entries are plain string literals with no type refs
             // to resolve here; commons-only legality and the reference/
             // duplicate-code checks live in bynk-emit's project validation.
-            CommonsItem::Messages(_) => {}
+            // #1883, slice 1a: likewise an asset (a string-literal path).
+            CommonsItem::Messages(_) | CommonsItem::Asset(_) => {}
         }
     }
 
@@ -660,6 +690,7 @@ pub fn resolve_recovering(commons: Commons) -> (ResolvedCommons, Vec<CompileErro
             is_context: false,
             uses_commons_type_names: HashSet::new(),
             event_type_names,
+            assets: local_assets,
         };
         (resolved, errors)
     }
@@ -814,6 +845,7 @@ pub fn resolve_file_record(
                     &resolved.types,
                     &resolved.fns,
                     &resolved.methods,
+                    &resolved.assets,
                     &mut sinks,
                 );
             }
@@ -827,7 +859,7 @@ pub fn resolve_file_record(
             // `messages` entries are plain string literals with no type refs
             // to resolve here; commons-only legality and the reference/
             // duplicate-code checks live in bynk-emit's project validation.
-            CommonsItem::Messages(_) => {}
+            CommonsItem::Messages(_) | CommonsItem::Asset(_) => {}
         }
         sinks.refs.clear_owner();
     }
@@ -923,7 +955,8 @@ fn check_signature_refs(
         CommonsItem::Type(_)
         | CommonsItem::Event(_)
         | CommonsItem::Fn(_)
-        | CommonsItem::Messages(_) => {}
+        | CommonsItem::Messages(_)
+        | CommonsItem::Asset(_) => {}
     }
 }
 
@@ -1226,6 +1259,7 @@ fn check_fn_refs(
     types: &HashMap<String, Arc<TypeDecl>>,
     fns: &HashMap<String, Arc<FnDecl>>,
     methods: &HashMap<String, MethodTable>,
+    assets: &HashMap<String, AssetDecl>,
     errors: &mut Sinks,
 ) {
     // Parameter types resolve.
@@ -1301,6 +1335,7 @@ fn check_fn_refs(
         type_params: &type_params,
         fns,
         methods,
+        assets,
         scopes: Vec::new(),
         errors,
     };
@@ -1361,6 +1396,7 @@ impl Gate<'_> {
             }
             TypeRef::Base(..)
             | TypeRef::QueueResult(_)
+            | TypeRef::Asset(_)
             | TypeRef::ValidationError(_)
             | TypeRef::JsonError(_)
             | TypeRef::Unit(_) => {}
@@ -1615,7 +1651,7 @@ pub fn check_hidden_type_names(
                     g.type_ref(id);
                 }
             }
-            CommonsItem::Messages(_) => {}
+            CommonsItem::Messages(_) | CommonsItem::Asset(_) => {}
         }
     }
     g.errors
@@ -1845,7 +1881,7 @@ fn check_type_ref_resolves_in(
         TypeRef::HttpResult(t, _) => {
             check_type_ref_resolves_in(t, types, type_params, errors);
         }
-        TypeRef::QueueResult(_) => {}
+        TypeRef::QueueResult(_) | TypeRef::Asset(_) => {}
         TypeRef::List(t, _) => {
             check_type_ref_resolves_in(t, types, type_params, errors);
         }
@@ -2114,6 +2150,8 @@ struct RefCheckCtx<'a, 'b> {
     type_params: &'a HashSet<String>,
     fns: &'a HashMap<String, Arc<FnDecl>>,
     methods: &'a HashMap<String, MethodTable>,
+    /// #1883, slice 1a: the asset names in scope, values of type `Asset`.
+    assets: &'a HashMap<String, AssetDecl>,
     scopes: Vec<HashMap<String, ()>>,
     errors: &'a mut Sinks<'b>,
 }
@@ -2319,6 +2357,9 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
                 // positions) now lives in the checker's ident rule. Silent
                 // pass here keeps `unknown_name` from misfiring.
                 cx.errors.refs.record(id.span, SymbolKind::Fn, &id.name);
+            } else if cx.assets.contains_key(&id.name) {
+                // #1883, slice 1a: an asset name is a value of type `Asset`;
+                // the checker types it (`check_ident`).
             } else if find_ambiguous_variant_owners(&id.name, cx.types).len() > 1 {
                 cx.errors.push(
                     CompileError::new(

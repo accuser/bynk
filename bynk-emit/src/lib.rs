@@ -73,6 +73,11 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
         &boundary_types,
         &mut boundary_errors,
     );
+    // #1883, slice 1a: a single-file compile is always a build, and nothing
+    // emits an asset yet, so each one is refused here as the project
+    // pipeline's build-mode gate refuses it — after its path is checked, so
+    // an unsafe path is still reported for what it is.
+    boundary_errors.extend(bynk_check::assets::single_file_asset_errors(&commons.items));
     // #1663: a boundary or resolve error is local to its declaration, so the
     // checker still runs over every declaration and its diagnostics join
     // theirs (minus echoes); any error still refuses the compile.

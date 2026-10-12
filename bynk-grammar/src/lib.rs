@@ -427,7 +427,8 @@ mod tests {
         // Net +1.
         // #1888 added: doc_line (the `--|` one-line doc token, an extra).
         // Net +1.
-        assert_eq!(rules.len(), 153);
+        // #1883 (static assets, slice 1a) added: asset_decl. Net +1.
+        assert_eq!(rules.len(), 154);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

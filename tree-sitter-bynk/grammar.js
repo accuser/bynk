@@ -201,6 +201,7 @@ module.exports = grammar({
         $.agent_decl,
         $.actor_decl,
         $.event_decl,
+        $.asset_decl,
       ),
 
     _context_body_item: ($) =>
@@ -217,6 +218,7 @@ module.exports = grammar({
         $.actor_decl,
         $.messages_decl,
         $.event_decl,
+        $.asset_decl,
       ),
 
     // v0.17: adapter items — a binding clause, capabilities, boundary types,
@@ -239,6 +241,7 @@ module.exports = grammar({
         $.actor_decl,
         $.messages_decl,
         $.event_decl,
+        $.asset_decl,
       ),
 
     _test_body_item: ($) =>
@@ -366,6 +369,18 @@ module.exports = grammar({
         repeat(field("annotation", $.store_annotation)),
         "=",
         field("body", $.record_type),
+      ),
+
+    // #1883 (static assets), slice 1a: `asset name = "path"` — one static
+    // file the platform serves. Admitted in every body (commons, context,
+    // adapter) like `event`; placement is a checker concern
+    // (`bynk.asset.outside_context_or_commons` rejects it in an adapter).
+    asset_decl: ($) =>
+      seq(
+        "asset",
+        field("name", $.identifier),
+        "=",
+        field("path", $.string_literal),
       ),
 
     // v0.154 (ADR 0178): a sum body may carry a trailing `embeds E as V, …`

@@ -27,6 +27,7 @@
 
 pub mod actors;
 pub mod analysis;
+pub mod assets;
 pub mod builtin_names;
 pub mod check_pipeline;
 pub mod checker;

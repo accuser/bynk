@@ -112,6 +112,7 @@ fn collect_vars(ty: TyId, tys: &Types, out: &mut HashSet<String>) {
         Ty::Base(_)
         | Ty::Error
         | Ty::QueueResult
+        | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
         | Ty::Unit
@@ -292,6 +293,7 @@ fn walk_ty(ty: TyId, ctx: &Ctx, visited: &mut HashSet<String>) -> Option<NotComp
         Ty::Error
         | Ty::Base(_)
         | Ty::QueueResult
+        | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
         | Ty::Unit
@@ -358,6 +360,7 @@ fn walk_ref(
             .or_else(|| walk_decl(&name.name, ctx, visited)),
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
+        | TypeRef::Asset(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => None,
@@ -383,6 +386,7 @@ fn render(t: &TypeRef) -> String {
         TypeRef::Connection(a, _) => one("Connection", a),
         TypeRef::History(a, _) => one("History", a),
         TypeRef::QueueResult(_) => "QueueResult".to_string(),
+        TypeRef::Asset(_) => "Asset".to_string(),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),

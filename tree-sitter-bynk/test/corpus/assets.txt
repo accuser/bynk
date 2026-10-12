@@ -1,0 +1,67 @@
+==========================
+asset declarations in a commons and a context (#1883, slice 1a)
+==========================
+
+commons compat.page
+
+---
+The board's stylesheet.
+---
+asset style = "assets/board.css"
+
+fn link(a: Asset) -> String {
+  a.url
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (doc_block)
+    (asset_decl
+      name: (identifier)
+      path: (string_literal))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (identifier))
+      return_type: (base_type)
+      body: (block
+        tail: (field_access
+          receiver: (identifier)
+          field: (identifier))))))
+
+==========================
+asset as an ordinary identifier outside its declaration position
+==========================
+
+context compat.board {
+  asset icon = "assets/icon.png"
+
+  fn f(asset: Int) -> Int {
+    asset
+  }
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (asset_decl
+      name: (identifier)
+      path: (string_literal))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (identifier)))))

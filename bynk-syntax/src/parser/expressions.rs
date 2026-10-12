@@ -896,8 +896,8 @@ impl<'a> Parser<'a> {
                     span: kw.span.merge(close.span),
                 })
             }
-            // A `RESERVED_CONTEXTUAL` keyword (`case`/`event`/`messages`/`on`/
-            // `suite`) is reserved only at its own item-dispatch position — an
+            // A `RESERVED_CONTEXTUAL` keyword (`asset`/`case`/`event`/
+            // `messages`/`on`/`suite`) is reserved only at its own item-dispatch position — an
             // ordinary identifier everywhere else, per `expect_ident`'s
             // exemption (`keywords::RESERVED_CONTEXTUAL`'s doc comment). That
             // exemption covers *declaring* a binding with one of these names
@@ -908,6 +908,7 @@ impl<'a> Parser<'a> {
             // surfaced concretely by `event` colliding with the pre-existing
             // `examples/event-log` handler `add(event: Event)`.
             TokenKind::Ident
+            | TokenKind::Asset
             | TokenKind::Case
             | TokenKind::Event
             | TokenKind::Messages

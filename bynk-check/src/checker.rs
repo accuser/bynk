@@ -305,6 +305,9 @@ pub enum Ty {
     HttpResult(TyId),
     /// `QueueResult` — the built-in queue verdict sum (v0.44). Non-generic.
     QueueResult,
+    /// `Asset` — a static file declared by `asset name = "path"` (#1883,
+    /// slice 1a, [DECISION H]). Non-generic; its one field is `.url : String`.
+    Asset,
     /// `List[T]` — built-in immutable list (v0.20b).
     List(TyId),
     /// `Map[K, V]` — built-in immutable map (v0.20b). The key type is
@@ -407,6 +410,7 @@ impl Ty {
             Ty::Effect(t) => format!("Effect[{}]", types.display(*t)),
             Ty::HttpResult(t) => format!("HttpResult[{}]", types.display(*t)),
             Ty::QueueResult => "QueueResult".to_string(),
+            Ty::Asset => "Asset".to_string(),
             Ty::List(t) => format!("List[{}]", types.display(*t)),
             Ty::Map(k, v) => format!("Map[{}, {}]", types.display(*k), types.display(*v)),
             Ty::Query(t) => format!("Query[{}]", types.display(*t)),
@@ -708,6 +712,10 @@ pub struct TypedCommons {
     /// handlers too — worth knowing before writing that consumer, not
     /// discovering it by surprise.
     pub actor_bindings: HashMap<Span, (String, TyId)>,
+    /// #1883, slice 1a: the assets visible in this unit, carried from
+    /// [`ResolvedCommons::assets`] so a per-handler check built from this
+    /// program (`context_checks`) still sees them.
+    pub assets: HashMap<String, AssetDecl>,
 }
 
 impl TypedCommons {
@@ -740,6 +748,7 @@ impl TypedCommons {
             warnings: Vec::new(),
             ty_intern: Arc::new(Types::new()),
             actor_bindings: HashMap::new(),
+            assets: HashMap::new(),
         }
     }
 
@@ -987,6 +996,7 @@ pub fn check_record_in(
                 warnings,
                 ty_intern: Arc::clone(&ty_intern),
                 actor_bindings: HashMap::new(),
+                assets: input.assets,
             }),
             ty_intern,
             typed_despite_errors: None,
@@ -1008,6 +1018,7 @@ pub fn check_record_in(
                 warnings: Vec::new(),
                 ty_intern: Arc::clone(&ty_intern),
                 actor_bindings: HashMap::new(),
+                assets: input.assets,
             }),
             ty_intern,
         }
@@ -2479,6 +2490,7 @@ pub(crate) fn substitute(t: TyId, subst: &HashMap<String, TyId>, tys: &Types) ->
         Ty::Error
         | Ty::Base(_)
         | Ty::QueueResult
+        | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
         | Ty::Unit
@@ -2509,6 +2521,7 @@ pub(crate) fn contains_var(t: TyId, tys: &Types) -> bool {
         Ty::Named { args, .. } => args.iter().any(|a| contains_var(*a, tys)),
         Ty::Base(_)
         | Ty::QueueResult
+        | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
         | Ty::Unit
@@ -2544,6 +2557,7 @@ fn contains_flexible_var(t: TyId, rigid: &HashSet<String>, tys: &Types) -> bool 
         Ty::Named { args, .. } => args.iter().any(|a| contains_flexible_var(*a, rigid, tys)),
         Ty::Base(_)
         | Ty::QueueResult
+        | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
         | Ty::Unit
@@ -2630,6 +2644,7 @@ pub(crate) fn unify(
             | Ty::Effect(_)
             | Ty::HttpResult(_)
             | Ty::QueueResult
+            | Ty::Asset
             | Ty::List(_)
             | Ty::Map(..)
             | Ty::Query(_)
@@ -2698,6 +2713,7 @@ pub fn record_type_refs(
         }
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
+        | TypeRef::Asset(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => {}
@@ -2795,6 +2811,7 @@ fn first_unresolved_type_name<'a>(
             .or_else(|| first_unresolved_type_name(ret, types, vars)),
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
+        | TypeRef::Asset(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => None,
@@ -2869,6 +2886,7 @@ pub fn resolve_type_ref(
             resolve_type_ref(v, types, tys)?,
         ),
         TypeRef::QueueResult(_) => Ty::QueueResult,
+        TypeRef::Asset(_) => Ty::Asset,
         // v0.119 (ADR 0155): `History[Agent]` is not a value type — it is a
         // test-only generator handled directly in `check_property_body`. It never
         // resolves as an ordinary type, so a stray `History[…]` in a value
@@ -2959,6 +2977,7 @@ pub fn compatible(t: TyId, u: TyId, tys: &Types) -> bool {
         (Ty::Connection(a), Ty::Connection(b)) => compatible(*a, *b, tys),
         (Ty::Map(k1, v1), Ty::Map(k2, v2)) => k1 == k2 && compatible(*v1, *v2, tys),
         (Ty::QueueResult, Ty::QueueResult) => true,
+        (Ty::Asset, Ty::Asset) => true,
         (Ty::ValidationError, Ty::ValidationError) => true,
         (Ty::JsonError, Ty::JsonError) => true,
         (Ty::Unit, Ty::Unit) => true,
@@ -2991,6 +3010,7 @@ pub fn compatible(t: TyId, u: TyId, tys: &Types) -> bool {
             | Ty::Effect(_)
             | Ty::HttpResult(_)
             | Ty::QueueResult
+            | Ty::Asset
             | Ty::List(_)
             | Ty::Map(..)
             | Ty::Query(_)
@@ -4213,6 +4233,7 @@ fn rebrand_return_type(
         Ty::Error
         | Ty::Base(_)
         | Ty::QueueResult
+        | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
         | Ty::Unit
@@ -4281,6 +4302,7 @@ fn structurally_compatible_inner(
                 && structurally_compatible_inner(*v1, *v2, arg_types, param_types, tys, visited)
         }
         (Ty::QueueResult, Ty::QueueResult) => true,
+        (Ty::Asset, Ty::Asset) => true,
         (
             Ty::Named {
                 name: an, args: aa, ..
@@ -4336,6 +4358,7 @@ fn structurally_compatible_inner(
             | Ty::Effect(_)
             | Ty::HttpResult(_)
             | Ty::QueueResult
+            | Ty::Asset
             | Ty::List(_)
             | Ty::Map(..)
             | Ty::Query(_)

@@ -289,6 +289,25 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                // #1883, slice 1a: `asset` parses wherever any item does;
+                // placement (context or commons, never an adapter) is the
+                // checker's call (`bynk.asset.outside_context_or_commons`),
+                // the same split as `event`/`messages` above.
+                Some(TokenKind::Asset) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
+                    match self.parse_asset_decl() {
+                        Ok(mut a) => {
+                            a.documentation = doc;
+                            a.trivia.leading = leading;
+                            a.trivia.trailing = self.take_trailing_trivia();
+                            last_span = a.span;
+                            items.push(CommonsItem::Asset(a));
+                            seen_item = true;
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 Some(TokenKind::Capability) => {
                     let err = CompileError::new(
                         "bynk.capability.outside_context",
@@ -1262,6 +1281,25 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                // #1883, slice 1a: `asset` parses wherever any item does;
+                // placement (context or commons, never an adapter) is the
+                // checker's call (`bynk.asset.outside_context_or_commons`),
+                // the same split as `event`/`messages` above.
+                Some(TokenKind::Asset) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
+                    match self.parse_asset_decl() {
+                        Ok(mut a) => {
+                            a.documentation = doc;
+                            a.trivia.leading = leading;
+                            a.trivia.trailing = self.take_trailing_trivia();
+                            last_span = a.span;
+                            items.push(CommonsItem::Asset(a));
+                            seen_item = true;
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 _ => {
                     let t = match self.peek() {
                         Some(t) => t,
@@ -1560,6 +1598,24 @@ impl<'a> Parser<'a> {
                             e.trivia.trailing = self.take_trailing_trivia();
                             last_span = e.span;
                             items.push(CommonsItem::Event(e));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                // #1883, slice 1a: `asset` parses wherever any item does;
+                // placement (context or commons, never an adapter) is the
+                // checker's call (`bynk.asset.outside_context_or_commons`),
+                // the same split as `event`/`messages` above.
+                Some(TokenKind::Asset) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span, &mut leading);
+                    match self.parse_asset_decl() {
+                        Ok(mut a) => {
+                            a.documentation = doc;
+                            a.trivia.leading = leading;
+                            a.trivia.trailing = self.take_trailing_trivia();
+                            last_span = a.span;
+                            items.push(CommonsItem::Asset(a));
                         }
                         Err(e) => self.handle_item_err(e)?,
                     }
@@ -3168,6 +3224,26 @@ impl<'a> Parser<'a> {
                 format!("expected a string literal {ctx}, found end of file"),
             )),
         }
+    }
+
+    /// #1883, slice 1a: `asset name = "path"`. The path is a plain string
+    /// literal, never an interpolated one — it names a file at build time, so
+    /// it must be known without evaluating anything. Placement and path
+    /// safety are checker concerns; this parses identically wherever it is
+    /// called from.
+    fn parse_asset_decl(&mut self) -> Result<AssetDecl, CompileError> {
+        let kw = self.expect(TokenKind::Asset, "to start an asset declaration")?;
+        let name = self.expect_ident("after `asset`")?;
+        self.expect(TokenKind::Eq, "after the asset name")?;
+        let (path, path_span) = self.expect_str_lit("for the asset's file path")?;
+        Ok(AssetDecl {
+            name,
+            path,
+            path_span,
+            documentation: None,
+            span: kw.span.merge(path_span),
+            trivia: Trivia::default(),
+        })
     }
 
     /// message-bundles track, slice 1: `messages <tag> @reference { "code" =>
