@@ -14,12 +14,17 @@ file may come from, how its URL is formed, which Worker serves it, and how
   never publish `.env` or a source file. Raised in the review of #1903; a
   denylist was the alternative, and a folder is simpler to reason about and
   easier to relax later.
-- **The caller pre-reads the folder.** `bynk-driver` and `bynk-testkit` read
-  every regular file under `assets/` (symlinks are not followed) into
-  `CompileOptions::asset_files`, as `sources` and the schema lock are, so
-  `bynk-emit` stays disk-free. The LSP lists the folder for the existence check
-  (`bynk.asset.missing_file`). With no folder read, a check skips that and a
-  build treats the folder as empty, so no URL is made up for an unread file.
+- **The caller lists the folder; the build reads only declared files.**
+  `bynk-driver` and `bynk-testkit` list every regular file under `assets/`
+  (symlinks are not followed) into `CompileOptions::asset_files`, an
+  `AssetFolder` carrying a reader callback, so `bynk-emit` stays disk-free.
+  The build calls the reader once for each file a declaration names, never for
+  the rest, so large undeclared media cost nothing; a declared file it cannot
+  read is `bynk.asset.unreadable_file`. (As first merged, the caller read every
+  file's bytes up front; the follow-up to #1904 made the read lazy.) The LSP
+  lists the folder for the existence check (`bynk.asset.missing_file`). With no
+  folder listed, a check skips that and a build treats the folder as empty, so
+  no URL is made up for an unread file.
 - **The URL is `/_assets/<stem>.<hash>.<ext>`**, `<hash>` the FNV-1a 64 of the
   content (`contract::fnv1a64_hex`, the contract hash's algorithm over bytes:
   reproducible and dependency-free; it only has to tell one project's files

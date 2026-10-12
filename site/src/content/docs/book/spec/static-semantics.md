@@ -1705,8 +1705,10 @@ declaring context say.
   never publish `.env` or a source file. `./` prefixes, repeated separators and
   `\` separators are normalised (`./assets//board.css` is `assets/board.css`).
 - The file MUST exist as a regular file in that folder; a symbolic link is not
-  followed (`bynk.asset.missing_file`). A check with no filesystem (an
-  in-memory check) skips this; a build with none treats the folder as empty.
+  followed (`bynk.asset.missing_file`), and it MUST be readable
+  (`bynk.asset.unreadable_file`). A check with no filesystem (an in-memory
+  check) skips this; a build with none treats the folder as empty. Only the
+  files a declaration names are read; other files in the folder are not.
 - Its name MUST NOT be declared twice in one unit (`bynk.asset.duplicate`), and
   MUST NOT equal the name of a free function or type in that unit
   (`bynk.resolve.name_conflict`).

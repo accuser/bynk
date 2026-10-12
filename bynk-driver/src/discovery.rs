@@ -80,16 +80,19 @@ impl std::error::Error for DiscoveryError {
     }
 }
 
-/// #1883, slice 1b: every file in the project's `assets/` folder, with its
-/// bytes ([`bynk_emit::project::assets::read_asset_files`]), for
-/// `CompileOptions::asset_files`. A missing folder is empty; an unreadable
-/// one is a [`DiscoveryError`] naming the folder.
-pub fn read_asset_files(
+/// #1883, slice 1b: the project's `assets/` folder, listed
+/// ([`bynk_emit::project::assets::AssetFolder::on_disk`]) for
+/// `CompileOptions::asset_files`. No file's bytes are read here: the build
+/// reads only the files a declaration names. A missing folder is empty; an
+/// unlistable one is a [`DiscoveryError`] naming the folder.
+pub fn list_asset_folder(
     project_root: &Path,
-) -> Result<std::collections::BTreeMap<String, Vec<u8>>, DiscoveryError> {
-    bynk_emit::project::assets::read_asset_files(project_root).map_err(|source| DiscoveryError {
-        path: project_root.join(bynk_emit::project::assets::PROJECT_ASSETS_DIR),
-        source,
+) -> Result<bynk_emit::project::assets::AssetFolder, DiscoveryError> {
+    bynk_emit::project::assets::AssetFolder::on_disk(project_root).map_err(|source| {
+        DiscoveryError {
+            path: project_root.join(bynk_emit::project::assets::PROJECT_ASSETS_DIR),
+            source,
+        }
     })
 }
 
