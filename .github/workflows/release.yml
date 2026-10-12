@@ -84,7 +84,7 @@ jobs:
       # No Rust toolchain or tsc here any more: the test run moved to the
       # cross-OS `test` job below, and what is left reads manifests (`node -p`)
       # and walks history, so this leg stays cheap.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "20"
       - name: Check tag/version match
@@ -167,7 +167,7 @@ jobs:
           tool: nextest@0.9
       # #1671: Node 22 (the floor, NODE_MAJOR_FLOOR) so tsc_verify's strip-types
       # checks run here; under BYNK_REQUIRE_TSC they fail rather than skip.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "22"
       # Range-pinned to major 5, as in the verify job above — see #828.
@@ -528,7 +528,7 @@ jobs:
         working-directory: tree-sitter-bynk
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           # npm@latest (>=12) requires Node >=22.22.2; Node 20 is too old for it.
           node-version: "22"
