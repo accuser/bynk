@@ -159,9 +159,23 @@ pub fn served_path(source: &str, bytes: &[u8]) -> String {
     }
 }
 
-/// Every declared asset's served path, keyed by its normalised source path —
-/// what the emitter writes as each `.url`. Only declarations whose file is in
-/// `files` appear (a missing one is `bynk.asset.missing_file`).
+/// The key a declaration's served path is filed under
+/// ([`declared_served_paths`]): its normalised source path, plus its fixed
+/// URL path when it has one — so one file may be served both content-hashed
+/// and at a fixed path.
+pub fn asset_key(a: &AssetDecl) -> String {
+    let source = bynk_project::assets::normalise_asset_path(&a.path);
+    match &a.at {
+        Some((at, _)) => format!("{source} at {at}"),
+        None => source,
+    }
+}
+
+/// Every declared asset's served path, keyed by [`asset_key`] — what the
+/// emitter writes as each `.url`: its fixed path (`at "/favicon.ico"`,
+/// slice 2) or its content-hashed one ([`served_path`]). Only declarations
+/// whose file is in `files` appear (a missing one is
+/// `bynk.asset.missing_file`).
 pub fn declared_served_paths(
     parsed: &[ParsedFile],
     files: &BTreeMap<String, Vec<u8>>,
@@ -172,50 +186,259 @@ pub fn declared_served_paths(
             let CommonsItem::Asset(a) = item else {
                 continue;
             };
-            let key = bynk_project::assets::normalise_asset_path(&a.path);
-            if let Some(bytes) = files.get(&key) {
-                let served = served_path(&key, bytes);
-                out.insert(key, served);
+            let source = bynk_project::assets::normalise_asset_path(&a.path);
+            if let Some(bytes) = files.get(&source) {
+                let served = match &a.at {
+                    Some((at, _)) => at.clone(),
+                    None => served_path(&source, bytes),
+                };
+                out.insert(asset_key(a), served);
             }
         }
     }
     out
 }
 
-/// The files a context's Worker ships: the assets declared by the context and
-/// by every commons in its **transitive** `uses` closure, keyed by served
-/// path, each mapped to its normalised source path.
-///
-/// Transitive, unlike name visibility ([`compose_unit_assets`], one level):
-/// commons `a` may use commons `b` and return `b`'s `.url`, and the Worker
-/// running `a`'s code must still serve `b`'s file. Sorted and deduplicated by
-/// served path, so the output is reproducible.
-pub fn deployed_assets(
-    context: &str,
-    unit_uses: &HashMap<String, Vec<String>>,
-    unit_tables: &HashMap<String, crate::symbols::UnitTable>,
-    served: &BTreeMap<String, String>,
-) -> BTreeMap<String, String> {
+/// The units reachable from `start` over `edges` (transitively), `start`
+/// included, in sorted order.
+fn closure<'a>(start: &'a str, edges: &[&'a HashMap<String, Vec<String>>]) -> BTreeSet<&'a str> {
     let mut seen: BTreeSet<&str> = BTreeSet::new();
-    let mut stack: Vec<&str> = vec![context];
-    let mut out = BTreeMap::new();
+    let mut stack: Vec<&str> = vec![start];
     while let Some(unit) = stack.pop() {
         if !seen.insert(unit) {
             continue;
         }
-        if let Some(table) = unit_tables.get(unit) {
-            for decl in table.assets.values() {
-                let key = bynk_project::assets::normalise_asset_path(&decl.path);
-                if let Some(path) = served.get(&key) {
-                    out.insert(path.clone(), key);
-                }
+        for map in edges {
+            for next in map.get(unit).into_iter().flatten() {
+                stack.push(next);
             }
         }
-        for used in unit_uses.get(unit).into_iter().flatten() {
-            stack.push(used);
+    }
+    seen
+}
+
+/// The files a context's Worker ships, keyed by served path, each mapped to
+/// its normalised source path. Sorted and deduplicated by served path, so the
+/// output is reproducible.
+///
+/// - **Content-hashed assets** come from every unit the context reaches over
+///   `uses` **and** `consumes`, transitively. Through `uses`, a commons may
+///   return another commons' `.url`; through `consumes`, another context may
+///   return one of its own in a fragment this Worker serves (#1883, slice 2).
+///   Either way the URL resolves against this Worker, so it ships the file.
+///   Hashed names never collide, so the duplication costs only bytes.
+/// - **Fixed-path assets** (`at "/favicon.ico"`) come over `uses` only: they
+///   belong to the root of the Worker that declares them, and shipping a
+///   consumed context's fixed paths would collide with this one's own.
+pub fn deployed_assets(
+    context: &str,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_tables: &HashMap<String, crate::symbols::UnitTable>,
+    served: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let hashed_units = closure(context, &[unit_uses, unit_consumes]);
+    let fixed_units = closure(context, &[unit_uses]);
+    let mut out = BTreeMap::new();
+    for unit in &hashed_units {
+        let Some(table) = unit_tables.get(*unit) else {
+            continue;
+        };
+        for decl in table.assets.values() {
+            if decl.at.is_some() && !fixed_units.contains(unit) {
+                continue;
+            }
+            if let Some(path) = served.get(&asset_key(decl)) {
+                out.insert(
+                    path.clone(),
+                    bynk_project::assets::normalise_asset_path(&decl.path),
+                );
+            }
         }
     }
     out
+}
+
+/// Why `at` is not a valid fixed URL path for an asset, or `None` when it is.
+/// It must be an absolute URL path naming a file: starting with `/`, not
+/// ending in `/`, with no empty, `.` or `..` segment, and only
+/// `[A-Za-z0-9._~-]` between the slashes (so it needs no encoding). It may not
+/// lie under [`SERVED_PREFIX`] (the content-hashed files' space) or `/_bynk/`
+/// (Bynk's own dispatch).
+pub fn at_path_reason(at: &str) -> Option<&'static str> {
+    let Some(rest) = at.strip_prefix('/') else {
+        return Some("it does not start with `/`");
+    };
+    if rest.is_empty() || rest.ends_with('/') {
+        return Some("it does not name a file (it ends with `/`)");
+    }
+    if rest
+        .split('/')
+        .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+    {
+        return Some("it has an empty, `.` or `..` segment");
+    }
+    if !rest
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '~' | '-'))
+    {
+        return Some("it has a character outside `[A-Za-z0-9._~-]`");
+    }
+    let first = rest.split('/').next().unwrap_or("");
+    if first == SERVED_PREFIX.trim_matches('/') {
+        return Some("it is under `/_assets/`, which content-hashed assets use");
+    }
+    if first == "_bynk" {
+        return Some("it is under `/_bynk/`, which Bynk's own dispatch uses");
+    }
+    None
+}
+
+/// `bynk.asset.invalid_at_path` for `a`, when its `at` path fails
+/// [`at_path_reason`].
+pub fn at_path_error(a: &AssetDecl) -> Option<CompileError> {
+    let (at, span) = a.at.as_ref()?;
+    let reason = at_path_reason(at)?;
+    Some(
+        CompileError::new(
+            "bynk.asset.invalid_at_path",
+            *span,
+            format!("asset `{}` cannot be served at `{at}`: {reason}", a.name.name),
+        )
+        .with_note(
+            "a fixed asset path is a URL path naming one file, such as `/favicon.ico` or `/robots.txt`",
+        ),
+    )
+}
+
+/// Whether the HTTP route `pattern` (`/a/:id/b`) matches the URL path `path`:
+/// the same number of segments, each literal equal or a `:param`. Routes have
+/// no wildcards, so this is the whole matching rule.
+fn route_matches(pattern: &str, path: &str) -> bool {
+    let p: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+    let u: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    p.len() == u.len()
+        && p.iter()
+            .zip(&u)
+            .all(|(ps, us)| ps.starts_with(':') || ps == us)
+}
+
+/// #1883, slice 2 ([DECISION C]): fixed asset paths against each Worker's
+/// routes. For every context, over the assets its `uses` closure declares
+/// with an `at` path:
+///
+/// - two different files at one fixed path is `bynk.asset.path_conflict`;
+/// - a fixed path equal to one of the context's literal HTTP routes is
+///   `bynk.asset.shadows_route`: the platform answers that path before the
+///   Worker runs, for **every** method (a `POST` gets the platform's `405`,
+///   checked against `wrangler dev` 4.107.0), so the handler is unreachable;
+/// - a fixed path a parameterised route matches (`/:name`) is the warning
+///   `bynk.asset.may_shadow_route`: the route still serves every other path.
+///
+/// Content-hashed paths need no check here: handlers may not use the
+/// `/_assets/` prefix at all (`bynk.http.reserved_prefix`).
+pub fn phase_asset_routes(
+    parsed: &[ParsedFile],
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, bynk_project::UnitKind>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    errors: &mut ErrorSink,
+) {
+    use bynk_syntax::ast::HandlerKind;
+    // A commons used by two contexts would otherwise report its conflict
+    // twice; report each (file, span, code) once.
+    let mut reported: BTreeSet<(std::path::PathBuf, usize, &'static str)> = BTreeSet::new();
+    let mut push = |file: std::path::PathBuf, err: CompileError, errors: &mut ErrorSink| {
+        if reported.insert((file.clone(), err.span.start, err.category)) {
+            errors.push_for(Some(&file), err);
+        }
+    };
+    for (ctx, kind) in kinds {
+        if *kind != bynk_project::UnitKind::Context {
+            continue;
+        }
+        // Fixed paths this Worker serves: at -> (source, file, span).
+        let mut fixed: BTreeMap<String, (String, std::path::PathBuf)> = BTreeMap::new();
+        for unit in closure(ctx, &[unit_uses]) {
+            for &i in groups.get(unit).into_iter().flatten() {
+                for item in parsed[i].items() {
+                    let CommonsItem::Asset(a) = item else {
+                        continue;
+                    };
+                    let Some((at, span)) = &a.at else { continue };
+                    if path_errors(a).is_some() || at_path_reason(at).is_some() {
+                        continue;
+                    }
+                    let source = bynk_project::assets::normalise_asset_path(&a.path);
+                    match fixed.get(at) {
+                        Some((prev, _)) if *prev != source => push(
+                            parsed[i].identity_path(),
+                            CompileError::new(
+                                "bynk.asset.path_conflict",
+                                *span,
+                                format!(
+                                    "the Worker for `{ctx}` would serve two files at `{at}`: `{prev}` and `{source}`"
+                                ),
+                            )
+                            .with_note("each fixed asset path names one file; give one of them another path"),
+                            errors,
+                        ),
+                        Some(_) => {}
+                        None => {
+                            fixed.insert(at.clone(), (source, parsed[i].identity_path()));
+                        }
+                    }
+                }
+            }
+        }
+        if fixed.is_empty() {
+            continue;
+        }
+        for &i in groups.get(ctx.as_str()).into_iter().flatten() {
+            for item in parsed[i].items() {
+                let CommonsItem::Service(svc) = item else {
+                    continue;
+                };
+                for h in &svc.handlers {
+                    let HandlerKind::Http { method, path } = &h.kind else {
+                        continue;
+                    };
+                    for (at, (source, _)) in &fixed {
+                        if !route_matches(path, at) {
+                            continue;
+                        }
+                        let literal = !path.split('/').any(|s| s.starts_with(':'));
+                        let err = if literal {
+                            CompileError::new(
+                                "bynk.asset.shadows_route",
+                                h.span,
+                                format!(
+                                    "`{} {path}` is unreachable: the asset `{source}` is served at `{at}`",
+                                    method.as_str()
+                                ),
+                            )
+                            .with_note(
+                                "the platform answers an asset's path before the Worker runs, for every method; move the asset or the route",
+                            )
+                        } else {
+                            CompileError::new(
+                                "bynk.asset.may_shadow_route",
+                                h.span,
+                                format!(
+                                    "`{} {path}` will not see requests for `{at}`: the asset `{source}` is served there",
+                                    method.as_str()
+                                ),
+                            )
+                            .with_note(
+                                "the platform answers an asset's path before the Worker runs; every other path still reaches this route",
+                            )
+                        };
+                        push(parsed[i].identity_path(), err, errors);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// `bynk.asset.missing_file` for each asset whose (otherwise valid) path names
@@ -351,6 +574,7 @@ pub fn single_file_asset_errors(items: &[CommonsItem], build: bool) -> Vec<Compi
             continue;
         };
         errors.extend(path_errors(a));
+        errors.extend(at_path_error(a));
         let key = a.name.name.as_str();
         match name_error(
             a,
@@ -408,6 +632,8 @@ mod tests {
         ("assets/a.css", "a{}"),
         ("assets/b.css", "b{}"),
         ("assets/board.css", "body{}"),
+        ("assets/favicon.ico", "ico"),
+        ("assets/other.ico", "other"),
     ];
 
     fn analyse(files: &[(&str, &str)]) -> crate::testkit::Analysed {
@@ -656,6 +882,7 @@ mod tests {
                 },
                 path: path.to_string(),
                 path_span: Default::default(),
+                at: None,
                 documentation: None,
                 span: Default::default(),
                 trivia: Default::default(),
@@ -692,13 +919,168 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let deployed = deployed_assets("ctx", &uses, &tables, &served);
+        let deployed = deployed_assets("ctx", &uses, &HashMap::new(), &tables, &served);
         assert_eq!(
             deployed.into_iter().collect::<Vec<_>>(),
             vec![(
                 "/_assets/board.1.css".to_string(),
                 "assets/board.css".to_string()
             )]
+        );
+    }
+
+    #[test]
+    fn at_path_reason_accepts_a_file_path_and_rejects_the_rest() {
+        for ok in [
+            "/favicon.ico",
+            "/robots.txt",
+            "/.well-known/security.txt",
+            "/a/b-c_d~e.f",
+        ] {
+            assert_eq!(at_path_reason(ok), None, "{ok} is valid");
+        }
+        for bad in [
+            "favicon.ico",
+            "/",
+            "/dir/",
+            "//x",
+            "/a/../b",
+            "/./a",
+            "/a b.txt",
+            "/a?b",
+            "/_assets/x.css",
+            "/_assets",
+            "/_bynk/x",
+        ] {
+            assert!(at_path_reason(bad).is_some(), "{bad} is rejected");
+        }
+    }
+
+    #[test]
+    fn route_matching_is_segment_wise_with_params() {
+        assert!(route_matches("/favicon.ico", "/favicon.ico"));
+        assert!(route_matches("/:page", "/favicon.ico"));
+        assert!(route_matches("/a/:id", "/a/b"));
+        assert!(!route_matches("/a/:id", "/a"));
+        assert!(!route_matches("/:page", "/a/b"));
+        assert!(!route_matches("/favicon.png", "/favicon.ico"));
+    }
+
+    const HANDLER: &str = "service web from http {\n  on GET(\"ROUTE\") () -> Effect[HttpResult[String]] by Visitor {\n    Ok(\"x\")\n  }\n}\n";
+
+    fn context_with(asset: &str, route: &str) -> String {
+        format!(
+            "context c\n\n{asset}\n\n{}",
+            HANDLER.replace("ROUTE", route)
+        )
+    }
+
+    /// #1883, slice 2: a fixed path against the Worker's own routes — an
+    /// exact literal route is unreachable (an error, for every method); a
+    /// parameterised one only loses that path (a warning).
+    #[test]
+    fn a_fixed_path_is_checked_against_the_workers_routes() {
+        let fav = "asset favicon = \"assets/favicon.ico\" at \"/favicon.ico\"";
+        analyse(&[("c.bynk", &context_with(fav, "/favicon.ico"))])
+            .assert_reports("bynk.asset.shadows_route");
+        let param = context_with(fav, "/:page").replace("() ->", "(page: String) ->");
+        let a = analyse(&[("c.bynk", &param)]);
+        a.assert_reports("bynk.asset.may_shadow_route");
+        assert!(
+            a.error_categories().is_empty(),
+            "a warning only: {}",
+            a.render()
+        );
+        analyse(&[("c.bynk", &context_with(fav, "/home"))]).assert_clean();
+        // Content-hashed assets never meet a route: `/_assets/` is reserved.
+        analyse(&[(
+            "c.bynk",
+            &context_with("asset style = \"assets/board.css\"", "/_assets/x.css"),
+        )])
+        .assert_reports("bynk.http.reserved_prefix");
+    }
+
+    /// Two different files at one fixed path in one Worker conflict, whether
+    /// declared together or reached through `uses`; the same file twice is
+    /// fine. And an invalid `at` path is reported at the declaration.
+    #[test]
+    fn fixed_paths_conflict_and_validate() {
+        let a = analyse(&[
+            (
+                "lib/a.bynk",
+                "commons lib.a\n\nasset icon = \"assets/favicon.ico\" at \"/favicon.ico\"\n",
+            ),
+            (
+                "app/web.bynk",
+                "context app.web\n\nuses lib.a\n\nasset other = \"assets/other.ico\" at \"/favicon.ico\"\n",
+            ),
+        ]);
+        a.assert_reports("bynk.asset.path_conflict");
+        analyse(&[(
+            "c.bynk",
+            "context c\n\nasset a = \"assets/favicon.ico\" at \"/favicon.ico\"\nasset b = \"assets/favicon.ico\" at \"/favicon.ico\"\n",
+        )])
+        .assert_clean();
+        analyse(&[(
+            "c.bynk",
+            "context c\n\nasset a = \"assets/favicon.ico\" at \"/_assets/favicon.ico\"\n",
+        )])
+        .assert_reports("bynk.asset.invalid_at_path");
+    }
+
+    /// Hashed assets ship over `uses` and `consumes`; fixed ones over `uses`
+    /// only, so a consumed context's root files stay its own.
+    #[test]
+    fn consumes_ships_hashed_assets_but_not_fixed_ones() {
+        fn decl(name: &str, path: &str, at: Option<&str>) -> AssetDecl {
+            AssetDecl {
+                name: Ident {
+                    name: name.to_string(),
+                    span: Default::default(),
+                },
+                path: path.to_string(),
+                path_span: Default::default(),
+                at: at.map(|a| (a.to_string(), Default::default())),
+                documentation: None,
+                span: Default::default(),
+                trivia: Default::default(),
+            }
+        }
+        let mut tables: HashMap<String, crate::symbols::UnitTable> = HashMap::new();
+        for unit in ["a", "b"] {
+            tables.insert(unit.to_string(), Default::default());
+        }
+        let b = tables.get_mut("b").unwrap();
+        b.assets
+            .insert("badge".into(), decl("badge", "assets/badge.svg", None));
+        b.assets.insert(
+            "robots".into(),
+            decl("robots", "assets/robots.txt", Some("/robots.txt")),
+        );
+        let consumes: HashMap<String, Vec<String>> = [("a".to_string(), vec!["b".to_string()])]
+            .into_iter()
+            .collect();
+        let served: BTreeMap<String, String> = [
+            (
+                "assets/badge.svg".to_string(),
+                "/_assets/badge.1.svg".to_string(),
+            ),
+            (
+                "assets/robots.txt at /robots.txt".to_string(),
+                "/robots.txt".to_string(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let a = deployed_assets("a", &HashMap::new(), &consumes, &tables, &served);
+        assert_eq!(
+            a.keys().cloned().collect::<Vec<_>>(),
+            vec!["/_assets/badge.1.svg"]
+        );
+        let b = deployed_assets("b", &HashMap::new(), &consumes, &tables, &served);
+        assert_eq!(
+            b.keys().cloned().collect::<Vec<_>>(),
+            vec!["/_assets/badge.1.svg", "/robots.txt"]
         );
     }
 

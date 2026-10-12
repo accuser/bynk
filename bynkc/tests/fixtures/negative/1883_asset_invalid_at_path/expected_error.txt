@@ -1,0 +1,2 @@
+bynk.asset.invalid_at_path asset `favicon` cannot be served at `/_assets/favicon.ico`: it is under `/_assets/`, which content-hashed assets use
+bynk.asset.invalid_at_path asset `folder` cannot be served at `/icons/`: it does not name a file (it ends with `/`)

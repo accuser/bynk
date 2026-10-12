@@ -65,3 +65,23 @@ context compat.board {
       return_type: (base_type)
       body: (block
         tail: (identifier)))))
+
+==========================
+asset at a fixed URL path (#1883, slice 2)
+==========================
+
+context compat.board {
+  asset favicon = "assets/favicon.ico" at "/favicon.ico"
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (asset_decl
+      name: (identifier)
+      path: (string_literal)
+      at: (string_literal))))

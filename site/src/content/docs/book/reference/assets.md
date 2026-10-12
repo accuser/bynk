@@ -39,6 +39,30 @@ fn head() -> String {
   (`bynk.asset.outside_context_or_commons`). A unit sees its own assets and
   those of each commons it `uses`, like functions.
 
+## Fixed paths
+
+Some files are fetched by name by clients that never read a page: a browser
+asks for `/favicon.ico`, a crawler for `/robots.txt`. Serve those at a fixed
+path with `at`:
+
+```bynk,fragment
+context compat.board
+
+asset favicon = "assets/favicon.ico" at "/favicon.ico"
+asset robots = "assets/robots.txt" at "/robots.txt"
+```
+
+Its `.url` is then that path. A fixed path names one file: it starts with `/`,
+does not end with `/`, and is not under `/_assets/` or `/_bynk/`
+(`bynk.asset.invalid_at_path`). One Worker serves one file at a path
+(`bynk.asset.path_conflict`).
+
+The platform answers a fixed path before the Worker runs, for every method, so
+a route at exactly that path is unreachable (`bynk.asset.shadows_route`), and a
+route with a parameter that matches it (`/:page`) no longer sees it (a warning,
+`bynk.asset.may_shadow_route`). A fixed path is not content-hashed, so it gets
+the platform's default caching rather than the year-long one.
+
 ## Public by construction
 
 An asset is served without running the Worker, so it is public whatever the
@@ -55,9 +79,12 @@ max-age=31536000, immutable`) and a page always links the current version.
 
 ## What ships where
 
-On the Workers target, each context's Worker serves the files declared by the
-context and by every commons its `uses` reach, directly or through other
-commons. Its `wrangler.toml` gains an `[assets]` block:
+On the Workers target, each context's Worker serves the content-hashed files
+of every unit it reaches through `uses` or `consumes`, directly or indirectly,
+so a URL handed over by a used commons or a consumed context's service still
+resolves on this Worker. Fixed-path files are served only by the Worker whose
+own `uses` reach them. No handler may use the `/_assets/` prefix
+(`bynk.http.reserved_prefix`). Its `wrangler.toml` gains an `[assets]` block:
 
 ```toml
 [assets]

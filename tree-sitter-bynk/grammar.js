@@ -381,6 +381,9 @@ module.exports = grammar({
         field("name", $.identifier),
         "=",
         field("path", $.string_literal),
+        // #1883, slice 2: an optional fixed URL path. `at` is contextual,
+        // matched only here (the `word` rule keeps it an identifier elsewhere).
+        optional(seq("at", field("at", $.string_literal))),
       ),
 
     // v0.154 (ADR 0178): a sum body may carry a trailing `embeds E as V, …`

@@ -120,8 +120,10 @@ at most once), field defaults, and emission are well-formedness: §5.7b.
 
 {{#grammar asset_decl}}
 
-`asset`, a name, `=`, and a plain string literal naming a file relative to the
-project root (an interpolated string is a parse error here). The grammar admits
+`asset`, a name, `=`, a plain string literal naming a file relative to the
+project root (an interpolated string is a parse error here), and optionally
+`at` and a second plain string literal: a fixed URL path to serve the file at.
+`at` is contextual, recognised only in this position. The grammar admits
 an `asset` in any body. Placement (contexts and commons only), the path rules,
 and the declared name's type are well-formedness: §5.12.
 

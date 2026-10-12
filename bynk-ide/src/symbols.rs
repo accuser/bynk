@@ -1487,8 +1487,12 @@ pub(crate) fn describe_messages(m: &MessagesDecl) -> String {
 /// #1883, slice 1a: an `asset` declaration's markdown — the declaration
 /// itself, the rule that it is public, then its doc.
 pub(crate) fn describe_asset(a: &AssetDecl) -> String {
+    let at =
+        a.at.as_ref()
+            .map(|(p, _)| format!(" at \"{}\"", bynk_fmt::escape_string(p)))
+            .unwrap_or_default();
     let mut out = format!(
-        "```bynk\nasset {} = \"{}\"\n```\n\nPublic: served by the platform, never by the Worker.\n",
+        "```bynk\nasset {} = \"{}\"{at}\n```\n\nPublic: served by the platform, never by the Worker.\n",
         a.name.name,
         bynk_fmt::escape_string(&a.path)
     );

@@ -388,6 +388,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An `asset` name is declared more than once in the same unit.",
     ),
     d(
+        "bynk.asset.invalid_at_path",
+        "An `asset`'s `at` path is not a URL path naming one file, or lies under `/_assets/` or `/_bynk/`.",
+    ),
+    warn(d(
+        "bynk.asset.may_shadow_route",
+        "A parameterised HTTP route matches a fixed asset path, so it never sees requests for that path (a warning).",
+    )),
+    d(
         "bynk.asset.missing_file",
         "An `asset` names a file that is not in the project's `assets/` folder.",
     ),
@@ -406,6 +414,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.asset.outside_context_or_commons",
         "An `asset` declaration appears outside a context or commons.",
+    ),
+    d(
+        "bynk.asset.path_conflict",
+        "Two different asset files would be served at one fixed path by the same Worker.",
+    ),
+    d(
+        "bynk.asset.shadows_route",
+        "A fixed asset path equals a literal HTTP route, which the platform-served asset makes unreachable.",
     ),
     d(
         "bynk.asset.unsafe_path",

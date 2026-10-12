@@ -1722,7 +1722,24 @@ it MUST NOT appear in a record field, a sum-variant payload, a boundary
 position, or an agent `store` field (`bynk.types.asset_at_boundary`); its `.url`
 may.
 
-**Translation.** An asset's `.url` is
+**Fixed paths** (`asset favicon = "assets/favicon.ico" at "/favicon.ico"`), for
+clients that fetch a file by name without reading a page:
+
+- The `at` path MUST be a URL path naming one file: starting with `/`, not
+  ending in `/`, with no empty, `.` or `..` segment, only `[A-Za-z0-9._~-]`
+  between slashes, and not under `/_assets/` or `/_bynk/`
+  (`bynk.asset.invalid_at_path`). The asset's `.url` is that path.
+- A Worker MUST NOT serve two different files at one fixed path
+  (`bynk.asset.path_conflict`).
+- The platform answers a fixed path before the Worker runs, for every method.
+  So a context's HTTP route equal to a fixed path its Worker serves is
+  unreachable (`bynk.asset.shadows_route`), and a parameterised route that
+  matches one (`/:page`) no longer sees that path (the warning
+  `bynk.asset.may_shadow_route`).
+- HTTP routes MUST NOT use the `/_assets/` prefix, where content-hashed assets
+  are served (`bynk.http.reserved_prefix`).
+
+**Translation.** A content-hashed asset's `.url` is
 `/_assets/<stem>.<hash>.<ext>`: `<hash>` is the FNV-1a 64 of the file's
 content as 16 lowercase hex digits, `<stem>` and `<ext>` the file name's,
 split at its last `.` (no `.<ext>` when it has none), with any character
@@ -1731,9 +1748,12 @@ content, so builds are reproducible, and a content change changes the URL. The
 declaring unit's module exports the asset as a constant of TypeScript type
 `{ readonly url: string }`; a unit that uses it imports it like a function.
 
-On the Workers target, each context's Worker ships the files declared by the
-context and by every commons in its **transitive** `uses` closure — wider than
-name visibility, since a used commons may return another's `.url`. They are
+On the Workers target, each context's Worker ships the content-hashed files
+declared by every unit it reaches over `uses` **and** `consumes`, transitively —
+wider than name visibility, since a used commons, or a consumed context's
+service, may hand back another unit's `.url`, which then resolves against this
+Worker. Fixed-path files ship only over `uses`: they belong to the root of the
+Worker that declares them. They are
 written to the Worker's `assets/` directory, beside (never containing) its
 code, under their served paths, with a `_headers` file giving `/_assets/*`
 `Cache-Control: public, max-age=31536000, immutable`. Its `wrangler.toml`

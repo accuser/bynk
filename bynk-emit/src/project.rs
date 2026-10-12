@@ -139,11 +139,6 @@ pub struct Artefacts {
 /// [`worker_assets_dir`] / [`is_worker_asset_path`] so the two can't drift.
 pub const WORKER_ASSETS_DIR: &str = "assets";
 
-/// #1883: the URL path prefix every asset is served under
-/// (`bynk_check::assets::SERVED_PREFIX`), re-exported for the driver and the
-/// deploy lock, which read a Worker's served files back.
-pub use bynk_check::assets::SERVED_PREFIX as SERVED_ASSETS_PREFIX;
-
 /// #1883, slice 0: `workers/<dashes>/<WORKER_ASSETS_DIR>`, the output-root-
 /// relative directory holding one Worker's static assets.
 pub fn worker_assets_dir(dashes: &str) -> PathBuf {
@@ -1989,6 +1984,8 @@ fn run_checks(
         (None, _) => None,
     };
     bynk_check::assets::phase_asset_files(&parsed, available_assets.as_ref(), &mut errors);
+    // #1883, slice 2: fixed asset paths against each Worker's routes.
+    bynk_check::assets::phase_asset_routes(&parsed, &groups, &kinds, &unit_uses, &mut errors);
     // A deployable Bundle build (no tests: `bynkc compile` without
     // `--target workers`) ships no files, so each asset's `.url` would 404:
     // say so. `bynkc test` also builds a Bundle, with tests, and stays quiet.
@@ -2719,6 +2716,7 @@ fn build_output(
                 let deployed = bynk_check::assets::deployed_assets(
                     ctx_name,
                     &unit_uses,
+                    &unit_consumes,
                     &unit_tables,
                     &asset_served,
                 );

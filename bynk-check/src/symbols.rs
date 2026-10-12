@@ -690,6 +690,7 @@ pub fn build_unit_table(
                 );
                 continue;
             }
+            errors.extend(crate::assets::at_path_error(a));
             if let Some(err) = crate::assets::path_errors(a) {
                 errors.push(err);
                 // Still registered below: the declaration is otherwise

@@ -1,0 +1,15 @@
+context compat.board
+
+consumes compat.widgets
+
+---
+The site icon, fetched by name by browsers that never read the page.
+---
+asset favicon = "assets/favicon.ico" at "/favicon.ico"
+
+service web from http {
+  on GET("/") () -> Effect[HttpResult[String]] by Visitor {
+    let html <- compat.widgets.fragment()
+    Ok("<link rel=\"icon\" href=\"\(favicon.url)\">\(html)")
+  }
+}

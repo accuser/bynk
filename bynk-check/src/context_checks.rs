@@ -3524,6 +3524,20 @@ fn validate_http_handler(
             .with_note("paths under `/_bynk/` are reserved for internal Bynk dispatch"),
         );
     }
+    // #1883, slice 2: `/_assets/` is where content-hashed static assets are
+    // served, before the Worker runs, so a handler there could be shadowed by
+    // any asset; the prefix is reserved outright.
+    let assets_dir = crate::assets::SERVED_PREFIX.trim_end_matches('/');
+    if path == assets_dir || path.starts_with(crate::assets::SERVED_PREFIX) {
+        errors.push(
+            CompileError::new(
+                "bynk.http.reserved_prefix",
+                handler.span,
+                format!("HTTP path `{path}` uses the reserved `{}` prefix", crate::assets::SERVED_PREFIX),
+            )
+            .with_note("paths under `/_assets/` are reserved for static assets, which the platform serves before the Worker runs"),
+        );
+    }
     // Parse segments and collect path-parameter names.
     let mut path_param_names: Vec<&str> = Vec::new();
     for seg in path.split('/').filter(|s| !s.is_empty()) {
