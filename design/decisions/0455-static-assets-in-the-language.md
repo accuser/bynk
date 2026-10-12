@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A context or commons declares a static file with `asset name = "path"`, a value of the new built-in type `Asset` whose `.url` is a `String`; declarations are checked, and a build refuses them with `bynk.asset.not_yet_emitted` until they can be emitted (static assets, slice 1a)
----
+# 0455 — Static assets are declared in the language, as values of a built-in `Asset` type
 
-## ADR: static-assets-in-the-language
-title: Static assets are declared in the language, as values of a built-in `Asset` type
-summary: `asset name = "path"` in a context or commons; the name is an `Asset` whose `.url` is the content-hashed URL
+- **Status:** Accepted (v0.327)
 
 **Context.** A context had no way to ship a static file: a stylesheet or icon
 was a string literal returned by a function and served through `Raw`, a Worker
