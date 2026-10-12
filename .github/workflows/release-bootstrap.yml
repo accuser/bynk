@@ -88,7 +88,7 @@ jobs:
           exit "$fail"
       # #1676: the same harness and profile as ci.yml's and release.yml's test
       # legs (.config/nextest.toml's `ci` profile), pinned the same way.
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         if: ${{ inputs.run_tests }}
         with:
           tool: nextest@0.9
