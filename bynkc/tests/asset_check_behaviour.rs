@@ -8,6 +8,9 @@
 //! - `bynkc compile --target workers` writes the hashed file and `_headers`
 //!   into the Worker's assets directory (slice 1b), read from the project's
 //!   `assets/` folder by the driver.
+//! - Only the files a declaration names are read: the folder is listed up
+//!   front, and a file nothing declares — however large, or unreadable —
+//!   never is (review of #1904).
 //!
 //! Each case works in its own directory under `CARGO_TARGET_TMPDIR`: the CLI
 //! may write a schema lock beside its input.
@@ -251,4 +254,186 @@ fn fixed_paths_stay_home_and_consumed_hashed_files_ship() {
         keys("compat-widgets"),
         vec!["_assets/badge.<hash>.svg", "_headers", "robots.txt"]
     );
+}
+
+/// The fixture's `assets/` folder, listed from disk, plus an undeclared
+/// `assets/huge.bin` — read through a reader that records every key it is
+/// asked for and refuses `huge.bin`, as an unreadable or enormous file would.
+fn recording_folder(
+    root: &Path,
+    refuse: &'static str,
+) -> (
+    bynk_emit::project::assets::AssetFolder,
+    std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+) {
+    use bynk_emit::project::assets::AssetFolder;
+    let disk = AssetFolder::on_disk(root).unwrap();
+    let mut files = disk.files().clone();
+    files.insert("assets/huge.bin".to_string());
+    let reads = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = reads.clone();
+    let folder = AssetFolder::new(
+        files,
+        std::sync::Arc::new(move |key: &str| {
+            log.lock().unwrap().push(key.to_string());
+            if key == refuse {
+                return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+            }
+            disk.read(key)
+        }),
+    );
+    (folder, reads)
+}
+
+fn fixture_options(folder: bynk_emit::project::assets::AssetFolder) -> bynkc::CompileOptions {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/positive/1883_asset_workers");
+    let paths = bynkc::try_read_project_paths(&root).expect("well-formed fixture manifest");
+    bynk_testkit::compile_options_split(root, paths)
+        .target(bynkc::BuildTarget::Workers)
+        .asset_files(folder)
+}
+
+/// Review of #1904: a file in `assets/` that no declaration names is listed
+/// but never read, so a large media file there costs a build nothing — and an
+/// unreadable one does not break it. Each declared file is read once.
+#[test]
+fn a_build_reads_only_the_declared_files() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/positive/1883_asset_workers");
+    let (folder, reads) = recording_folder(&root, "assets/huge.bin");
+    let out = bynkc::compile_project(&fixture_options(folder))
+        .unwrap_or_else(|f| panic!("compile failed: {} error(s)", f.errors.len()));
+    assert_eq!(
+        out.artefacts.assets,
+        compile_fixture(bynkc::BuildTarget::Workers)
+            .artefacts
+            .assets,
+        "the undeclared file changes nothing"
+    );
+
+    let mut reads = reads.lock().unwrap().clone();
+    assert!(
+        !reads.iter().any(|k| k == "assets/huge.bin"),
+        "an undeclared file is never read: {reads:?}"
+    );
+    let total = reads.len();
+    reads.sort();
+    reads.dedup();
+    assert_eq!(
+        total,
+        reads.len(),
+        "each declared file is read once: {reads:?}"
+    );
+    assert_eq!(
+        reads,
+        vec!["assets/board.css", "assets/css/palette.css"],
+        "exactly the declared files"
+    );
+}
+
+/// A declared file the reader fails on is `bynk.asset.unreadable_file`, not a
+/// panic or a missing file.
+#[test]
+fn an_unreadable_declared_file_is_reported() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/positive/1883_asset_workers");
+    let (folder, _) = recording_folder(&root, "assets/board.css");
+    let Err(failure) = bynkc::compile_project(&fixture_options(folder)) else {
+        panic!("an unreadable declared file must fail the build");
+    };
+    let codes: Vec<_> = failure.errors.iter().map(|e| e.error.category).collect();
+    assert_eq!(codes, vec!["bynk.asset.unreadable_file"], "{codes:?}");
+}
+
+/// Through the real CLI: an undeclared file in `assets/` that cannot be read
+/// does not affect the build. (Skipped where permissions do not bite, e.g.
+/// as root.)
+#[cfg(unix)]
+#[test]
+fn an_unreadable_undeclared_file_does_not_affect_the_cli_build() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = project("asset-build-unreadable-undeclared", true);
+    let locked = dir.join("assets/locked.bin");
+    std::fs::write(&locked, b"secret").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read(&locked).is_ok() {
+        eprintln!(
+            "skipped: permissions do not stop this user reading `{}`",
+            locked.display()
+        );
+        return;
+    }
+    let out_dir = dir.join("out");
+    let (ok, out) = bynkc(
+        &[
+            "compile",
+            "--target",
+            "workers",
+            "--output",
+            out_dir.to_str().unwrap(),
+        ],
+        &dir,
+    );
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(ok, "the undeclared file must not be read, got:\n{out}");
+}
+
+/// Review of #1905: two declarations of one file, in different units (one
+/// spelled `./assets/…`), read it once; when that read fails, each
+/// declaration is reported, the first with the I/O error and without a second
+/// read for the other.
+#[test]
+fn a_file_declared_twice_is_read_once() {
+    let dir = project("asset-build-declared-twice", true);
+    std::fs::write(
+        dir.join("src/compat/extra.bynk"),
+        "commons compat.extra\n\nasset again = \"./assets/board.css\"\n",
+    )
+    .unwrap();
+    let options = |refuse: &'static str| {
+        let (folder, reads) = recording_folder(&dir, refuse);
+        let paths = bynkc::ProjectPaths::conventional(&dir);
+        let options = bynk_testkit::compile_options_split(dir.clone(), paths)
+            .target(bynkc::BuildTarget::Workers)
+            .asset_files(folder);
+        (options, reads)
+    };
+    let board_reads = |reads: &std::sync::Mutex<Vec<String>>| {
+        reads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| *k == "assets/board.css")
+            .count()
+    };
+
+    let (opts, reads) = options("assets/huge.bin");
+    if let Err(f) = bynkc::compile_project(&opts) {
+        panic!(
+            "compile failed: {:?}",
+            f.errors
+                .iter()
+                .map(|e| e.error.category)
+                .collect::<Vec<_>>()
+        );
+    }
+    assert_eq!(board_reads(&reads), 1, "read once for two declarations");
+
+    let (opts, reads) = options("assets/board.css");
+    let Err(failure) = bynkc::compile_project(&opts) else {
+        panic!("an unreadable declared file must fail the build");
+    };
+    assert_eq!(board_reads(&reads), 1, "a failed read is not retried");
+    let unreadable: Vec<_> = failure
+        .errors
+        .iter()
+        .filter(|e| e.error.category == "bynk.asset.unreadable_file")
+        .collect();
+    assert_eq!(unreadable.len(), 2, "one per declaration");
+    let with_io_note = unreadable
+        .iter()
+        .filter(|e| e.error.notes.iter().any(|n| n.contains("the read failed")))
+        .count();
+    assert_eq!(with_io_note, 1, "the I/O error is noted once");
 }

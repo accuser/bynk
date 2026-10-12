@@ -29,8 +29,10 @@ fn head() -> String {
 - **Path:** relative to the project root, and inside the project's `assets/`
   folder. Anything else is `bynk.asset.outside_assets_dir`; a path that is
   absolute or contains `..` is `bynk.asset.unsafe_path`. The file must exist
-  as a regular file (`bynk.asset.missing_file`); symbolic links are not
-  followed.
+  as a regular file (`bynk.asset.missing_file`) and be readable
+  (`bynk.asset.unreadable_file`); symbolic links are not followed. Only the
+  files a declaration names are read, so other files in `assets/` cost a
+  build nothing.
 - **Name:** a value of the built-in type `Asset`. Its one field, `.url`, is a
   `String`: the URL the file is served at. The name is in the same namespace
   as functions, so it may not repeat an asset (`bynk.asset.duplicate`), a

@@ -424,6 +424,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A fixed asset path equals a literal HTTP route, which the platform-served asset makes unreachable.",
     ),
     d(
+        "bynk.asset.unreadable_file",
+        "An `asset` names a file in the project's `assets/` folder that could not be read.",
+    ),
+    d(
         "bynk.asset.unsafe_path",
         "An `asset` path is empty, absolute, or contains a `..` segment.",
     ),

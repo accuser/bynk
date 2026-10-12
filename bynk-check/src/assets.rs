@@ -5,8 +5,10 @@
 //! the files each Worker ships.
 //!
 //! The checker stays disk-free (`bynk-wasm` compiles it with no filesystem):
-//! the project's `assets/` folder reaches it pre-read by the caller
-//! (`bynk_project::assets`), as a path set or as bytes.
+//! the project's `assets/` folder reaches it from the caller
+//! (`bynk_project::assets`), as a path set or as an
+//! [`AssetFolder`](bynk_project::assets::AssetFolder) whose reader it calls
+//! for the declared files alone ([`read_declared_files`]).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -507,6 +509,64 @@ pub fn phase_asset_files(
             }
         }
     }
+}
+
+/// The bytes of every declared asset file in `folder`, keyed by normalised
+/// path — read through the folder's reader once each, and only for a file a
+/// declaration names, so a large file nothing declares is never read. A
+/// declaration whose path fails [`path_errors`] or names no listed file is
+/// skipped ([`phase_asset_files`] reports the latter); a listed file the
+/// reader fails on is `bynk.asset.unreadable_file`, and is left out.
+pub fn read_declared_files(
+    parsed: &[ParsedFile],
+    folder: &bynk_project::assets::AssetFolder,
+    errors: &mut ErrorSink,
+) -> BTreeMap<String, Vec<u8>> {
+    let mut out = BTreeMap::new();
+    let mut failed: BTreeSet<String> = BTreeSet::new();
+    for pf in parsed {
+        for item in pf.items() {
+            let CommonsItem::Asset(a) = item else {
+                continue;
+            };
+            if path_errors(a).is_some() {
+                continue;
+            }
+            let key = bynk_project::assets::normalise_asset_path(&a.path);
+            if !folder.files().contains(&key) || out.contains_key(&key) {
+                continue;
+            }
+            if failed.contains(&key) {
+                // Reported once per declaration, read once per file.
+                errors.push_for(Some(&pf.identity_path()), unreadable_file_error(a, &key));
+                continue;
+            }
+            match folder.read(&key) {
+                Ok(bytes) => {
+                    out.insert(key, bytes);
+                }
+                Err(e) => {
+                    errors.push_for(
+                        Some(&pf.identity_path()),
+                        unreadable_file_error(a, &key).with_note(format!("the read failed: {e}")),
+                    );
+                    failed.insert(key);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn unreadable_file_error(a: &AssetDecl, key: &str) -> CompileError {
+    CompileError::new(
+        "bynk.asset.unreadable_file",
+        a.path_span,
+        format!(
+            "asset `{}` names `{key}`, which could not be read",
+            a.name.name
+        ),
+    )
 }
 
 /// `bynk.asset.needs_project` for `a`: a single-file build emits one module

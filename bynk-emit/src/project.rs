@@ -399,18 +399,21 @@ pub struct CompileOptions {
     /// `bynk-driver`'s `project_options`/`try_project_options` read the
     /// manifest and set it, as does `bynkc/tests/e2e.rs` for a fixture.
     pub compatibility_flags: Vec<String>,
-    /// #1883, slice 1b: the files in the project's `assets/` folder, keyed by
-    /// normalised project-relative path (`assets/board.css`) — pre-read by
-    /// the caller with `bynk_project::assets::read_asset_files`, the way
-    /// `sources` and `schema_registry` are, so `bynk-emit` never reads the
-    /// disk. `bynk-driver`'s `project_options`/`try_project_options` and
-    /// `bynk-testkit`'s `compile_options_*` set it.
+    /// #1883, slice 1b: the project's `assets/` folder — its files, keyed by
+    /// normalised project-relative path (`assets/board.css`), listed by the
+    /// caller, and a reader for their bytes
+    /// ([`assets::AssetFolder`], usually `AssetFolder::on_disk`). The build
+    /// reads only the files an `asset` declaration names, once each, through
+    /// that reader, so `bynk-emit` never touches the disk and a large file
+    /// nothing declares is never read. `bynk-driver`'s
+    /// `project_options`/`try_project_options` and `bynk-testkit`'s
+    /// `compile_options_*` set it.
     ///
     /// `None` means no filesystem was consulted (`compile_in_memory`, the
     /// playground). A check then skips the existence check; a build treats it
     /// as an empty folder, so an asset there is `bynk.asset.missing_file`
     /// rather than a URL made up for a file nobody read.
-    pub asset_files: Option<BTreeMap<String, Vec<u8>>>,
+    pub asset_files: Option<assets::AssetFolder>,
 }
 
 impl CompileOptions {
@@ -513,9 +516,9 @@ impl CompileOptions {
         self
     }
 
-    /// #1883, slice 1b: the pre-read `assets/` folder. See the field's own doc.
-    pub fn asset_files(mut self, files: BTreeMap<String, Vec<u8>>) -> Self {
-        self.asset_files = Some(files);
+    /// #1883, slice 1b: the listed `assets/` folder. See the field's own doc.
+    pub fn asset_files(mut self, folder: assets::AssetFolder) -> Self {
+        self.asset_files = Some(folder);
         self
     }
 }
@@ -612,7 +615,6 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         options.import_ext,
         options.roots.project_root(),
         &options.compatibility_flags,
-        options.asset_files.as_ref(),
     )
 }
 
@@ -746,7 +748,7 @@ pub fn compile_in_memory(
         None,
         tys,
     );
-    finish_build(run, ImportExt::Js, Path::new(""), &[], None)
+    finish_build(run, ImportExt::Js, Path::new(""), &[])
 }
 
 /// [`compile_in_memory`] for several files (#1830): each `(path, source)` pair
@@ -785,7 +787,7 @@ pub(crate) fn compile_files_in_memory(
         None,
         tys,
     );
-    finish_build(run, ImportExt::Js, Path::new(""), &[], None)
+    finish_build(run, ImportExt::Js, Path::new(""), &[])
 }
 
 /// Analyse a single **in-memory** Bynk source and return all diagnostics —
@@ -932,8 +934,6 @@ fn finish_build(
     import_ext: ImportExt,
     display_root: &Path,
     compatibility_flags: &[String],
-    // #1883, slice 1b: the pre-read `assets/` folder, for the Workers' files.
-    asset_files: Option<&BTreeMap<String, Vec<u8>>>,
 ) -> Result<ProjectOutput, ProjectFailure> {
     let (flags, _) = crate::compatibility_flags(compatibility_flags);
     let flag_warnings = compatibility_flag_warnings(compatibility_flags);
@@ -975,6 +975,7 @@ fn finish_build(
             npm_deps,
             target,
             schema_registry,
+            asset_bytes,
             ..
         } => {
             let mut out = build_output(
@@ -997,7 +998,7 @@ fn finish_build(
                 target,
                 import_ext,
                 &flags,
-                asset_files,
+                asset_bytes.as_ref(),
             );
             // ADR 0117: surface non-failing warnings on the successful build
             // (errors is empty here — the guard arm above caught any).
@@ -1761,6 +1762,10 @@ enum RunChecks {
         // `ProjectOutput::schema_lock`. `None` when `schema_registry` was
         // `SchemaLock::Off` (#1078) — nothing for a caller to persist.
         schema_registry: Option<schema_registry::SchemaRegistry>,
+        // #1883, slice 1b: the bytes of each declared asset file, by
+        // normalised path ([`bynk_check::assets::read_declared_files`]), for
+        // the Workers' files. `None` when no folder was listed.
+        asset_bytes: Option<BTreeMap<String, Vec<u8>>>,
     },
 }
 
@@ -1797,11 +1802,11 @@ fn run_checks(
     // naming *which* project's lock file is corrupt, now that #1078 made
     // `bynk-emit` disk-free (and so path-blind) for this file.
     project_root: &Path,
-    // #1883, slice 1b: the pre-read `assets/` folder
+    // #1883, slice 1b: the listed `assets/` folder
     // (`CompileOptions::asset_files`). `None` when no filesystem was
     // consulted: a check then skips the existence check, a build treats it as
     // empty.
-    asset_files: Option<&BTreeMap<String, Vec<u8>>>,
+    asset_files: Option<&assets::AssetFolder>,
     tys: &Arc<Types>,
 ) -> RunChecks {
     let mut errors = ErrorSink::new();
@@ -1977,13 +1982,17 @@ fn run_checks(
 
     // -- 6a0. #1883, slice 1b: every declared asset names a file in the
     //         `assets/` folder. A build with no folder read checks against an
-    //         empty one; a check with none skips this.
-    let available_assets: Option<BTreeSet<String>> = match (asset_files, mode) {
-        (Some(files), _) => Some(files.keys().cloned().collect()),
-        (None, Mode::Build) => Some(BTreeSet::new()),
+    //         empty one; a check with none skips this. Then the declared files
+    //         alone are read, through the folder's reader.
+    let no_assets = BTreeSet::new();
+    let available_assets: Option<&BTreeSet<String>> = match (asset_files, mode) {
+        (Some(folder), _) => Some(folder.files()),
+        (None, Mode::Build) => Some(&no_assets),
         (None, _) => None,
     };
-    bynk_check::assets::phase_asset_files(&parsed, available_assets.as_ref(), &mut errors);
+    bynk_check::assets::phase_asset_files(&parsed, available_assets, &mut errors);
+    let asset_bytes = asset_files
+        .map(|folder| bynk_check::assets::read_declared_files(&parsed, folder, &mut errors));
     // #1883, slice 2: fixed asset paths against each Worker's routes.
     bynk_check::assets::phase_asset_routes(&parsed, &groups, &kinds, &unit_uses, &mut errors);
     // A deployable Bundle build (no tests: `bynkc compile` without
@@ -2165,7 +2174,8 @@ fn run_checks(
     // #1883, slice 1b: each declared asset's served URL path, by normalised
     // source path — what its `.url` constant holds. Empty when no folder was
     // read (a missing file is already `bynk.asset.missing_file`).
-    let asset_served = asset_files
+    let asset_served = asset_bytes
+        .as_ref()
         .map(|files| bynk_check::assets::declared_served_paths(&parsed, files))
         .unwrap_or_default();
 
@@ -2415,6 +2425,7 @@ fn run_checks(
         npm_deps,
         target,
         schema_registry: schema_registry_doc,
+        asset_bytes,
     }
 }
 
@@ -2457,8 +2468,8 @@ fn build_output(
     import_ext: ImportExt,
     // #1890: the merged `wrangler.toml` flag list (`finish_build` merges it).
     compatibility_flags: &[String],
-    // #1883, slice 1b: the pre-read `assets/` folder; each Worker ships the
-    // files its `uses` closure declares.
+    // #1883, slice 1b: the declared asset files' bytes; each Worker ships
+    // the files its `uses` closure declares.
     asset_files: Option<&BTreeMap<String, Vec<u8>>>,
 ) -> ProjectOutput {
     // #1883, slice 1b: each declared asset's served path, and the files the
