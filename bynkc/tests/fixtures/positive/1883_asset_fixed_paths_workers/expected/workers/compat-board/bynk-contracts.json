@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "provides": {},
+  "expects": {
+    "compat.widgets": {
+      "fragment": "611920cdc38d1482"
+    }
+  }
+}

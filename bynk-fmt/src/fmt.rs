@@ -1309,6 +1309,9 @@ impl<'a> Formatter<'a> {
             a.name.name,
             escape_string(&a.path)
         ));
+        if let Some((at, _)) = &a.at {
+            self.push(&format!(" at \"{}\"", escape_string(at)));
+        }
         self.emit_trailing_comment_or_newline(a.trivia.trailing.as_deref());
     }
 

@@ -141,8 +141,13 @@ fn a_workers_build_writes_the_hashed_file_and_headers() {
 /// The positive fixture `1883_asset_workers`, compiled in-process: what the
 /// e2e golden files cannot show (they compare documents, never `assets`).
 fn compile_fixture(target: bynkc::BuildTarget) -> bynkc::ProjectOutput {
+    compile_named_fixture("1883_asset_workers", target)
+}
+
+fn compile_named_fixture(name: &str, target: bynkc::BuildTarget) -> bynkc::ProjectOutput {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/positive/1883_asset_workers");
+        .join("tests/fixtures/positive")
+        .join(name);
     let paths = bynkc::try_read_project_paths(&root).expect("well-formed fixture manifest");
     bynkc::compile_project(&bynk_testkit::compile_options_split(root, paths).target(target))
         .unwrap_or_else(|f| panic!("compile failed: {} error(s)", f.errors.len()))
@@ -213,6 +218,41 @@ fn a_deployable_bundle_build_warns_that_its_assets_are_not_served() {
             .iter()
             .any(|w| w.error.category == "bynk.asset.not_served"),
         "a build with tests (as `bynkc test` compiles) does not warn"
+    );
+}
+
+/// #1883, slice 2, on `1883_asset_fixed_paths_workers`: `compat.board`
+/// consumes `compat.widgets` and serves its fragment, so it ships the widget's
+/// content-hashed badge — but not the widget's fixed `/robots.txt`, which
+/// stays at the root of the widget's own Worker. Its own `/favicon.ico` sits
+/// at the root of its assets directory, outside `_assets/`.
+#[test]
+fn fixed_paths_stay_home_and_consumed_hashed_files_ship() {
+    let out = compile_named_fixture(
+        "1883_asset_fixed_paths_workers",
+        bynkc::BuildTarget::Workers,
+    );
+    let keys = |worker: &str| -> Vec<String> {
+        let prefix = format!("workers/{worker}/assets/");
+        out.artefacts
+            .assets
+            .keys()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .filter_map(|k| k.strip_prefix(&prefix).map(str::to_string))
+            .map(|k| match k.strip_prefix("_assets/badge.") {
+                // Elide the content hash, which the fixture's bytes fix anyway.
+                Some(_) => "_assets/badge.<hash>.svg".to_string(),
+                None => k,
+            })
+            .collect()
+    };
+    assert_eq!(
+        keys("compat-board"),
+        vec!["_assets/badge.<hash>.svg", "_headers", "favicon.ico"]
+    );
+    assert_eq!(
+        keys("compat-widgets"),
+        vec!["_assets/badge.<hash>.svg", "_headers", "robots.txt"]
     );
 }
 

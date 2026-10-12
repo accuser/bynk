@@ -770,6 +770,8 @@ syntactically permitted in a `commons`/`adapter` body too, the same way
 Worker, public by construction. `name` is a value of the built-in type `Asset`,
 whose `.url` is the file's content-hashed URL. The path is a plain string
 literal, relative to the project root, naming a file in its `assets/` folder.
+An optional `at "/path"` serves it at that fixed URL path instead of a
+content-hashed one (`at` is contextual, matched only here).
 Placement (a context or commons, never an adapter) and the path rules (not
 empty, not absolute, no `..` segment, inside `assets/`, the file exists) are
 checker concerns, not grammar ones: this rule is admitted in every body, like

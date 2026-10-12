@@ -388,6 +388,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     //         every asset in the editor.
     let available_assets = bynk_project::assets::list_asset_files(roots.project_root()).ok();
     crate::assets::phase_asset_files(&parsed, available_assets.as_ref(), &mut errors);
+    crate::assets::phase_asset_routes(&parsed, &groups, &kinds, &unit_uses, &mut errors);
 
     // -- 6a'. message-bundles slice 1 (#859): messages-block legality,
     //         @reference cardinality, within-block duplicate codes, and the

@@ -545,6 +545,16 @@
     "type": "asset_decl",
     "named": true,
     "fields": {
+      "at": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -11325,6 +11335,10 @@
   },
   {
     "type": "asset",
+    "named": false
+  },
+  {
+    "type": "at",
     "named": false
   },
   {

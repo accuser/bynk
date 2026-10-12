@@ -1,0 +1,1 @@
+bynk.asset.shadows_route `GET /favicon.ico` is unreachable: the asset `assets/favicon.ico` is served at `/favicon.ico`

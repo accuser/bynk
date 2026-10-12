@@ -675,6 +675,11 @@ pub struct AssetDecl {
     pub name: Ident,
     pub path: String,
     pub path_span: Span,
+    /// `at "/favicon.ico"` (#1883, slice 2, [DECISION C]): a fixed URL path
+    /// to serve the file at, for clients that fetch a file by name without
+    /// reading a page (`favicon.ico`, `robots.txt`). `None` serves it at a
+    /// content-hashed path under `/_assets/`. With its span, for diagnostics.
+    pub at: Option<(String, Span)>,
     pub documentation: Option<Doc>,
     pub span: Span,
     pub trivia: Trivia,

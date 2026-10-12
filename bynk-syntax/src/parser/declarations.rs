@@ -3236,12 +3236,25 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident("after `asset`")?;
         self.expect(TokenKind::Eq, "after the asset name")?;
         let (path, path_span) = self.expect_str_lit("for the asset's file path")?;
+        // #1883, slice 2: an optional `at "/path"`. `at` is contextual —
+        // matched only here, lexed as an ordinary identifier — like `embeds`.
+        // Nothing else can follow an asset's path on its line (every item
+        // starts with a keyword), so this never misreads a following item.
+        let at = if matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "at")
+        {
+            self.bump();
+            Some(self.expect_str_lit("for the asset's fixed URL path, after `at`")?)
+        } else {
+            None
+        };
+        let end = at.as_ref().map_or(path_span, |(_, span)| *span);
         Ok(AssetDecl {
             name,
             path,
             path_span,
+            at,
             documentation: None,
-            span: kw.span.merge(path_span),
+            span: kw.span.merge(end),
             trivia: Trivia::default(),
         })
     }

@@ -399,13 +399,16 @@ pub(crate) fn emit_project(
     // function (`record_name_ref`).
     for item in &commons.commons.items {
         if let CommonsItem::Asset(a) = item {
-            let key = crate::project::assets::normalise_asset_path(&a.path);
-            let url = ctx.asset_served.get(&key).cloned().unwrap_or_else(|| {
-                panic!(
-                    "bynk internal error: asset `{}` reached emission without a served path",
-                    a.name.name
-                )
-            });
+            let url = ctx
+                .asset_served
+                .get(&bynk_check::assets::asset_key(a))
+                .cloned()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "bynk internal error: asset `{}` reached emission without a served path",
+                        a.name.name
+                    )
+                });
             body.push(bynk_ts::TsStmt::decl(
                 bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
                     name: ts_ident(&a.name.name),

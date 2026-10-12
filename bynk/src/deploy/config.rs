@@ -285,26 +285,34 @@ const CONTRACTS_MANIFEST_VERSION: u32 = 1;
 /// compiler predating this file has none either. An *unreadable* or
 /// *unparseable* one is an error — it sits beside the config we just read, so a
 /// failure there means the tree is damaged rather than merely old.
-/// #1883, slice 1b: the served paths of the static files a compiled Worker
-/// ships — every file under its `assets/_assets/` directory, as
-/// `/_assets/<name>` — for the deploy lock. No directory is an empty set (a
-/// Worker with no assets). The names already carry their content hashes, so
-/// no manifest is needed.
+/// #1883: the served paths of the static files a compiled Worker ships —
+/// every file under its assets directory, as the URL path it is served at
+/// (`/_assets/board.<hash>.css`, and since slice 2 fixed paths such as
+/// `/favicon.ico`), except the platform's own `_headers` — for the deploy
+/// lock. No directory is an empty set (a Worker with no assets). A hashed name
+/// already carries its content hash, so no manifest is needed.
 pub(crate) fn served_assets(worker_dir: &Path) -> BTreeSet<String> {
-    // Both spellings come from the one served prefix (review of #1904).
-    let prefix = bynk_emit::project::SERVED_ASSETS_PREFIX;
-    let dir = worker_dir
-        .join(bynk_emit::project::WORKER_ASSETS_DIR)
-        .join(prefix.trim_matches('/'));
-    std::fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-                .map(|e| format!("{prefix}{}", e.file_name().to_string_lossy()))
-                .collect()
-        })
-        .unwrap_or_default()
+    fn walk(dir: &Path, url: &str, out: &mut BTreeSet<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Ok(ty) = entry.file_type() else { continue };
+            if ty.is_dir() {
+                walk(&entry.path(), &format!("{url}{name}/"), out);
+            } else if ty.is_file() && !(url == "/" && name == "_headers") {
+                out.insert(format!("{url}{name}"));
+            }
+        }
+    }
+    let mut out = BTreeSet::new();
+    walk(
+        &worker_dir.join(bynk_emit::project::WORKER_ASSETS_DIR),
+        "/",
+        &mut out,
+    );
+    out
 }
 
 pub(crate) fn read_contracts_manifest(worker_dir: &Path) -> Result<ContractsManifest, String> {
@@ -978,11 +986,19 @@ mod served_assets_tests {
         std::fs::create_dir_all(dir.join("assets/_assets")).unwrap();
         std::fs::write(dir.join("assets/_assets/board.1a2b.css"), "a{}").unwrap();
         std::fs::write(dir.join("assets/_headers"), "x").unwrap();
+        // #1883, slice 2: a fixed path, at the root or nested.
+        std::fs::write(dir.join("assets/favicon.ico"), "i").unwrap();
+        std::fs::create_dir_all(dir.join("assets/.well-known")).unwrap();
+        std::fs::write(dir.join("assets/.well-known/security.txt"), "s").unwrap();
         let served = served_assets(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(
             served.into_iter().collect::<Vec<_>>(),
-            vec!["/_assets/board.1a2b.css".to_string()]
+            vec![
+                "/.well-known/security.txt".to_string(),
+                "/_assets/board.1a2b.css".to_string(),
+                "/favicon.ico".to_string(),
+            ]
         );
     }
 }
