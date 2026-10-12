@@ -148,13 +148,26 @@ pub fn worker_assets_dir(dashes: &str) -> PathBuf {
 /// some Worker's assets directory — `workers/<dashes>/<WORKER_ASSETS_DIR>/…`,
 /// at any depth. The ownership rule `bynk-driver::output`'s reconciliation
 /// applies regardless of extension.
+///
+/// Every component after the assets directory must be a plain name
+/// (`Component::Normal`), not just present. Review of #1902: `components()`
+/// keeps `..`, so checking only that the tail was non-empty accepted
+/// `workers/x/assets/../../../../etc/x`, which the driver's `dir.join` would
+/// then write outside the output root, where reconciliation can never see
+/// it. Slice 1 derives these paths from source, so this is a security rule,
+/// not tidiness.
 pub fn is_worker_asset_path(rel: &Path) -> bool {
     use std::path::Component;
     let mut parts = rel.components();
+    let mut tail_len = 0usize;
     matches!(parts.next(), Some(Component::Normal(w)) if w == "workers")
         && matches!(parts.next(), Some(Component::Normal(_)))
         && matches!(parts.next(), Some(Component::Normal(a)) if a == WORKER_ASSETS_DIR)
-        && parts.next().is_some()
+        && parts.all(|c| {
+            tail_len += 1;
+            matches!(c, Component::Normal(_))
+        })
+        && tail_len > 0
 }
 
 /// One typed output document. No `String` at construction for TypeScript or
@@ -4046,6 +4059,11 @@ mod tests {
             "assets/x.css",
             "compat/assets/x.css",
             "workers/compat-board/sub/assets/x.css",
+            // Review of #1902: `components()` keeps `..`, and `dir.join`
+            // would then write outside the output root entirely.
+            "workers/compat-board/assets/../../../../etc/cron.d/x",
+            "workers/compat-board/assets/_assets/../x.css",
+            "workers/compat-board/assets/..",
         ];
         for p in not_owned {
             assert!(!is_worker_asset_path(Path::new(p)), "{p} is not owned");

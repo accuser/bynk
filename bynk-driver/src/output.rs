@@ -35,6 +35,14 @@ pub fn write_output(out: &ProjectOutput, dir: &Path) -> std::io::Result<()> {
         write_document(path, doc, &out.artefacts.docs, dir)?;
     }
     for (path, bytes) in &out.artefacts.assets {
+        // Review of #1902: a path in both maps would silently resolve to the
+        // asset, decided only by loop order. Unreachable while documents never
+        // land in an assets directory; this makes it a test failure if one does.
+        debug_assert!(
+            !out.artefacts.docs.contains_key(path),
+            "`{}` is both a document and a static asset",
+            path.display()
+        );
         write_asset(path, bytes, dir)?;
     }
     Ok(())
@@ -176,27 +184,39 @@ fn prune_stale_output_dir(
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
+        let rel = path.strip_prefix(root).unwrap_or(&path);
+        // #1883, slice 0: the compiler owns a Worker's assets directory
+        // outright. Review of #1902: that has to hold for every kind of
+        // entry there, or an asset the build stopped producing lingers and
+        // keeps being served.
+        let owned_asset = is_worker_asset_path(rel);
         if file_type.is_dir() {
             let is_own_cache = path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n == "node_modules" || n.starts_with('.'));
-            if is_own_cache {
+            // The `.git`/`node_modules` skip protects trees that live beside
+            // the compiler's output. Inside an assets directory there are no
+            // such trees, and a dot-directory (`.well-known/`) holds assets.
+            if is_own_cache && !owned_asset {
                 continue;
             }
             prune_stale_output_dir(root, &path, expected, dirs_visited)?;
             dirs_visited.push(path);
         } else if file_type.is_file() {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let rel = path.strip_prefix(root).unwrap_or(&path);
-            // #1883, slice 0: the compiler owns a Worker's assets directory
-            // outright, so there the extension filter does not apply — an
-            // asset keeps its source's extension (`.css`, `.png`, …) and the
-            // platform's `_headers` file has none.
-            let prunable = is_prunable_output_extension(ext) || is_worker_asset_path(rel);
+            // Inside an assets directory the extension filter does not apply:
+            // an asset keeps its source's extension (`.css`, `.png`, …) and
+            // the platform's `_headers` file has none.
+            let prunable = is_prunable_output_extension(ext) || owned_asset;
             if prunable && !expected.contains(rel) {
                 std::fs::remove_file(&path)?;
             }
+        } else if file_type.is_symlink() && owned_asset && !expected.contains(rel) {
+            // `DirEntry::file_type` does not follow links, so a symlink is
+            // neither `is_dir` nor `is_file`. `remove_file` removes the link
+            // itself, never its target.
+            std::fs::remove_file(&path)?;
         }
     }
     Ok(())
