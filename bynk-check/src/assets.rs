@@ -264,7 +264,8 @@ pub fn deployed_assets(
 /// ending in `/`, with no empty, `.` or `..` segment, and only
 /// `[A-Za-z0-9._~-]` between the slashes (so it needs no encoding). It may not
 /// lie under [`SERVED_PREFIX`] (the content-hashed files' space) or `/_bynk/`
-/// (Bynk's own dispatch).
+/// (Bynk's own dispatch), nor be one of the root files the platform reads as
+/// configuration (`/_headers`, `/_redirects`, `/.assetsignore`).
 pub fn at_path_reason(at: &str) -> Option<&'static str> {
     let Some(rest) = at.strip_prefix('/') else {
         return Some("it does not start with `/`");
@@ -290,6 +291,13 @@ pub fn at_path_reason(at: &str) -> Option<&'static str> {
     }
     if first == "_bynk" {
         return Some("it is under `/_bynk/`, which Bynk's own dispatch uses");
+    }
+    // Review of #1906: at the root of a Worker's assets directory these names
+    // are configuration, not files — the platform reads `_headers` and
+    // `_redirects`, wrangler reads `.assetsignore` — and the compiler writes
+    // its own `_headers` there.
+    if matches!(rest, "_headers" | "_redirects" | ".assetsignore") {
+        return Some("the platform reads that file as configuration, not as an asset");
     }
     None
 }
@@ -357,8 +365,8 @@ pub fn phase_asset_routes(
         if *kind != bynk_project::UnitKind::Context {
             continue;
         }
-        // Fixed paths this Worker serves: at -> (source, file, span).
-        let mut fixed: BTreeMap<String, (String, std::path::PathBuf)> = BTreeMap::new();
+        // Fixed paths this Worker serves: at -> source file.
+        let mut fixed: BTreeMap<String, String> = BTreeMap::new();
         for unit in closure(ctx, &[unit_uses]) {
             for &i in groups.get(unit).into_iter().flatten() {
                 for item in parsed[i].items() {
@@ -370,8 +378,29 @@ pub fn phase_asset_routes(
                         continue;
                     }
                     let source = bynk_project::assets::normalise_asset_path(&a.path);
+                    // Review of #1906: a path that is a folder of another
+                    // (`/logo` and `/logo/icon.png`) cannot be written, since
+                    // one name would be both a file and a directory.
+                    let nested = fixed.keys().find(|other| {
+                        other.starts_with(&format!("{at}/")) || at.starts_with(&format!("{other}/"))
+                    });
+                    if let Some(other) = nested {
+                        push(
+                            parsed[i].identity_path(),
+                            CompileError::new(
+                                "bynk.asset.path_conflict",
+                                *span,
+                                format!(
+                                    "the Worker for `{ctx}` cannot serve files at both `{other}` and `{at}`: one would be a folder of the other"
+                                ),
+                            )
+                            .with_note("a fixed asset path names one file, so it cannot also be a folder; give one of them another path"),
+                            errors,
+                        );
+                        continue;
+                    }
                     match fixed.get(at) {
-                        Some((prev, _)) if *prev != source => push(
+                        Some(prev) if *prev != source => push(
                             parsed[i].identity_path(),
                             CompileError::new(
                                 "bynk.asset.path_conflict",
@@ -385,7 +414,7 @@ pub fn phase_asset_routes(
                         ),
                         Some(_) => {}
                         None => {
-                            fixed.insert(at.clone(), (source, parsed[i].identity_path()));
+                            fixed.insert(at.clone(), source);
                         }
                     }
                 }
@@ -403,7 +432,7 @@ pub fn phase_asset_routes(
                     let HandlerKind::Http { method, path } = &h.kind else {
                         continue;
                     };
-                    for (at, (source, _)) in &fixed {
+                    for (at, source) in &fixed {
                         if !route_matches(path, at) {
                             continue;
                         }
@@ -951,6 +980,10 @@ mod tests {
             "/_assets/x.css",
             "/_assets",
             "/_bynk/x",
+            // Review of #1906: files the platform reads as configuration.
+            "/_headers",
+            "/_redirects",
+            "/.assetsignore",
         ] {
             assert!(at_path_reason(bad).is_some(), "{bad} is rejected");
         }
@@ -1026,6 +1059,12 @@ mod tests {
             "context c\n\nasset a = \"assets/favicon.ico\" at \"/_assets/favicon.ico\"\n",
         )])
         .assert_reports("bynk.asset.invalid_at_path");
+        // Review of #1906: one path cannot be both a file and a folder.
+        analyse(&[(
+            "c.bynk",
+            "context c\n\nasset logo = \"assets/favicon.ico\" at \"/logo\"\nasset icon = \"assets/other.ico\" at \"/logo/icon.ico\"\n",
+        )])
+        .assert_reports("bynk.asset.path_conflict");
     }
 
     /// Hashed assets ship over `uses` and `consumes`; fixed ones over `uses`

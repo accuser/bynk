@@ -19,8 +19,11 @@ resolves against the consuming Worker (raised in the review of #1904).
 - **`asset name = "path" at "/url"`** serves the file at that fixed path, and
   `.url` is that path. `at` is contextual, matched only in this position. The
   path must name one file, need no encoding, and stay out of `/_assets/` and
-  `/_bynk/` (`bynk.asset.invalid_at_path`); one Worker serves one file at a
-  path (`bynk.asset.path_conflict`).
+  `/_bynk/` or the root files the platform reads as configuration
+  (`/_headers`, `/_redirects`, `/.assetsignore`) (`bynk.asset.invalid_at_path`);
+  one Worker serves one file at a path, and no fixed path is a folder of
+  another (`bynk.asset.path_conflict`), so every check fails before a write
+  would (review of #1906).
 - **Shadowing is checked per Worker.** Checked against `wrangler dev`
   4.107.0, the platform answers an asset's path for **every** method (a `POST`
   gets its `405`), so a literal route equal to a fixed path is unreachable

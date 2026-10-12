@@ -1727,10 +1727,13 @@ clients that fetch a file by name without reading a page:
 
 - The `at` path MUST be a URL path naming one file: starting with `/`, not
   ending in `/`, with no empty, `.` or `..` segment, only `[A-Za-z0-9._~-]`
-  between slashes, and not under `/_assets/` or `/_bynk/`
-  (`bynk.asset.invalid_at_path`). The asset's `.url` is that path.
-- A Worker MUST NOT serve two different files at one fixed path
-  (`bynk.asset.path_conflict`).
+  between slashes, not under `/_assets/` or `/_bynk/`, and not one of the root
+  files the platform reads as configuration (`/_headers`, `/_redirects`,
+  `/.assetsignore`) (`bynk.asset.invalid_at_path`). The asset's `.url` is that
+  path.
+- A Worker MUST NOT serve two different files at one fixed path, nor files at
+  two fixed paths where one is a folder of the other (`/logo` and
+  `/logo/icon.png`) (`bynk.asset.path_conflict`).
 - The platform answers a fixed path before the Worker runs, for every method.
   So a context's HTTP route equal to a fixed path its Worker serves is
   unreachable (`bynk.asset.shadows_route`), and a parameterised route that

@@ -53,9 +53,10 @@ asset robots = "assets/robots.txt" at "/robots.txt"
 ```
 
 Its `.url` is then that path. A fixed path names one file: it starts with `/`,
-does not end with `/`, and is not under `/_assets/` or `/_bynk/`
-(`bynk.asset.invalid_at_path`). One Worker serves one file at a path
-(`bynk.asset.path_conflict`).
+does not end with `/`, is not under `/_assets/` or `/_bynk/`, and is not a file
+the platform reads as configuration (`/_headers`, `/_redirects`,
+`/.assetsignore`) (`bynk.asset.invalid_at_path`). One Worker serves one file at
+a path, and one path cannot be a folder of another (`bynk.asset.path_conflict`).
 
 The platform answers a fixed path before the Worker runs, for every method, so
 a route at exactly that path is unreachable (`bynk.asset.shadows_route`), and a
