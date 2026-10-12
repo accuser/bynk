@@ -299,6 +299,12 @@ The `content-type` is an opaque `String`, unvalidated — you own it. If you wri
 `Bytes.fromUtf8(s)`, the body is UTF-8, so a `content-type` claiming a different
 charset would mislead; keep them in step.
 
+A file that never changes per request — a stylesheet, a script or an icon
+beside a page a handler builds — is better shipped as a
+[static asset](/book/reference/assets/): the platform serves it without running
+the Worker, at a content-hashed URL cached for a year, and the handler links it
+through the asset's `.url`.
+
 A producer that can fail mid-stream carries its outcome in-band — build a
 `Stream[Result[String, E]]` and `.map` it to `Stream[String]`, encoding an `Err`
 as an error event — because the HTTP status is already sent once streaming

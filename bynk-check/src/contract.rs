@@ -325,10 +325,18 @@ pub fn canon_predicate(p: &PredKind) -> String {
 /// crosses a wire or is compared between two separately-compiled binaries. FNV-1a
 /// is fully specified, so two compilers agree forever.
 pub fn contract_hash(normal_form: &str) -> String {
+    fnv1a64_hex(normal_form.as_bytes())
+}
+
+/// FNV-1a (64-bit) over `bytes`, as 16 lowercase hex chars — [`contract_hash`]'s
+/// algorithm over raw bytes. #1883, slice 1b also uses it for an asset's
+/// content hash (`assets::served_path`), where the same reasoning holds: it
+/// only has to tell one project's own files apart, reproducibly.
+pub fn fnv1a64_hex(bytes: &[u8]) -> String {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut h = OFFSET;
-    for b in normal_form.as_bytes() {
+    for b in bytes {
         h ^= *b as u64;
         h = h.wrapping_mul(PRIME);
     }

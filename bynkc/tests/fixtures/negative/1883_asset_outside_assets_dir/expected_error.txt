@@ -1,0 +1,2 @@
+bynk.asset.outside_assets_dir asset `env` must name a file in the project's `assets/` folder
+bynk.asset.outside_assets_dir asset `source` must name a file in the project's `assets/` folder

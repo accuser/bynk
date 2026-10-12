@@ -87,6 +87,8 @@ use tests_emit::*;
 // module (emitter, main, lib) must stay reachable at that path.
 pub use bynk_check::project_model::BuildTarget;
 pub use bynk_check::symbols::{FileDeclIndex, UnitTable};
+// #1883, slice 1b: the `assets/` folder helpers, for the driver and testkit.
+pub use bynk_project::assets;
 pub use bynk_project::{
     AttributedError, ProjectPaths, ProjectPathsError, Roots, SchemaLock, UnitKind, WorkersConfig,
     check_manifest, check_manifest_str, discover_project_files, try_read_project_paths,
@@ -119,14 +121,15 @@ pub struct Artefacts {
     /// passes this map through untouched; `bynk-driver::output::write_output`
     /// writes and reconciles it alongside `docs`.
     ///
-    /// Always empty until slice 1 adds the `asset` declaration that fills it.
+    /// Filled by a Workers build (slice 1b, `build_output`) with each Worker's
+    /// files and `_headers`; always empty for a Bundle build.
     pub assets: BTreeMap<PathBuf, Vec<u8>>,
 }
 
 /// #1883, slice 0: the name of the directory, inside a Worker's own
 /// `workers/<dashes>/` output directory, that holds its static assets — the
-/// directory the generated `wrangler.toml`'s `[assets] directory` will name
-/// (slice 1). Separate from the Worker's own output so the compiled Worker and
+/// directory the generated `wrangler.toml`'s `[assets] directory` names
+/// (`emitter::wrangler::assets_block`). Separate from the Worker's own output so the compiled Worker and
 /// its source maps are never served as public assets.
 ///
 /// The compiler owns everything under it: `bynk-driver::output::write_output`
@@ -396,6 +399,18 @@ pub struct CompileOptions {
     /// `bynk-driver`'s `project_options`/`try_project_options` read the
     /// manifest and set it, as does `bynkc/tests/e2e.rs` for a fixture.
     pub compatibility_flags: Vec<String>,
+    /// #1883, slice 1b: the files in the project's `assets/` folder, keyed by
+    /// normalised project-relative path (`assets/board.css`) — pre-read by
+    /// the caller with `bynk_project::assets::read_asset_files`, the way
+    /// `sources` and `schema_registry` are, so `bynk-emit` never reads the
+    /// disk. `bynk-driver`'s `project_options`/`try_project_options` and
+    /// `bynk-testkit`'s `compile_options_*` set it.
+    ///
+    /// `None` means no filesystem was consulted (`compile_in_memory`, the
+    /// playground). A check then skips the existence check; a build treats it
+    /// as an empty folder, so an asset there is `bynk.asset.missing_file`
+    /// rather than a URL made up for a file nobody read.
+    pub asset_files: Option<BTreeMap<String, Vec<u8>>>,
 }
 
 impl CompileOptions {
@@ -411,6 +426,7 @@ impl CompileOptions {
             sources: None,
             schema_registry: SchemaLock::Off,
             compatibility_flags: Vec::new(),
+            asset_files: None,
         }
     }
 
@@ -431,6 +447,7 @@ impl CompileOptions {
             sources: None,
             schema_registry: SchemaLock::Off,
             compatibility_flags: Vec::new(),
+            asset_files: None,
         }
     }
 
@@ -493,6 +510,12 @@ impl CompileOptions {
     /// `bynk.toml`'s `[workers]` table. See the field's own doc.
     pub fn compatibility_flags(mut self, flags: Vec<String>) -> Self {
         self.compatibility_flags = flags;
+        self
+    }
+
+    /// #1883, slice 1b: the pre-read `assets/` folder. See the field's own doc.
+    pub fn asset_files(mut self, files: BTreeMap<String, Vec<u8>>) -> Self {
+        self.asset_files = Some(files);
         self
     }
 }
@@ -572,6 +595,7 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         options.tests,
         &options.schema_registry,
         options.roots.project_root(),
+        options.asset_files.as_ref(),
         tys,
     );
     // #1078: `bynk-emit` no longer writes `bynk.schema.lock` itself — the
@@ -588,6 +612,7 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         options.import_ext,
         options.roots.project_root(),
         &options.compatibility_flags,
+        options.asset_files.as_ref(),
     )
 }
 
@@ -656,6 +681,7 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
         // own era), preserved as-is by #1078, not introduced by it.
         &SchemaLock::Off,
         options.roots.project_root(),
+        options.asset_files.as_ref(),
         tys,
     );
     match run {
@@ -717,9 +743,10 @@ pub fn compile_in_memory(
         true,
         &SchemaLock::Off,
         &root,
+        None,
         tys,
     );
-    finish_build(run, ImportExt::Js, Path::new(""), &[])
+    finish_build(run, ImportExt::Js, Path::new(""), &[], None)
 }
 
 /// [`compile_in_memory`] for several files (#1830): each `(path, source)` pair
@@ -755,9 +782,10 @@ pub(crate) fn compile_files_in_memory(
         true,
         &SchemaLock::Off,
         &root,
+        None,
         tys,
     );
-    finish_build(run, ImportExt::Js, Path::new(""), &[])
+    finish_build(run, ImportExt::Js, Path::new(""), &[], None)
 }
 
 /// Analyse a single **in-memory** Bynk source and return all diagnostics —
@@ -825,6 +853,7 @@ pub fn analyse_in_memory_with_types(
         true,
         &SchemaLock::Off,
         &root,
+        None,
         tys,
     );
     match run {
@@ -903,6 +932,8 @@ fn finish_build(
     import_ext: ImportExt,
     display_root: &Path,
     compatibility_flags: &[String],
+    // #1883, slice 1b: the pre-read `assets/` folder, for the Workers' files.
+    asset_files: Option<&BTreeMap<String, Vec<u8>>>,
 ) -> Result<ProjectOutput, ProjectFailure> {
     let (flags, _) = crate::compatibility_flags(compatibility_flags);
     let flag_warnings = compatibility_flag_warnings(compatibility_flags);
@@ -966,6 +997,7 @@ fn finish_build(
                 target,
                 import_ext,
                 &flags,
+                asset_files,
             );
             // ADR 0117: surface non-failing warnings on the successful build
             // (errors is empty here — the guard arm above caught any).
@@ -1208,6 +1240,7 @@ fn emit_unit(
     pf: &ParsedFile,
     unit_ctx: &EmitUnitCtx,
     history_target_agents: &HashSet<String>,
+    asset_served: &BTreeMap<String, String>,
     unit_info: &BTreeMap<String, UnitInfo>,
     imported_from: &HashMap<String, String>,
     imported_from_kind: &HashMap<String, UnitKind>,
@@ -1356,6 +1389,7 @@ fn emit_unit(
         import_ext,
         contracts,
         history_target_agents: history_target_agents.clone(),
+        asset_served: asset_served.clone(),
         runtime_use: Default::default(),
     };
     // v0.72: the map's `source` is the absolute path the compiler read the file
@@ -1426,6 +1460,7 @@ fn check_unit_files(
     contracts: bool,
     agent_deps_plan: Option<&AgentDepsPlan>,
     history_target_agents: &HashSet<String>,
+    asset_served: &BTreeMap<String, String>,
     mode: Mode,
     errors: &mut ErrorSink,
     refs: &mut RefSink,
@@ -1567,6 +1602,7 @@ fn check_unit_files(
             pf,
             &unit_ctx,
             history_target_agents,
+            asset_served,
             unit_info,
             imported_from,
             imported_from_kind,
@@ -1761,6 +1797,11 @@ fn run_checks(
     // naming *which* project's lock file is corrupt, now that #1078 made
     // `bynk-emit` disk-free (and so path-blind) for this file.
     project_root: &Path,
+    // #1883, slice 1b: the pre-read `assets/` folder
+    // (`CompileOptions::asset_files`). `None` when no filesystem was
+    // consulted: a check then skips the existence check, a build treats it as
+    // empty.
+    asset_files: Option<&BTreeMap<String, Vec<u8>>>,
     tys: &Arc<Types>,
 ) -> RunChecks {
     let mut errors = ErrorSink::new();
@@ -1934,6 +1975,16 @@ fn run_checks(
         &mut errors,
     );
 
+    // -- 6a0. #1883, slice 1b: every declared asset names a file in the
+    //         `assets/` folder. A build with no folder read checks against an
+    //         empty one; a check with none skips this.
+    let available_assets: Option<BTreeSet<String>> = match (asset_files, mode) {
+        (Some(files), _) => Some(files.keys().cloned().collect()),
+        (None, Mode::Build) => Some(BTreeSet::new()),
+        (None, _) => None,
+    };
+    bynk_check::assets::phase_asset_files(&parsed, available_assets.as_ref(), &mut errors);
+
     // -- 6a'. message-bundles slice 1 (#859): messages-block legality,
     //         @reference cardinality, within-block duplicate codes, and the
     //         `uses bynk.locale` dependency. Runs here (not in phase_group)
@@ -2049,20 +2100,6 @@ fn run_checks(
         }
     }
 
-    // #1883, slice 1a: an `asset` declaration checks (placement, path,
-    // names, `.url`), but nothing emits one yet: slice 1b adds the file
-    // reader, the content hash and the `[assets]` block. Until then a build
-    // refuses it with one named diagnostic per declaration, rather than
-    // emitting a Worker whose `.url` references are undefined. Build mode
-    // only, so `bynk check` and the editor stay clean. Slice 1b removes this.
-    if mode == Mode::Build {
-        for pf in &parsed {
-            for err in bynk_check::assets::not_yet_emitted_errors(pf.items()) {
-                errors.push_for(Some(&pf.identity_path()), err);
-            }
-        }
-    }
-
     if !errors.is_empty() && mode == Mode::Build {
         return RunChecks::Bailed {
             errors,
@@ -2113,6 +2150,12 @@ fn run_checks(
     // emitted file (`collect_history_target_agents` used to be called from
     // inside the per-file emit prologue).
     let history_target_agents = collect_history_target_agents(&parsed);
+    // #1883, slice 1b: each declared asset's served URL path, by normalised
+    // source path — what its `.url` constant holds. Empty when no folder was
+    // read (a missing file is already `bynk.asset.missing_file`).
+    let asset_served = asset_files
+        .map(|files| bynk_check::assets::declared_served_paths(&parsed, files))
+        .unwrap_or_default();
 
     // #1702 review: `uses` targets first, so a generic callee's compared type
     // parameters are known before an importer's calls are checked.
@@ -2205,6 +2248,7 @@ fn run_checks(
             contracts,
             agent_deps_plan.as_ref(),
             &history_target_agents,
+            &asset_served,
             mode,
             &mut errors,
             &mut refs,
@@ -2401,7 +2445,18 @@ fn build_output(
     import_ext: ImportExt,
     // #1890: the merged `wrangler.toml` flag list (`finish_build` merges it).
     compatibility_flags: &[String],
+    // #1883, slice 1b: the pre-read `assets/` folder; each Worker ships the
+    // files its `uses` closure declares.
+    asset_files: Option<&BTreeMap<String, Vec<u8>>>,
 ) -> ProjectOutput {
+    // #1883, slice 1b: each declared asset's served path, and the files the
+    // Workers below stage into their assets directories (empty for a Bundle
+    // build: only a Worker serves files).
+    let asset_served = asset_files
+        .map(|files| bynk_check::assets::declared_served_paths(&parsed, files))
+        .unwrap_or_default();
+    let mut staged_assets: BTreeMap<PathBuf, Vec<u8>> = BTreeMap::new();
+
     // #1655 (runtime-semantics track S6): a `--target workers` build writes the
     // workers layout (`workers/<ctx>/…`), but a *unit* test module imports the
     // bundle layout (`./../<ctx>.js`), so `tsc` over the output failed
@@ -2632,7 +2687,7 @@ fn build_output(
                 // AST contact here was incidental to where the loop happened
                 // to be written, not structural.
                 let (crons, queues) = bynk_check::symbols::cron_and_queue_triggers(table);
-                let wrangler_doc = emitter::emit_wrangler_toml(
+                let mut wrangler_doc = emitter::emit_wrangler_toml(
                     ctx_name,
                     table,
                     &service_consumes,
@@ -2642,6 +2697,35 @@ fn build_output(
                     ctx_uses_emit,
                     compatibility_flags,
                 );
+                // #1883, slice 1b: the static files this Worker serves — its
+                // own and those of every commons its `uses` closure reaches —
+                // under its assets directory, with `_headers` and the
+                // `[assets]` block. A Worker with none gets neither.
+                let deployed = bynk_check::assets::deployed_assets(
+                    ctx_name,
+                    &unit_uses,
+                    &unit_tables,
+                    &asset_served,
+                );
+                if !deployed.is_empty() {
+                    let dir = worker_assets_dir(&dashes);
+                    for (served, source) in &deployed {
+                        let bytes = asset_files
+                            .and_then(|files| files.get(source))
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "bynk internal error: deployed asset `{source}` was never read"
+                                )
+                            });
+                        staged_assets.insert(dir.join(served.trim_start_matches('/')), bytes);
+                    }
+                    staged_assets.insert(
+                        dir.join("_headers"),
+                        emitter::wrangler::ASSET_HEADERS.as_bytes().to_vec(),
+                    );
+                    wrangler_doc.push_block(emitter::wrangler::assets_block());
+                }
                 // Arc C slice 4 (#1323): `emit_worker_entry` returns a real
                 // `TsProgram` directly — the construction site's own
                 // `Verbatim`/`NotYetConverted` wrap is gone, matching the
@@ -2850,7 +2934,7 @@ fn build_output(
     ProjectOutput {
         artefacts: Artefacts {
             docs,
-            assets: BTreeMap::new(),
+            assets: staged_assets,
         },
         discovered,
         // Populated by `compile_project` from the run's warning sink (ADR 0117).
@@ -3954,6 +4038,10 @@ pub(crate) struct EmitProjectCtx {
     /// exported `__bynkDriveHistory_<Agent>` test-support driver — every other
     /// agent's emission is byte-for-byte unchanged.
     pub history_target_agents: HashSet<String>,
+    /// #1883, slice 1b: each declared asset's served URL path, keyed by its
+    /// normalised source path (`assets::declared_served_paths`) — the value
+    /// of the asset's `.url`.
+    pub asset_served: BTreeMap<String, String>,
     /// v0.132.1 (#481): for a context, the user-defined attached methods of each
     /// `uses`-imported refined/opaque type, keyed by the type's name and sorted
     /// by method name. The context's own `TypedCommons` merges the imported
@@ -4344,6 +4432,7 @@ mod tests {
             true,
             &SchemaLock::Off,
             roots.project_root(),
+            None,
             &Arc::new(Types::new()),
         );
         let snapshots = match run {
@@ -4618,6 +4707,7 @@ mod tests {
             true,
             &SchemaLock::Off,
             roots.project_root(),
+            None,
             &Arc::new(Types::new()),
         );
         match run {

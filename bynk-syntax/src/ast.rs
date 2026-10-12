@@ -667,8 +667,9 @@ impl CommonsItem {
 ///
 /// `path` is the literal's value with escapes applied, relative to the
 /// project root. The checker rejects a path that is absolute or contains a
-/// `..` segment (`bynk.asset.unsafe_path`); whether the file exists is
-/// checked in slice 1b, which threads the file reader through.
+/// `..` segment (`bynk.asset.unsafe_path`) or names a file outside the
+/// project's `assets/` folder (`bynk.asset.outside_assets_dir`), and one
+/// whose file does not exist there (`bynk.asset.missing_file`).
 #[derive(Debug, Clone)]
 pub struct AssetDecl {
     pub name: Ident,

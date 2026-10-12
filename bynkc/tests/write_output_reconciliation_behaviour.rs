@@ -129,9 +129,9 @@ fn a_workers_assets_dir_is_written_byte_for_byte_and_pruned_regardless_of_extens
     // build that no longer has an asset removes it — even though `.css`,
     // `.png` and the extensionless `_headers` are not among the extensions
     // reconciliation prunes elsewhere. A same-extension file *outside* the
-    // assets directory is not the compiler's, so it must survive. Nothing
-    // in the language produces an asset until slice 1, so the assets are
-    // added to a real build's output by hand.
+    // assets directory is not the compiler's, so it must survive. The assets
+    // are added to a real build's output by hand, so this tests the writer
+    // alone, whatever produced them.
     let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("write-output-assets-src");
     let out_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("write-output-assets-out");
     let _ = std::fs::remove_dir_all(&root);

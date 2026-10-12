@@ -46,10 +46,14 @@ pub fn project_options(input: &Path) -> Result<CompileOptions, discovery::Discov
             .unwrap_or_else(|_| project::ProjectPaths::conventional(input));
         // #1890: degrades like `[paths]` above; `try_project_options` refuses.
         let workers = project::try_read_workers_config_with(input, &overlay).unwrap_or_default();
-        Ok(options_for_split(input, paths)?.compatibility_flags(workers.compatibility_flags))
+        Ok(options_for_split(input, paths)?
+            .compatibility_flags(workers.compatibility_flags)
+            .asset_files(discovery::read_asset_files(input)?))
     } else {
         let sources = discovery::read_bynk_tree_single(input)?;
-        Ok(CompileOptions::single(input.to_path_buf()).sources(sources))
+        Ok(CompileOptions::single(input.to_path_buf())
+            .sources(sources)
+            .asset_files(discovery::read_asset_files(input)?))
     }
 }
 
@@ -63,14 +67,20 @@ pub fn project_options(input: &Path) -> Result<CompileOptions, discovery::Discov
 /// options, so every CLI build (`bynkc compile`, `bynk dev`/`deploy`, which
 /// all come through here) writes the project's flags into `wrangler.toml`.
 pub fn try_project_options(input: &Path) -> Result<CompileOptions, ProjectOptionsError> {
+    // #1883, slice 1b: the `assets/` folder is read once here, beside the
+    // sources, so `bynk-emit` never touches the disk.
+    let asset_files = discovery::read_asset_files(input)?;
     Ok(match project_sources(input)? {
         (Some(paths), sources) => {
             let workers = project::try_read_workers_config_with(input, &manifest_overlay(input))?;
             CompileOptions::split(input.to_path_buf(), paths)
                 .sources(sources)
                 .compatibility_flags(workers.compatibility_flags)
+                .asset_files(asset_files)
         }
-        (None, sources) => CompileOptions::single(input.to_path_buf()).sources(sources),
+        (None, sources) => CompileOptions::single(input.to_path_buf())
+            .sources(sources)
+            .asset_files(asset_files),
     })
 }
 

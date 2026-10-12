@@ -285,6 +285,26 @@ const CONTRACTS_MANIFEST_VERSION: u32 = 1;
 /// compiler predating this file has none either. An *unreadable* or
 /// *unparseable* one is an error — it sits beside the config we just read, so a
 /// failure there means the tree is damaged rather than merely old.
+/// #1883, slice 1b: the served paths of the static files a compiled Worker
+/// ships — every file under its `assets/_assets/` directory, as
+/// `/_assets/<name>` — for the deploy lock. No directory is an empty set (a
+/// Worker with no assets). The names already carry their content hashes, so
+/// no manifest is needed.
+pub(crate) fn served_assets(worker_dir: &Path) -> BTreeSet<String> {
+    let dir = worker_dir
+        .join(bynk_emit::project::WORKER_ASSETS_DIR)
+        .join("_assets");
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                .map(|e| format!("/_assets/{}", e.file_name().to_string_lossy()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub(crate) fn read_contracts_manifest(worker_dir: &Path) -> Result<ContractsManifest, String> {
     let path = worker_dir.join(bynk_emit::emitter::contracts::CONTRACTS_MANIFEST);
     if !path.exists() {
@@ -940,5 +960,27 @@ type = "worker"
         assert!(read_secrets_manifest(&dir).is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod served_assets_tests {
+    use super::*;
+
+    /// #1883, slice 1b: what a compiled Worker ships, read back for the lock.
+    #[test]
+    fn served_assets_lists_the_workers_hashed_files() {
+        let dir = std::env::temp_dir().join(format!("bynk-served-assets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(served_assets(&dir).is_empty(), "no directory, no assets");
+        std::fs::create_dir_all(dir.join("assets/_assets")).unwrap();
+        std::fs::write(dir.join("assets/_assets/board.1a2b.css"), "a{}").unwrap();
+        std::fs::write(dir.join("assets/_headers"), "x").unwrap();
+        let served = served_assets(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            served.into_iter().collect::<Vec<_>>(),
+            vec!["/_assets/board.1a2b.css".to_string()]
+        );
     }
 }

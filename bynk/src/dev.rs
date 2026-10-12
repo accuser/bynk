@@ -426,7 +426,9 @@ fn reap(child: &mut std::process::Child) {
 
 /// #524: a change fingerprint over the project's watched inputs — every
 /// `.bynk` file under the `[paths] include` roots (author `exclude` subtrees
-/// and tool/VCS directories skipped) plus `bynk.toml` itself. Hashes each
+/// and tool/VCS directories skipped), `bynk.toml` itself, and (#1883, slice
+/// 1b) every file in the project's `assets/` folder, so editing a stylesheet
+/// rebuilds and rehashes it. Hashes each
 /// file's path, mtime, and length, so an edit, add, delete, or rename all
 /// change the fingerprint. I/O errors skip the entry rather than aborting the
 /// watch.
@@ -455,6 +457,11 @@ fn watch_fingerprint(project_root: &Path) -> u64 {
             record(p, &mut entries)
         });
     }
+    if let Ok(assets) = bynk_emit::project::assets::list_asset_files(project_root) {
+        for rel in assets {
+            record(&project_root.join(rel), &mut entries);
+        }
+    }
     entries.sort();
     let mut hasher = std::hash::DefaultHasher::new();
     for (path, mtime, len) in &entries {
@@ -463,6 +470,28 @@ fn watch_fingerprint(project_root: &Path) -> u64 {
         len.hash(&mut hasher);
     }
     hasher.finish()
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+
+    /// #1883, slice 1b: an edit to a file in `assets/` changes the
+    /// fingerprint, so `bynk dev` rebuilds and the `.url` hash moves with it.
+    #[test]
+    fn an_asset_edit_changes_the_watch_fingerprint() {
+        let root = std::env::temp_dir().join(format!("bynk-dev-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        std::fs::write(root.join("src/a.bynk"), "commons a\n").unwrap();
+        std::fs::write(root.join("assets/board.css"), "a{}").unwrap();
+        let before = watch_fingerprint(&root);
+        std::fs::write(root.join("assets/board.css"), "a{color:red}").unwrap();
+        let after = watch_fingerprint(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_ne!(before, after, "an asset edit must trigger a rebuild");
+    }
 }
 
 /// Walk `dir` recursively, calling `visit` for each `.bynk` file. Skips the

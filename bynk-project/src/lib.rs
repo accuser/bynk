@@ -21,6 +21,7 @@
 //! The public surface below is enumerated by hand (R10.4-style) — no blanket
 //! `pub use module::*`.
 
+pub mod assets;
 pub mod consistency;
 pub mod discovery;
 pub mod graph;

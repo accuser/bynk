@@ -1,0 +1,18 @@
+commons compat.page
+
+-- #1883, slice 1b: a declared asset must be a file in the project's `assets/`
+-- folder. Exact: the missing file is the only diagnostic, so everything else
+-- about the project is valid.
+
+---
+The board's stylesheet.
+---
+asset style = "assets/board.css"
+
+fn link(a: Asset) -> String {
+  a.url
+}
+
+fn sheet() -> String {
+  link(style)
+}

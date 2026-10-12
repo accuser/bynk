@@ -413,6 +413,10 @@
         "link": "/book/reference/websocket/"
       },
       {
+        "label": "Static assets",
+        "link": "/book/reference/assets/"
+      },
+      {
         "label": "Actors",
         "link": "/book/reference/actors/"
       },

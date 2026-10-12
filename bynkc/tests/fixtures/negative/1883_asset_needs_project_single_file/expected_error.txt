@@ -1,0 +1,2 @@
+bynk.asset.needs_project asset `style` cannot be built from a single file
+# exact

@@ -690,7 +690,7 @@ pub fn build_unit_table(
                 );
                 continue;
             }
-            if let Some(err) = crate::assets::unsafe_path_error(a) {
+            if let Some(err) = crate::assets::path_errors(a) {
                 errors.push(err);
                 // Still registered below: the declaration is otherwise
                 // well-formed, so its uses should not also report
@@ -905,10 +905,15 @@ pub fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDe
                 | CommonsItem::Actor(_)
                 // `messages` bundles aren't cross-file-imported by name in
                 // slice 1 (no multi-file bundle merge yet).
-                | CommonsItem::Messages(_)
-                // #1883, slice 1a: nothing emits an asset yet; slice 1b
-                // decides whether `.url` needs a cross-file import.
-                | CommonsItem::Asset(_) => {}
+                | CommonsItem::Messages(_) => {}
+                // #1883, slice 1b: an asset is an exported constant of its
+                // file, in the function namespace, so a sibling file or a
+                // `uses`-ing unit imports it the way it imports a function.
+                CommonsItem::Asset(a) => {
+                    idx.fns
+                        .entry(a.name.name.clone())
+                        .or_insert_with(|| path.clone());
+                }
             }
         }
     }

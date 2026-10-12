@@ -1,0 +1,9 @@
+context compat.board
+
+uses compat.page
+
+service web from http {
+  on GET("/") () -> Effect[HttpResult[String]] by Visitor {
+    Ok("<!doctype html><head>\(head())</head><a href=\"\(style.url)\">css</a>")
+  }
+}
