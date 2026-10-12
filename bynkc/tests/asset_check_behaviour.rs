@@ -16,7 +16,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const PAGE: &str = "commons compat.page\n\nasset style = \"assets/board.css\"\n\nfn sheet() -> String {\n  style.url\n}\n";
-const BOARD: &str = "context compat.board\n\nuses compat.page\n\nservice web from http {\n  on GET(\"/\") () -> Effect[HttpResult[String]] by Visitor {\n    Ok(sheet())\n  }\n}\n";
+// The context declares an asset of its own too (review of #1904): the
+// Worker serves both its own and its used commons' files.
+const BOARD: &str = "context compat.board\n\nuses compat.page\n\nasset icon = \"assets/icon.svg\"\n\nservice web from http {\n  on GET(\"/\") () -> Effect[HttpResult[String]] by Visitor {\n    Ok(\"\\(sheet())\\(icon.url)\")\n  }\n}\n";
+const SVG: &[u8] = b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>";
 const CSS: &[u8] = b"body{}\n";
 
 fn scratch(name: &str) -> PathBuf {
@@ -34,6 +37,7 @@ fn project(name: &str, with_file: bool) -> PathBuf {
     if with_file {
         std::fs::create_dir_all(dir.join("assets")).unwrap();
         std::fs::write(dir.join("assets/board.css"), CSS).unwrap();
+        std::fs::write(dir.join("assets/icon.svg"), SVG).unwrap();
     }
     dir
 }
@@ -91,11 +95,16 @@ fn a_workers_build_writes_the_hashed_file_and_headers() {
     assert!(ok, "the Workers build must pass, got:\n{out}");
 
     let assets = out_dir.join("workers/compat-board/assets");
-    let served: Vec<PathBuf> = std::fs::read_dir(assets.join("_assets"))
+    let mut served: Vec<PathBuf> = std::fs::read_dir(assets.join("_assets"))
         .expect("the Worker's assets directory")
         .map(|e| e.unwrap().path())
         .collect();
-    assert_eq!(served.len(), 1, "{served:?}");
+    served.sort();
+    assert_eq!(
+        served.len(),
+        2,
+        "the commons' file and the context's own: {served:?}"
+    );
     let name = served[0]
         .file_name()
         .unwrap()
@@ -106,6 +115,11 @@ fn a_workers_build_writes_the_hashed_file_and_headers() {
         "hashed name: {name}"
     );
     assert_eq!(std::fs::read(&served[0]).unwrap(), CSS);
+    assert_eq!(
+        std::fs::read(&served[1]).unwrap(),
+        SVG,
+        "the context's own asset"
+    );
     assert!(
         std::fs::read_to_string(assets.join("_headers"))
             .unwrap()
@@ -173,5 +187,28 @@ fn a_bundle_build_ships_no_files() {
     assert!(
         out.artefacts.assets.is_empty(),
         "only a Worker serves files"
+    );
+}
+
+/// Review of #1904: a deployable Bundle build ships no files, so it warns
+/// about each asset whose `.url` it emits; `bynkc test`'s Bundle build (with
+/// tests) does not.
+#[test]
+fn a_deployable_bundle_build_warns_that_its_assets_are_not_served() {
+    let dir = project("asset-build-bundle", true);
+    let (ok, out) = bynkc(
+        &["compile", "--output", dir.join("out").to_str().unwrap()],
+        &dir,
+    );
+    assert!(ok, "a Bundle build still succeeds, got:\n{out}");
+    assert!(out.contains("bynk.asset.not_served"), "{out}");
+
+    let quiet = compile_fixture(bynkc::BuildTarget::Bundle);
+    assert!(
+        !quiet
+            .warnings
+            .iter()
+            .any(|w| w.error.category == "bynk.asset.not_served"),
+        "a build with tests (as `bynkc test` compiles) does not warn"
     );
 }

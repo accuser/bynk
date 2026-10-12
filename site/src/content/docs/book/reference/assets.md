@@ -68,7 +68,9 @@ html_handling = "none"
 ```
 
 A request for an asset is answered by the platform; any other request reaches
-the Worker as before. `bynk dev` rebuilds when a file in `assets/` changes,
+the Worker as before. A Bundle build (`bynkc compile` without
+`--target workers`) ships no files, so it warns that each asset is not served
+(`bynk.asset.not_served`). `bynk dev` rebuilds when a file in `assets/` changes,
 and `bynk deploy` records each Worker's served files in `bynk.deploy.lock`.
 
 An `Asset` is not data: it may not appear in a record field, a boundary or an

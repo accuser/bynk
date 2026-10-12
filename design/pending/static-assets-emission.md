@@ -1,6 +1,6 @@
 ---
 level: minor
-changelog: '`asset` declarations build: each Worker serves its files from `assets/` at a content-hashed `.url`, through an `[assets]` block and an immutable `_headers`; new `bynk.asset.outside_assets_dir`, `bynk.asset.missing_file` and `bynk.asset.needs_project` (static assets, slice 1b)'
+changelog: '`asset` declarations build: each Worker serves its files from `assets/` at a content-hashed `.url`, through an `[assets]` block and an immutable `_headers`; new `bynk.asset.outside_assets_dir`, `bynk.asset.missing_file`, `bynk.asset.needs_project`, and the `bynk.asset.not_served` warning for a deployable Bundle build (static assets, slice 1b)'
 ---
 
 ## ADR: static-assets-emission
@@ -39,7 +39,8 @@ file may come from, how its URL is formed, which Worker serves it, and how
   its code, a `_headers` file (`/_assets/*` immutable for a year), and an
   `[assets]` block with `run_worker_first = false`, `not_found_handling =
   "none"` and `html_handling = "none"` set explicitly. The Bundle target ships
-  no files.
+  no files; a deployable Bundle build warns about each asset it cannot serve
+  (`bynk.asset.not_served`), while `bynkc test`'s Bundle build stays quiet.
 - **Single files cannot build an asset** (`bynk.asset.needs_project`): no
   project root, no Worker. Checking one is unaffected.
 - **Tooling.** `bynk dev` watches `assets/`; `bynk deploy` records each

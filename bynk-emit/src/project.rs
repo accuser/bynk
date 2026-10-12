@@ -139,6 +139,11 @@ pub struct Artefacts {
 /// [`worker_assets_dir`] / [`is_worker_asset_path`] so the two can't drift.
 pub const WORKER_ASSETS_DIR: &str = "assets";
 
+/// #1883: the URL path prefix every asset is served under
+/// (`bynk_check::assets::SERVED_PREFIX`), re-exported for the driver and the
+/// deploy lock, which read a Worker's served files back.
+pub use bynk_check::assets::SERVED_PREFIX as SERVED_ASSETS_PREFIX;
+
 /// #1883, slice 0: `workers/<dashes>/<WORKER_ASSETS_DIR>`, the output-root-
 /// relative directory holding one Worker's static assets.
 pub fn worker_assets_dir(dashes: &str) -> PathBuf {
@@ -1984,6 +1989,16 @@ fn run_checks(
         (None, _) => None,
     };
     bynk_check::assets::phase_asset_files(&parsed, available_assets.as_ref(), &mut errors);
+    // A deployable Bundle build (no tests: `bynkc compile` without
+    // `--target workers`) ships no files, so each asset's `.url` would 404:
+    // say so. `bynkc test` also builds a Bundle, with tests, and stays quiet.
+    if mode == Mode::Build && target == BuildTarget::Bundle && !tests {
+        for pf in &parsed {
+            for warning in bynk_check::assets::bundle_not_served_warnings(pf.items()) {
+                errors.push_for(Some(&pf.identity_path()), warning);
+            }
+        }
+    }
 
     // -- 6a'. message-bundles slice 1 (#859): messages-block legality,
     //         @reference cardinality, within-block duplicate codes, and the
@@ -2722,7 +2737,7 @@ fn build_output(
                     }
                     staged_assets.insert(
                         dir.join("_headers"),
-                        emitter::wrangler::ASSET_HEADERS.as_bytes().to_vec(),
+                        emitter::wrangler::asset_headers().into_bytes(),
                     );
                     wrangler_doc.push_block(emitter::wrangler::assets_block());
                 }
@@ -4139,6 +4154,26 @@ fn called_cross_context_services(
 mod tests {
     use super::*;
     use std::fs;
+
+    /// Review of #1904: the `_headers` glob must cover every served path, or
+    /// every asset silently loses its immutable cache lifetime. Both come
+    /// from `SERVED_PREFIX`; this pins that they still agree.
+    #[test]
+    fn the_headers_glob_covers_every_served_path() {
+        let headers = crate::emitter::wrangler::asset_headers();
+        let glob = headers.lines().next().expect("a path line");
+        let prefix = glob.strip_suffix('*').expect("a prefix glob");
+        for source in ["assets/board.css", "assets/css/a.min.js", "assets/LICENSE"] {
+            let served = bynk_check::assets::served_path(source, b"x");
+            assert!(served.starts_with(prefix), "{served} not under {glob}");
+            let staged = worker_assets_dir("w").join(served.trim_start_matches('/'));
+            assert!(
+                is_worker_asset_path(&staged),
+                "{} is owned",
+                staged.display()
+            );
+        }
+    }
 
     /// #1883, slice 0: the ownership rule `write_output`'s reconciliation
     /// prunes by. Only files *inside* a Worker's assets directory qualify —

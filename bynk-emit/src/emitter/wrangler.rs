@@ -114,9 +114,14 @@ pub(crate) fn assets_block() -> TomlBlock {
 /// directory beside its files. Every served path carries its content hash, so
 /// a file under [`bynk_check::assets::SERVED_PREFIX`] never changes and may
 /// be cached for a year. Without it the platform's default is `max-age=0,
-/// must-revalidate`.
-pub(crate) const ASSET_HEADERS: &str =
-    "/_assets/*\n  Cache-Control: public, max-age=31536000, immutable\n";
+/// must-revalidate`. The glob is built from the prefix, so the two cannot
+/// drift (review of #1904).
+pub(crate) fn asset_headers() -> String {
+    format!(
+        "{}*\n  Cache-Control: public, max-age=31536000, immutable\n",
+        bynk_check::assets::SERVED_PREFIX
+    )
+}
 
 /// P6.x cutover slice 2 (#1191, narrowed from #1187): `crons`/`queues` arrive
 /// pre-collected, sorted and deduped by the caller (`project.rs`'s own

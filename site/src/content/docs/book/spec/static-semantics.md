@@ -1740,8 +1740,9 @@ code, under their served paths, with a `_headers` file giving `/_assets/*`
 gains an `[assets]` block with `run_worker_first = false` (a matching asset is
 served without running the Worker), `not_found_handling = "none"` (any other
 request reaches the Worker) and `html_handling = "none"` (an asset is served
-only at its exact path). A Worker with no assets gets none of these, and the
-Bundle target ships no files. `bynk deploy` records each Worker's served paths
+only at its exact path). A Worker with no assets gets none of these. The Bundle target ships no
+files, so a deployable Bundle build (one without tests) warns about each
+asset whose `.url` it emits (`bynk.asset.not_served`). `bynk deploy` records each Worker's served paths
 in `bynk.deploy.lock`.
 
 **Single files.** A single file has no project root and no Worker, so building

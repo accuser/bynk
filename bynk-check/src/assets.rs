@@ -94,6 +94,35 @@ pub fn path_errors(a: &AssetDecl) -> Option<CompileError> {
 /// under it an immutable cache lifetime.
 pub const SERVED_PREFIX: &str = "/_assets/";
 
+/// `bynk.asset.not_served` (a warning) for each asset among `items`, for a
+/// deployable Bundle build: a Bundle ships no Worker and so no files, yet each
+/// module still carries its asset's `.url`, which would 404 wherever the
+/// output is served. A warning, not an error, because a Bundle build is also
+/// how `bynkc test` compiles; the caller raises it only for a build without
+/// tests (review of #1904). A helper here keeps `bynk-emit`'s `project.rs`
+/// free of syntax-tree types (the `ast_importers` probe).
+pub fn bundle_not_served_warnings(items: &[CommonsItem]) -> Vec<CompileError> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            CommonsItem::Asset(a) => Some(
+                CompileError::new(
+                    "bynk.asset.not_served",
+                    a.span,
+                    format!(
+                        "asset `{}` is not served by a Bundle build: its `.url` names a file this build does not ship",
+                        a.name.name
+                    ),
+                )
+                .with_note(
+                    "assets are served beside a Worker; build with `--target workers` (as `bynk dev` and `bynk deploy` do)",
+                ),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The URL path the platform serves the asset file `source` (a normalised
 /// `assets/…` key) with content `bytes` at:
 /// `/_assets/<stem>.<hash>.<ext>`, where `<hash>` is the content's FNV-1a 64

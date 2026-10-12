@@ -291,15 +291,17 @@ const CONTRACTS_MANIFEST_VERSION: u32 = 1;
 /// Worker with no assets). The names already carry their content hashes, so
 /// no manifest is needed.
 pub(crate) fn served_assets(worker_dir: &Path) -> BTreeSet<String> {
+    // Both spellings come from the one served prefix (review of #1904).
+    let prefix = bynk_emit::project::SERVED_ASSETS_PREFIX;
     let dir = worker_dir
         .join(bynk_emit::project::WORKER_ASSETS_DIR)
-        .join("_assets");
+        .join(prefix.trim_matches('/'));
     std::fs::read_dir(dir)
         .map(|entries| {
             entries
                 .flatten()
                 .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-                .map(|e| format!("/_assets/{}", e.file_name().to_string_lossy()))
+                .map(|e| format!("{prefix}{}", e.file_name().to_string_lossy()))
                 .collect()
         })
         .unwrap_or_default()

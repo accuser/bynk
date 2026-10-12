@@ -395,6 +395,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.asset.needs_project",
         "A single-file build met an `asset` declaration; assets need a project build.",
     ),
+    warn(d(
+        "bynk.asset.not_served",
+        "A deployable Bundle build met an `asset`; a Bundle ships no files, so its `.url` would not be served (a warning).",
+    )),
     d(
         "bynk.asset.outside_assets_dir",
         "An `asset` path does not name a file in the project's `assets/` folder.",
