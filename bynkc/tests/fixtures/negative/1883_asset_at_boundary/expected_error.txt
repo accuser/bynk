@@ -1,0 +1,1 @@
+bynk.types.asset_at_boundary an `Asset` type cannot appear in a record field

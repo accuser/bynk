@@ -51,6 +51,43 @@ pub fn compile(source: &str, filename: &str) -> Result<String, Vec<CompileError>
 
 /// The warning-preserving single-file compile behind [`compile`]. See [`Compiled`].
 pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, Vec<CompileError>> {
+    let (program, warnings) = check_single_file(source, SingleFileMode::Build)?;
+    Ok(Compiled {
+        ts: emitter::emit(&program),
+        warnings,
+    })
+}
+
+/// Check a single-file commons without building it: the same diagnostics as
+/// [`compile_with_warnings`], minus the build-only ones, and no emission.
+/// Returns the non-failing warnings on success. The single-file half of
+/// `bynk check` / `bynkc check` (`bynk_driver::run_check`); a directory goes
+/// through the project pipeline in `Mode::Check` instead.
+///
+/// #1883, slice 1a (review of #1903): before this, `run_check` reused
+/// [`compile_with_warnings`], so `bynk check page.bynk` failed with the
+/// build-only `bynk.asset.not_yet_emitted`, contradicting §5.12's "checking is
+/// unaffected".
+pub fn check_with_warnings(
+    source: &str,
+    _filename: &str,
+) -> Result<Vec<CompileError>, Vec<CompileError>> {
+    check_single_file(source, SingleFileMode::Check).map(|(_, warnings)| warnings)
+}
+
+/// Whether a single-file run will go on to emit (`Build`) or only report
+/// (`Check`). Only build-only diagnostics differ: today, the asset gate.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SingleFileMode {
+    Check,
+    Build,
+}
+
+/// The shared single-file pipeline: lex, parse, check, certify.
+fn check_single_file(
+    source: &str,
+    mode: SingleFileMode,
+) -> Result<(checker::CheckedProgram, Vec<CompileError>), Vec<CompileError>> {
     let tokens = lexer::tokenize(source).map_err(|e| vec![e])?;
     // ADR 0117: parse-time warnings (orphan doc blocks) ride alongside the
     // AST — they surface with the build's warnings instead of failing it.
@@ -73,6 +110,14 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
         &boundary_types,
         &mut boundary_errors,
     );
+    // #1883, slice 1a: the asset declaration rules (path, duplicates, name
+    // conflicts), which the project path raises in `build_unit_table`; and,
+    // in a build only, the refusal the project pipeline's build-mode gate
+    // gives, since nothing emits an asset yet.
+    boundary_errors.extend(bynk_check::assets::single_file_asset_errors(
+        &commons.items,
+        mode == SingleFileMode::Build,
+    ));
     // #1663: a boundary or resolve error is local to its declaration, so the
     // checker still runs over every declaration and its diagnostics join
     // theirs (minus echoes); any error still refuses the compile.
@@ -100,10 +145,7 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
     let program = checker::certify(typed, warnings.clone()).unwrap_or_else(|_| {
         panic!("bynk internal error: check() already gated on error-severity diagnostics")
     });
-    Ok(Compiled {
-        ts: emitter::emit(&program),
-        warnings,
-    })
+    Ok((program, warnings))
 }
 
 /// Minimum supported Node.js **major** version for the `node` platform binding

@@ -95,6 +95,7 @@ fn canon_type(t: &TypeRef) -> String {
         TypeRef::Effect(t, _) => format!("Effect[{}]", canon_type(t)),
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", canon_type(t)),
         TypeRef::QueueResult(_) => "QueueResult".to_string(),
+        TypeRef::Asset(_) => "Asset".to_string(),
         TypeRef::List(t, _) => format!("List[{}]", canon_type(t)),
         TypeRef::Map(k, v, _) => format!("Map[{}, {}]", canon_type(k), canon_type(v)),
         TypeRef::Query(t, _) => format!("Query[{}]", canon_type(t)),
@@ -623,6 +624,7 @@ mod tests {
                 .map(|(n, e)| (n.to_string(), e))
                 .collect(),
             flattened_caps: StdHashMap::new(),
+            assets: StdHashMap::new(),
         }
     }
 

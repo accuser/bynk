@@ -848,9 +848,11 @@ fn type_ref_mentions(t: &TypeRef, marker: TypeRefMarker) -> bool {
         // v0.157 (ADR 0183): recurse into a generic application's arguments.
         TypeRef::App { args, .. } => args.iter().any(|a| type_ref_mentions(a, marker)),
         TypeRef::QueueResult(_) => marker == TypeRefMarker::QueueResult,
-        TypeRef::Base(..) | TypeRef::Named(_) | TypeRef::ValidationError(_) | TypeRef::Unit(_) => {
-            false
-        }
+        TypeRef::Base(..)
+        | TypeRef::Named(_)
+        | TypeRef::Asset(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::Unit(_) => false,
     }
 }
 
@@ -882,7 +884,7 @@ fn commons_mentions_type(commons: &TypedCommons, marker: TypeRefMarker) -> bool 
         // An `event` registers into the `types` table and is checked over
         // the same record-field path as `CommonsItem::Type`'s `Record` arm.
         CommonsItem::Event(e) => e.body.fields.iter().any(|f| in_type_ref(&f.type_ref)),
-        CommonsItem::Actor(_) | CommonsItem::Messages(_) => false,
+        CommonsItem::Actor(_) | CommonsItem::Messages(_) | CommonsItem::Asset(_) => false,
     })
 }
 
@@ -939,7 +941,8 @@ fn file_mentions_connection(commons: &TypedCommons) -> bool {
         CommonsItem::Type(_)
         | CommonsItem::Actor(_)
         | CommonsItem::Messages(_)
-        | CommonsItem::Event(_) => false,
+        | CommonsItem::Event(_)
+        | CommonsItem::Asset(_) => false,
     })
 }
 
@@ -999,6 +1002,7 @@ pub(crate) fn ty_to_type_ref(t: TyId, tys: &Arc<Types>) -> Option<TypeRef> {
         | Ty::Connection(_)
         | Ty::HttpResult(_)
         | Ty::QueueResult
+        | Ty::Asset
         | Ty::Fn { .. }
         | Ty::Var(_)
         | Ty::Actor(_)
@@ -2339,7 +2343,8 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
             // same name in this unit can't capture them. Nothing is
             // registered here; user code that names `LocaleTag` itself
             // imports it the ordinary way.
-            CommonsItem::Messages(_) => {}
+            // #1883, slice 1a: an asset references no other declaration.
+            CommonsItem::Messages(_) | CommonsItem::Asset(_) => {}
         }
     }
     for (cap, path) in &ctx.file_decl_index.capabilities {
@@ -2438,6 +2443,7 @@ fn collect_refs_in_typeref(
         }
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
+        | TypeRef::Asset(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => {}
@@ -2795,6 +2801,7 @@ fn record_ty_refs(
         Ty::Error
         | Ty::Base(_)
         | Ty::QueueResult
+        | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
         | Ty::Unit
@@ -5065,6 +5072,17 @@ fn is_bare_named(ty: &TsType, target: &str) -> bool {
     matches!(ty, TsType::Named { name, type_args } if type_args.is_empty() && name == target)
 }
 
+/// #1883, slice 1a: the TypeScript shape of a Bynk `Asset` —
+/// `{ readonly url: string }`, structural, so a program that only *names* the
+/// type (`fn link(a: Asset) -> String`) compiles with no runtime support.
+/// Slice 1b emits each declared asset as a constant of this shape.
+pub(crate) fn asset_ts_type() -> TsType {
+    TsType::Object(vec![bynk_ts::TsTypeMember::readonly_prop(
+        "url",
+        TsType::named("string"),
+    )])
+}
+
 fn ts_type_ref_to_ts_type(r: &TypeRef, qualify: Option<QualifyFn<'_>>) -> TsType {
     match r {
         TypeRef::Base(b, _) => TsType::named(ts_base(*b)),
@@ -5145,6 +5163,7 @@ fn ts_type_ref_to_ts_type(r: &TypeRef, qualify: Option<QualifyFn<'_>>) -> TsType
             ],
         ),
         TypeRef::QueueResult(_) => TsType::named("QueueResult"),
+        TypeRef::Asset(_) => asset_ts_type(),
         TypeRef::ValidationError(_) => TsType::named("ValidationError"),
         TypeRef::JsonError(_) => TsType::named("JsonError"),
         TypeRef::Unit(_) => TsType::named("void"),
@@ -5500,6 +5519,7 @@ fn ts_ty_to_ts_type(t: TyId, tys: &Arc<Types>) -> TsType {
             vec![ts_ty_to_ts_type(*k, tys), ts_ty_to_ts_type(*v, tys)],
         ),
         Ty::QueueResult => TsType::named("QueueResult"),
+        Ty::Asset => asset_ts_type(),
         Ty::ValidationError => TsType::named("ValidationError"),
         Ty::JsonError => TsType::named("JsonError"),
         Ty::Unit => TsType::named("void"),

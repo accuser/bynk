@@ -1,0 +1,2 @@
+bynk.asset.not_yet_emitted asset `style` checks, but this compiler cannot build it yet
+# exact

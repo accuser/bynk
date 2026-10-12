@@ -1484,6 +1484,22 @@ pub(crate) fn describe_messages(m: &MessagesDecl) -> String {
     out
 }
 
+/// #1883, slice 1a: an `asset` declaration's markdown — the declaration
+/// itself, the rule that it is public, then its doc.
+pub(crate) fn describe_asset(a: &AssetDecl) -> String {
+    let mut out = format!(
+        "```bynk\nasset {} = \"{}\"\n```\n\nPublic: served by the platform, never by the Worker.\n",
+        a.name.name,
+        bynk_fmt::escape_string(&a.path)
+    );
+    if let Some(doc) = &a.documentation {
+        out.push('\n');
+        out.push_str(doc);
+        out.push('\n');
+    }
+    out
+}
+
 /// v0.123 (slice 2): the `from <protocol>` header suffix for a service, or the
 /// empty string for a plain `on call` service.
 fn service_protocol_suffix(p: &ServiceProtocol) -> String {
@@ -1753,6 +1769,7 @@ pub fn type_ref_str(t: &TypeRef) -> String {
         TypeRef::Effect(t, _) => format!("Effect[{}]", type_ref_str(t)),
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", type_ref_str(t)),
         TypeRef::QueueResult(_) => "QueueResult".to_string(),
+        TypeRef::Asset(_) => "Asset".to_string(),
         // v0.20b: the built-in collection types.
         TypeRef::List(t, _) => format!("List[{}]", type_ref_str(t)),
         TypeRef::Query(t, _) => format!("Query[{}]", type_ref_str(t)),

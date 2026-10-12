@@ -1317,6 +1317,7 @@ const DECLARATION_KEYWORDS: &[TokenKind] = &[
     TokenKind::Actor,
     TokenKind::Messages,
     TokenKind::Event,
+    TokenKind::Asset,
     TokenKind::Uses,
     TokenKind::Consumes,
     TokenKind::Exports,
@@ -1559,7 +1560,7 @@ fn is_item_start(kind: TokenKind) -> bool {
         // Top-level unit keywords.
         Commons | Context | Adapter | Suite
         // Body items shared across commons/context/adapter.
-        | Type | Fn | Messages | Event | Uses
+        | Type | Fn | Messages | Event | Asset | Uses
         // Context/adapter-only body items.
         | Consumes | Exports | Capability | Provides | Service | Agent | Actor
         // Adapter-only.
@@ -1692,7 +1693,7 @@ mod tests {
         // name a binding after one of them and read it back inside the body);
         // surfaced concretely when `event` joined the tier and collided with
         // `examples/event-log`'s pre-existing `add(event: Event)` handler.
-        for kw in ["case", "event", "messages", "on", "suite"] {
+        for kw in ["asset", "case", "event", "messages", "on", "suite"] {
             let src = format!("commons x\n\nfn f({kw}: Int) -> Int {{\n  {kw}\n}}\n");
             let result = parse_str(&src);
             assert!(
@@ -2536,8 +2537,8 @@ mod tests {
     fn is_item_start_matches_the_pinned_keyword_set() {
         use TokenKind::*;
         let expected_true = [
-            Commons, Context, Adapter, Suite, Type, Fn, Messages, Event, Uses, Consumes, Exports,
-            Capability, Provides, Service, Agent, Actor, Binding, Stub, Case, Property,
+            Commons, Context, Adapter, Suite, Type, Fn, Messages, Event, Asset, Uses, Consumes,
+            Exports, Capability, Provides, Service, Agent, Actor, Binding, Stub, Case, Property,
         ];
         for kind in expected_true {
             assert!(is_item_start(kind), "{kind:?} must be an item start");

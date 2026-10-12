@@ -616,6 +616,10 @@ pub enum CommonsItem {
     /// Context-only (checker-enforced, not grammar) — the mirror image of
     /// `Messages`' commons-only restriction, same mechanism.
     Event(EventDecl),
+    /// `asset name = "path"` (#1883, slice 1a). A static file the platform
+    /// serves beside the Worker. Context or commons ([DECISION G]); an
+    /// adapter is rejected by the checker, not the grammar, like `Event`.
+    Asset(AssetDecl),
 }
 
 impl CommonsItem {
@@ -635,6 +639,7 @@ impl CommonsItem {
             CommonsItem::Actor(a) => Some(&a.name),
             CommonsItem::Messages(_) => None,
             CommonsItem::Event(e) => Some(&e.name),
+            CommonsItem::Asset(a) => Some(&a.name),
         }
     }
 
@@ -650,8 +655,28 @@ impl CommonsItem {
             CommonsItem::Actor(a) => a.span,
             CommonsItem::Messages(m) => m.span,
             CommonsItem::Event(e) => e.span,
+            CommonsItem::Asset(a) => a.span,
         }
     }
+}
+
+/// `asset name = "path"` (#1883, slice 1a): one static file, served by the
+/// platform at a content-hashed URL and never reaching the Worker, so public
+/// by construction. `name` is a value of the built-in type `Asset`
+/// ([DECISION H]), whose `.url` is that URL.
+///
+/// `path` is the literal's value with escapes applied, relative to the
+/// project root. The checker rejects a path that is absolute or contains a
+/// `..` segment (`bynk.asset.unsafe_path`); whether the file exists is
+/// checked in slice 1b, which threads the file reader through.
+#[derive(Debug, Clone)]
+pub struct AssetDecl {
+    pub name: Ident,
+    pub path: String,
+    pub path_span: Span,
+    pub documentation: Option<Doc>,
+    pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// One locale's message bundle (v0.222+): `messages "<tag>" @reference { ... }`.
@@ -2417,6 +2442,10 @@ pub enum TypeRef {
     /// `QueueResult` — the built-in queue verdict sum (`Ack | Retry`),
     /// non-generic; the required return of a queue handler (v0.44).
     QueueResult(Span),
+    /// `Asset` — a static file declared by `asset name = "path"` (#1883,
+    /// slice 1a, [DECISION H]). Non-generic, like `QueueResult`; its one
+    /// field is `.url : String`.
+    Asset(Span),
     /// `List[T]` — the built-in generic immutable list type (v0.20b).
     List(Box<TypeRef>, Span),
     /// `Map[K, V]` — the built-in generic immutable map type (v0.20b).
@@ -2477,6 +2506,7 @@ impl TypeRef {
             TypeRef::Effect(_, s) => *s,
             TypeRef::HttpResult(_, s) => *s,
             TypeRef::QueueResult(s) => *s,
+            TypeRef::Asset(s) => *s,
             TypeRef::List(_, s) => *s,
             TypeRef::Map(_, _, s) => *s,
             TypeRef::Query(_, s) => *s,
@@ -2543,6 +2573,7 @@ pub fn generic_record_is_recursive(
             }
             TypeRef::Base(..)
             | TypeRef::QueueResult(_)
+            | TypeRef::Asset(_)
             | TypeRef::ValidationError(_)
             | TypeRef::JsonError(_)
             | TypeRef::Unit(_) => {}

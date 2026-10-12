@@ -382,6 +382,16 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
             });
             push_member_docs(out, &e.as_type_decl());
         }
+        // #1883, slice 1a.
+        CommonsItem::Asset(a) => out.push(DocEntry {
+            name: a.name.name.clone(),
+            kind: "asset",
+            depth: 0,
+            markdown: symbols::describe_asset(a),
+            documented: a.documentation.is_some(),
+            span: a.name.span,
+            file: None,
+        }),
     }
 }
 

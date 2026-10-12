@@ -117,7 +117,21 @@ fn item_symbol(pm: &PositionMap, item: &CommonsItem) -> DocumentSymbol {
         // Events track, slice 0 (spine #936): an `event` outlines exactly
         // like a `type` — same synthetic `TypeDecl` used elsewhere.
         CommonsItem::Event(e) => type_symbol(pm, &e.as_type_decl()),
+        CommonsItem::Asset(a) => asset_symbol(pm, a),
     }
+}
+
+/// #1883, slice 1a: an `asset` outlines as a constant — a named value that
+/// never changes, which is what its `.url` is.
+fn asset_symbol(pm: &PositionMap, a: &AssetDecl) -> DocumentSymbol {
+    make_symbol(
+        a.name.name.clone(),
+        detail_from_doc(&a.documentation),
+        SymbolKind::CONSTANT,
+        pm.range(a.span),
+        pm.range(a.name.span),
+        Vec::new(),
+    )
 }
 
 fn messages_symbol(pm: &PositionMap, m: &MessagesDecl) -> DocumentSymbol {

@@ -384,6 +384,22 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["store_field"],
     ),
     d(
+        "bynk.asset.duplicate",
+        "An `asset` name is declared more than once in the same unit.",
+    ),
+    d(
+        "bynk.asset.not_yet_emitted",
+        "A build met an `asset` declaration, which this compiler checks but cannot yet build.",
+    ),
+    d(
+        "bynk.asset.outside_context_or_commons",
+        "An `asset` declaration appears outside a context or commons.",
+    ),
+    d(
+        "bynk.asset.unsafe_path",
+        "An `asset` path is empty, absolute, or contains a `..` segment.",
+    ),
+    d(
         "bynk.boundary.structural_mismatch",
         "Data crossing a context boundary did not match the expected shape.",
     ),
@@ -1891,6 +1907,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A call, method, capability, or constructor argument has the wrong type.",
         &["call"],
     ),
+    d(
+        "bynk.types.asset_at_boundary",
+        "An `Asset` type appears in a record field, boundary or store position; pass its `.url` instead.",
+    ),
     dg(
         "bynk.types.call_arity",
         "A function value was applied with the wrong number of arguments.",
@@ -2396,6 +2416,7 @@ pub fn category(code: &str) -> &str {
 fn category_title(cat: &str) -> &'static str {
     match cat {
         "agent" | "agents" => "Agents",
+        "asset" => "Static assets",
         "boundary" => "Boundaries",
         "capability" => "Capabilities",
         "consumes" => "Consumes",

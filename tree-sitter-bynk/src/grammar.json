@@ -410,6 +410,10 @@
         {
           "type": "SYMBOL",
           "name": "event_decl"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "asset_decl"
         }
       ]
     },
@@ -463,6 +467,10 @@
         {
           "type": "SYMBOL",
           "name": "event_decl"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "asset_decl"
         }
       ]
     },
@@ -520,6 +528,10 @@
         {
           "type": "SYMBOL",
           "name": "event_decl"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "asset_decl"
         }
       ]
     },
@@ -1242,6 +1254,35 @@
           "content": {
             "type": "SYMBOL",
             "name": "record_type"
+          }
+        }
+      ]
+    },
+    "asset_decl": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "asset"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "="
+        },
+        {
+          "type": "FIELD",
+          "name": "path",
+          "content": {
+            "type": "SYMBOL",
+            "name": "string_literal"
           }
         }
       ]

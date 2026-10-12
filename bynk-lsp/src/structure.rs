@@ -107,6 +107,8 @@ fn walk_item(item: &CommonsItem, out: &mut Vec<(Span, bool)>) {
             out.push((e.span, true));
             out.push((e.body.span, true));
         }
+        // #1883, slice 1a: a one-line declaration, nothing to fold.
+        CommonsItem::Asset(_) => {}
     }
 }
 

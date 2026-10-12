@@ -57,6 +57,7 @@
   "ensures"
   "messages"
   "event"
+  "asset"
 ] @keyword.declaration
 
 [

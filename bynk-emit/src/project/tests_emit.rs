@@ -1423,6 +1423,7 @@ fn integration_typed_commons(
         // wrong-table lookup.
         ty_intern: Arc::clone(tys),
         actor_bindings: HashMap::new(),
+        assets: HashMap::new(),
     }
 }
 
@@ -3259,6 +3260,7 @@ fn synthetic_typed_commons_for_target(
         // wrong-table lookup.
         ty_intern: Arc::clone(tys),
         actor_bindings: HashMap::new(),
+        assets: HashMap::new(),
     }
 }
 

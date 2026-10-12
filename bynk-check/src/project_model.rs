@@ -1075,7 +1075,10 @@ pub fn check_function_type_boundary_items(
             }
             // slice 1: `MessageEntry.code`/`.template` are plain string
             // literals, no fn-type-bearing fields to reject here.
-            CommonsItem::Fn(_) | CommonsItem::Provider(_) | CommonsItem::Messages(_) => {}
+            CommonsItem::Fn(_)
+            | CommonsItem::Provider(_)
+            | CommonsItem::Messages(_)
+            | CommonsItem::Asset(_) => {}
         }
     }
 }
@@ -1610,6 +1613,35 @@ pub fn phase_uses_name_conflicts(
                     );
                 } else {
                     imported.insert(fn_name.clone(), t.clone());
+                }
+            }
+            // #1883, slice 1a ([DECISION G]): a commons' assets come in
+            // through `uses` like its functions, and share their namespace.
+            for asset_name in used.assets.keys() {
+                if local.types.contains_key(asset_name)
+                    || local.fns.contains_key(asset_name)
+                    || local.assets.contains_key(asset_name)
+                {
+                    continue;
+                }
+                if let Some(prev) = imported.get(asset_name) {
+                    let site = uses_span_of(parsed, &groups[name], t);
+                    let span = site.map(|(_, s)| s).unwrap_or_default();
+                    let file = site.map(|(i, _)| parsed[i].identity_path());
+                    errors.push_for(file.as_deref(),
+                        CompileError::new(
+                            "bynk.uses.name_conflict",
+                            span,
+                            format!(
+                                "`{name}` uses two commons that both declare `{asset_name}`: `{prev}` and `{t}`",
+                            ),
+                        )
+                        .with_note(
+                            "name conflicts at the use site are not yet renamable; remove or restructure one of the imports",
+                        ),
+                    );
+                } else {
+                    imported.insert(asset_name.clone(), t.clone());
                 }
             }
         }
@@ -3965,6 +3997,7 @@ fn type_ref_names(r: &TypeRef, vars: &HashSet<&str>, out: &mut Vec<String>) {
         }
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
+        | TypeRef::Asset(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => {}
@@ -4182,6 +4215,7 @@ mod native_platform_closure_tests {
             exported_capabilities: Default::default(),
             events: StdHashMap::new(),
             flattened_caps: StdHashMap::new(),
+            assets: StdHashMap::new(),
         }
     }
 

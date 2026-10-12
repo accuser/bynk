@@ -50,6 +50,12 @@ pub enum TokenKind {
     // likely a parameter/local name (`on event(event: T)`).
     #[token("event")]
     Event,
+    // #1883 (static assets), slice 1a: `asset name = "path"` — a context or
+    // commons item declaring one static file the platform serves.
+    // RESERVED_CONTEXTUAL, not hard, for the same reason as `event` (ADR
+    // 0272's `messages` postmortem): `asset` is a likely local or segment name.
+    #[token("asset")]
+    Asset,
     #[token("fn")]
     Fn,
     #[token("where")]
@@ -389,6 +395,7 @@ impl TokenKind {
             Commons => "`commons`",
             Type => "`type`",
             Event => "`event`",
+            Asset => "`asset`",
             Fn => "`fn`",
             Where => "`where`",
             True => "`true`",

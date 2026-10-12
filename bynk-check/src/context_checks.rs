@@ -340,7 +340,9 @@ pub fn check_context_declarations(
         HashMap::new(),
         is_context,
         uses_commons_type_names.clone(),
-    );
+    )
+    // #1883, slice 1a: a handler body sees the unit's assets too.
+    .with_assets(typed.assets.clone());
 
     // v0.25: capability operation signatures reference types.
     check_capability_decls(table, &typed.types, &no_vars, refs);
@@ -1225,6 +1227,7 @@ pub fn ts_type_ref_display(r: &TypeRef) -> String {
         TypeRef::Effect(t, _) => format!("Effect[{}]", ts_type_ref_display(t)),
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", ts_type_ref_display(t)),
         TypeRef::QueueResult(_) => "QueueResult".to_string(),
+        TypeRef::Asset(_) => "Asset".to_string(),
         TypeRef::List(t, _) => format!("List[{}]", ts_type_ref_display(t)),
         TypeRef::Query(t, _) => format!("Query[{}]", ts_type_ref_display(t)),
         TypeRef::Stream(t, _) => format!("Stream[{}]", ts_type_ref_display(t)),
@@ -2995,7 +2998,9 @@ fn check_agent_decls(
             HashMap::new(),
             is_context,
             uses_commons_type_names.clone(),
-        );
+        )
+        // #1883, slice 1a: a handler body sees the unit's assets too.
+        .with_assets(typed.assets.clone());
         // v0.81: the fresh-key rule for `store Cell[T]` fields — an
         // initialiser is checked against the element type `T` (which also types
         // the init expression so the emitter can qualify variant constructors),
@@ -3091,7 +3096,9 @@ fn check_agent_decls(
             HashMap::new(),
             is_context,
             uses_commons_type_names.clone(),
-        );
+        )
+        // #1883, slice 1a: a handler body sees the unit's assets too.
+        .with_assets(typed.assets.clone());
         self_scope.insert(
             "self".to_string(),
             tys.intern(Ty::Named {
@@ -4165,6 +4172,20 @@ pub fn reject_fn_types(
             for a in args {
                 reject_fn_types(a, what, types, errors);
             }
+        }
+        // #1883, slice 1a: an `Asset` names a file the platform serves; it
+        // is not data. What crosses a boundary or is stored is its `.url`.
+        TypeRef::Asset(span) => {
+            errors.push(
+                CompileError::new(
+                    "bynk.types.asset_at_boundary",
+                    *span,
+                    format!(
+                        "an `Asset` type cannot appear in {what} — an asset names a file the platform serves, not a value to persist or send"
+                    ),
+                )
+                .with_note("store or send the asset's `.url` (a `String`) instead"),
+            );
         }
         TypeRef::Base(..)
         | TypeRef::Named(_)

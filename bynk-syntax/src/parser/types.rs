@@ -930,6 +930,11 @@ impl<'a> Parser<'a> {
                     if name == "QueueResult" {
                         return Ok(TypeRef::QueueResult(t.span));
                     }
+                    // #1883, slice 1a: `Asset` is a predeclared non-generic
+                    // built-in, the type of an `asset` declaration's name.
+                    if name == "Asset" {
+                        return Ok(TypeRef::Asset(t.span));
+                    }
                     // v0.20b: `List` and `Map` are predeclared built-in generics.
                     if name == "List" {
                         if self.peek_kind() != Some(TokenKind::LBracket) {

@@ -1687,3 +1687,35 @@ request's `Accept-Language` against that bundle's locales and falls back to its
 reference locale; otherwise it returns `"en"`. A context that consumes `Locale`
 and whose direct `uses` reach two or more bundles is
 `bynk.locale.multiple_message_bundles`.
+
+## §5.12 Static assets {#assets}
+
+An **asset** declaration, `asset name = "path"`
+([§4.1.12a](/book/spec/syntactic-grammar/#4112a-asset_decl)), names one static
+file the platform serves beside a Worker, at a content-hashed URL, without
+running the Worker. An asset is therefore public whatever the actors of the
+declaring context say.
+
+- An `asset` MUST be declared in a context or a commons
+  (`bynk.asset.outside_context_or_commons`).
+- Its path MUST NOT be empty, absolute (`/x`, `\x`, `C:/x`), or contain a `..`
+  segment, under either separator (`bynk.asset.unsafe_path`).
+- Its name MUST NOT be declared twice in one unit (`bynk.asset.duplicate`), and
+  MUST NOT equal the name of a free function or type in that unit
+  (`bynk.resolve.name_conflict`).
+- A unit sees its own assets and those of each commons it `uses`, one level, as
+  with functions; a local declaration wins. Two used commons that declare the
+  same name are `bynk.uses.name_conflict`.
+
+In an expression, an asset's name has type `Asset`. `Asset` is a built-in,
+non-generic type with one field, `url : String`; any other field is
+`bynk.types.unknown_field`. `Asset` is reserved as a built-in type name, so
+`type Asset` is `bynk.resolve.reserved_builtin_type`. An `Asset` is not data:
+it MUST NOT appear in a record field, a sum-variant payload, a boundary
+position, or an agent `store` field (`bynk.types.asset_at_boundary`); its `.url`
+may.
+
+**Not yet built.** This release checks `asset` declarations but cannot build
+them: a build of a project that declares one is `bynk.asset.not_yet_emitted`.
+Checking (`bynk check`, the editor) is unaffected. Whether the named file
+exists is checked when assets are built.

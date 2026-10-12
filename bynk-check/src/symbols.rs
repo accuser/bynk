@@ -8,9 +8,9 @@ use crate::project_model::UnitInfo;
 use crate::resolver::{self, MethodTable as ResolverMethodTable};
 use bynk_project::{ParsedFile, UnitKind};
 use bynk_syntax::ast::{
-    ActorDecl, AgentDecl, BaseType, Block, CapRef, CapabilityDecl, CommonsItem, EventDecl,
-    ExportKind, Expr, ExprId, ExprKind, FnDecl, FnName, HandlerKind, Ident, Param, ProviderDecl,
-    ServiceDecl, ServiceProtocol, Trivia, TypeBody, TypeDecl, TypeRef, Visibility,
+    ActorDecl, AgentDecl, AssetDecl, BaseType, Block, CapRef, CapabilityDecl, CommonsItem,
+    EventDecl, ExportKind, Expr, ExprId, ExprKind, FnDecl, FnName, HandlerKind, Ident, Param,
+    ProviderDecl, ServiceDecl, ServiceProtocol, Trivia, TypeBody, TypeDecl, TypeRef, Visibility,
 };
 use bynk_syntax::error::CompileError;
 use bynk_syntax::span::Span;
@@ -92,6 +92,11 @@ pub fn assemble_index(
                     CommonsItem::Messages(m) => {
                         (SymbolKind::Messages, &m.tag, symbol_modifiers(&unit, None))
                     }
+                    // #1883, slice 1a: an asset is not indexed yet — no
+                    // symbol kind fits a value that is neither a function nor
+                    // a type. Hover and go-to-definition come with its own
+                    // `SymbolKind` in a later slice.
+                    CommonsItem::Asset(_) => continue,
                 };
                 builder.add_first_party_def(&unit, kind, name, modifiers);
             }
@@ -266,6 +271,8 @@ pub fn assemble_index(
                         symbol_modifiers(&unit, None),
                     );
                 }
+                // #1883, slice 1a: not indexed yet; see the synthetic-unit arm.
+                CommonsItem::Asset(_) => {}
             }
         }
     }
@@ -320,6 +327,11 @@ pub struct UnitTable {
     /// just any type" checks key off it. Empty for commons/adapters
     /// (`bynk.event.outside_context` rejects it there).
     pub events: HashMap<String, EventDecl>,
+    /// #1883, slice 1a: `asset` declarations, by name — values of the
+    /// built-in type `Asset`, local to this unit. A context or commons only
+    /// (`bynk.asset.outside_context_or_commons`); a unit's visible assets
+    /// add those of the commons it `uses` (`assets::compose_unit_assets`).
+    pub assets: HashMap<String, AssetDecl>,
     /// #291: the capabilities this unit flattens in with `consumes U { Cap }`,
     /// each mapped to the unit providing it — `phase_resolve_consumes`'s
     /// per-unit answer, recorded by [`record_flattened_caps`] so a test body's
@@ -655,6 +667,50 @@ pub fn build_unit_table(
         }
         out.extend(errors.into_iter().map(|e| (parsed[i].identity_path(), e)));
     }
+    // #1883, slice 1a: `asset` declarations. After the function pass, so an
+    // asset that shares a function's or type's name is reported whichever
+    // was declared first: an asset is a value, in the same namespace as a
+    // free function, and a type name in expression position is an error.
+    for &i in indices {
+        let mut errors: Vec<CompileError> = Vec::new();
+        for item in parsed[i].items() {
+            let CommonsItem::Asset(a) = item else {
+                continue;
+            };
+            if !matches!(kind, UnitKind::Context | UnitKind::Commons) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.asset.outside_context_or_commons",
+                        a.span,
+                        "`asset` declarations are only allowed inside a context or a commons",
+                    )
+                    .with_note(
+                        "an asset ships with the Worker of each context that declares it or `uses` a commons that does",
+                    ),
+                );
+                continue;
+            }
+            if let Some(err) = crate::assets::unsafe_path_error(a) {
+                errors.push(err);
+                // Still registered below: the declaration is otherwise
+                // well-formed, so its uses should not also report
+                // `unknown_name`.
+            }
+            let key = &a.name.name;
+            match crate::assets::name_error(
+                a,
+                table.assets.get(key).map(|p| &p.name),
+                table.fns.get(key).map(|f| f.name.ident()),
+                table.types.get(key).map(|t| &t.name),
+            ) {
+                Some(err) => errors.push(err),
+                None => {
+                    table.assets.insert(key.clone(), a.clone());
+                }
+            }
+        }
+        out.extend(errors.into_iter().map(|e| (parsed[i].identity_path(), e)));
+    }
     // message-bundles slice 1 (#859): a commons declaring at least one
     // `messages` block also gets a synthetic `render(tag: LocaleTag, msg:
     // Message) -> String` in its own local function table — not just emitted
@@ -849,7 +905,10 @@ pub fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDe
                 | CommonsItem::Actor(_)
                 // `messages` bundles aren't cross-file-imported by name in
                 // slice 1 (no multi-file bundle merge yet).
-                | CommonsItem::Messages(_) => {}
+                | CommonsItem::Messages(_)
+                // #1883, slice 1a: nothing emits an asset yet; slice 1b
+                // decides whether `.url` needs a cross-file import.
+                | CommonsItem::Asset(_) => {}
             }
         }
     }

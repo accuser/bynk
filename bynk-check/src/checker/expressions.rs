@@ -55,6 +55,13 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<TyId>, ctx: &mut Ctx) -> 
         }
         return Some(ty);
     }
+    // #1883, slice 1a: an `asset` name is a value of type `Asset`. Locals
+    // shadow it (checked above), as they shadow a function; an asset never
+    // shares a name with a function or type in scope (`bynk.resolve.
+    // name_conflict` at declaration).
+    if ctx.input.assets.contains_key(&id.name) {
+        return Some(tys.intern(Ty::Asset));
+    }
     // v0.20a: a named function referenced as a *value* where a function type
     // is expected (the contextual relaxation of `bynk.resolve.fn_without_call`,
     // relocated here from the resolver). A Var-bearing expected (generic
@@ -2879,6 +2886,21 @@ pub(crate) fn check_field_access(
             return None;
         }
         return Some(tys.intern(Ty::Base(*base)));
+    }
+    // #1883, slice 1a ([DECISION H]): `Asset` is compiler-known, with one
+    // field, `.url` — the content-hashed URL the platform serves the file at.
+    if recv_ty == tys.intern(Ty::Asset) {
+        return match field.name.as_str() {
+            "url" => Some(tys.intern(Ty::Base(BaseType::String))),
+            other => {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.unknown_field",
+                    field.span,
+                    format!("`Asset` has no field `{other}` — its one field is `url`"),
+                ));
+                None
+            }
+        };
     }
     // v0.22b: `JsonError` is a compiler-known record (ADR 0047) — uniform
     // `String` fields so a decode failure is inspectable in Bynk.

@@ -57,6 +57,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     k("agent", "Declare a stateful, keyed agent inside a context."),
     k("as", "Alias a consumed context (`consumes X as Y`)."),
     k(
+        "asset",
+        "Declare a static file the platform serves, public by construction (`asset name = \"path\"`).",
+    ),
+    k(
         "binding",
         "Name an adapter's TypeScript binding module (`binding \"<module>\"`).",
     ),
@@ -229,7 +233,7 @@ pub const CONTEXTUAL_KEYWORDS: &[KeywordInfo] = &[
 /// [`is_reserved_contextual`]) and the
 /// `is_reserved_keyword_covers_every_lexer_keyword` drift guard both defer to
 /// this list, so adding a word here is enough to make the parser admit it.
-pub const RESERVED_CONTEXTUAL: &[&str] = &["case", "event", "messages", "on", "suite"];
+pub const RESERVED_CONTEXTUAL: &[&str] = &["asset", "case", "event", "messages", "on", "suite"];
 
 /// True when `word` is a [reserved contextual keyword](RESERVED_CONTEXTUAL) —
 /// a reserved token `expect_ident` re-admits as an identifier. Because each of
@@ -254,6 +258,10 @@ pub fn is_reserved_contextual(word: &str) -> bool {
 /// (`bynkc/tests/keywords_reference.rs`) asserts this list equals the set of
 /// names the type parser dispatches on. Keep it sorted.
 pub const BUILTIN_TYPE_NAMES: &[KeywordInfo] = &[
+    k(
+        "Asset",
+        "A static file declared by `asset name = \"path\"`; its `.url` is the content-hashed URL the platform serves it at.",
+    ),
     k(
         "Connection",
         "A held WebSocket connection, `Connection[F]`.",

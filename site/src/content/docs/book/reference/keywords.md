@@ -80,6 +80,7 @@ Reserved only in the one position named below; elsewhere (a field, parameter, or
 
 | Keyword | Meaning |
 |---|---|
+| `asset` | Declare a static file the platform serves, public by construction (`asset name = "path"`). |
 | `case` | Declare a test case inside a `suite` (`case "…" { … }`). |
 | `event` | Declare a typed fact a context may emit (`event Name = { fields }`), inside a context. |
 | `messages` | Declare a message bundle for one locale (`messages "<tag>" { "code" => "template" }`), inside a commons. |
@@ -92,6 +93,7 @@ Compiler-known type constructors. They are not lexer keywords — you may use th
 
 | Name | Meaning |
 |---|---|
+| `Asset` | A static file declared by `asset name = "path"`; its `.url` is the content-hashed URL the platform serves it at. |
 | `Connection` | A held WebSocket connection, `Connection[F]`. |
 | `History` | A generated call-history generator, `History[Agent]` (test-only). |
 | `HttpResult` | The HTTP handler result type, `HttpResult[T]`. |

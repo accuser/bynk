@@ -1,0 +1,1 @@
+bynk.asset.duplicate asset `style` is already declared

@@ -2049,6 +2049,20 @@ fn run_checks(
         }
     }
 
+    // #1883, slice 1a: an `asset` declaration checks (placement, path,
+    // names, `.url`), but nothing emits one yet: slice 1b adds the file
+    // reader, the content hash and the `[assets]` block. Until then a build
+    // refuses it with one named diagnostic per declaration, rather than
+    // emitting a Worker whose `.url` references are undefined. Build mode
+    // only, so `bynk check` and the editor stay clean. Slice 1b removes this.
+    if mode == Mode::Build {
+        for pf in &parsed {
+            for err in bynk_check::assets::not_yet_emitted_errors(pf.items()) {
+                errors.push_for(Some(&pf.identity_path()), err);
+            }
+        }
+    }
+
     if !errors.is_empty() && mode == Mode::Build {
         return RunChecks::Bailed {
             errors,

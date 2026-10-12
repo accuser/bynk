@@ -116,6 +116,15 @@ expr`). The grammar admits an `event` in any body, and the annotation list in
 any number. Placement (contexts only), the closed annotation set (`@schema(N)`,
 at most once), field defaults, and emission are well-formedness: §5.7b.
 
+### §4.1.12a asset_decl {#4112a-asset_decl}
+
+{{#grammar asset_decl}}
+
+`asset`, a name, `=`, and a plain string literal naming a file relative to the
+project root (an interpolated string is a parse error here). The grammar admits
+an `asset` in any body. Placement (contexts and commons only), the path rules,
+and the declared name's type are well-formedness: §5.12.
+
 ### §4.1.13 messages_decl (v0.228) {#4113-messages_decl}
 
 {{#grammar messages_decl}}

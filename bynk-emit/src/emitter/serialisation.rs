@@ -1919,6 +1919,12 @@ fn emit_field_deserialise_wire(
                     as_expr(ident(json), TsType::named("unknown")),
                     TsType::named("QueueResult"),
                 ),
+                // #1883, slice 1a: unreachable in a checked program
+                // (`bynk.types.asset_at_boundary`); total for the model.
+                UncheckedReason::Asset => as_expr(
+                    as_expr(ident(json), TsType::named("unknown")),
+                    crate::emitter::asset_ts_type(),
+                ),
             };
             vec![const_(format!("__{name}"), value)]
         }
@@ -2326,6 +2332,7 @@ pub(crate) fn agent_wire_passes_through(t: &TypeRef) -> bool {
         TypeRef::Base(..)
         | TypeRef::Named(_)
         | TypeRef::QueueResult(_)
+        | TypeRef::Asset(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => false,
@@ -2483,6 +2490,9 @@ pub(crate) fn deserialise_expr_via(
             ok_unknown_cast(&ty)
         }
         TypeRef::QueueResult(_) => ok_unknown_cast("QueueResult"),
+        // #1883, slice 1a: unreachable in a checked program
+        // (`bynk.types.asset_at_boundary`).
+        TypeRef::Asset(_) => ok_unknown_cast("{ readonly url: string }"),
         // v0.110 (ADR 0142 D5): a `Bytes` wires as a base64 string; decode it
         // (rejecting a non-string or invalid base64) to a `Uint8Array`.
         TypeRef::Base(BaseType::Bytes, _) => {

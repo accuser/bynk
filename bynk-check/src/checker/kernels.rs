@@ -2220,6 +2220,7 @@ fn json_codable(t: TyId, tys: &Types) -> bool {
         | Ty::Connection(_)
         | Ty::HttpResult(_)
         | Ty::QueueResult
+        | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
         | Ty::Var(_)
