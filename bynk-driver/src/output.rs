@@ -44,7 +44,19 @@ pub fn write_output(out: &ProjectOutput, dir: &Path) -> std::io::Result<()> {
 /// binary-safe counterpart of [`write_document`] — an asset is not a
 /// [`Document`] (see `bynk_emit::project::Artefacts::assets` for why), so it
 /// gets no printer, no source-map trailer and no text conversion.
+///
+/// Every asset must lie under a Worker's compiler-owned assets directory
+/// ([`is_worker_asset_path`]): that is the only place reconciliation prunes
+/// files of any extension, so an asset written anywhere else would linger
+/// after it stopped being produced. Producers build the path through
+/// `bynk_emit::project::worker_assets_dir`; this assertion makes bypassing it
+/// a test failure rather than a silent leak.
 fn write_asset(path: &Path, bytes: &[u8], dir: &Path) -> std::io::Result<()> {
+    debug_assert!(
+        is_worker_asset_path(path),
+        "static asset `{}` is outside every Worker's assets directory",
+        path.display()
+    );
     let target = dir.join(path);
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;

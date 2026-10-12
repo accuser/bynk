@@ -225,3 +225,27 @@ fn a_workers_assets_dir_is_written_byte_for_byte_and_pruned_regardless_of_extens
         "a file outside the assets dir is not owned"
     );
 }
+
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "is outside every Worker's assets directory")]
+fn an_asset_outside_a_workers_assets_dir_is_rejected_in_debug_builds() {
+    // #1883, slice 0: reconciliation only owns a Worker's assets directory,
+    // so an asset written anywhere else would never be pruned. A producer
+    // that bypasses `worker_assets_dir` must fail loudly in tests.
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("write-output-stray-asset-src");
+    let out_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("write-output-stray-asset-out");
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    write(
+        &root.join("src/only.bynk"),
+        "commons only\n\nfn f() -> Int {\n  1\n}\n",
+    );
+    let paths = bynkc::try_read_project_paths(&root).expect("well-formed fixture manifest");
+    let mut out = bynkc::compile_project(&bynk_testkit::compile_options_split(root, paths))
+        .unwrap_or_else(|f| panic!("compile failed: {} error(s)", f.errors.len()));
+    out.artefacts
+        .assets
+        .insert(PathBuf::from("workers/only/board.css"), b"body{}".to_vec());
+    let _ = bynkc::write_output(&out, &out_dir);
+}
