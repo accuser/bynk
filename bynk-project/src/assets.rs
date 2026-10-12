@@ -11,7 +11,7 @@
 //! declaration names, and the LSP lists it with [`list_asset_files`] for the
 //! existence check.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -47,9 +47,8 @@ pub type AssetReader = dyn Fn(&str) -> io::Result<Vec<u8>> + Send + Sync;
 /// those a declaration names. A large file nothing declares is never read.
 ///
 /// The caller decides where the bytes come from: [`AssetFolder::on_disk`]
-/// for a real build, [`AssetFolder::in_memory`] for a build with no
-/// filesystem behind it. `bynk-emit` only ever calls [`AssetFolder::read`],
-/// so it stays disk-free.
+/// for a real build, [`AssetFolder::new`] with its own reader otherwise.
+/// `bynk-emit` only ever calls [`AssetFolder::read`], so it stays disk-free.
 #[derive(Clone)]
 pub struct AssetFolder {
     files: BTreeSet<String>,
@@ -66,29 +65,22 @@ impl AssetFolder {
 
     /// `<project_root>/assets/`, listed now ([`list_asset_files`]: regular
     /// files only, symbolic links not followed, a missing folder empty) and
-    /// read later, file by file, as the compiler asks.
+    /// read later, file by file, as the compiler asks. The folder's real
+    /// location is fixed now too, so a read whose path resolves anywhere else
+    /// — a directory swapped for a symbolic link after the listing — is
+    /// refused rather than published.
     pub fn on_disk(project_root: &Path) -> io::Result<Self> {
         let files = list_asset_files(project_root)?;
+        if files.is_empty() {
+            // Nothing listed, so `read` never reaches the reader.
+            return Ok(Self::new(files, Arc::new(|_: &str| Err(not_listed()))));
+        }
         let root: PathBuf = project_root.to_path_buf();
+        let dir = std::fs::canonicalize(root.join(PROJECT_ASSETS_DIR))?;
         Ok(Self::new(
             files,
-            Arc::new(move |key: &str| read_listed_file(&root, key)),
+            Arc::new(move |key: &str| read_listed_file(&root, &dir, key)),
         ))
-    }
-
-    /// A folder held in memory, keyed by normalised path.
-    pub fn in_memory(files: BTreeMap<String, Vec<u8>>) -> Self {
-        let keys = files.keys().cloned().collect();
-        let files = Arc::new(files);
-        Self::new(
-            keys,
-            Arc::new(move |key: &str| {
-                files
-                    .get(key)
-                    .cloned()
-                    .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
-            }),
-        )
     }
 
     /// The files in the folder, by normalised key.
@@ -96,8 +88,13 @@ impl AssetFolder {
         &self.files
     }
 
-    /// The bytes of the listed file `key`.
+    /// The bytes of the listed file `key`. A key the listing does not hold is
+    /// `NotFound` without consulting the reader, so no caller can steer it
+    /// outside the folder (`normalise_asset_path` keeps `..` segments).
     pub fn read(&self, key: &str) -> io::Result<Vec<u8>> {
+        if !self.files.contains(key) {
+            return Err(not_listed());
+        }
         (self.reader)(key)
     }
 }
@@ -110,9 +107,15 @@ impl fmt::Debug for AssetFolder {
     }
 }
 
+fn not_listed() -> io::Error {
+    io::Error::new(io::ErrorKind::NotFound, "not a listed asset file")
+}
+
 /// Read the listed file `key` under `root`, refusing it if it has become a
-/// symbolic link since the folder was listed, so a link is never followed.
-fn read_listed_file(root: &Path, key: &str) -> io::Result<Vec<u8>> {
+/// symbolic link since the folder was listed, or if its path now resolves
+/// outside `dir` (the assets folder's canonical path, fixed at listing) —
+/// a folder on the way swapped for a link — so no link is ever followed.
+fn read_listed_file(root: &Path, dir: &Path, key: &str) -> io::Result<Vec<u8>> {
     let path = root.join(key);
     if !std::fs::symlink_metadata(&path)?.file_type().is_file() {
         return Err(io::Error::new(
@@ -120,7 +123,14 @@ fn read_listed_file(root: &Path, key: &str) -> io::Result<Vec<u8>> {
             "not a regular file",
         ));
     }
-    std::fs::read(path)
+    let resolved = std::fs::canonicalize(&path)?;
+    if !resolved.starts_with(dir) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "resolves outside the assets folder",
+        ));
+    }
+    std::fs::read(resolved)
 }
 
 /// Every regular file under `<project_root>/assets/`, by its normalised
@@ -201,15 +211,43 @@ mod tests {
             vec!["assets/board.css", "assets/img/a.png"]
         );
         assert_eq!(folder.read("assets/img/a.png").unwrap(), vec![0x89, 0x00]);
-        // The reader never follows a link, even one asked for by name.
+        // Only listed keys are read: a link, or a `..` escape, is refused
+        // by name, whatever the reader would do with it.
         #[cfg(unix)]
         assert!(folder.read("assets/leak.txt").is_err());
+        assert_eq!(
+            folder.read("assets/../secret.txt").unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
         assert!(
             AssetFolder::on_disk(&root.join("nowhere"))
                 .unwrap()
                 .files()
                 .is_empty()
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Review of #1905: a directory inside `assets/` swapped for a symbolic
+    /// link between the listing and the read does not pull a file in from
+    /// outside the folder, though the file at the end is a regular one.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_swapped_for_a_link_after_listing_is_not_followed() {
+        let root =
+            std::env::temp_dir().join(format!("bynk-project-assets-swap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("assets/css")).unwrap();
+        std::fs::write(root.join("assets/css/palette.css"), b"a{}").unwrap();
+        std::fs::create_dir_all(root.join("outside")).unwrap();
+        std::fs::write(root.join("outside/palette.css"), b"secret").unwrap();
+
+        let folder = AssetFolder::on_disk(&root).unwrap();
+        assert_eq!(folder.read("assets/css/palette.css").unwrap(), b"a{}");
+        std::fs::remove_dir_all(root.join("assets/css")).unwrap();
+        std::os::unix::fs::symlink(root.join("outside"), root.join("assets/css")).unwrap();
+        let err = folder.read("assets/css/palette.css").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{err}");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -338,3 +338,62 @@ fn an_unreadable_undeclared_file_does_not_affect_the_cli_build() {
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
     assert!(ok, "the undeclared file must not be read, got:\n{out}");
 }
+
+/// Review of #1905: two declarations of one file, in different units (one
+/// spelled `./assets/…`), read it once; when that read fails, each
+/// declaration is reported, the first with the I/O error and without a second
+/// read for the other.
+#[test]
+fn a_file_declared_twice_is_read_once() {
+    let dir = project("asset-build-declared-twice", true);
+    std::fs::write(
+        dir.join("src/compat/extra.bynk"),
+        "commons compat.extra\n\nasset again = \"./assets/board.css\"\n",
+    )
+    .unwrap();
+    let options = |refuse: &'static str| {
+        let (folder, reads) = recording_folder(&dir, refuse);
+        let paths = bynkc::ProjectPaths::conventional(&dir);
+        let options = bynk_testkit::compile_options_split(dir.clone(), paths)
+            .target(bynkc::BuildTarget::Workers)
+            .asset_files(folder);
+        (options, reads)
+    };
+    let board_reads = |reads: &std::sync::Mutex<Vec<String>>| {
+        reads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| *k == "assets/board.css")
+            .count()
+    };
+
+    let (opts, reads) = options("assets/huge.bin");
+    if let Err(f) = bynkc::compile_project(&opts) {
+        panic!(
+            "compile failed: {:?}",
+            f.errors
+                .iter()
+                .map(|e| e.error.category)
+                .collect::<Vec<_>>()
+        );
+    }
+    assert_eq!(board_reads(&reads), 1, "read once for two declarations");
+
+    let (opts, reads) = options("assets/board.css");
+    let Err(failure) = bynkc::compile_project(&opts) else {
+        panic!("an unreadable declared file must fail the build");
+    };
+    assert_eq!(board_reads(&reads), 1, "a failed read is not retried");
+    let unreadable: Vec<_> = failure
+        .errors
+        .iter()
+        .filter(|e| e.error.category == "bynk.asset.unreadable_file")
+        .collect();
+    assert_eq!(unreadable.len(), 2, "one per declaration");
+    let with_io_note = unreadable
+        .iter()
+        .filter(|e| e.error.notes.iter().any(|n| n.contains("the read failed")))
+        .count();
+    assert_eq!(with_io_note, 1, "the I/O error is noted once");
+}
