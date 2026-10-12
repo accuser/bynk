@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **485** codes in total.
+There are **486** codes in total.
 
 ## Agents
 
@@ -522,6 +522,7 @@ There are **485** codes in total.
 | `bynk.asset.not_served` | A deployable Bundle build met an `asset`; a Bundle ships no files, so its `.url` would not be served (a warning). |  | Warning |
 | `bynk.asset.outside_assets_dir` | An `asset` path does not name a file in the project's `assets/` folder. |  | — |
 | `bynk.asset.outside_context_or_commons` | An `asset` declaration appears outside a context or commons. |  | — |
+| `bynk.asset.unreadable_file` | An `asset` names a file in the project's `assets/` folder that could not be read. |  | — |
 | `bynk.asset.unsafe_path` | An `asset` path is empty, absolute, or contains a `..` segment. |  | — |
 
 ## Suites and cases
