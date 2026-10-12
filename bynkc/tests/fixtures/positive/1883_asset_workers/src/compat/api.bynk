@@ -1,0 +1,9 @@
+context compat.api
+
+-- Uses no commons with assets: its Worker gets no `[assets]` block.
+
+service api from http {
+  on GET("/ping") () -> Effect[HttpResult[String]] by Visitor {
+    Ok("pong")
+  }
+}

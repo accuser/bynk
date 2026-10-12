@@ -97,6 +97,7 @@
   - [Cron](reference/cron.md)
   - [Queue](reference/queue.md)
   - [WebSocket](reference/websocket.md)
+  - [Static assets](reference/assets.md)
   - [Actors](reference/actors.md)
   - [Testing](reference/testing.md)
   - [Diagnostic index](reference/diagnostics.md)

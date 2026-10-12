@@ -1,17 +1,20 @@
-//! #1883 (static assets), slice 1a: the checker-side rules for `asset name =
-//! "path"` declarations that need no disk — the path-safety rule, and the
-//! composition of a unit's visible assets through `uses` ([DECISION G]).
+//! #1883 (static assets): the checker-side rules for `asset name = "path"`
+//! declarations — the path rules, the name rule, the composition of a unit's
+//! visible assets through `uses` ([DECISION G]) — and (slice 1b) the build
+//! side's shared definitions: the existence check, the served URL path, and
+//! the files each Worker ships.
 //!
-//! Whether a declared file exists, and its content hash, are slice 1b's: the
-//! checker stays disk-free (`bynk-wasm` compiles it with no filesystem), so
-//! both arrive through the file reader 1b threads in from the driver.
+//! The checker stays disk-free (`bynk-wasm` compiles it with no filesystem):
+//! the project's `assets/` folder reaches it pre-read by the caller
+//! (`bynk_project::assets`), as a path set or as bytes.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bynk_syntax::ast::{AssetDecl, CommonsItem, FnName, Ident};
 use bynk_syntax::error::CompileError;
 
-use crate::project_model::UnitInfo;
+use crate::project_model::{ErrorSink, UnitInfo};
+use bynk_project::ParsedFile;
 
 /// Why `path` is not a safe asset path, or `None` when it is.
 ///
@@ -53,36 +56,224 @@ pub fn unsafe_path_error(a: &AssetDecl) -> Option<CompileError> {
     )
 }
 
-/// `bynk.asset.not_yet_emitted` for `a`: slice 1a checks an asset but cannot
-/// build one, so every build refuses it (the project pipeline's build-mode
-/// gate in `bynk-emit`'s `run_checks`, and the single-file compile, which is
-/// always a build). Slice 1b removes it.
-pub fn not_yet_emitted_error(a: &AssetDecl) -> CompileError {
+/// `bynk.asset.outside_assets_dir` for `a`, when its path is safe but does
+/// not lie inside the project's assets folder
+/// ([`bynk_project::assets::PROJECT_ASSETS_DIR`]). Assets are public, so they
+/// come only from that folder, and a declaration can never publish `.env` or
+/// a source file by mistake (#1883, slice 1b).
+pub fn outside_assets_dir_error(a: &AssetDecl) -> Option<CompileError> {
+    if unsafe_asset_path_reason(&a.path).is_some()
+        || bynk_project::assets::is_in_assets_dir(&a.path)
+    {
+        return None;
+    }
+    let dir = bynk_project::assets::PROJECT_ASSETS_DIR;
+    Some(
+        CompileError::new(
+            "bynk.asset.outside_assets_dir",
+            a.path_span,
+            format!(
+                "asset `{}` must name a file in the project's `{dir}/` folder",
+                a.name.name
+            ),
+        )
+        .with_note(format!(
+            "assets are public, so they come only from `{dir}/`; move the file there and name it `{dir}/…`"
+        )),
+    )
+}
+
+/// The path rules for `a`, in order: [`unsafe_path_error`], then
+/// [`outside_assets_dir_error`] (at most one of the two applies).
+pub fn path_errors(a: &AssetDecl) -> Option<CompileError> {
+    unsafe_path_error(a).or_else(|| outside_assets_dir_error(a))
+}
+
+/// The URL path prefix every asset is served under. A handler route under it
+/// is reserved for assets (slice 2's check), and `_headers` gives everything
+/// under it an immutable cache lifetime.
+pub const SERVED_PREFIX: &str = "/_assets/";
+
+/// `bynk.asset.not_served` (a warning) for each asset among `items`, for a
+/// deployable Bundle build: a Bundle ships no Worker and so no files, yet each
+/// module still carries its asset's `.url`, which would 404 wherever the
+/// output is served. A warning, not an error, because a Bundle build is also
+/// how `bynkc test` compiles; the caller raises it only for a build without
+/// tests (review of #1904). A helper here keeps `bynk-emit`'s `project.rs`
+/// free of syntax-tree types (the `ast_importers` probe).
+pub fn bundle_not_served_warnings(items: &[CommonsItem]) -> Vec<CompileError> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            CommonsItem::Asset(a) => Some(
+                CompileError::new(
+                    "bynk.asset.not_served",
+                    a.span,
+                    format!(
+                        "asset `{}` is not served by a Bundle build: its `.url` names a file this build does not ship",
+                        a.name.name
+                    ),
+                )
+                .with_note(
+                    "assets are served beside a Worker; build with `--target workers` (as `bynk dev` and `bynk deploy` do)",
+                ),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The URL path the platform serves the asset file `source` (a normalised
+/// `assets/…` key) with content `bytes` at:
+/// `/_assets/<stem>.<hash>.<ext>`, where `<hash>` is the content's FNV-1a 64
+/// ([`crate::contract::fnv1a64_hex`]) and `<stem>`/`<ext>` are the file
+/// name's, split at its last `.` (no `.<ext>` when it has none).
+///
+/// Only the file name is kept, not its folders: the hash already tells two
+/// files apart, and the same bytes under the same name are one served file,
+/// however many declarations name them. Any character outside
+/// `[A-Za-z0-9._-]` becomes `-`, so `.url` never needs percent-encoding.
+/// Reproducible: it depends only on the name and the bytes.
+pub fn served_path(source: &str, bytes: &[u8]) -> String {
+    let name = source.rsplit('/').next().unwrap_or(source);
+    let clean: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let hash = crate::contract::fnv1a64_hex(bytes);
+    match clean.rfind('.') {
+        Some(dot) if dot > 0 => {
+            format!(
+                "{SERVED_PREFIX}{}.{hash}.{}",
+                &clean[..dot],
+                &clean[dot + 1..]
+            )
+        }
+        _ => format!("{SERVED_PREFIX}{clean}.{hash}"),
+    }
+}
+
+/// Every declared asset's served path, keyed by its normalised source path —
+/// what the emitter writes as each `.url`. Only declarations whose file is in
+/// `files` appear (a missing one is `bynk.asset.missing_file`).
+pub fn declared_served_paths(
+    parsed: &[ParsedFile],
+    files: &BTreeMap<String, Vec<u8>>,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for pf in parsed {
+        for item in pf.items() {
+            let CommonsItem::Asset(a) = item else {
+                continue;
+            };
+            let key = bynk_project::assets::normalise_asset_path(&a.path);
+            if let Some(bytes) = files.get(&key) {
+                let served = served_path(&key, bytes);
+                out.insert(key, served);
+            }
+        }
+    }
+    out
+}
+
+/// The files a context's Worker ships: the assets declared by the context and
+/// by every commons in its **transitive** `uses` closure, keyed by served
+/// path, each mapped to its normalised source path.
+///
+/// Transitive, unlike name visibility ([`compose_unit_assets`], one level):
+/// commons `a` may use commons `b` and return `b`'s `.url`, and the Worker
+/// running `a`'s code must still serve `b`'s file. Sorted and deduplicated by
+/// served path, so the output is reproducible.
+pub fn deployed_assets(
+    context: &str,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_tables: &HashMap<String, crate::symbols::UnitTable>,
+    served: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut stack: Vec<&str> = vec![context];
+    let mut out = BTreeMap::new();
+    while let Some(unit) = stack.pop() {
+        if !seen.insert(unit) {
+            continue;
+        }
+        if let Some(table) = unit_tables.get(unit) {
+            for decl in table.assets.values() {
+                let key = bynk_project::assets::normalise_asset_path(&decl.path);
+                if let Some(path) = served.get(&key) {
+                    out.insert(path.clone(), key);
+                }
+            }
+        }
+        for used in unit_uses.get(unit).into_iter().flatten() {
+            stack.push(used);
+        }
+    }
+    out
+}
+
+/// `bynk.asset.missing_file` for each asset whose (otherwise valid) path names
+/// no file in `available` — the project's `assets/` folder as the caller read
+/// it (`bynk_project::assets`). `None` skips the check: nothing on disk was
+/// consulted (an in-memory check). A build passes `Some`, an empty set when it
+/// had no filesystem, so it never invents a URL for a file nobody read.
+///
+/// A path that already fails [`path_errors`] is not also reported missing.
+pub fn phase_asset_files(
+    parsed: &[ParsedFile],
+    available: Option<&BTreeSet<String>>,
+    errors: &mut ErrorSink,
+) {
+    let Some(available) = available else { return };
+    for pf in parsed {
+        for item in pf.items() {
+            let CommonsItem::Asset(a) = item else {
+                continue;
+            };
+            if path_errors(a).is_some() {
+                continue;
+            }
+            let key = bynk_project::assets::normalise_asset_path(&a.path);
+            if !available.contains(&key) {
+                errors.push_for(
+                    Some(&pf.identity_path()),
+                    CompileError::new(
+                        "bynk.asset.missing_file",
+                        a.path_span,
+                        format!("asset `{}` names `{key}`, which does not exist", a.name.name),
+                    )
+                    .with_note(
+                        "an asset must be a regular file in the project's `assets/` folder; symbolic links are not followed",
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// `bynk.asset.needs_project` for `a`: a single-file build emits one module
+/// and no Worker, and has no project root to find `assets/` under, so it
+/// cannot ship a file. Checking a single file (`bynk check page.bynk`) is
+/// unaffected; building one that declares an asset is refused. Build the
+/// project instead.
+pub fn needs_project_error(a: &AssetDecl) -> CompileError {
     CompileError::new(
-        "bynk.asset.not_yet_emitted",
+        "bynk.asset.needs_project",
         a.span,
         format!(
-            "asset `{}` checks, but this compiler cannot build it yet",
+            "asset `{}` cannot be built from a single file",
             a.name.name
         ),
     )
     .with_note(
-        "`asset` declarations are checked today and built from the next release (#1883); remove the declaration to build",
+        "an asset is served beside a Worker, so it needs a project build (`bynk dev`, `bynkc compile <project dir>`) with the file in the project's `assets/` folder",
     )
-}
-
-/// [`not_yet_emitted_error`] for every asset among `items` — the project
-/// pipeline's build-mode gate. A helper here, not a loop at the call site, so
-/// `bynk-emit`'s `project.rs` names no syntax-tree type (the `ast_importers`
-/// probe).
-pub fn not_yet_emitted_errors(items: &[CommonsItem]) -> Vec<CompileError> {
-    items
-        .iter()
-        .filter_map(|item| match item {
-            CommonsItem::Asset(a) => Some(not_yet_emitted_error(a)),
-            _ => None,
-        })
-        .collect()
 }
 
 /// The name rule for asset `a`, given what its unit already declares under
@@ -132,7 +323,7 @@ pub fn name_error(
 /// The single-file compile's asset diagnostics, in declaration order: each
 /// asset's path check and name rule ([`name_error`], against the file's own
 /// functions, types and earlier assets), and, when `build` is set, its
-/// refusal ([`not_yet_emitted_error`]). Placement needs no check here: a
+/// refusal ([`needs_project_error`]). Placement needs no check here: a
 /// single file is always a commons (an `adapter` is a parse error).
 pub fn single_file_asset_errors(items: &[CommonsItem], build: bool) -> Vec<CompileError> {
     let mut fns: HashMap<&str, &Ident> = HashMap::new();
@@ -159,7 +350,7 @@ pub fn single_file_asset_errors(items: &[CommonsItem], build: bool) -> Vec<Compi
         let CommonsItem::Asset(a) = item else {
             continue;
         };
-        errors.extend(unsafe_path_error(a));
+        errors.extend(path_errors(a));
         let key = a.name.name.as_str();
         match name_error(
             a,
@@ -173,7 +364,7 @@ pub fn single_file_asset_errors(items: &[CommonsItem], build: bool) -> Vec<Compi
             }
         }
         if build {
-            errors.push(not_yet_emitted_error(a));
+            errors.push(needs_project_error(a));
         }
     }
     errors
@@ -209,7 +400,38 @@ pub fn compose_unit_assets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testkit::analyse;
+
+    /// The asset files these tests' declarations name, written into each
+    /// project beside its sources so the existence check passes (it reads
+    /// the `assets/` folder from disk, as the editor does).
+    const ASSET_FILES: &[(&str, &str)] = &[
+        ("assets/a.css", "a{}"),
+        ("assets/b.css", "b{}"),
+        ("assets/board.css", "body{}"),
+    ];
+
+    fn analyse(files: &[(&str, &str)]) -> crate::testkit::Analysed {
+        let mut all = files.to_vec();
+        all.extend_from_slice(ASSET_FILES);
+        crate::testkit::analyse(&all)
+    }
+
+    /// #1883, slice 1b: a declared file must exist in `assets/`; a symlink
+    /// there does not count.
+    #[test]
+    fn a_declared_file_must_exist_in_the_assets_folder() {
+        let a = crate::testkit::analyse(&[(
+            "c.bynk",
+            "context c\n\nasset style = \"assets/missing.css\"\n",
+        )]);
+        a.assert_reports("bynk.asset.missing_file");
+
+        let a = analyse(&[(
+            "c.bynk",
+            "context c\n\nasset style = \"./assets/board.css\"\n",
+        )]);
+        a.assert_clean();
+    }
 
     /// [DECISION G]: a commons owns its stylesheet, and a context that `uses`
     /// it reads `.url` without naming the asset itself — in a free function
@@ -241,7 +463,7 @@ mod tests {
     fn a_local_shadows_an_asset_and_asset_is_still_an_identifier() {
         let a = analyse(&[(
             "c.bynk",
-            "context c\n\nasset style = \"a.css\"\n\nfn f(style: Int) -> Int {\n  style + 1\n}\n\nfn g(asset: Int) -> Int {\n  asset\n}\n",
+            "context c\n\nasset style = \"assets/a.css\"\n\nfn f(style: Int) -> Int {\n  style + 1\n}\n\nfn g(asset: Int) -> Int {\n  asset\n}\n",
         )]);
         a.assert_clean();
         assert_eq!(a.type_at("c.bynk", "style + 1"), "Int");
@@ -252,10 +474,13 @@ mod tests {
     #[test]
     fn a_local_asset_wins_over_a_used_one() {
         let a = analyse(&[
-            ("lib/a.bynk", "commons lib.a\n\nasset style = \"a.css\"\n"),
+            (
+                "lib/a.bynk",
+                "commons lib.a\n\nasset style = \"assets/a.css\"\n",
+            ),
             (
                 "app/web.bynk",
-                "context app.web\n\nuses lib.a\n\nasset style = \"b.css\"\n\nfn f() -> String {\n  style.url\n}\n",
+                "context app.web\n\nuses lib.a\n\nasset style = \"assets/b.css\"\n\nfn f() -> String {\n  style.url\n}\n",
             ),
         ]);
         a.assert_clean();
@@ -264,8 +489,14 @@ mod tests {
     #[test]
     fn two_used_commons_declaring_one_asset_name_conflict() {
         let a = analyse(&[
-            ("lib/a.bynk", "commons lib.a\n\nasset style = \"a.css\"\n"),
-            ("lib/b.bynk", "commons lib.b\n\nasset style = \"b.css\"\n"),
+            (
+                "lib/a.bynk",
+                "commons lib.a\n\nasset style = \"assets/a.css\"\n",
+            ),
+            (
+                "lib/b.bynk",
+                "commons lib.b\n\nasset style = \"assets/b.css\"\n",
+            ),
             (
                 "app/web.bynk",
                 "context app.web\n\nuses lib.a\nuses lib.b\n\nfn f() -> String {\n  style.url\n}\n",
@@ -280,8 +511,8 @@ mod tests {
     #[test]
     fn a_multi_file_unit_shares_one_asset_namespace() {
         let dup = analyse(&[
-            ("c/a.bynk", "context c\n\nasset style = \"a.css\"\n"),
-            ("c/b.bynk", "context c\n\nasset style = \"b.css\"\n"),
+            ("c/a.bynk", "context c\n\nasset style = \"assets/a.css\"\n"),
+            ("c/b.bynk", "context c\n\nasset style = \"assets/b.css\"\n"),
         ]);
         assert_eq!(
             dup.categories()
@@ -293,7 +524,7 @@ mod tests {
             dup.render()
         );
         let shared = analyse(&[
-            ("c/a.bynk", "context c\n\nasset style = \"a.css\"\n"),
+            ("c/a.bynk", "context c\n\nasset style = \"assets/a.css\"\n"),
             (
                 "c/b.bynk",
                 "context c\n\nfn f() -> String {\n  style.url\n}\n",
@@ -313,7 +544,7 @@ mod tests {
             ("lib/b.bynk", "commons lib.b\n\ntype Style = String\n"),
             (
                 "app/web.bynk",
-                "context app.web\n\nuses lib.a\nuses lib.b\n\nasset Style = \"a.css\"\n\ntype Page = { s: Style }\n",
+                "context app.web\n\nuses lib.a\nuses lib.b\n\nasset Style = \"assets/a.css\"\n\ntype Page = { s: Style }\n",
             ),
         ]);
         a.assert_reports("bynk.uses.name_conflict");
@@ -323,7 +554,7 @@ mod tests {
     fn an_asset_has_only_a_url_field() {
         let a = analyse(&[(
             "c.bynk",
-            "context c\n\nasset style = \"a.css\"\n\nfn f() -> String {\n  style.path\n}\n",
+            "context c\n\nasset style = \"assets/a.css\"\n\nfn f() -> String {\n  style.path\n}\n",
         )]);
         a.assert_reports("bynk.types.unknown_field");
     }
@@ -334,19 +565,19 @@ mod tests {
     fn each_declaration_rule_reports_its_own_code() {
         for (src, code) in [
             (
-                "adapter c\n\nbinding \"./c.js\"\n\nasset style = \"a.css\"\n",
+                "adapter c\n\nbinding \"./c.js\"\n\nasset style = \"assets/a.css\"\n",
                 "bynk.asset.outside_context_or_commons",
             ),
             (
-                "context c\n\nasset style = \"a.css\"\nasset style = \"b.css\"\n",
+                "context c\n\nasset style = \"assets/a.css\"\nasset style = \"assets/b.css\"\n",
                 "bynk.asset.duplicate",
             ),
             (
-                "context c\n\nfn style() -> Int {\n  1\n}\n\nasset style = \"a.css\"\n",
+                "context c\n\nfn style() -> Int {\n  1\n}\n\nasset style = \"assets/a.css\"\n",
                 "bynk.resolve.name_conflict",
             ),
             (
-                "context c\n\ntype Style = Int\n\nasset Style = \"a.css\"\n",
+                "context c\n\ntype Style = Int\n\nasset Style = \"assets/a.css\"\n",
                 "bynk.resolve.name_conflict",
             ),
             (
@@ -366,6 +597,14 @@ mod tests {
                 "bynk.resolve.reserved_builtin_type",
             ),
             (
+                "context c\n\nasset env = \".env\"\n",
+                "bynk.asset.outside_assets_dir",
+            ),
+            (
+                "context c\n\nasset page = \"src/c.bynk\"\n",
+                "bynk.asset.outside_assets_dir",
+            ),
+            (
                 "context c\n\nagent Board {\n  key id: String\n\n  store style: Cell[Asset]\n\n  on call get() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n",
                 "bynk.types.asset_at_boundary",
             ),
@@ -373,6 +612,94 @@ mod tests {
             let a = analyse(&[("c.bynk", src)]);
             a.assert_reports(code);
         }
+    }
+
+    #[test]
+    fn served_path_is_hashed_flat_and_url_safe() {
+        let h = crate::contract::fnv1a64_hex(b"body{}");
+        assert_eq!(
+            served_path("assets/board.css", b"body{}"),
+            format!("/_assets/board.{h}.css")
+        );
+        assert_eq!(
+            served_path("assets/css/board.min.css", b"body{}"),
+            format!("/_assets/board.min.{h}.css")
+        );
+        assert_eq!(
+            served_path("assets/LICENSE", b"body{}"),
+            format!("/_assets/LICENSE.{h}")
+        );
+        assert_eq!(
+            served_path("assets/.nojekyll", b"body{}"),
+            format!("/_assets/.nojekyll.{h}")
+        );
+        assert_eq!(
+            served_path("assets/my file é.css", b"body{}"),
+            format!("/_assets/my-file--.{h}.css")
+        );
+        assert_ne!(
+            served_path("assets/board.css", b"a"),
+            served_path("assets/board.css", b"b"),
+            "a content change changes the URL"
+        );
+    }
+
+    /// A Worker ships the files of its whole `uses` closure, not just the
+    /// first level: `ctx -> a -> b -> c`, and only `c` declares an asset.
+    #[test]
+    fn deployed_assets_follow_the_transitive_uses_closure() {
+        fn decl(name: &str, path: &str) -> AssetDecl {
+            AssetDecl {
+                name: Ident {
+                    name: name.to_string(),
+                    span: Default::default(),
+                },
+                path: path.to_string(),
+                path_span: Default::default(),
+                documentation: None,
+                span: Default::default(),
+                trivia: Default::default(),
+            }
+        }
+        let mut tables: HashMap<String, crate::symbols::UnitTable> = HashMap::new();
+        for unit in ["ctx", "a", "b", "c", "unused"] {
+            tables.insert(unit.to_string(), Default::default());
+        }
+        tables
+            .get_mut("c")
+            .unwrap()
+            .assets
+            .insert("style".into(), decl("style", "./assets/board.css"));
+        tables
+            .get_mut("unused")
+            .unwrap()
+            .assets
+            .insert("logo".into(), decl("logo", "assets/logo.png"));
+        let uses: HashMap<String, Vec<String>> =
+            [("ctx", vec!["a"]), ("a", vec!["b"]), ("b", vec!["c", "a"])]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.into_iter().map(String::from).collect()))
+                .collect();
+        let served: BTreeMap<String, String> = [
+            (
+                "assets/board.css".to_string(),
+                "/_assets/board.1.css".to_string(),
+            ),
+            (
+                "assets/logo.png".to_string(),
+                "/_assets/logo.2.png".to_string(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let deployed = deployed_assets("ctx", &uses, &tables, &served);
+        assert_eq!(
+            deployed.into_iter().collect::<Vec<_>>(),
+            vec![(
+                "/_assets/board.1.css".to_string(),
+                "assets/board.css".to_string()
+            )]
+        );
     }
 
     #[test]

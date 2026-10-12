@@ -4046,6 +4046,19 @@ pub fn compose_unit_symbols(
                 imported_from_kind.insert(fn_name.clone(), UnitKind::Commons);
             }
         }
+        // #1883, slice 1b: a used commons' assets are visible here
+        // (`assets::compose_unit_assets`); record where each came from, so
+        // the emitter imports its constant from the declaring module. A
+        // local asset, function or type of the same name wins.
+        for asset_name in used.assets.keys() {
+            if !local_table.assets.contains_key(asset_name)
+                && !combined_fns.contains_key(asset_name)
+                && !imported_from.contains_key(asset_name)
+            {
+                imported_from.insert(asset_name.clone(), t.clone());
+                imported_from_kind.insert(asset_name.clone(), UnitKind::Commons);
+            }
+        }
         for (type_name, mt) in &used.methods {
             let entry = combined_methods.entry(type_name.clone()).or_default();
             for (m, decl) in &mt.instance {

@@ -82,7 +82,10 @@ fn manifest_overlay(roots: &bynk_ide::AnalysisRoots) -> HashMap<PathBuf, String>
 pub fn compile_options_single(root: impl Into<PathBuf>) -> bynk_emit::project::CompileOptions {
     let root = root.into();
     let sources = read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
-    bynk_emit::project::CompileOptions::single(root).sources(sources)
+    let assets = read_assets(&root);
+    bynk_emit::project::CompileOptions::single(root)
+        .sources(sources)
+        .asset_files(assets)
 }
 
 /// `CompileOptions::split(project_root, paths)`, with every source pre-read.
@@ -100,5 +103,15 @@ pub fn compile_options_split(
         paths: paths.clone(),
     };
     let sources = read_all(bynk_emit::project::discover_project_files(&roots));
-    bynk_emit::project::CompileOptions::split(project_root, paths).sources(sources)
+    let assets = read_assets(&project_root);
+    bynk_emit::project::CompileOptions::split(project_root, paths)
+        .sources(sources)
+        .asset_files(assets)
+}
+
+/// #1883, slice 1b: the project's `assets/` folder, as the driver reads it
+/// for a real build — so a fixture's `assets/` reaches the compiler.
+fn read_assets(project_root: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    bynk_emit::project::assets::read_asset_files(project_root)
+        .unwrap_or_else(|e| panic!("read `{}/assets`: {e}", project_root.display()))
 }

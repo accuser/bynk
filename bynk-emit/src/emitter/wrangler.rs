@@ -82,6 +82,47 @@ pub(crate) const EVENTS_FANOUT_CLASS_NAME: &str = "__EventsFanout";
 /// remote Wrangler command runs.
 pub const KV_NAMESPACE_ID_PLACEHOLDER: &str = "<KV_NAMESPACE_ID>";
 
+/// #1883, slice 1b: the `[assets]` block for a Worker that ships static files.
+/// `directory` is the Worker's own assets directory
+/// ([`crate::project::WORKER_ASSETS_DIR`]), beside — never containing — its
+/// compiled code. The three routing settings are set explicitly rather than
+/// inherited (#1883 [DECISION C], checked against the wrangler reference):
+///
+/// - `run_worker_first = false`: a matching asset is served without running
+///   the Worker, which is what makes an asset public by construction.
+/// - `not_found_handling = "none"`: a request no asset matches falls through
+///   to the Worker, so every handler stays reachable.
+/// - `html_handling = "none"`: an asset is served only at its exact path (the
+///   default would also serve `foo.html` at `/foo`), so the route-conflict
+///   check can compare paths exactly.
+pub(crate) fn assets_block() -> TomlBlock {
+    TomlBlock::table(
+        "assets",
+        vec![
+            TomlEntry::kv(
+                "directory",
+                TomlValue::str(format!("./{}", crate::project::WORKER_ASSETS_DIR)),
+            ),
+            TomlEntry::kv("run_worker_first", TomlValue::Bool(false)),
+            TomlEntry::kv("not_found_handling", TomlValue::str("none")),
+            TomlEntry::kv("html_handling", TomlValue::str("none")),
+        ],
+    )
+}
+
+/// #1883, slice 1b: the `_headers` file written into a Worker's assets
+/// directory beside its files. Every served path carries its content hash, so
+/// a file under [`bynk_check::assets::SERVED_PREFIX`] never changes and may
+/// be cached for a year. Without it the platform's default is `max-age=0,
+/// must-revalidate`. The glob is built from the prefix, so the two cannot
+/// drift (review of #1904).
+pub(crate) fn asset_headers() -> String {
+    format!(
+        "{}*\n  Cache-Control: public, max-age=31536000, immutable\n",
+        bynk_check::assets::SERVED_PREFIX
+    )
+}
+
 /// P6.x cutover slice 2 (#1191, narrowed from #1187): `crons`/`queues` arrive
 /// pre-collected, sorted and deduped by the caller (`project.rs`'s own
 /// `emit_wrangler_toml` call site) rather than being walked here off

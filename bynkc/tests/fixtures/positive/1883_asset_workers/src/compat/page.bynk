@@ -1,0 +1,16 @@
+commons compat.page
+
+uses compat.theme
+
+---
+The board's stylesheet.
+---
+asset style = "assets/board.css"
+
+fn link(a: Asset) -> String {
+  "<link rel=\"stylesheet\" href=\"\(a.url)\">"
+}
+
+fn head() -> String {
+  "\(link(palette))\(link(style))"
+}

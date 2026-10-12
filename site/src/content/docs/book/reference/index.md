@@ -15,6 +15,7 @@ the `bynk.toml` manifest, emission, and the editor tooling — see the
 - [Operators & built-ins](/book/reference/operators/) — operators, precedence, built-in types.
 - [Agents](/book/reference/agents/) — declaration, state, zeroability, lifecycle.
 - [HTTP](/book/reference/http/) — HTTP handlers and `HttpResult`.
+- [Static assets](/book/reference/assets/) — `asset` declarations: files served beside a Worker.
 - [Testing](/book/reference/testing/) — `suite`/`case`, `expect`, `property`, `as <tier>`, `stub`, `Val[T]`.
 
 ## Project & output

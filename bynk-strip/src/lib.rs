@@ -338,8 +338,8 @@ mod tests {
     /// #1883, slice 0: static assets are served as-is, so stripping a
     /// project's types must hand `Artefacts.assets` through byte-for-byte —
     /// `bynkc compile --emit js` strips before it writes, and an asset dropped
-    /// here would be missing from that output. Nothing produces an asset until slice 1, so one is
-    /// added to a real build's output by hand.
+    /// here would be missing from that output. One is added to a real
+    /// build's output by hand, so this tests stripping alone.
     #[test]
     fn strip_project_to_js_passes_static_assets_through_unchanged() {
         use bynk_emit::project::{BuildTarget, compile_in_memory, worker_assets_dir};

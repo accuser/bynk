@@ -769,8 +769,9 @@ syntactically permitted in a `commons`/`adapter` body too, the same way
 `asset name = "path"` (#1883) — one static file the platform serves beside a
 Worker, public by construction. `name` is a value of the built-in type `Asset`,
 whose `.url` is the file's content-hashed URL. The path is a plain string
-literal, relative to the project root. Placement (a context or commons, never
-an adapter) and the path rules (not empty, not absolute, no `..` segment) are
+literal, relative to the project root, naming a file in its `assets/` folder.
+Placement (a context or commons, never an adapter) and the path rules (not
+empty, not absolute, no `..` segment, inside `assets/`, the file exists) are
 checker concerns, not grammar ones: this rule is admitted in every body, like
 `event_decl`. `asset` is a contextual keyword, so it remains usable as an
 ordinary identifier elsewhere.

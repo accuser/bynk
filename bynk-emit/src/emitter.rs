@@ -321,6 +321,7 @@ fn single_file_ctx() -> EmitProjectCtx {
         event_schema_versions: HashMap::new(),
         consumed_adapters: HashSet::new(),
         history_target_agents: HashSet::new(),
+        asset_served: Default::default(),
         imported_methods: HashMap::new(),
         runtime_use: Default::default(),
     }
@@ -389,6 +390,33 @@ pub(crate) fn emit_project(
                 first.span = Some(t.span);
             }
             body.extend(item_stmts);
+        }
+    }
+    // #1883, slice 1b: each asset is an exported constant holding its served
+    // URL, emitted before the functions so no top-level initializer can reach
+    // it before it is defined. It is typed with the structural `Asset` shape,
+    // so it reads the same as any other `Asset` value. A unit that `uses` this one imports it like a
+    // function (`record_name_ref`).
+    for item in &commons.commons.items {
+        if let CommonsItem::Asset(a) = item {
+            let key = crate::project::assets::normalise_asset_path(&a.path);
+            let url = ctx.asset_served.get(&key).cloned().unwrap_or_else(|| {
+                panic!(
+                    "bynk internal error: asset `{}` reached emission without a served path",
+                    a.name.name
+                )
+            });
+            body.push(bynk_ts::TsStmt::decl(
+                bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+                    name: ts_ident(&a.name.name),
+                    ty: Some(asset_ts_type()),
+                    init: bynk_ts::TsExpr::object(vec![(
+                        "url".to_string(),
+                        bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(url)),
+                    )]),
+                })),
+                Some(a.span),
+            ));
         }
     }
     for item in &commons.commons.items {
@@ -2506,6 +2534,11 @@ fn collect_refs_in_expr(
         ExprKind::Ident(id) => {
             if let Some(type_name) = sum_owner_of_variant(&id.name, e.id, commons) {
                 record_name_ref(&type_name, local_to_file, ctx, out);
+            } else if commons.assets.contains_key(&id.name) {
+                // #1883, slice 1b: a bare asset name (an `Asset` argument,
+                // not just `style.url`, which the field-access arm already
+                // records) imports the declaring module's constant.
+                record_name_ref(&id.name, local_to_file, ctx, out);
             }
         }
         ExprKind::IntLit { .. }
@@ -5075,7 +5108,7 @@ fn is_bare_named(ty: &TsType, target: &str) -> bool {
 /// #1883, slice 1a: the TypeScript shape of a Bynk `Asset` —
 /// `{ readonly url: string }`, structural, so a program that only *names* the
 /// type (`fn link(a: Asset) -> String`) compiles with no runtime support.
-/// Slice 1b emits each declared asset as a constant of this shape.
+/// Each declared asset is emitted as a constant of this shape (`emit_project`).
 pub(crate) fn asset_ts_type() -> TsType {
     TsType::Object(vec![bynk_ts::TsTypeMember::readonly_prop(
         "url",

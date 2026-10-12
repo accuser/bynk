@@ -382,6 +382,13 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
         &mut errors,
     );
 
+    // -- 6a0. #1883, slice 1b: every declared asset names a file in the
+    //         `assets/` folder, listed from disk as discovery already reads
+    //         it. An unreadable folder skips the check rather than flagging
+    //         every asset in the editor.
+    let available_assets = bynk_project::assets::list_asset_files(roots.project_root()).ok();
+    crate::assets::phase_asset_files(&parsed, available_assets.as_ref(), &mut errors);
+
     // -- 6a'. message-bundles slice 1 (#859): messages-block legality,
     //         @reference cardinality, within-block duplicate codes, and the
     //         `uses bynk.locale` dependency. P5.0: closes category 2 of this

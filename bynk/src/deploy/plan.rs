@@ -440,6 +440,12 @@ pub fn run(
                     .map(|m| Some(m.provides))
                     .unwrap_or(None);
                 lock.record_deployed(&opts.environment, worker, provided);
+                // #1883, slice 1b: and the static files it now serves.
+                lock.record_assets(
+                    &opts.environment,
+                    worker,
+                    served_assets(&workers_dir.join(worker)),
+                );
                 if let Err(e) = write_lock(&lock_path, &lock) {
                     eprintln!(
                         "bynk: deployed `{worker}` but could not record it in {}: {e}",

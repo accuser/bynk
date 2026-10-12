@@ -66,8 +66,7 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
 ///
 /// #1883, slice 1a (review of #1903): before this, `run_check` reused
 /// [`compile_with_warnings`], so `bynk check page.bynk` failed with the
-/// build-only `bynk.asset.not_yet_emitted`, contradicting §5.12's "checking is
-/// unaffected".
+/// build-only asset refusal, contradicting §5.12's "checking is unaffected".
 pub fn check_with_warnings(
     source: &str,
     _filename: &str,
@@ -110,10 +109,10 @@ fn check_single_file(
         &boundary_types,
         &mut boundary_errors,
     );
-    // #1883, slice 1a: the asset declaration rules (path, duplicates, name
-    // conflicts), which the project path raises in `build_unit_table`; and,
-    // in a build only, the refusal the project pipeline's build-mode gate
-    // gives, since nothing emits an asset yet.
+    // #1883: the asset declaration rules (path, duplicates, name conflicts),
+    // which the project path raises in `build_unit_table`; and, in a build
+    // only, `bynk.asset.needs_project` — a single file has no project root to
+    // find `assets/` under and emits no Worker to serve it beside.
     boundary_errors.extend(bynk_check::assets::single_file_asset_errors(
         &commons.items,
         mode == SingleFileMode::Build,

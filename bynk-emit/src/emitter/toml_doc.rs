@@ -161,6 +161,8 @@ impl TomlEntry {
 pub(crate) enum TomlValue {
     Str(String),
     Int(i64),
+    /// #1883, slice 1b: `[assets] run_worker_first = false`.
+    Bool(bool),
     Array(Vec<TomlValue>),
 }
 
@@ -229,6 +231,7 @@ fn render_value(value: &TomlValue) -> String {
     match value {
         TomlValue::Str(s) => format!("\"{}\"", escape_toml_basic_string(s)),
         TomlValue::Int(n) => n.to_string(),
+        TomlValue::Bool(b) => b.to_string(),
         TomlValue::Array(items) => {
             let rendered: Vec<String> = items.iter().map(render_value).collect();
             format!("[{}]", rendered.join(", "))

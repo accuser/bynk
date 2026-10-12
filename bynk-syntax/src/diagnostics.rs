@@ -388,8 +388,20 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An `asset` name is declared more than once in the same unit.",
     ),
     d(
-        "bynk.asset.not_yet_emitted",
-        "A build met an `asset` declaration, which this compiler checks but cannot yet build.",
+        "bynk.asset.missing_file",
+        "An `asset` names a file that is not in the project's `assets/` folder.",
+    ),
+    d(
+        "bynk.asset.needs_project",
+        "A single-file build met an `asset` declaration; assets need a project build.",
+    ),
+    warn(d(
+        "bynk.asset.not_served",
+        "A deployable Bundle build met an `asset`; a Bundle ships no files, so its `.url` would not be served (a warning).",
+    )),
+    d(
+        "bynk.asset.outside_assets_dir",
+        "An `asset` path does not name a file in the project's `assets/` folder.",
     ),
     d(
         "bynk.asset.outside_context_or_commons",

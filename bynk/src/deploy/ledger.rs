@@ -71,6 +71,14 @@ struct WorkerRecord {
     /// Additive and `default`ed, so a pre-v0.177 ledger still reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     contracts: Option<BTreeMap<String, String>>,
+    /// #1883, slice 1b: the static files this Worker serves, as of the push
+    /// that recorded it — each one's served path (`/_assets/board.<hash>.css`).
+    /// The content hash is in the path, so a changed, added or removed file
+    /// is a changed line in the committed lock's diff. Empty (and omitted)
+    /// for a Worker with none; additive and `default`ed, so an older lock
+    /// still reads.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    assets: BTreeSet<String>,
 }
 
 impl DeployLock {
@@ -96,8 +104,27 @@ impl DeployLock {
                 WorkerRecord {
                     deployed: true,
                     contracts,
+                    assets: BTreeSet::new(),
                 },
             );
+    }
+
+    /// #1883, slice 1b: record the served paths of the static files `worker`
+    /// shipped in this push ([`WorkerRecord::assets`]). Called right after
+    /// [`DeployLock::record_deployed`]; a Worker not yet recorded is ignored.
+    pub(crate) fn record_assets(
+        &mut self,
+        environment: &str,
+        worker: &str,
+        assets: BTreeSet<String>,
+    ) {
+        if let Some(record) = self
+            .environments
+            .get_mut(environment)
+            .and_then(|env| env.workers.get_mut(worker))
+        {
+            record.assets = assets;
+        }
     }
 
     /// v0.177 (#643): what the ledger believes `worker` currently provides.
@@ -555,6 +582,7 @@ pub(crate) mod tests {
                         WorkerRecord {
                             deployed: true,
                             contracts: Default::default(),
+                            assets: BTreeSet::new(),
                         },
                     )]),
                     queues: BTreeSet::from(["intake".to_string()]),
@@ -611,6 +639,34 @@ pub(crate) mod tests {
         assert!(
             !text.contains("id"),
             "a queue is addressed by name — the ledger has no id to record: {text}"
+        );
+        assert_eq!(toml::from_str::<DeployLock>(&text).unwrap(), lock);
+    }
+
+    /// #1883, slice 1b: a Worker's served asset paths round-trip, and a
+    /// Worker with none writes no `assets` line.
+    #[test]
+    fn a_workers_served_assets_round_trip_and_none_is_not_written() {
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.record_deployed("default", "board", Some(Default::default()));
+        lock.record_assets(
+            "default",
+            "board",
+            ["/_assets/board.1a2b.css".to_string()]
+                .into_iter()
+                .collect(),
+        );
+        lock.record_deployed("default", "api", Some(Default::default()));
+        lock.record_assets("default", "api", BTreeSet::new());
+        let text = toml::to_string_pretty(&lock).unwrap();
+        assert!(text.contains("\"/_assets/board.1a2b.css\""), "{text}");
+        assert_eq!(
+            text.matches("assets = ").count(),
+            1,
+            "only `board` has assets: {text}"
         );
         assert_eq!(toml::from_str::<DeployLock>(&text).unwrap(), lock);
     }

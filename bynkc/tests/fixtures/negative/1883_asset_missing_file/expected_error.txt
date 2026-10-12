@@ -1,0 +1,2 @@
+bynk.asset.missing_file asset `style` names `assets/board.css`, which does not exist
+# exact

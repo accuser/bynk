@@ -1698,8 +1698,15 @@ declaring context say.
 
 - An `asset` MUST be declared in a context or a commons
   (`bynk.asset.outside_context_or_commons`).
-- Its path MUST NOT be empty, absolute (`/x`, `\x`, `C:/x`), or contain a `..`
-  segment, under either separator (`bynk.asset.unsafe_path`).
+- Its path is relative to the project root. It MUST NOT be empty, absolute
+  (`/x`, `\x`, `C:/x`), or contain a `..` segment, under either separator
+  (`bynk.asset.unsafe_path`); and it MUST name a file in the project's
+  `assets/` folder (`bynk.asset.outside_assets_dir`), so a declaration can
+  never publish `.env` or a source file. `./` prefixes, repeated separators and
+  `\` separators are normalised (`./assets//board.css` is `assets/board.css`).
+- The file MUST exist as a regular file in that folder; a symbolic link is not
+  followed (`bynk.asset.missing_file`). A check with no filesystem (an
+  in-memory check) skips this; a build with none treats the folder as empty.
 - Its name MUST NOT be declared twice in one unit (`bynk.asset.duplicate`), and
   MUST NOT equal the name of a free function or type in that unit
   (`bynk.resolve.name_conflict`).
@@ -1715,7 +1722,29 @@ it MUST NOT appear in a record field, a sum-variant payload, a boundary
 position, or an agent `store` field (`bynk.types.asset_at_boundary`); its `.url`
 may.
 
-**Not yet built.** This release checks `asset` declarations but cannot build
-them: a build of a project that declares one is `bynk.asset.not_yet_emitted`.
-Checking (`bynk check`, the editor) is unaffected. Whether the named file
-exists is checked when assets are built.
+**Translation.** An asset's `.url` is
+`/_assets/<stem>.<hash>.<ext>`: `<hash>` is the FNV-1a 64 of the file's
+content as 16 lowercase hex digits, `<stem>` and `<ext>` the file name's,
+split at its last `.` (no `.<ext>` when it has none), with any character
+outside `[A-Za-z0-9._-]` replaced by `-`. It depends only on the name and the
+content, so builds are reproducible, and a content change changes the URL. The
+declaring unit's module exports the asset as a constant of TypeScript type
+`{ readonly url: string }`; a unit that uses it imports it like a function.
+
+On the Workers target, each context's Worker ships the files declared by the
+context and by every commons in its **transitive** `uses` closure — wider than
+name visibility, since a used commons may return another's `.url`. They are
+written to the Worker's `assets/` directory, beside (never containing) its
+code, under their served paths, with a `_headers` file giving `/_assets/*`
+`Cache-Control: public, max-age=31536000, immutable`. Its `wrangler.toml`
+gains an `[assets]` block with `run_worker_first = false` (a matching asset is
+served without running the Worker), `not_found_handling = "none"` (any other
+request reaches the Worker) and `html_handling = "none"` (an asset is served
+only at its exact path). A Worker with no assets gets none of these. The Bundle target ships no
+files, so a deployable Bundle build (one without tests) warns about each
+asset whose `.url` it emits (`bynk.asset.not_served`). `bynk deploy` records each Worker's served paths
+in `bynk.deploy.lock`.
+
+**Single files.** A single file has no project root and no Worker, so building
+one that declares an asset is `bynk.asset.needs_project`. Checking it is
+unaffected.
