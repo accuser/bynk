@@ -696,41 +696,17 @@ pub fn build_unit_table(
                 // well-formed, so its uses should not also report
                 // `unknown_name`.
             }
-            if let Some(prev) = table.assets.get(&a.name.name) {
-                errors.push(
-                    CompileError::new(
-                        "bynk.asset.duplicate",
-                        a.name.span,
-                        format!("asset `{}` is already declared", a.name.name),
-                    )
-                    .with_label(prev.name.span, "previously declared here"),
-                );
-            } else if let Some(prev) = table.fns.get(&a.name.name) {
-                errors.push(
-                    CompileError::new(
-                        "bynk.resolve.name_conflict",
-                        a.name.span,
-                        format!(
-                            "asset `{}` conflicts with a function of the same name",
-                            a.name.name
-                        ),
-                    )
-                    .with_label(prev.name.ident().span, "function declared here"),
-                );
-            } else if let Some(prev) = table.types.get(&a.name.name) {
-                errors.push(
-                    CompileError::new(
-                        "bynk.resolve.name_conflict",
-                        a.name.span,
-                        format!(
-                            "asset `{}` conflicts with a type of the same name",
-                            a.name.name
-                        ),
-                    )
-                    .with_label(prev.name.span, "type declared here"),
-                );
-            } else {
-                table.assets.insert(a.name.name.clone(), a.clone());
+            let key = &a.name.name;
+            match crate::assets::name_error(
+                a,
+                table.assets.get(key).map(|p| &p.name),
+                table.fns.get(key).map(|f| f.name.ident()),
+                table.types.get(key).map(|t| &t.name),
+            ) {
+                Some(err) => errors.push(err),
+                None => {
+                    table.assets.insert(key.clone(), a.clone());
+                }
             }
         }
         out.extend(errors.into_iter().map(|e| (parsed[i].identity_path(), e)));

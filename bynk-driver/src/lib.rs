@@ -901,7 +901,7 @@ fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
 /// directory routes through [`project::check_project`] (finding #64 —
 /// non-bailing, so a structural error anywhere does not hide diagnostics
 /// elsewhere the way `compile_project`'s bail-fast `Mode::Build` would), a
-/// single file through [`bynk_emit::compile_with_warnings`]. `short` selects
+/// single file through [`bynk_emit::check_with_warnings`]. `short` selects
 /// the one-line `--format short` rendering. `prog` prefixes messages
 /// (`bynk: …`).
 pub fn run_check(prog: &str, input: &Path, short: bool) -> ExitCode {
@@ -934,13 +934,13 @@ pub fn run_check(prog: &str, input: &Path, short: bool) -> ExitCode {
             }
         };
         let filename = shown(input);
-        match bynk_emit::compile_with_warnings(&source, &filename) {
-            Ok(compiled) => {
-                if !compiled.warnings.is_empty() {
+        match bynk_emit::check_with_warnings(&source, &filename) {
+            Ok(warnings) => {
+                if !warnings.is_empty() {
                     if short {
-                        bynk_render::print_errors_short(&compiled.warnings, &source, &filename);
+                        bynk_render::print_errors_short(&warnings, &source, &filename);
                     } else {
-                        bynk_render::print_errors(&compiled.warnings, &source, &filename);
+                        bynk_render::print_errors(&warnings, &source, &filename);
                     }
                 }
                 ExitCode::SUCCESS

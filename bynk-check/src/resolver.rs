@@ -621,14 +621,16 @@ pub fn resolve_recovering(commons: Commons) -> (ResolvedCommons, Vec<CompileErro
 
     // #1883, slice 1a: single-file mode has no `uses`, so the visible assets
     // are exactly the ones declared here.
-    let local_assets: HashMap<String, AssetDecl> = commons
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            CommonsItem::Asset(a) => Some((a.name.name.clone(), a.clone())),
-            _ => None,
-        })
-        .collect();
+    // The first declaration of a name wins, as in the unit table; a second is
+    // `bynk.asset.duplicate` (`assets::single_file_asset_errors`).
+    let mut local_assets: HashMap<String, AssetDecl> = HashMap::new();
+    for item in &commons.items {
+        if let CommonsItem::Asset(a) = item {
+            local_assets
+                .entry(a.name.name.clone())
+                .or_insert_with(|| a.clone());
+        }
+    }
 
     // Second pass: validate references inside type-refs and function bodies.
     let mut refs = RefSink::new(); // single-file mode: no recording context.

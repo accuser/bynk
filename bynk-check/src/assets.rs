@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use bynk_syntax::ast::{AssetDecl, CommonsItem};
+use bynk_syntax::ast::{AssetDecl, CommonsItem, FnName, Ident};
 use bynk_syntax::error::CompileError;
 
 use crate::project_model::UnitInfo;
@@ -85,14 +85,94 @@ pub fn not_yet_emitted_errors(items: &[CommonsItem]) -> Vec<CompileError> {
         .collect()
 }
 
-/// The single-file compile's asset diagnostics: each asset's path check, then
-/// its refusal. A single-file compile is always a build and has no unit
-/// table, so both are reported here, in declaration order.
-pub fn single_file_asset_errors(items: &[CommonsItem]) -> Vec<CompileError> {
+/// The name rule for asset `a`, given what its unit already declares under
+/// that name: an earlier asset is `bynk.asset.duplicate`; a free function or a
+/// type is `bynk.resolve.name_conflict` (an asset is a value, in the
+/// function namespace, and a type name in value position is an error). `None`
+/// when the name is free. One rule for the project pipeline
+/// (`symbols::build_unit_table`) and the single-file compile, which has no
+/// unit table (review of #1903).
+pub fn name_error(
+    a: &AssetDecl,
+    prev_asset: Option<&Ident>,
+    prev_fn: Option<&Ident>,
+    prev_type: Option<&Ident>,
+) -> Option<CompileError> {
+    let name = &a.name.name;
+    if let Some(prev) = prev_asset {
+        Some(
+            CompileError::new(
+                "bynk.asset.duplicate",
+                a.name.span,
+                format!("asset `{name}` is already declared"),
+            )
+            .with_label(prev.span, "previously declared here"),
+        )
+    } else if let Some(prev) = prev_fn {
+        Some(
+            CompileError::new(
+                "bynk.resolve.name_conflict",
+                a.name.span,
+                format!("asset `{name}` conflicts with a function of the same name"),
+            )
+            .with_label(prev.span, "function declared here"),
+        )
+    } else {
+        prev_type.map(|prev| {
+            CompileError::new(
+                "bynk.resolve.name_conflict",
+                a.name.span,
+                format!("asset `{name}` conflicts with a type of the same name"),
+            )
+            .with_label(prev.span, "type declared here")
+        })
+    }
+}
+
+/// The single-file compile's asset diagnostics, in declaration order: each
+/// asset's path check and name rule ([`name_error`], against the file's own
+/// functions, types and earlier assets), and, when `build` is set, its
+/// refusal ([`not_yet_emitted_error`]). Placement needs no check here: a
+/// single file is always a commons (an `adapter` is a parse error).
+pub fn single_file_asset_errors(items: &[CommonsItem], build: bool) -> Vec<CompileError> {
+    let mut fns: HashMap<&str, &Ident> = HashMap::new();
+    let mut types: HashMap<&str, &Ident> = HashMap::new();
+    for item in items {
+        match item {
+            CommonsItem::Fn(f) => {
+                if let FnName::Free(id) = &f.name {
+                    fns.entry(id.name.as_str()).or_insert(id);
+                }
+            }
+            CommonsItem::Type(t) => {
+                types.entry(t.name.name.as_str()).or_insert(&t.name);
+            }
+            CommonsItem::Event(e) => {
+                types.entry(e.name.name.as_str()).or_insert(&e.name);
+            }
+            _ => {}
+        }
+    }
+    let mut assets: HashMap<&str, &Ident> = HashMap::new();
     let mut errors = Vec::new();
     for item in items {
-        if let CommonsItem::Asset(a) = item {
-            errors.extend(unsafe_path_error(a));
+        let CommonsItem::Asset(a) = item else {
+            continue;
+        };
+        errors.extend(unsafe_path_error(a));
+        let key = a.name.name.as_str();
+        match name_error(
+            a,
+            assets.get(key).copied(),
+            fns.get(key).copied(),
+            types.get(key).copied(),
+        ) {
+            Some(err) => errors.push(err),
+            None => {
+                assets.insert(key, &a.name);
+            }
+        }
+        if build {
             errors.push(not_yet_emitted_error(a));
         }
     }
@@ -222,6 +302,23 @@ mod tests {
         shared.assert_clean();
     }
 
+    /// Review of #1903: a local asset must not hide a real conflict between
+    /// two used commons over a *type* (or function) name. An asset only wins
+    /// in value position; a type position still resolves through the
+    /// imported types, so the ambiguity remains and must be reported.
+    #[test]
+    fn a_local_asset_does_not_hide_a_two_import_type_conflict() {
+        let a = analyse(&[
+            ("lib/a.bynk", "commons lib.a\n\ntype Style = Int\n"),
+            ("lib/b.bynk", "commons lib.b\n\ntype Style = String\n"),
+            (
+                "app/web.bynk",
+                "context app.web\n\nuses lib.a\nuses lib.b\n\nasset Style = \"a.css\"\n\ntype Page = { s: Style }\n",
+            ),
+        ]);
+        a.assert_reports("bynk.uses.name_conflict");
+    }
+
     #[test]
     fn an_asset_has_only_a_url_field() {
         let a = analyse(&[(
@@ -267,6 +364,10 @@ mod tests {
             (
                 "context c\n\ntype Asset = Int\n",
                 "bynk.resolve.reserved_builtin_type",
+            ),
+            (
+                "context c\n\nagent Board {\n  key id: String\n\n  store style: Cell[Asset]\n\n  on call get() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n",
+                "bynk.types.asset_at_boundary",
             ),
         ] {
             let a = analyse(&[("c.bynk", src)]);

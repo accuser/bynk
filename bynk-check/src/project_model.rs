@@ -1568,10 +1568,7 @@ pub fn phase_uses_name_conflicts(
         for t in targets {
             let used = unit_tables.get(t).expect("used unit table present");
             for type_name in used.types.keys() {
-                if local.types.contains_key(type_name)
-                    || local.fns.contains_key(type_name)
-                    || local.assets.contains_key(type_name)
-                {
+                if local.types.contains_key(type_name) || local.fns.contains_key(type_name) {
                     continue;
                 }
                 if let Some(prev) = imported.get(type_name) {
@@ -1595,10 +1592,7 @@ pub fn phase_uses_name_conflicts(
                 }
             }
             for fn_name in used.fns.keys() {
-                if local.types.contains_key(fn_name)
-                    || local.fns.contains_key(fn_name)
-                    || local.assets.contains_key(fn_name)
-                {
+                if local.types.contains_key(fn_name) || local.fns.contains_key(fn_name) {
                     continue;
                 }
                 if let Some(prev) = imported.get(fn_name) {
