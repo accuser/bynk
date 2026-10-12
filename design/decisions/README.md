@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0457](0457-static-assets-fixed-paths.md) | **Fixed asset paths are checked against routes; hashed assets follow `consumes`** (v0.329) — `at "/path"` serves an asset at a fixed URL; a route it shadows is an error, or a warning when parameterised; Workers ship consumed contexts' hashed files | Accepted (v0.329) |
 | [0456](0456-static-assets-emission.md) | **Static assets build from the project's `assets/` folder, at content-hashed URLs, per Worker** (v0.328) — Files come only from `assets/`; `.url` is `/_assets/<stem>.<fnv64>.<ext>`; a Worker ships its transitive `uses` closure's files | Accepted (v0.328) |
 | [0455](0455-static-assets-in-the-language.md) | **Static assets are declared in the language, as values of a built-in `Asset` type** (v0.327) — `asset name = "path"` in a context or commons; the name is an `Asset` whose `.url` is the content-hashed URL | Accepted (v0.327) |
 | [0454](0454-one-line-docs.md) | **A one-line doc form, `--|`, and docs on record fields and variants** (v0.326) — `--|` doc lines (line-leading only), consecutive lines join, both forms on one target is `bynk.parse.doc_forms_mixed`, docs on fields, variants, payload fields and message entries, and the formatter keeps each form | Accepted (v0.326) |

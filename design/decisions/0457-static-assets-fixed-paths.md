@@ -1,11 +1,6 @@
----
-level: minor
-changelog: 'An `asset` may be served at a fixed path (`asset favicon = "assets/favicon.ico" at "/favicon.ico"`), checked against the Worker''s routes (`bynk.asset.shadows_route`, the warning `bynk.asset.may_shadow_route`, `bynk.asset.path_conflict`, `bynk.asset.invalid_at_path`); `/_assets/` is a reserved route prefix; a Worker ships the hashed assets of the contexts it consumes (static assets, slice 2)'
----
+# 0457 — Fixed asset paths are checked against routes; hashed assets follow `consumes`
 
-## ADR: static-assets-fixed-paths
-title: Fixed asset paths are checked against routes; hashed assets follow `consumes`
-summary: `at "/path"` serves an asset at a fixed URL; a route it shadows is an error, or a warning when parameterised; Workers ship consumed contexts' hashed files
+- **Status:** Accepted (v0.329)
 
 **Context.** Content-hashed URLs (slice 1b) suit files a page links, but some
 files are fetched by name by clients that never read a page: `/favicon.ico`,
