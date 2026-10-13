@@ -1,0 +1,14 @@
+commons app
+
+uses lib.st
+
+-- #1927: constructing a bare variant of the sum the function `Status` hides
+-- emits the sum's name, which the function has taken.
+
+fn Status() -> Int {
+  1
+}
+
+fn finished() -> Bool {
+  isDone(Done)
+}

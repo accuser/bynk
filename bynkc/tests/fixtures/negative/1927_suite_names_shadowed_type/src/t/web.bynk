@@ -1,0 +1,9 @@
+context t.web
+
+uses t.lib
+
+service Status from http {
+  on GET("/") () -> Effect[HttpResult[String]] by Visitor {
+    Ok("up")
+  }
+}

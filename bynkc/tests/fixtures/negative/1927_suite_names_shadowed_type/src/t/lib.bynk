@@ -1,0 +1,12 @@
+commons t.lib
+
+type Status =
+  | Done
+  | Pending
+
+fn isDone(s: Status) -> Bool {
+  match s {
+    Done => true
+    Pending => false
+  }
+}

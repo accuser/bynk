@@ -1,0 +1,19 @@
+context t.web
+
+uses t.lib
+
+-- #1927: the service `Status` hides `t.lib`'s type `Status`. A value of the
+-- type still flows through, and a match still names its variants.
+
+service Status from http {
+  on GET("/") () -> Effect[HttpResult[String]] by Visitor {
+    Ok(if isDone(current()) { "done" } else { "pending" })
+  }
+}
+
+fn label() -> String {
+  match current() {
+    Done => "done"
+    Pending => "pending"
+  }
+}

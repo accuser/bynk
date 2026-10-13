@@ -1,0 +1,16 @@
+context shop.cart
+
+uses shop.model
+
+-- #1927: the agent `Cart` hides `shop.model`'s type `Cart`, so the store
+-- field cannot name it.
+
+agent Cart {
+  key id: String
+
+  store c: Cell[Cart]
+
+  on call count() -> Effect[Int] {
+    1
+  }
+}
