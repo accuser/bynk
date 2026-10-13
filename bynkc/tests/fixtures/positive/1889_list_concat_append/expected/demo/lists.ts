@@ -53,3 +53,17 @@ export function receiverUnchanged(xs: readonly number[]): boolean {
   const zs = [...xs, ...[8]];
   return __bynkEq(xs, [1, 2]) && __bynkEq(ys, [1, 2, 9]) && __bynkEq(zs, [1, 2, 8]);
 }
+
+export function appendRows(xs: readonly number[]): readonly (readonly number[])[] {
+  const none: readonly (readonly number[])[] = [];
+  return ((__xs: readonly number[], __acc: readonly (readonly number[])[], __f: (acc: readonly (readonly number[])[], x: number) => readonly (readonly number[])[]) => { for (const __x of __xs) __acc = __f(__acc, __x); return __acc; })(xs, none, (acc, x) => [...acc, [x, x * x]]);
+}
+
+export function concatRows(a: readonly (readonly number[])[], b: readonly (readonly number[])[]): readonly (readonly number[])[] {
+  return [...a, ...b];
+}
+
+export function appendEmptyRows(n: number): readonly (readonly number[])[] {
+  const none: readonly (readonly number[])[] = [];
+  return ((__xs: readonly number[], __acc: readonly (readonly number[])[], __f: (acc: readonly (readonly number[])[], x: number) => readonly (readonly number[])[]) => { for (const __x of __xs) __acc = __f(__acc, __x); return __acc; })(([1, 2, 3]).slice(0, globalThis.Math.max(0, n)), none, (acc, x) => [...acc, []]);
+}
