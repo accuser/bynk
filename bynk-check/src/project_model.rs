@@ -4712,7 +4712,7 @@ mod shadowed_import_tests {
     /// function that makes one and one that reads one.
     const STATUS_LIB: (&str, &str) = (
         "lib/st.bynk",
-        "commons lib.st\n\ntype Status =\n  | Done\n  | Pending\n\nfn mk() -> Status {\n  Done\n}\n\nfn isDone(s: Status) -> Bool {\n  match s {\n    Done => true\n    Pending => false\n  }\n}\n",
+        "commons lib.st\n\ntype Status =\n  | Done\n  | Pending\n  | Failed(reason: String)\n\nfn mk() -> Status {\n  Done\n}\n\nfn isDone(s: Status) -> Bool {\n  match s {\n    Done => true\n    _ => false\n  }\n}\n",
     );
 
     /// #1927: a bare variant of a hidden sum emits the sum's name, which the
@@ -4726,8 +4726,12 @@ mod shadowed_import_tests {
         let construct = unit("fn f() -> Bool {\n  isDone(Done)\n}\n");
         let r = analyse(&[STATUS_LIB, ("app/main.bynk", &construct)]);
         assert_eq!(r.error_categories(), vec!["bynk.uses.name_conflict"]);
+        // A payload variant, constructed by a bare call.
+        let construct = unit("fn f() -> Bool {\n  isDone(Failed(\"x\"))\n}\n");
+        let r = analyse(&[STATUS_LIB, ("app/main.bynk", &construct)]);
+        assert_eq!(r.error_categories(), vec!["bynk.uses.name_conflict"]);
         let matched = unit(
-            "fn f() -> Bool {\n  match mk() {\n    Done => true\n    Pending => false\n  }\n}\n",
+            "fn f() -> Bool {\n  match mk() {\n    Done => true\n    Failed(r) => false\n    _ => false\n  }\n}\n",
         );
         let r = analyse(&[STATUS_LIB, ("app/main.bynk", &matched)]);
         r.assert_clean();
