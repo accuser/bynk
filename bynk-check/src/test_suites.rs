@@ -1374,9 +1374,26 @@ impl<'a> CrossingServices<'a> {
             })
             .collect();
         for e in exprs_in_order(body) {
-            let ExprKind::MethodCall { receiver, .. } = &e.kind else {
+            let ExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } = &e.kind
+            else {
                 continue;
             };
+            // #1883 (review of #1923): `svc.<VERB>(x)` whose first argument is
+            // not a route string reaches no handler — it is an asset fetch
+            // (`svc.GET(asset)`, served by the asset tier) or a bad address
+            // reported elsewhere — so it crosses into no other context.
+            if bynk_syntax::ast::HttpMethod::from_ident(&method.name).is_some()
+                && args
+                    .first()
+                    .is_some_and(|a| !matches!(a.kind, ExprKind::StrLit(_)))
+            {
+                continue;
+            }
             let through = match &receiver.kind {
                 // `svc.call(…)` / `svc.GET(…)` / … on a target service.
                 ExprKind::Ident(svc) if !shadowed.contains(&svc.name) => self
@@ -2911,10 +2928,11 @@ pub struct SuiteView {
     /// Review of #1814: each reached name the view already binds to another
     /// declaration (`project_model::close_view_types`).
     pub conflicts: Vec<crate::project_model::ViewConflict>,
-    /// #1883, slice 3 ([DECISION F]): the assets a case may name — those its
-    /// target unit sees (its own and its `uses`d commons'), plus the suite's
-    /// own `uses` commons' in a `system` suite. An asset name types as
-    /// `Asset`; `svc.GET(asset)` fetches the file.
+    /// #1883, slice 3 ([DECISION F]): the assets a case may name — those the
+    /// target's Worker ships: the target's own and its `uses`d commons'
+    /// (content-hashed and fixed-path), plus the content-hashed assets of the
+    /// contexts it consumes. An asset name types as `Asset`;
+    /// `svc.GET(asset)` fetches the file.
     pub assets: HashMap<String, bynk_syntax::ast::AssetDecl>,
 }
 
@@ -2927,6 +2945,17 @@ impl SuiteView {
         unit_tables: &HashMap<String, UnitTable>,
         unit_uses: &HashMap<String, Vec<String>>,
     ) {
+        self.merge_assets_where(unit, unit_tables, unit_uses, |_| true);
+    }
+
+    /// [`Self::merge_assets`], keeping only the declarations `keep` admits.
+    fn merge_assets_where(
+        &mut self,
+        unit: &str,
+        unit_tables: &HashMap<String, UnitTable>,
+        unit_uses: &HashMap<String, Vec<String>>,
+        keep: impl Fn(&bynk_syntax::ast::AssetDecl) -> bool,
+    ) {
         let own = unit_tables.get(unit).into_iter();
         let used = unit_uses
             .get(unit)
@@ -2934,7 +2963,7 @@ impl SuiteView {
             .flatten()
             .filter_map(|u| unit_tables.get(u));
         for table in own.chain(used) {
-            for (name, decl) in &table.assets {
+            for (name, decl) in table.assets.iter().filter(|(_, d)| keep(d)) {
                 self.assets
                     .entry(name.clone())
                     .or_insert_with(|| decl.clone());
@@ -3038,6 +3067,13 @@ pub fn privileged_view(
         }
     }
     view.merge_assets(owning_unit, unit_tables, unit_uses);
+    // Review of #1923: the content-hashed assets of each consumed context
+    // too — the target's Worker ships them (`assets::deployed_assets`), so a
+    // fragment a consumed service returns resolves. Its fixed paths stay
+    // with its own Worker, so they are not nameable here.
+    for consumed in unit_consumes.get(owning_unit).into_iter().flatten() {
+        view.merge_assets_where(consumed, unit_tables, unit_uses, |d| d.at.is_none());
+    }
     view.close(&imported, unit_tables, unit_uses);
     Some(view)
 }
@@ -3060,9 +3096,19 @@ pub fn integration_view(
                 view.merge(t, with_fns, true);
                 imported.push(u.clone());
             }
-            // #1883, slice 3: assets from both, so a case can fetch the
-            // target's files and name a used commons' `.url`.
-            view.merge_assets(u, unit_tables, unit_uses);
+        }
+    }
+    // #1883, slice 3: the assets the target's Worker ships, mirroring
+    // `assets::deployed_assets` — the target's own and its `uses`d commons'
+    // (hashed and fixed), plus each other participant's content-hashed ones
+    // (a consumed context, whose fragment may carry its `.url`). Review of
+    // #1922: a participant's fixed path, or an asset of the suite's own
+    // `uses` commons, is not served by the target's Worker, so it is not
+    // nameable either (an ordinary unknown name rather than a `NotFound`).
+    if let Some((target, others)) = participants.split_first() {
+        view.merge_assets(target, unit_tables, unit_uses);
+        for other in others {
+            view.merge_assets_where(other, unit_tables, unit_uses, |d| d.at.is_none());
         }
     }
     view.close(&imported, unit_tables, unit_uses);

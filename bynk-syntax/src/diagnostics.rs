@@ -1840,9 +1840,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A call-site `by <Actor>(x)` supplies an identity to an actor that takes none — a unit-identity actor (e.g. `Visitor`) or `Nobody`.",
         &["case"],
     ),
-    d(
+    dg(
         "bynk.test.asset_address_method",
         "A suite fetches an asset with a method other than `GET`; the platform serves assets to `GET` and answers other methods with 405.",
+        &["case"],
     ),
     dg(
         "bynk.test.credential_needs_system",
@@ -1864,9 +1865,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor.",
         &["case"],
     ),
-    d(
+    dg(
         "bynk.test.principal_on_asset",
         "A suite's asset fetch carries a `by` clause; an asset is public and served before the Worker runs.",
+        &["case"],
     ),
     dg(
         "bynk.test.principal_on_wrong_method",

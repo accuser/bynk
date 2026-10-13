@@ -3076,6 +3076,27 @@ fn check_test_service_address(
             && is_asset_value(first, ctx)
         {
             let _ = type_of(first, None, ctx);
+            // Review of #1922: only an HTTP service fronts a Worker the
+            // platform serves assets beside.
+            if sig.protocol.as_deref() != Some("http") {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.test.service_bad_address",
+                        method.span,
+                        format!(
+                            "`{}` is not a `from http` service, so it cannot fetch an asset",
+                            id.name
+                        ),
+                    )
+                    .with_note("fetch an asset through one of the target's `from http` services: `api.GET(asset)`"),
+                );
+                // Review of #1923: still type the rest, as every other
+                // error arm here does, so a mistake inside them is reported.
+                for a in &args[1..] {
+                    let _ = type_of(a, None, ctx);
+                }
+                return None;
+            }
             if method.name != "GET" {
                 ctx.errors.push(
                     CompileError::new(
@@ -3106,9 +3127,8 @@ fn check_test_service_address(
             }
             ctx.callees.insert(
                 expr_id,
-                Callee::TestService {
+                Callee::TestAssetFetch {
                     service: id.name.clone(),
-                    address: format!("{} asset", method.name),
                 },
             );
             return None;
