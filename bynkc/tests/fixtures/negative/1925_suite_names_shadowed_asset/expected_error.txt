@@ -1,0 +1,2 @@
+bynk.uses.name_conflict
+`logo` names this unit's service, which hides the asset `logo` from `t.brand`

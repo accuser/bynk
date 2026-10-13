@@ -22,18 +22,23 @@ fn analyse(root: &Path) -> (ProjectIndex, HashMap<String, String>) {
 }
 
 fn analyse_roots(roots: &bynk_ide::AnalysisRoots) -> (ProjectIndex, HashMap<String, String>) {
+    analyse_roots_expecting(roots, &[])
+}
+
+/// [`analyse_roots`] for a project that reports exactly `expected` (by
+/// category, in order across files): the index is still built for a project
+/// with errors, as the editor sees one mid-edit.
+fn analyse_roots_expecting(
+    roots: &bynk_ide::AnalysisRoots,
+    expected: &[&str],
+) -> (ProjectIndex, HashMap<String, String>) {
     let result = bynk_ide::diagnose_project_with(roots, &bynk_testkit::read_project_sources(roots));
-    for f in &result.files {
-        assert!(
-            f.diagnostics.is_empty(),
-            "fixture should be clean, got in {}: {:?}",
-            f.source_path.display(),
-            f.diagnostics
-                .iter()
-                .map(|d| d.error.category)
-                .collect::<Vec<_>>()
-        );
-    }
+    let reported: Vec<&str> = result
+        .files
+        .iter()
+        .flat_map(|f| f.diagnostics.iter().map(|d| d.error.category))
+        .collect();
+    assert_eq!(reported, expected, "diagnostics reported by the fixture");
     let snapshots = result
         .files
         .iter()
@@ -284,6 +289,9 @@ fn asset_references_resolve_to_their_declaration() {
 /// in the same context would take over the service's owner entry, and every
 /// ref inside the service's handlers would be re-attributed to the asset's
 /// file — at offsets that belong to the service's.
+///
+/// Since #1925 the program is `bynk.resolve.name_conflict`, but the editor
+/// indexes it as typed, so the refs must still land in the right file.
 #[test]
 fn an_asset_named_like_a_service_does_not_steal_its_refs() {
     let root =
@@ -309,7 +317,10 @@ fn an_asset_named_like_a_service_does_not_steal_its_refs() {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, text).unwrap();
     }
-    let (index, snapshots) = analyse_roots(&bynk_ide::AnalysisRoots::Project(root.clone()));
+    let (index, snapshots) = analyse_roots_expecting(
+        &bynk_ide::AnalysisRoots::Project(root.clone()),
+        &["bynk.resolve.name_conflict"],
+    );
     let _ = std::fs::remove_dir_all(&root);
 
     // `greet()` in the handler is a ref in the service's file, spelling `greet`.

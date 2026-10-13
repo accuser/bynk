@@ -752,6 +752,10 @@ pub fn compose_unit_assets(
             continue;
         };
         for (asset_name, decl) in &used_info.table.assets {
+            // #1925: a local declaration of any kind shadows the import.
+            if crate::symbols::local_value_kind(&info.table, asset_name).is_some() {
+                continue;
+            }
             combined
                 .entry(asset_name.clone())
                 .or_insert_with(|| decl.clone());

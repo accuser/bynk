@@ -637,7 +637,7 @@ There are **492** codes in total.
 
 | Code | Summary | Construct | Severity |
 |---|---|---|---|
-| `bynk.uses.name_conflict` | A `uses` name collides with another name, or a value crosses between a unit's code and an imported declaration's position whose type the unit shadows. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) | — |
+| `bynk.uses.name_conflict` | A `uses` name collides with another name, a value crosses between a unit's code and an imported declaration's position whose type the unit shadows, or a reference names an import the unit's own declaration shadows. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) | — |
 | `bynk.uses.self_reference` | A commons `uses` itself. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) | — |
 | `bynk.uses.target_is_context` | `uses` targets a context instead of a commons. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) | — |
 | `bynk.uses.unknown_commons` | `uses` names a commons that does not exist. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) | — |

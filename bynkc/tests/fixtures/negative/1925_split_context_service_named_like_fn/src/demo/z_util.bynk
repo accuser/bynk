@@ -1,0 +1,5 @@
+context demo
+
+fn probe() -> Int {
+  1
+}

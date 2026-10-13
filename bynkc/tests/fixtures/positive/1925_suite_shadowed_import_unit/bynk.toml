@@ -1,0 +1,3 @@
+[project]
+name = "suite-shadowed-import"
+version = "0.1.0"

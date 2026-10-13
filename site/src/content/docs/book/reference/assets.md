@@ -35,8 +35,9 @@ fn head() -> String {
   build nothing.
 - **Name:** a value of the built-in type `Asset`. Its one field, `.url`, is a
   `String`: the URL the file is served at. The name is in the same namespace
-  as functions, so it may not repeat an asset (`bynk.asset.duplicate`), a
-  function or a type (`bynk.resolve.name_conflict`) in the same unit.
+  as functions, so it may not repeat an asset (`bynk.asset.duplicate`), or a
+  function, type, event, service, agent or provider
+  (`bynk.resolve.name_conflict`) in the same unit.
 - **Where:** in a context or a commons, never an adapter
   (`bynk.asset.outside_context_or_commons`). A unit sees its own assets and
   those of each commons it `uses`, like functions.
