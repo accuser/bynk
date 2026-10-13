@@ -117,6 +117,7 @@ const KIND_TO_CM_TYPE: Record<string, string> = {
   field: "property",
   constructor: "function",
   function: "function",
+  constant: "constant",
   local: "variable",
 };
 

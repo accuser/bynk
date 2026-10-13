@@ -60,6 +60,9 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<TyId>, ctx: &mut Ctx) -> 
     // shares a name with a function or type in scope (`bynk.resolve.
     // name_conflict` at declaration).
     if ctx.input.assets.contains_key(&id.name) {
+        // #1883: a use edge to the declaration, recorded here because this
+        // one site sees both fn and handler bodies.
+        ctx.refs.record(id.span, SymbolKind::Asset, &id.name);
         return Some(tys.intern(Ty::Asset));
     }
     // v0.20a: a named function referenced as a *value* where a function type

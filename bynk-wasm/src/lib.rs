@@ -333,6 +333,7 @@ fn to_candidate(c: completion::Completion) -> CompletionCandidate {
         Field => "field",
         Constructor => "constructor",
         Function => "function",
+        Constant => "constant",
     };
     CompletionCandidate {
         label: c.label,

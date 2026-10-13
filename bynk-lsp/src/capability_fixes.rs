@@ -174,7 +174,10 @@ impl<'a> Header<'a> {
                         unit: key.unit.clone(),
                     });
                 }
-                SymbolKind::Fn if !type_only && unit_is_commons(index, &key.unit) => {
+                // #1883: an asset is a value from a commons, imported like a fn.
+                SymbolKind::Fn | SymbolKind::Asset
+                    if !type_only && unit_is_commons(index, &key.unit) =>
+                {
                     targets.push(Candidate::Uses {
                         unit: key.unit.clone(),
                     });

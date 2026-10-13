@@ -4169,6 +4169,7 @@ fn to_completion_item(c: completion::Completion) -> CompletionItem {
             completion::CompletionKind::Field => CompletionItemKind::FIELD,
             completion::CompletionKind::Constructor => CompletionItemKind::CONSTRUCTOR,
             completion::CompletionKind::Function => CompletionItemKind::FUNCTION,
+            completion::CompletionKind::Constant => CompletionItemKind::CONSTANT,
         }),
         // Snippet items carry `${n:…}` tab stops; everything else inserts its
         // label verbatim (the default).
@@ -4254,6 +4255,9 @@ fn lsp_symbol_kind(kind: bynk_check::index::SymbolKind) -> SymbolKind {
         bynk_check::index::SymbolKind::Actor => SymbolKind::INTERFACE,
         bynk_check::index::SymbolKind::Handler => SymbolKind::METHOD,
         bynk_check::index::SymbolKind::Messages => SymbolKind::STRUCT,
+        // #1883: an asset is a named value that never changes — as the
+        // document outline already shows it (`document_symbols::asset_symbol`).
+        bynk_check::index::SymbolKind::Asset => SymbolKind::CONSTANT,
     }
 }
 

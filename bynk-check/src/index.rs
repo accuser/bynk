@@ -46,6 +46,9 @@ pub enum SymbolKind {
     /// A `messages <tag> { ... }` bundle, keyed by its `tag` (message-bundles
     /// track, slice 1).
     Messages,
+    /// #1883: an `asset name = "path"` declaration — a value of type `Asset`,
+    /// keyed by its name in the declaring unit.
+    Asset,
 }
 
 impl SymbolKind {
@@ -63,6 +66,7 @@ impl SymbolKind {
             SymbolKind::Actor => "actor",
             SymbolKind::Handler => "handler",
             SymbolKind::Messages => "messages",
+            SymbolKind::Asset => "asset",
         }
     }
 }
@@ -472,6 +476,27 @@ impl IndexBuilder {
         };
         self.owner_keys
             .insert((unit.to_string(), name.to_string()), key.clone());
+        self.defs.insert(key, (site, modifiers));
+    }
+
+    /// #1883: register a symbol that can never enclose a call site (an
+    /// `asset`) — its def only, with no owner entry. Owners are keyed by
+    /// (unit, name) without the kind, so registering one here would let an
+    /// asset take over a same-named service's or agent's owner entry and
+    /// re-attribute that owner's refs to the asset's file.
+    pub fn add_leaf_def(
+        &mut self,
+        unit: &str,
+        kind: SymbolKind,
+        name: &str,
+        site: SiteRef,
+        modifiers: SymbolModifiers,
+    ) {
+        let key = SymbolKey {
+            unit: unit.to_string(),
+            kind,
+            name: name.to_string(),
+        };
         self.defs.insert(key, (site, modifiers));
     }
 

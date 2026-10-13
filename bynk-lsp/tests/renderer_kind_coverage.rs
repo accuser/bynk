@@ -14,7 +14,7 @@
 //! It has two halves, and needs both:
 //!
 //! - [`every_indexed_symbol_has_a_renderer`] is the **invariant**: sweep every
-//!   key the real index produces for a fixture declaring all ten kinds, and fail
+//!   key the real index produces for a fixture declaring every kind, and fail
 //!   on any the renderer answers `None` for. This is what would have caught #611
 //!   gap B and all three of #616.
 //! - [`declared_name`]'s `match` is the **forcing function**: it is exhaustive
@@ -42,6 +42,10 @@ type Stored = {
 }
 
 fn free(n: Int) -> Int { n }
+
+asset logo = "assets/logo.svg"
+
+fn logoUrl() -> String { logo.url }
 
 fn Stored.retitle(self, t: Title) -> Stored {
   Stored { title: t }
@@ -117,13 +121,15 @@ fn declared_name(kind: SymbolKind) -> &'static str {
         SymbolKind::Handler => "Todos.bump",
         // message-bundles slice 1 (#859): a messages block, keyed by its tag.
         SymbolKind::Messages => "en",
+        // #1883: an asset, keyed by its name.
+        SymbolKind::Asset => "logo",
     }
 }
 
 /// Every variant, so the fixture's coverage is asserted rather than assumed.
 /// `declared_name`'s exhaustive `match` is what forces this list to be extended
 /// in practice: a new kind fails to compile there first.
-const ALL_KINDS: [SymbolKind; 12] = [
+const ALL_KINDS: [SymbolKind; 13] = [
     SymbolKind::Type,
     SymbolKind::Fn,
     SymbolKind::Capability,
@@ -136,6 +142,7 @@ const ALL_KINDS: [SymbolKind; 12] = [
     SymbolKind::Actor,
     SymbolKind::Handler,
     SymbolKind::Messages,
+    SymbolKind::Asset,
 ];
 
 /// [`EVERY_KIND`] analysed under its own root. `test_name` is what keeps the
@@ -159,6 +166,9 @@ fn analysed(test_name: &str) -> (bynk_ide::ProjectDiagnostics, HashMap<PathBuf, 
     let bundle_dir = root.join("app");
     fs::create_dir_all(&bundle_dir).expect("create test root");
     fs::write(bundle_dir.join("bundle.bynk"), MESSAGES_BUNDLE).expect("write fixture");
+    // #1883: the asset's file, else `bynk.asset.missing_file` fires.
+    fs::create_dir_all(root.join("assets")).expect("create test root");
+    fs::write(root.join("assets/logo.svg"), "<svg/>").expect("write fixture");
     // Content-ownership track (#1086) slice 4: bynk-testkit's complete
     // sources map instead of relying on bynk-emit's disk fallback.
     let sources =

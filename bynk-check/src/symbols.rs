@@ -92,11 +92,13 @@ pub fn assemble_index(
                     CommonsItem::Messages(m) => {
                         (SymbolKind::Messages, &m.tag, symbol_modifiers(&unit, None))
                     }
-                    // #1883, slice 1a: an asset is not indexed yet — no
-                    // symbol kind fits a value that is neither a function nor
-                    // a type. Hover and go-to-definition come with its own
-                    // `SymbolKind` in a later slice.
-                    CommonsItem::Asset(_) => continue,
+                    // #1883: an asset indexes under its own kind, keyed by
+                    // name in the declaring unit.
+                    CommonsItem::Asset(a) => (
+                        SymbolKind::Asset,
+                        &a.name.name,
+                        symbol_modifiers(&unit, None),
+                    ),
                 };
                 builder.add_first_party_def(&unit, kind, name, modifiers);
             }
@@ -271,8 +273,21 @@ pub fn assemble_index(
                         symbol_modifiers(&unit, None),
                     );
                 }
-                // #1883, slice 1a: not indexed yet; see the synthetic-unit arm.
-                CommonsItem::Asset(_) => {}
+                // #1883: an asset's declaration site, for hover, go-to-
+                // definition, references, rename and semantic tokens. A bare
+                // use in a unit that `uses` this one resolves here through the
+                // qualification pass, as a function's does. A leaf def: an
+                // asset encloses no call site, so it registers no owner (one
+                // would clash with a same-named service's — review of #1924).
+                CommonsItem::Asset(a) => {
+                    builder.add_leaf_def(
+                        &unit,
+                        SymbolKind::Asset,
+                        &a.name.name,
+                        site(&a.name),
+                        symbol_modifiers(&unit, None),
+                    );
+                }
             }
         }
     }
