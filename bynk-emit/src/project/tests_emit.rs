@@ -48,6 +48,126 @@ use std::sync::Arc;
 /// comes back, keyed by its resolved `stub` map, so the loop below is Phase
 /// 5 (TypeScript emission) alone, over exactly the targets ready for it.
 #[allow(clippy::too_many_arguments)]
+/// #1883, slice 3: the project's declared assets, for the test passes — each
+/// declaration's served path ([`bynk_check::assets::declared_served_paths`])
+/// and each declared file's bytes. Empty when no `assets/` folder was read.
+pub(crate) struct TestAssetFiles<'a> {
+    pub(crate) served: &'a BTreeMap<String, String>,
+    pub(crate) bytes: &'a BTreeMap<String, Vec<u8>>,
+}
+
+/// #1883, slice 3 ([DECISION F]): the TypeScript that lets a case fetch an
+/// asset — the files `target`'s Worker ships
+/// ([`bynk_check::assets::deployed_assets`]), embedded base64 by served path
+/// with the platform's content type, and `__bynkAssetGet(url)`, which answers
+/// as the platform's asset tier does: `HttpResult.Raw(bytes, contentType)`
+/// for a shipped file, `NotFound` otherwise. Embedding keeps a suite free of
+/// disk access at test time; it is harness data, not the compile-time
+/// `String` embedding [DECISION E] excludes. `None` when the Worker ships no
+/// files, so a module without assets is unchanged.
+fn asset_harness(
+    target: &str,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_tables: &HashMap<String, UnitTable>,
+    files: &TestAssetFiles,
+) -> Option<String> {
+    let deployed = bynk_check::assets::deployed_assets(
+        target,
+        unit_uses,
+        unit_consumes,
+        unit_tables,
+        files.served,
+    );
+    if deployed.is_empty() {
+        return None;
+    }
+    let mut out = String::from(
+        "const __bynkAssetFiles: Record<string, { readonly body: string; readonly contentType: string }> = {\n",
+    );
+    for (served, source) in &deployed {
+        let bytes = files.bytes.get(source)?;
+        out.push_str(&format!(
+            "  {}: {{ body: \"{}\", contentType: {} }},\n",
+            bynk_project::json_string(served),
+            base64(bytes),
+            bynk_project::json_string(bynk_check::assets::content_type_for(served)),
+        ));
+    }
+    out.push_str(
+        "};\n\
+         function __bynkAssetGet(url: string): HttpResult<never> {\n\
+         \x20 const f = globalThis.Object.hasOwn(__bynkAssetFiles, url) ? __bynkAssetFiles[url] : undefined;\n\
+         \x20 if (f === undefined) return HttpResult.NotFound;\n\
+         \x20 const bin = atob(f.body);\n\
+         \x20 const bytes = new Uint8Array(bin.length);\n\
+         \x20 for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);\n\
+         \x20 return HttpResult.Raw(bytes, f.contentType);\n\
+         }\n",
+    );
+    Some(out)
+}
+
+/// #1883, slice 3: each asset a `system` case may name ([`SuiteView::assets`]),
+/// grouped by the unit that declares it — searched in the participants, then
+/// the units they `uses`, then the suite's own `uses` commons — sorted.
+fn system_asset_owners(
+    view: &test_suites::SuiteView,
+    participants: &[String],
+    uses_targets: &[String],
+    unit_tables: &HashMap<String, UnitTable>,
+) -> BTreeMap<String, Vec<String>> {
+    let mut owners: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (name, decl) in &view.assets {
+        let owner = unit_tables
+            .iter()
+            .filter(|(_, t)| {
+                t.assets
+                    .get(name)
+                    .is_some_and(|d| d.path == decl.path && d.at == decl.at)
+            })
+            .map(|(u, _)| u)
+            .min_by_key(|u| {
+                (
+                    !participants.contains(u),
+                    !uses_targets.contains(u),
+                    (*u).clone(),
+                )
+            });
+        if let Some(owner) = owner {
+            owners.entry(owner.clone()).or_default().push(name.clone());
+        }
+    }
+    for names in owners.values_mut() {
+        names.sort();
+    }
+    owners
+}
+
+/// Standard base64 (RFC 4648, with padding) of `bytes`, for
+/// [`asset_harness`]'s embedded files.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for (i, shift) in [18u32, 12, 6, 0].into_iter().enumerate() {
+            if i <= chunk.len() {
+                out.push(ALPHABET[((n >> shift) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn process_tests(
     test_groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
@@ -75,6 +195,8 @@ pub(crate) fn process_tests(
     // v0.132: running set of already-emitted barrel output paths, shared with the
     // integration pass so a commons imported by both is barrelled exactly once.
     emitted_barrels: &mut HashSet<PathBuf>,
+    // #1883, slice 3: the declared assets, for `svc.GET(asset)` in a case.
+    asset_files: &TestAssetFiles,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     tys: &Arc<Types>,
@@ -130,6 +252,13 @@ pub(crate) fn process_tests(
             import_ext,
             contracts,
             &hidden,
+            asset_harness(
+                target_name,
+                unit_uses,
+                unit_consumes,
+                unit_tables,
+                asset_files,
+            ),
             tys,
         );
         if let Some((path, program, source_map, runnable)) = emit_out {
@@ -197,6 +326,8 @@ pub(crate) fn process_integration_tests(
     groups: &BTreeMap<String, Vec<usize>>,
     // v0.132: barrel-path dedup set shared with the unit-test pass.
     emitted_barrels: &mut HashSet<PathBuf>,
+    // #1883, slice 3: the declared assets, for `svc.GET(asset)` in a case.
+    asset_files: &TestAssetFiles,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     tys: &Arc<Types>,
@@ -282,6 +413,9 @@ pub(crate) fn process_integration_tests(
             unit_consumes,
             unit_tables,
             &case_inputs,
+            participants.first().and_then(|target| {
+                asset_harness(target, unit_uses, unit_consumes, unit_tables, asset_files)
+            }),
             tys,
         ) {
             outputs.push(StagedFile {
@@ -334,6 +468,8 @@ fn emit_integration_module(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_tables: &HashMap<String, UnitTable>,
     cases: &[SystemCaseInput],
+    // #1883, slice 3: `asset_harness`'s text, when the target ships assets.
+    asset_harness: Option<String>,
     tys: &Arc<Types>,
 ) -> Option<(PathBuf, TsProgram, Option<String>, RunnableTest)> {
     // #914: the test-scaffold module's runtime import list is emitted below as a
@@ -405,6 +541,10 @@ fn emit_integration_module(
     .iter()
     .map(|s| s.to_string())
     .collect();
+    // #1883, slice 3: the asset fetch helper answers with an `HttpResult`.
+    if asset_harness.is_some() {
+        runtime_names.push("HttpResult".to_string());
+    }
     if has_agents {
         runtime_names.push("__makeIntegrationDoNamespace".to_string());
         runtime_names.push("type __DurableObjectState".to_string());
@@ -446,6 +586,16 @@ fn emit_integration_module(
         let path = relative_import_for_test(&commons_dir_for(owner));
         uses_imports.push((test_ns(owner), path));
     }
+    // #1883, slice 3: the unit owning each asset a case may name. A
+    // participant's own assets are exported by its `handlers.js` (already
+    // imported above); a commons' come from that commons' module.
+    let asset_owners = system_asset_owners(view, participants, uses_targets, unit_tables);
+    for owner in asset_owners.keys() {
+        if !participants.contains(owner) {
+            let path = relative_import_for_test(&commons_dir_for(owner));
+            uses_imports.push((test_ns(owner), path));
+        }
+    }
     uses_imports.sort();
     uses_imports.dedup();
     for (ns, path) in &uses_imports {
@@ -465,6 +615,11 @@ fn emit_integration_module(
     // the printer's own automatic lead-in blank (`no_blank_before`) rather than
     // stacking a second one on top.
     stmts.push(TsStmt::raw(expectation_runtime_helpers(), None));
+    // #1883, slice 3: the embedded files and `__bynkAssetGet`, for an asset
+    // fetch in a case.
+    if let Some(text) = &asset_harness {
+        stmts.push(TsStmt::raw(text.clone(), None));
+    }
 
     // The env-graph harness: stand each participant up as an in-process Worker
     // and wire its Service Bindings to its siblings; the root env binds to all.
@@ -533,6 +688,14 @@ fn emit_integration_module(
             }
         }
         extend_hidden_destructures(&mut case_out, &hidden, unit_tables);
+        // #1883, slice 3: the assets a case may name, from their owners.
+        for (owner, names) in &asset_owners {
+            crate::emitter::extend_printed_at(
+                &mut case_out,
+                emit_ns_destructure(&test_ns(owner), names, &[]),
+                2,
+            );
+        }
         // #1855: the lowering reads the case's checked types (a literal at a
         // refined record field is branded only when its type says so), so
         // type the body here as the check pass did, into throwaway sinks.
@@ -1712,6 +1875,8 @@ fn emit_test_module(
     import_ext: ImportExt,
     contracts: bool,
     hidden: &BTreeMap<String, String>,
+    // #1883, slice 3: `asset_harness`'s text, when the target ships assets.
+    asset_harness: Option<String>,
     tys: &Arc<Types>,
 ) -> Option<(PathBuf, TsProgram, Option<String>, RunnableTest)> {
     // #914: the test-scaffold module's runtime import list is emitted below as a
@@ -1777,6 +1942,10 @@ fn emit_test_module(
     runtime_names.push("type Result".to_string());
     runtime_names.push("type Option".to_string());
     runtime_names.push("type ValidationError".to_string());
+    // #1883, slice 3: the asset fetch helper answers with an `HttpResult`.
+    if asset_harness.is_some() {
+        runtime_names.push("HttpResult".to_string());
+    }
     let import_idx = stmts.len();
 
     // Compute relative import path from tests/ to the target's output dir.
@@ -1872,6 +2041,11 @@ fn emit_test_module(
     // helpers, or — if this module has none of those — the deps factory,
     // always last in that chain and so the guaranteed fallback).
     stmts.push(TsStmt::raw(expectation_runtime_helpers(), None));
+    // #1883, slice 3: the embedded files and `__bynkAssetGet`, for an asset
+    // fetch in a case.
+    if let Some(text) = &asset_harness {
+        stmts.push(TsStmt::raw(text.clone(), None));
+    }
     let mut suppress_next_blank = true;
 
     // v0.115: the target unit's contracted free functions the runner can attack
@@ -3998,10 +4172,12 @@ fn emit_test_scope_setup(
     // body can reference them unqualified. The target's types and fns are
     // exported from its namespace by the production emitter.
     if let Some(table) = unit_tables.get(target_name) {
+        // #1883, slice 3: the target's assets are exported constants too.
         let mut names: Vec<String> = table
             .types
             .keys()
             .chain(table.fns.keys())
+            .chain(table.assets.keys())
             .cloned()
             .collect();
         // For contexts, also bring services and providers into scope.
@@ -4039,16 +4215,28 @@ fn emit_test_scope_setup(
     // scope — `Cannot redeclare block-scoped variable 'render'` under `tsc`.
     let target_local: std::collections::HashSet<&String> = unit_tables
         .get(target_name)
-        .map(|t| t.types.keys().chain(t.fns.keys()).collect())
+        .map(|t| {
+            t.types
+                .keys()
+                .chain(t.fns.keys())
+                .chain(t.assets.keys())
+                .collect()
+        })
         .unwrap_or_default();
+    // #1883, slice 3: a name brought in by an earlier used commons is not
+    // destructured again (two used commons may not share an asset name —
+    // `bynk.uses.name_conflict` — but an asset may share none with a fn either).
+    let mut seen_assets: std::collections::HashSet<&String> = std::collections::HashSet::new();
     if let Some(used) = unit_uses.get(target_name) {
         for u in used {
             let ns = test_ns(u);
             if let Some(table) = unit_tables.get(u) {
+                let assets = table.assets.keys().filter(|n| seen_assets.insert(*n));
                 let mut names: Vec<String> = table
                     .types
                     .keys()
                     .chain(table.fns.keys())
+                    .chain(assets)
                     .filter(|n| !target_local.contains(n))
                     .cloned()
                     .collect();

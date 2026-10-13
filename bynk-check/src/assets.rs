@@ -161,6 +161,49 @@ pub fn served_path(source: &str, bytes: &[u8]) -> String {
     }
 }
 
+/// The `Content-Type` the platform serves `served` (a URL path) with, by its
+/// extension — the table measured against `wrangler dev` 4.107.0 (#1883,
+/// slice 3), so a suite fetching an asset (`svc.GET(style)`) sees what
+/// production sends. Text types carry `; charset=utf-8`. A file with no
+/// extension is served with no content type, here `""`; an extension the
+/// table does not know is `application/octet-stream`.
+pub fn content_type_for(served: &str) -> &'static str {
+    let name = served.rsplit('/').next().unwrap_or(served);
+    let Some((_, ext)) = name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty()) else {
+        return "";
+    };
+    match ext.to_ascii_lowercase().as_str() {
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "html" | "htm" => "text/html; charset=utf-8",
+        "txt" => "text/plain; charset=utf-8",
+        "csv" => "text/csv; charset=utf-8",
+        "md" => "text/markdown; charset=utf-8",
+        "json" | "map" => "application/json",
+        "webmanifest" => "application/manifest+json",
+        "xml" => "application/xml",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "ico" => "image/vnd.microsoft.icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "pdf" => "application/pdf",
+        "wasm" => "application/wasm",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "zip" => "application/zip",
+        _ => "application/octet-stream",
+    }
+}
+
 /// The key a declaration's served path is filed under
 /// ([`declared_served_paths`]): its normalised source path, plus its fixed
 /// URL path when it has one — so one file may be served both content-hashed
@@ -1181,6 +1224,27 @@ mod tests {
             b.keys().cloned().collect::<Vec<_>>(),
             vec!["/_assets/badge.1.svg", "/robots.txt"]
         );
+    }
+
+    /// #1883, slice 3: a suite names its target's assets and fetches one with
+    /// `svc.GET(asset)` — `GET` only, the asset alone, and no `by` (an asset
+    /// is public). Anything else that is not a route string is still a bad
+    /// address.
+    #[test]
+    fn a_suite_fetches_an_asset_by_get_alone() {
+        let web = "context t.web\n\nasset style = \"assets/board.css\"\n\nservice api from http {\n  on GET(\"/\") () -> Effect[HttpResult[String]] by Visitor {\n    Ok(style.url)\n  }\n}\n";
+        let suite = |body: &str| format!("suite t.web {{\n  case \"c\" {{\n{body}\n  }}\n}}\n");
+        let run = |body: &str| analyse(&[("t/web.bynk", web), ("tests/web.bynk", &suite(body))]);
+        run("    expect style.url == style.url\n    let r <- api.GET(style)\n    expect r is Raw(_, _)")
+            .assert_clean();
+        run("    let r <- api.POST(style)\n    expect r is Raw(_, _)")
+            .assert_reports("bynk.test.asset_address_method");
+        run("    let r <- api.GET(style, 1)\n    expect r is Raw(_, _)")
+            .assert_reports("bynk.test.service_call_arity");
+        run("    let r <- api.GET(style) by Visitor\n    expect r is Raw(_, _)")
+            .assert_reports("bynk.test.principal_on_asset");
+        run("    let s = \"/\"\n    let r <- api.GET(s)\n    expect r is Ok(_)")
+            .assert_reports("bynk.test.service_bad_address");
     }
 
     #[test]

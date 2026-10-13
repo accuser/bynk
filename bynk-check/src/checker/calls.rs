@@ -3067,6 +3067,52 @@ fn check_test_service_address(
                 address: method.name.clone(),
             },
         );
+        // #1883, slice 3 ([DECISION F]): `svc.GET(style)` — an `Asset` as the
+        // address. The platform serves an asset before the Worker runs, so no
+        // handler is involved: the call answers with the file the target's
+        // Worker ships, as the platform would (`HttpResult.Raw`).
+        if let Some(first) = args.first()
+            && !matches!(first.kind, EK::StrLit(_))
+            && is_asset_value(first, ctx)
+        {
+            let _ = type_of(first, None, ctx);
+            if method.name != "GET" {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.test.asset_address_method",
+                        method.span,
+                        format!(
+                            "an asset is fetched with `{}.GET(asset)`, not `{}`",
+                            id.name, method.name
+                        ),
+                    )
+                    .with_note(
+                        "the platform serves an asset to `GET` and answers every other method with `405`",
+                    ),
+                );
+            }
+            if args.len() > 1 {
+                ctx.errors.push(CompileError::new(
+                    "bynk.test.service_call_arity",
+                    args[1].span,
+                    format!(
+                        "`{}.{}(asset)` takes the asset alone; remove the other arguments",
+                        id.name, method.name
+                    ),
+                ));
+                for a in &args[1..] {
+                    let _ = type_of(a, None, ctx);
+                }
+            }
+            ctx.callees.insert(
+                expr_id,
+                Callee::TestService {
+                    service: id.name.clone(),
+                    address: format!("{} asset", method.name),
+                },
+            );
+            return None;
+        }
         let Some(EK::StrLit(path)) = args.first().map(|a| &a.kind) else {
             ctx.errors.push(
                 CompileError::new(
@@ -3311,6 +3357,19 @@ fn handler_actor_name(handler: &TestHandler, protocol: Option<&str>) -> Option<S
     }
 }
 
+/// #1883, slice 3: whether `e` is an `Asset` value — an asset name in scope
+/// (not shadowed by a local), or a field/expression that types as `Asset` —
+/// without recording anything. Decides the `svc.GET(asset)` address form.
+fn is_asset_value(e: &Expr, ctx: &Ctx) -> bool {
+    match &e.kind {
+        ExprKind::Ident(id) => ctx
+            .lookup(id.name.as_str())
+            .map(|t| matches!(&*ctx.tys.get(t), Ty::Asset))
+            .unwrap_or_else(|| ctx.input.assets.contains_key(&id.name)),
+        _ => false,
+    }
+}
+
 /// v0.182 (#664): resolve the handler a test-body address invocation targets,
 /// without side effects. Shared by the argument check and the principal check.
 fn resolve_test_address<'a>(
@@ -3385,6 +3444,27 @@ pub(crate) fn check_effect_let_principal(
         return;
     };
     let Some(handler) = resolve_test_address(&sig, &method.name, args).cloned() else {
+        if let Some(p) = principal
+            && args.first().is_some_and(|a| is_asset_value(a, ctx))
+        {
+            // #1883, slice 3: an asset is public and served before the Worker
+            // runs, so no principal reaches it.
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.principal_on_asset",
+                    p.span,
+                    format!(
+                        "an asset is public and served before the Worker runs, so `by {}` is meaningless",
+                        p.actor.name
+                    ),
+                )
+                .with_note("drop the `by` clause on an asset fetch"),
+            );
+            if let Some(id) = &p.identity {
+                let _ = type_of(id, None, ctx);
+            }
+            return;
+        }
         if let Some(p) = principal {
             // #707: a wrong-method `405` test (an http method whose path is
             // declared for *another* method) reaches no handler, so a `by` clause

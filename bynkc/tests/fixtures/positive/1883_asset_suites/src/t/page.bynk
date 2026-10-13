@@ -1,0 +1,7 @@
+commons t.page
+
+asset style = "assets/board.css"
+
+fn link() -> String {
+  "<link href=\"\(style.url)\">"
+}
