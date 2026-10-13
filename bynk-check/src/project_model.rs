@@ -3463,17 +3463,27 @@ pub fn merge_consumed_exports(
             let Some(decl) = used.types.get(type_name) else {
                 continue;
             };
-            if combined_types.contains_key(type_name) {
+            // #1927: a local value of the export's name (a function, asset,
+            // service, agent or provider) takes the emitted module's binding
+            // as a type of that name would, so it conflicts the same way.
+            let local_value = crate::symbols::local_value_kind(&unit_info[name].table, type_name)
+                .map(|(kind, _)| kind)
+                .filter(|kind| !matches!(*kind, "type" | "event"));
+            if combined_types.contains_key(type_name) || local_value.is_some() {
                 // Name conflict between local/uses and consumed export.
                 let consumes_site = consumes_span_of(parsed, &unit_info[name].files, t);
                 let consumes_span = consumes_site.map(|(_, s)| s).unwrap_or_default();
                 let consumes_file = consumes_site.map(|(i, _)| parsed[i].identity_path());
+                let in_scope = match local_value {
+                    Some(kind) => format!("this context declares a {kind} of the same name"),
+                    None => "a type of the same name is already in scope".to_string(),
+                };
                 errors.push_for(consumes_file.as_deref(),
                     CompileError::new(
                         "bynk.consumes.name_conflict",
                         consumes_span,
                         format!(
-                            "context `{name}` consumes `{t}` which exports type `{type_name}`, but a type of the same name is already in scope",
+                            "context `{name}` consumes `{t}` which exports type `{type_name}`, but {in_scope}",
                         ),
                     )
                     .with_note(
@@ -4147,6 +4157,12 @@ pub fn compose_unit_symbols(
 /// shadowing and is not listed. The first `uses` target to declare a name
 /// decides, as in the compositions.
 ///
+/// #1927: an imported type a local value hides is listed too, but stays in
+/// the composed table: an imported declaration that uses it must still check,
+/// and a value of it may flow through the unit's code. Writing its name is the
+/// conflict instead ([`crate::resolver::check_shadowed_type_names`]). A local
+/// type or event over an imported type is #1824's type shadowing, not listed.
+///
 /// [`ResolvedCommons::shadowed_import_error`]: crate::resolver::ResolvedCommons::shadowed_import_error
 pub fn shadowed_imports(
     name: &str,
@@ -4172,14 +4188,18 @@ pub fn shadowed_imports_in<'a>(
 ) -> HashMap<String, crate::resolver::ShadowedImport> {
     let mut out = HashMap::new();
     for (t, used) in uses {
+        // #1927: an imported type too. A local type or event over it is
+        // #1824's type shadowing, not this.
         let imports = used
             .fns
             .keys()
             .map(|n| (n, "function"))
-            .chain(used.assets.keys().map(|n| (n, "asset")));
+            .chain(used.assets.keys().map(|n| (n, "asset")))
+            .chain(used.types.keys().map(|n| (n, "type")));
         for (n, imported) in imports {
             if let Some((kind, local_span)) = crate::symbols::local_value_kind(local, n)
                 && kind != imported
+                && !(imported == "type" && kind == "event")
             {
                 out.entry(n.clone())
                     .or_insert_with(|| crate::resolver::ShadowedImport {
@@ -4530,7 +4550,7 @@ mod shadowed_import_tests {
 
     /// Each imported kind: its declaration in `lib.util`, and an expression
     /// using it with the type that expression has.
-    const IMPORTED: [(&str, &str, &str, &str); 2] = [
+    const IMPORTED: [(&str, &str, &str, &str); 3] = [
         (
             "function",
             "fn thing() -> Int {\n  1\n}\n",
@@ -4542,6 +4562,13 @@ mod shadowed_import_tests {
             "asset thing = \"assets/x.json\"\n",
             "thing.url",
             "String",
+        ),
+        // #1927: writing an imported type's name (here, constructing one).
+        (
+            "type",
+            "type thing = { n: Int }\n",
+            "thing { n: 1 }.n",
+            "Int",
         ),
     ];
 
@@ -4596,6 +4623,9 @@ mod shadowed_import_tests {
                         // An unused shadow, and a same-kind one, are legal.
                         Use::None => vec![],
                         _ if local == imported => vec![],
+                        // An event is a type: a local one over an imported
+                        // type is #1824's type shadowing, and answers.
+                        _ if imported == "type" && local == "event" => vec![],
                         // In a function body the resolver reads `thing.url`
                         // on a type name as a static member of the type, and
                         // rejects it under that code.
@@ -4676,6 +4706,78 @@ mod shadowed_import_tests {
         let read = file("let u = thing.url\n  1");
         let r = analyse(&[lib, ("app/main.bynk", &read), ("assets/x.json", "{}")]);
         assert_eq!(r.error_categories(), vec!["bynk.uses.name_conflict"]);
+    }
+
+    /// #1927: the sum used across these tests, from a commons, with a
+    /// function that makes one and one that reads one.
+    const STATUS_LIB: (&str, &str) = (
+        "lib/st.bynk",
+        "commons lib.st\n\ntype Status =\n  | Done\n  | Pending\n\nfn mk() -> Status {\n  Done\n}\n\nfn isDone(s: Status) -> Bool {\n  match s {\n    Done => true\n    Pending => false\n  }\n}\n",
+    );
+
+    /// #1927: a bare variant of a hidden sum emits the sum's name, which the
+    /// local declaration has taken, so constructing one is the conflict.
+    /// Matching one is not: a pattern emits the variant's tag alone.
+    #[test]
+    fn a_hidden_sums_bare_variant_constructs_only_by_conflict() {
+        let unit = |body: &str| {
+            format!("commons app\n\nuses lib.st\n\nfn Status() -> Int {{\n  1\n}}\n\n{body}")
+        };
+        let construct = unit("fn f() -> Bool {\n  isDone(Done)\n}\n");
+        let r = analyse(&[STATUS_LIB, ("app/main.bynk", &construct)]);
+        assert_eq!(r.error_categories(), vec!["bynk.uses.name_conflict"]);
+        let matched = unit(
+            "fn f() -> Bool {\n  match mk() {\n    Done => true\n    Pending => false\n  }\n}\n",
+        );
+        let r = analyse(&[STATUS_LIB, ("app/main.bynk", &matched)]);
+        r.assert_clean();
+    }
+
+    /// #1927: a value of a hidden type flows through the unit's code, and an
+    /// imported declaration that uses the type still checks; only writing the
+    /// name is the conflict.
+    #[test]
+    fn a_hidden_types_values_still_flow() {
+        let r = analyse(&[
+            STATUS_LIB,
+            (
+                "app/main.bynk",
+                "context app\n\nuses lib.st\n\nagent Status {\n  key id: String\n\n  store hits: Cell[Int]\n\n  on call ping() -> Effect[Int] {\n    1\n  }\n}\n\nfn f() -> Bool {\n  let s = mk()\n  isDone(s)\n}\n",
+            ),
+        ]);
+        r.assert_clean();
+    }
+
+    /// #1927: a local asset answers its own `.url`, even beside a hidden
+    /// imported type of its name.
+    #[test]
+    fn a_local_asset_answers_its_own_url_beside_a_hidden_type() {
+        let r = analyse(&[
+            STATUS_LIB,
+            (
+                "app/main.bynk",
+                "commons app\n\nuses lib.st\n\nasset Status = \"assets/x.json\"\n\nfn f() -> String {\n  Status.url\n}\n",
+            ),
+            ("assets/x.json", "{}"),
+        ]);
+        r.assert_clean();
+    }
+
+    /// #1927: a local value named like a type a context consumes conflicts at
+    /// the `consumes` clause, as a local type of that name already does.
+    #[test]
+    fn a_local_value_named_like_a_consumed_export_conflicts() {
+        let r = analyse(&[
+            (
+                "shop.bynk",
+                "context shop\n\nexports transparent { Order }\n\ntype Order = { id: String }\n",
+            ),
+            (
+                "app.bynk",
+                "context app\n\nconsumes shop\n\nservice Order {\n  on call() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n",
+            ),
+        ]);
+        assert_eq!(r.error_categories(), vec!["bynk.consumes.name_conflict"]);
     }
 
     /// The diagnostic names both declarations and where the local one is.

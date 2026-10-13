@@ -385,6 +385,18 @@ pub fn check_file_core(
             .get_or_insert_with(Vec::new)
             .extend(hidden_named);
     }
+    // #1927: a `uses`-imported type a local value hides may not be written
+    // either, and its errors are resolve errors the same way.
+    let shadowed_named = resolver::check_shadowed_type_names(
+        &resolved.commons.items,
+        &resolved.shadowed_imports,
+        &resolved.types,
+    );
+    if !shadowed_named.is_empty() {
+        resolve_errors
+            .get_or_insert_with(Vec::new)
+            .extend(shadowed_named);
+    }
     let item_spans: Vec<bynk_syntax::span::Span> =
         resolved.commons.items.iter().map(|i| i.span()).collect();
     // The unit's own span is this file's, even when it has no items of its own
