@@ -1,11 +1,6 @@
----
-level: minor
-changelog: 'A suite names its target''s assets and fetches one with `api.GET(style)`, answered as the platform''s asset tier would (`Raw(body, contentType)`, or `NotFound`); `bynk.test.asset_address_method`, `bynk.test.principal_on_asset`; a case now binds an `HttpResult` variant''s payload by its real field (`Raw(body, ct)`, `BadRequest(m)`) (static assets, slice 3)'
----
+# 0458 — A suite fetches an asset through `svc.GET(asset)`, answered by an imitation of the asset tier
 
-## ADR: static-assets-in-suites
-title: A suite fetches an asset through `svc.GET(asset)`, answered by an imitation of the asset tier
-summary: Suites see their target's assets; `svc.GET(asset)` yields `Raw(body, contentType)` from the files the target's Worker ships, at every tier
+- **Status:** Accepted (v0.330)
 
 **Context.** #1883 [DECISION F] chose to make assets testable: a suite should
 check that a page links a real asset and that the asset is served. On the
