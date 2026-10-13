@@ -1,0 +1,2 @@
+bynk.resolve.name_conflict
+service `probe` conflicts with a function of the same name

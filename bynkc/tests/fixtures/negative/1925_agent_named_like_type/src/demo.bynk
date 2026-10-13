@@ -1,0 +1,15 @@
+context demo
+
+-- #1925: an agent and a type are one scope of the emitted module.
+
+type Probe = { n: Int }
+
+agent Probe {
+  key id: String
+
+  store hits: Cell[Int]
+
+  on call ping() -> Effect[Int] {
+    1
+  }
+}

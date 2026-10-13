@@ -39,6 +39,13 @@ locals-in-scope tooling (ADR 0064) resolves as "latest in-scope def wins" —
 with each occurrence free to change type. The emitter gives a re-bound name
 its own emitted identifier so each `let` still lowers to a distinct binding.
 
+A unit's top-level declarations share one namespace, except capabilities and
+actors, which each keep their own. A function, an asset, a type or event, a
+service, an agent and a provider with a body (by its implementation name,
+`provides Cap = Name`) MUST NOT share a name, across all of the unit's files
+(`bynk.resolve.name_conflict`; two types, or a type and an event, are
+`bynk.resolve.duplicate_type`). They are all one scope of the emitted module.
+
 A bare reference to a **named function** is a value only where a function
 type is expected (v0.20a); elsewhere it MUST be called
 (`bynk.resolve.fn_without_call`). A call on an in-scope **value** is legal
@@ -1710,8 +1717,9 @@ declaring context say.
   check) skips this; a build with none treats the folder as empty. Only the
   files a declaration names are read; other files in the folder are not.
 - Its name MUST NOT be declared twice in one unit (`bynk.asset.duplicate`), and
-  MUST NOT equal the name of a free function or type in that unit
-  (`bynk.resolve.name_conflict`).
+  MUST NOT equal the name of another declaration in the unit's namespace
+  ([§5.1](#51-name-resolution--visibility)): a function, type, event, service,
+  agent or provider (`bynk.resolve.name_conflict`).
 - A unit sees its own assets and those of each commons it `uses`, one level, as
   with functions; a local declaration wins. Two used commons that declare the
   same name are `bynk.uses.name_conflict`.
