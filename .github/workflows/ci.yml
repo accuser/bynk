@@ -281,12 +281,12 @@ jobs:
       # Pinned to the 0.9 line (like typescript@5): this now
       # gates every test run, so a future 0.10 with changed behaviour must not
       # turn CI red with no repo change.
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: nextest@0.9
       # #1671: Node 22 (the floor, NODE_MAJOR_FLOOR) so tsc_verify's strip-types
       # checks run here; under BYNK_REQUIRE_TSC they fail rather than skip.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "22"
       # `tsc` is needed by the tsc-verify stage and the `bynkc test` fixtures.
@@ -472,7 +472,7 @@ jobs:
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       # Prebuilt binary — avoids recompiling cargo-llvm-cov from source on every
       # run (minutes of pure build cost on a report-only, continue-on-error job).
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: cargo-llvm-cov
       - name: Coverage summary
@@ -525,10 +525,10 @@ jobs:
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       # Same version as the wasm-bindgen crate in Cargo.lock, like
       # deploy-playground.yml; xtask/tests/wasm_bindgen_pin.rs checks both.
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: wasm-bindgen-cli@0.2.127
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "20"
       - name: Install deps
@@ -560,7 +560,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "22"
       - name: Install deps
@@ -596,7 +596,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           # @vscode/vsce 4 (the packaging step below) requires Node >= 22.
           node-version: "22"
@@ -665,7 +665,7 @@ jobs:
         # paths, which now shell `bynk` rather than `bynkc` directly (#486) — all
         # three land on PATH via runTest.ts (DECISION D).
         run: cargo build --release -p bynk-lsp -p bynkc -p bynk
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           # ≥ 22.6 for the debug paths — the emitted `.ts` runs under Node's
           # TypeScript type-stripping (`--experimental-strip-types`).
@@ -700,7 +700,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "20"
       - name: Install deps
@@ -742,7 +742,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           # ≥ 22 so `node --test` runs the `.ts` suite directly under TypeScript
           # type-stripping, matching the emitted runtime's own execution model.
@@ -824,7 +824,7 @@ jobs:
       # trigger an implicit download when `cargo audit` dispatches in-repo).
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       # Prebuilt binary — avoids compiling cargo-audit from source on every run.
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: cargo-audit
       - name: Audit dependencies
@@ -877,7 +877,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "20"
       - name: Audit
