@@ -52,14 +52,46 @@ retries = { backoff = "fixed", count = 1, delay = "1s" }
 # CI output: compact while green, but print the full output of anything that
 # failed (or was retried) at the end so a red run is diagnosable from the log.
 #
-# `status-level` only chooses which test statuses are *listed* as they finish;
+# `status-level` only chooses which test statuses are *listed* as they happen;
 # it says nothing about output. What decides whether a passing test's output
 # is ever seen is `success-output`, left at its `never` default — so a test
 # that prints a "SKIPPED" banner and passes is invisible here (#1671). A gate
 # must therefore fail, not skip, when CI requires it (`BYNK_REQUIRE_TSC` and
 # friends), rather than rely on its banner being read.
+#
+# `slow`, not `fail` (#1929): it lists a retry as it happens, and names a test
+# still running past each `slow-timeout` period (`SLOW [> 120.000s] …`). At
+# `fail`, nothing named a running test, and a terminated attempt printed
+# nothing until the final summary. A passing test is still not listed, so a
+# green run stays compact: no test reaches the period in a healthy run.
 failure-output = "final"
-status-level = "fail"
+status-level = "slow"
+
+# A hung test is named at 2 minutes and killed at 10, rather than holding the
+# job until its `timeout-minutes` cancels it. At the old `status-level = "fail"`
+# the v0.330.4 release's Windows leg sat on one hung test (2340 of 2341 passed)
+# until the 40-minute job limit cancelled it. That skipped every publish job,
+# and the log could not say which test it was. A test past `period ×
+# terminate-after` is now a TIMEOUT failure: listed with its output, and
+# retried once under `retries` above. A retry that passes is listed as FLAKY in
+# the final summary.
+#
+# The limit is generous on purpose. The slowest tests (the workerd runtime
+# legs, `tsc_verify`) take about a minute on a fast Linux machine, and the
+# longest bounded wait in the suite is a workerd leg's 180s boot window. A
+# Windows runner's whole test phase is about 6 minutes, so no single test there
+# approaches 10. A hang and its one retry cost at most 20 minutes, and every
+# job running this profile must leave room for that:
+# `xtask/tests/suite_harness.rs` checks each job's `timeout-minutes` against
+# these two settings.
+#
+# One cost on unix: terminating a workerd leg skips its `Drop`, and its
+# `wrangler dev` chain runs in a process group of its own (#1686,
+# `bynkc/tests/wrangler/mod.rs`), out of reach of nextest's signal. The chain is
+# left running for the rest of the job. The retry still boots: it is a fresh
+# process, so it gets a fresh port (`20000 + pid % 10000`). A leaked chain is
+# the lesser cost; a hang that cancels the job leaves the whole run unnamed.
+slow-timeout = { period = "120s", terminate-after = 5 }
 
 [profile.default]
 # Local runs keep the default (0) retries so flakes surface immediately.

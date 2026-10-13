@@ -42,7 +42,10 @@ Every gate that runs the workspace suite runs it the same way:
 (`ci.yml`), the release gate (`release.yml`) and the bootstrap's verify job. The
 `ci` profile in `.config/nextest.toml` runs each test in its own process, and
 retries a failure once. A test that passes on the retry is listed as **FLAKY**
-but doesn't fail the gate, at release as on a PR. The policy is decided in that
+but doesn't fail the gate, at release as on a PR. A test still running after 2
+minutes is named in the log, and one still running after 10 is stopped and
+counts as a failure (then retried like any other), so a hang can't hold a gate
+until its job times out. The policy is decided in that
 one file, so a test can't pass CI and then fail the release because of the
 harness. `xtask/tests/suite_harness.rs` checks that all three workflows run that
 exact command, so they can't drift apart again unnoticed.

@@ -44,8 +44,12 @@ pub const SPEC: &str = "wrangler@4";
 /// One cost: the group is not the terminal's foreground group, so a Ctrl-C on
 /// a local `cargo test` no longer reaches the chain. The test process dies
 /// without running `Drop`, and the wrangler it started is left running. Before
-/// #1686 the SIGINT reached the whole chain directly. CI is unaffected. To
-/// clean up after an interrupted run, kill the `workerd`s whose cwd is under
+/// #1686 the SIGINT reached the whole chain directly. CI pays the same cost
+/// when nextest terminates a hung test (`slow-timeout` in
+/// `.config/nextest.toml`'s `ci` profile, #1929): the signal reaches the
+/// test's process group, not this one, so the chain outlives the job's
+/// remaining tests. The retry still boots, on its own fresh port. To clean up
+/// after an interrupted run, kill the `workerd`s whose cwd is under
 /// `/tmp/bynk-*`.
 ///
 /// Off unix there are no process groups, and this falls back to
