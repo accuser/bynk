@@ -62,3 +62,8 @@ export function appendRows(xs: readonly number[]): readonly (readonly number[])[
 export function concatRows(a: readonly (readonly number[])[], b: readonly (readonly number[])[]): readonly (readonly number[])[] {
   return [...a, ...b];
 }
+
+export function appendEmptyRows(n: number): readonly (readonly number[])[] {
+  const none: readonly (readonly number[])[] = [];
+  return ((__xs: readonly number[], __acc: readonly (readonly number[])[], __f: (acc: readonly (readonly number[])[], x: number) => readonly (readonly number[])[]) => { for (const __x of __xs) __acc = __f(__acc, __x); return __acc; })(([1, 2, 3]).slice(0, globalThis.Math.max(0, n)), none, (acc, x) => [...acc, []]);
+}

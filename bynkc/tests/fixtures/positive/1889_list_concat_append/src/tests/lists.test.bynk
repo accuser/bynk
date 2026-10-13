@@ -46,4 +46,8 @@ suite demo.lists {
   case "concat joins nested lists in order" {
     expect concatRows([[1]], [[2, 3], []]) == [[1], [2, 3], []]
   }
+
+  case "append adds an empty list as one element" {
+    expect appendEmptyRows(2) == [[], []]
+  }
 }
