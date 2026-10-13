@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.330.1** | 'An asset fetch in a suite (`api.GET(style)`) is target-scoped: only the target''s own assets are nameable, it works through a `from http` service only, and it is its own callee, so no route can be mistaken for it (static assets, review of slice 3)' |
 | **v0.330.0** | 'A suite names its target''s assets and fetches one with `api.GET(style)`, answered as the platform''s asset tier would (`Raw(body, contentType)`, or `NotFound`); `bynk.test.asset_address_method`, `bynk.test.principal_on_asset`; a case now binds an `HttpResult` variant''s payload by its real field (`Raw(body, ct)`, `BadRequest(m)`) (static assets, slice 3)' |
 | **v0.329.0** | 'An `asset` may be served at a fixed path (`asset favicon = "assets/favicon.ico" at "/favicon.ico"`), checked against the Worker''s routes (`bynk.asset.shadows_route`, the warning `bynk.asset.may_shadow_route`, `bynk.asset.path_conflict`, `bynk.asset.invalid_at_path`); `/_assets/` is a reserved route prefix; a Worker ships the hashed assets of the contexts it consumes (static assets, slice 2)' |
 | **v0.328.1** | 'A build reads only the `assets/` files an `asset` declaration names, so large undeclared media there no longer slow `bynkc compile` or each `bynk dev` rebuild; a declared file that cannot be read is the new `bynk.asset.unreadable_file` (static assets, #1883)' |

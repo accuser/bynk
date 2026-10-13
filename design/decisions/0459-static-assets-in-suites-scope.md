@@ -1,11 +1,6 @@
----
-level: patch
-changelog: 'An asset fetch in a suite (`api.GET(style)`) is target-scoped: only the target''s own assets are nameable, it works through a `from http` service only, and it is its own callee, so no route can be mistaken for it (static assets, review of slice 3)'
----
+# 0459 — A suite names exactly the assets its target's Worker ships, and fetches them through an HTTP service
 
-## ADR: static-assets-in-suites-scope
-title: A suite names exactly the assets its target's Worker ships, and fetches them through an HTTP service
-summary: Every asset a case can name is one the target's Worker ships; a non-HTTP service cannot fetch one
+- **Status:** Accepted (v0.330.1)
 
 **Context.** Slice 3 of #1883 (#1922, ADR "static-assets-in-suites") let a
 case name the assets of every `system` participant and of the suite's own
