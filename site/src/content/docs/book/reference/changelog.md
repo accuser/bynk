@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.329**.
+written against **v0.330**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.330.0** | 'A suite names its target''s assets and fetches one with `api.GET(style)`, answered as the platform''s asset tier would (`Raw(body, contentType)`, or `NotFound`); `bynk.test.asset_address_method`, `bynk.test.principal_on_asset`; a case now binds an `HttpResult` variant''s payload by its real field (`Raw(body, ct)`, `BadRequest(m)`) (static assets, slice 3)' |
 | **v0.329.0** | 'An `asset` may be served at a fixed path (`asset favicon = "assets/favicon.ico" at "/favicon.ico"`), checked against the Worker''s routes (`bynk.asset.shadows_route`, the warning `bynk.asset.may_shadow_route`, `bynk.asset.path_conflict`, `bynk.asset.invalid_at_path`); `/_assets/` is a reserved route prefix; a Worker ships the hashed assets of the contexts it consumes (static assets, slice 2)' |
 | **v0.328.1** | 'A build reads only the `assets/` files an `asset` declaration names, so large undeclared media there no longer slow `bynkc compile` or each `bynk dev` rebuild; a declared file that cannot be read is the new `bynk.asset.unreadable_file` (static assets, #1883)' |
 | **v0.328.0** | '`asset` declarations build: each Worker serves its files from `assets/` at a content-hashed `.url`, through an `[assets]` block and an immutable `_headers`; new `bynk.asset.outside_assets_dir`, `bynk.asset.missing_file`, `bynk.asset.needs_project`, and the `bynk.asset.not_served` warning for a deployable Bundle build (static assets, slice 1b)' |

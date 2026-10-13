@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0458](0458-static-assets-in-suites.md) | **A suite fetches an asset through `svc.GET(asset)`, answered by an imitation of the asset tier** (v0.330) — Suites see their target's assets; `svc.GET(asset)` yields `Raw(body, contentType)` from the files the target's Worker ships, at every tier | Accepted (v0.330) |
 | [0457](0457-static-assets-fixed-paths.md) | **Fixed asset paths are checked against routes; hashed assets follow `consumes`** (v0.329) — `at "/path"` serves an asset at a fixed URL; a route it shadows is an error, or a warning when parameterised; Workers ship consumed contexts' hashed files | Accepted (v0.329) |
 | [0456](0456-static-assets-emission.md) | **Static assets build from the project's `assets/` folder, at content-hashed URLs, per Worker** (v0.328) — Files come only from `assets/`; `.url` is `/_assets/<stem>.<fnv64>.<ext>`; a Worker ships its transitive `uses` closure's files | Accepted (v0.328) |
 | [0455](0455-static-assets-in-the-language.md) | **Static assets are declared in the language, as values of a built-in `Asset` type** (v0.327) — `asset name = "path"` in a context or commons; the name is an `Asset` whose `.url` is the content-hashed URL | Accepted (v0.327) |
