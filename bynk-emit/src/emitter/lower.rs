@@ -2320,14 +2320,13 @@ fn lower_method_call(
     // Slice B: a `system`-tier http address drives a real `worker.fetch` through
     // a driver (`__sysdrive_<svc>_<key>(rest, sub)`), not a direct handler call.
     // #1883, slice 3 ([DECISION F]): `svc.GET(asset)` in a case — the
-    // checker classified it (`Callee::TestService` with an `"… asset"`
-    // address). The platform serves an asset before the Worker runs, so it
+    // checker classified it (`Callee::TestAssetFetch`). The platform serves an asset before the Worker runs, so it
     // reaches no handler in either tier: the module's `__bynkAssetGet` answers
     // from the files the target's Worker ships (`asset_harness`).
     if let ExprKind::Ident(_) = &receiver.kind
         && matches!(
             cx.commons().callees.get(&e.id),
-            Some(bynk_check::checker::Callee::TestService { address, .. }) if address.ends_with(" asset")
+            Some(bynk_check::checker::Callee::TestAssetFetch { .. })
         )
         && let Some(first) = args.first()
     {

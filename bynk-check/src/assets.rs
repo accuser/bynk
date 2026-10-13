@@ -1247,6 +1247,114 @@ mod tests {
             .assert_reports("bynk.test.service_bad_address");
     }
 
+    /// #1883, slice 3 (review of #1922): the content types measured against
+    /// `wrangler dev` 4.107.0, pinned so the next wrangler bump has something
+    /// to diff against, plus the edges the doc comment promises.
+    #[test]
+    fn content_type_for_matches_the_platform() {
+        for (path, ct) in [
+            ("/_assets/board.3f9c2a.css", "text/css; charset=utf-8"),
+            ("/_assets/app.1.js", "text/javascript; charset=utf-8"),
+            ("/_assets/app.1.mjs", "text/javascript; charset=utf-8"),
+            ("/_assets/d.1.json", "application/json"),
+            ("/index.html", "text/html; charset=utf-8"),
+            ("/index.htm", "text/html; charset=utf-8"),
+            ("/robots.txt", "text/plain; charset=utf-8"),
+            ("/feed.xml", "application/xml"),
+            ("/_assets/i.1.svg", "image/svg+xml"),
+            ("/_assets/i.1.png", "image/png"),
+            ("/_assets/i.1.jpg", "image/jpeg"),
+            ("/_assets/i.1.jpeg", "image/jpeg"),
+            ("/_assets/i.1.gif", "image/gif"),
+            ("/_assets/i.1.webp", "image/webp"),
+            ("/_assets/i.1.avif", "image/avif"),
+            ("/favicon.ico", "image/vnd.microsoft.icon"),
+            ("/_assets/f.1.woff", "font/woff"),
+            ("/_assets/f.1.woff2", "font/woff2"),
+            ("/_assets/f.1.ttf", "font/ttf"),
+            ("/_assets/f.1.otf", "font/otf"),
+            ("/doc.pdf", "application/pdf"),
+            ("/_assets/m.1.wasm", "application/wasm"),
+            ("/_assets/app.1.map", "application/json"),
+            ("/data.csv", "text/csv; charset=utf-8"),
+            ("/notes.md", "text/markdown; charset=utf-8"),
+            ("/site.webmanifest", "application/manifest+json"),
+            ("/v.mp4", "video/mp4"),
+            ("/v.webm", "video/webm"),
+            ("/a.mp3", "audio/mpeg"),
+            ("/a.wav", "audio/wav"),
+            ("/x.zip", "application/zip"),
+            ("/x.bin", "application/octet-stream"),
+            // Edges: an unknown extension, an uppercase one, no extension
+            // (served with no content type), and a dotfile (no extension).
+            ("/x.unknownext", "application/octet-stream"),
+            ("/Logo.PNG", "image/png"),
+            ("/_assets/README.1", "application/octet-stream"),
+            ("/README", ""),
+            ("/.hidden", ""),
+        ] {
+            assert_eq!(content_type_for(path), ct, "{path}");
+        }
+    }
+
+    /// Review of #1922: an asset is fetched through an HTTP service only, and a
+    /// `system` suite names only its target's assets — the files the target's
+    /// Worker ships — so nothing nameable can answer `NotFound`.
+    #[test]
+    fn asset_fetches_are_http_only_and_target_scoped() {
+        let web = "context t.web\n\nasset style = \"assets/board.css\"\n\nservice jobs from queue(\"q\") {\n  on message(m: String) -> Effect[QueueResult] {\n    Ack\n  }\n}\n\nservice api from http {\n  on GET(\"/\") () -> Effect[HttpResult[String]] by Visitor {\n    Ok(style.url)\n  }\n}\n";
+        let a = analyse(&[
+            ("t/web.bynk", web),
+            (
+                "tests/web.bynk",
+                "suite t.web {\n  case \"c\" {\n    let r <- jobs.GET(style)\n    expect r is Raw(_, _)\n  }\n}\n",
+            ),
+        ]);
+        a.assert_reports("bynk.test.service_bad_address");
+
+        let lib = "commons t.lib\n\nasset other = \"assets/a.css\"\n";
+        let a = analyse(&[
+            ("t/web.bynk", web),
+            ("t/lib.bynk", lib),
+            (
+                "tests/web_system.bynk",
+                "suite t.web as system {\n  uses t.lib\n\n  case \"c\" {\n    let r <- api.GET(other)\n    expect r is Raw(_, _)\n  }\n}\n",
+            ),
+        ]);
+        a.assert_reports("bynk.resolve.unknown_name");
+    }
+
+    /// Review of #1923: a suite names exactly what the target's Worker ships
+    /// (`deployed_assets`) — so a consumed context's content-hashed asset is
+    /// nameable and fetchable, at both tiers, while its fixed path (served
+    /// only by its own Worker) is not.
+    #[test]
+    fn a_consumed_contexts_hashed_asset_is_nameable_but_its_fixed_one_is_not() {
+        let other = "context t.other\n\nasset badge = \"assets/a.css\"\nasset robots = \"assets/b.css\" at \"/robots.txt\"\n\nservice fragment {\n  on call() -> Effect[String] {\n    Effect.pure(badge.url)\n  }\n}\n";
+        let web = "context t.web\n\nconsumes t.other\n\nservice api from http {\n  on GET(\"/\") () -> Effect[HttpResult[String]] by Visitor {\n    let f <- t.other.fragment()\n    Ok(f)\n  }\n}\n";
+        for header in ["suite t.web", "suite t.web as system"] {
+            let suite = |body: &str| format!("{header} {{\n  case \"c\" {{\n{body}\n  }}\n}}\n");
+            analyse(&[
+                ("t/other.bynk", other),
+                ("t/web.bynk", web),
+                (
+                    "tests/web.bynk",
+                    &suite("    let r <- api.GET(badge)\n    expect r is Raw(_, _)"),
+                ),
+            ])
+            .assert_clean();
+            analyse(&[
+                ("t/other.bynk", other),
+                ("t/web.bynk", web),
+                (
+                    "tests/web.bynk",
+                    &suite("    let r <- api.GET(robots)\n    expect r is Raw(_, _)"),
+                ),
+            ])
+            .assert_reports("bynk.resolve.unknown_name");
+        }
+    }
+
     #[test]
     fn unsafe_asset_path_reason_accepts_relative_paths_and_rejects_escapes() {
         for ok in [

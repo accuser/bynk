@@ -562,6 +562,10 @@ pub enum Callee {
     /// type at runtime) — this classification exists purely for a later
     /// consumer (e.g. go-to-definition on the address), not typing.
     TestService { service: String, address: String },
+    /// #1883, slice 3: `svc.GET(asset)` in a test body — an asset fetch,
+    /// answered by the asset tier rather than a handler. Its own variant
+    /// (review of #1922) so no route address can be mistaken for it.
+    TestAssetFetch { service: String },
     /// An effectful `<field>.<op>(…)` storage operation on a `store`
     /// `Map`/`Set`/`Cache`/`Log`/`Cell` field — R6.5's own named target
     /// (P6.2, #1143): a mutation detector keyed on this variant, not a

@@ -35,8 +35,9 @@ A route/schedule the service does not declare is `bynk.test.service_unknown_rout
 
 ### Fetching a static asset — `svc.GET(asset)` {#assets}
 
-A case can name the target's [static assets](/book/reference/assets/) (its own
-and those of the commons it `uses`) and fetch one through any of its HTTP
+A case can name the [static assets](/book/reference/assets/) its target's
+Worker ships (the target's own, those of the commons it `uses`, and the
+content-hashed ones of the contexts it consumes) and fetch one through any of its HTTP
 services by passing the asset instead of a route:
 
 ```bynk,fragment

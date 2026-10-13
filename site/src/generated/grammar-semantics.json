@@ -168,6 +168,10 @@
       "summary": "A call-site `by <Actor>(x)` supplies an identity to an actor that takes none — a unit-identity actor (e.g. `Visitor`) or `Nobody`."
     },
     {
+      "code": "bynk.test.asset_address_method",
+      "summary": "A suite fetches an asset with a method other than `GET`; the platform serves assets to `GET` and answers other methods with 405."
+    },
+    {
       "code": "bynk.test.credential_needs_system",
       "summary": "A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it."
     },
@@ -182,6 +186,10 @@
     {
       "code": "bynk.test.principal_identity_mismatch",
       "summary": "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor."
+    },
+    {
+      "code": "bynk.test.principal_on_asset",
+      "summary": "A suite's asset fetch carries a `by` clause; an asset is public and served before the Worker runs."
     },
     {
       "code": "bynk.test.principal_on_wrong_method",
