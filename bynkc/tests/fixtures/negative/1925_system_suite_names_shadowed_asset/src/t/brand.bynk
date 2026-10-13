@@ -1,0 +1,7 @@
+commons t.brand
+
+asset logo = "assets/logo.svg"
+
+fn badge() -> String {
+  "<img src=\"\(logo.url)\">"
+}

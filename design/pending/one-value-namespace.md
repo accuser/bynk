@@ -40,6 +40,13 @@ In a suite the clash is visible in Bynk itself: with `asset api` and
   bodies (checker). One it can answer resolves to it: a call to a local agent
   constructs the agent. An unused shadow stays legal, so no working program
   is rejected.
+- Suites follow their target. A case names what the target names: a unit
+  suite's view and test module leave a hidden import out (before, the module
+  bound `const logo` for both the target's service and the used commons' asset,
+  and failed `tsc` even when no case named it), and naming one is the same
+  conflict. A `system` suite, whose cases name participants by qualified name,
+  sees it as an unknown name. The file still ships, since the commons that
+  declares it may use it.
 - Not chosen: renaming services in the emitted TypeScript. `tsc` would pass,
   but a name would still mean two things in a suite.
 

@@ -1794,7 +1794,10 @@ unaffected.
 target's own and its `uses`d commons' (content-hashed and fixed-path), plus the
 content-hashed assets of the contexts it consumes. A consumed context's
 fixed-path assets, and those of a `system` suite's own `uses` commons, are not
-nameable. `svc.GET(a)`, for
+nameable, nor is an asset the target hides behind its own declaration of the
+same name ([§5.1](#51-name-resolution--visibility)); naming it in a unit suite
+is `bynk.uses.name_conflict`, as in the target. Its file still ships, since the
+commons that declares it may use it. `svc.GET(a)`, for
 an `Asset` `a` and any `from http` service `svc` of the target (any other
 service is `bynk.test.service_bad_address`), fetches `a` from the asset tier
 rather than a handler: it yields `Raw(body, contentType)` when the target's

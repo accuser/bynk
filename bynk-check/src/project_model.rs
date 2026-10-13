@@ -4104,28 +4104,40 @@ pub fn shadowed_imports(
     name: &str,
     unit_info: &BTreeMap<String, UnitInfo>,
 ) -> HashMap<String, crate::resolver::ShadowedImport> {
-    let mut out = HashMap::new();
     let Some(info) = unit_info.get(name) else {
-        return out;
+        return HashMap::new();
     };
-    for t in &info.uses {
-        let Some(used) = unit_info.get(t).map(|u| &u.table) else {
-            continue;
-        };
+    shadowed_imports_in(
+        &info.table,
+        info.uses
+            .iter()
+            .filter_map(|t| unit_info.get(t).map(|u| (t, &u.table))),
+    )
+}
+
+/// [`shadowed_imports`] over a unit's own table and its `uses` targets'
+/// tables, in `uses` order — for a caller holding tables rather than
+/// [`UnitInfo`]s (a suite's view of its target, `crate::test_suites`).
+pub fn shadowed_imports_in<'a>(
+    local: &UnitTable,
+    uses: impl Iterator<Item = (&'a String, &'a UnitTable)>,
+) -> HashMap<String, crate::resolver::ShadowedImport> {
+    let mut out = HashMap::new();
+    for (t, used) in uses {
         let imports = used
             .fns
             .keys()
             .map(|n| (n, "function"))
             .chain(used.assets.keys().map(|n| (n, "asset")));
         for (n, imported) in imports {
-            if let Some((local, local_span)) = crate::symbols::local_value_kind(&info.table, n)
-                && local != imported
+            if let Some((kind, local_span)) = crate::symbols::local_value_kind(local, n)
+                && kind != imported
             {
                 out.entry(n.clone())
                     .or_insert_with(|| crate::resolver::ShadowedImport {
                         unit: t.clone(),
                         imported,
-                        local,
+                        local: kind,
                         local_span,
                     });
             }

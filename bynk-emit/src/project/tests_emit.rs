@@ -4095,6 +4095,9 @@ fn emit_test_scope_setup(
     // own `render` (a messages block's synthetic one) *and* `uses
     // bynk.locale` (which also declares `render`) destructured both into one
     // scope — `Cannot redeclare block-scoped variable 'render'` under `tsc`.
+    // #1925: every name in the target's own namespace — its services,
+    // agents and bodied providers too — hides a used commons' of that name,
+    // which is out of scope (`bynk_check::project_model::shadowed_imports`).
     let target_local: std::collections::HashSet<&String> = unit_tables
         .get(target_name)
         .map(|t| {
@@ -4102,6 +4105,14 @@ fn emit_test_scope_setup(
                 .keys()
                 .chain(t.fns.keys())
                 .chain(t.assets.keys())
+                .chain(t.services.keys())
+                .chain(t.agents.keys())
+                .chain(
+                    t.providers
+                        .values()
+                        .filter(|p| !p.external)
+                        .map(|p| &p.provider_name.name),
+                )
                 .collect()
         })
         .unwrap_or_default();
