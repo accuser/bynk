@@ -605,7 +605,7 @@ impl Backend {
         let positions = crate::position::PositionMap::new(&text);
         let lsp_diags: Vec<Diagnostic> = bynk_ide::diagnose(&text)
             .into_iter()
-            .map(|d| make_diagnostic(&d, &positions, uri))
+            .map(|d| make_diagnostic(&d, &positions, uri, &ProjectFiles::new()))
             .collect();
         self.client
             .publish_diagnostics(uri.clone(), lsp_diags, Some(version))
@@ -731,22 +731,31 @@ impl Backend {
         let mut snapshots = std::collections::HashMap::new();
         let mut diagnostics: std::collections::HashMap<PathBuf, Vec<bynk_ide::Diagnostic>> =
             std::collections::HashMap::new();
+        // Spans convert against the snapshot the analysis saw — never a newer
+        // buffer (Settled, v0.24 proposal). Built for every file up front: a
+        // diagnostic's secondary label may lie in a sibling file.
+        let files: ProjectFiles<'_> = result
+            .files
+            .iter()
+            .filter_map(|file| {
+                let abs = canonical_root.join(&file.source_path);
+                let abs = abs.canonicalize().unwrap_or(abs);
+                let uri = Url::from_file_path(&abs).ok()?;
+                let positions = crate::position::PositionMap::new(&file.text);
+                Some((file.source_path.clone(), (uri, positions)))
+            })
+            .collect();
         for file in &result.files {
-            let abs = canonical_root.join(&file.source_path);
-            let abs = abs.canonicalize().unwrap_or(abs);
-            let Ok(uri) = Url::from_file_path(&abs) else {
+            let Some((uri, positions)) = files.get(&file.source_path) else {
                 continue;
             };
-            // Spans convert against the snapshot the analysis saw — never a
-            // newer buffer (Settled, v0.24 proposal).
-            let positions = crate::position::PositionMap::new(&file.text);
             let diags: Vec<Diagnostic> = file
                 .diagnostics
                 .iter()
-                .map(|d| make_diagnostic(d, &positions, &uri))
+                .map(|d| make_diagnostic(d, positions, uri, &files))
                 .collect();
             version_by_uri.insert(uri.clone(), versions.get(&file.source_path).copied());
-            new_by_uri.insert(uri, diags);
+            new_by_uri.insert(uri.clone(), diags);
             diagnostics.insert(file.source_path.clone(), file.diagnostics.clone());
             snapshots.insert(file.source_path.clone(), file.text.clone());
         }
@@ -4318,33 +4327,53 @@ mod code_description_tests {
     }
 }
 
+/// Every analysed project file's URI and the positions of the snapshot it
+/// was analysed at, by identity path — where [`make_diagnostic`] places a
+/// secondary label that lies in a sibling file.
+type ProjectFiles<'a> = std::collections::HashMap<PathBuf, (Url, crate::position::PositionMap<'a>)>;
+
 fn make_diagnostic(
     d: &bynk_ide::Diagnostic,
     positions: &crate::position::PositionMap,
     uri: &Url,
+    files: &ProjectFiles<'_>,
 ) -> Diagnostic {
     let range = positions.range(d.error.span);
     let severity = match d.severity {
         bynk_syntax::Severity::Error => DiagnosticSeverity::ERROR,
         bynk_syntax::Severity::Warning => DiagnosticSeverity::WARNING,
     };
-    let related_information: Vec<DiagnosticRelatedInformation> = d
-        .error
-        .labels
-        .iter()
-        .map(|(span, msg)| DiagnosticRelatedInformation {
+    let mut related_information: Vec<DiagnosticRelatedInformation> = Vec::new();
+    let mut label_notes: Vec<&str> = Vec::new();
+    for (i, (span, msg)) in d.error.labels.iter().enumerate() {
+        // A label's span is an offset into the text of the file it lies in:
+        // this document's, or a sibling's in the same project, which has its
+        // own URI and positions. A label in a file with no snapshot (a
+        // toolchain-injected unit) has nowhere to point, so it is a note.
+        let (label_uri, label_positions) = match d.label_file(i) {
+            bynk_ide::LabelFile::Primary => (uri, positions),
+            bynk_ide::LabelFile::Other(path) => match files.get(path) {
+                Some((u, p)) => (u, p),
+                None => {
+                    label_notes.push(msg);
+                    continue;
+                }
+            },
+            bynk_ide::LabelFile::Unavailable => {
+                label_notes.push(msg);
+                continue;
+            }
+        };
+        related_information.push(DiagnosticRelatedInformation {
             location: Location {
-                // Secondary-label spans are offsets into this same document's
-                // `text`, so they belong to the document's own URI — not a
-                // placeholder. (Cross-file related info is not yet modelled.)
-                uri: uri.clone(),
-                range: positions.range(*span),
+                uri: label_uri.clone(),
+                range: label_positions.range(*span),
             },
             message: msg.clone(),
-        })
-        .collect();
+        });
+    }
     let mut message = d.error.message.clone();
-    for note in &d.error.notes {
+    for note in d.error.notes.iter().map(String::as_str).chain(label_notes) {
         message.push_str("\n\n");
         message.push_str("note: ");
         message.push_str(note);
@@ -4611,6 +4640,136 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         assert_eq!(shown.lock().unwrap().len(), 2, "a new streak is told again");
         drain.abort();
+    }
+
+    /// A diagnostic's secondary label in a sibling file of a multi-file unit
+    /// points at that file's URI, at its position there. Before, every label
+    /// took the diagnostic's own URI, so "previously declared here" for a
+    /// service declared in `a_web.bynk` pointed into `z_more.bynk`, at the same
+    /// byte offsets.
+    #[tokio::test]
+    async fn a_label_in_a_sibling_file_points_at_that_file() {
+        use futures::StreamExt;
+        use tower::{Service, ServiceExt};
+
+        let service_src =
+            "service api {\n  on call() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n";
+        let s = scratch_project(
+            "sibling_label",
+            &[
+                ("bynk.toml", "[project]\nname = \"demo\"\n"),
+                (
+                    "src/app/a_web.bynk",
+                    &format!("context app\n\n{service_src}"),
+                ),
+                (
+                    "src/app/z_more.bynk",
+                    &format!("context app\n\n\n\n\n{service_src}"),
+                ),
+            ],
+        );
+        let (mut service, socket) = tower_lsp::LspService::new(Backend::new);
+        for request in [
+            tower_lsp::jsonrpc::Request::build("initialize")
+                .params(serde_json::json!({ "capabilities": {} }))
+                .id(1)
+                .finish(),
+            tower_lsp::jsonrpc::Request::build("initialized")
+                .params(serde_json::json!({}))
+                .finish(),
+        ] {
+            service.ready().await.unwrap().call(request).await.unwrap();
+        }
+        let published = Arc::new(std::sync::Mutex::new(Vec::<PublishDiagnosticsParams>::new()));
+        let drain = {
+            let published = Arc::clone(&published);
+            tokio::spawn(socket.for_each(move |message| {
+                if message.method() == "textDocument/publishDiagnostics"
+                    && let Some(params) = message.params()
+                {
+                    published
+                        .lock()
+                        .unwrap()
+                        .push(serde_json::from_value(params.clone()).unwrap());
+                }
+                async {}
+            }))
+        };
+        let backend = service.inner().clone();
+        let canonical = s.0.canonicalize().unwrap();
+        backend
+            .state
+            .write()
+            .await
+            .projects
+            .insert(canonical.clone(), ProjectState::default());
+        backend.run_project_diagnostics(canonical.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        drain.abort();
+
+        let a_web = Url::from_file_path(canonical.join("src/app/a_web.bynk")).unwrap();
+        let z_more = Url::from_file_path(canonical.join("src/app/z_more.bynk")).unwrap();
+        let published = published.lock().unwrap();
+        let duplicate = published
+            .iter()
+            .filter(|p| p.uri == z_more)
+            .flat_map(|p| &p.diagnostics)
+            .find(|d| {
+                d.code
+                    == Some(NumberOrString::String(
+                        "bynk.resolve.duplicate_service".into(),
+                    ))
+            })
+            .unwrap_or_else(|| panic!("z_more.bynk must report the duplicate: {published:?}"));
+        let related = duplicate
+            .related_information
+            .as_deref()
+            .expect("the duplicate carries its \"previously declared here\" label");
+        assert_eq!(related.len(), 1, "{related:?}");
+        assert_eq!(related[0].message, "previously declared here");
+        assert_eq!(
+            related[0].location.uri, a_web,
+            "the label lies in a_web.bynk, not the diagnostic's own file"
+        );
+        // `service api {` is line 2 (0-based) of a_web.bynk; `api` at column 8.
+        assert_eq!(
+            related[0].location.range,
+            Range::new(Position::new(2, 8), Position::new(2, 11)),
+        );
+    }
+
+    /// A label with nowhere to point — in a toolchain-injected unit, or in a
+    /// file the round has no snapshot of — is a `note:` on the message, never
+    /// a `relatedInformation` entry at this document's own positions.
+    #[test]
+    fn a_label_with_no_file_to_point_at_becomes_a_note() {
+        let text = "context app\n";
+        let positions = crate::position::PositionMap::new(text);
+        let uri = Url::parse("file:///z.bynk").unwrap();
+        let d = bynk_ide::Diagnostic {
+            severity: bynk_syntax::Severity::Error,
+            error: bynk_syntax::CompileError::new(
+                "bynk.test",
+                bynk_syntax::span::Span::new(0, 7),
+                "msg",
+            )
+            .with_label(bynk_syntax::span::Span::new(0, 1), "in an injected unit")
+            .with_label(bynk_syntax::span::Span::new(0, 1), "in an unanalysed file"),
+            label_files: vec![
+                bynk_ide::LabelFile::Unavailable,
+                bynk_ide::LabelFile::Other(PathBuf::from("src/missing.bynk")),
+            ],
+        };
+        let diagnostic = make_diagnostic(&d, &positions, &uri, &ProjectFiles::new());
+        assert!(
+            diagnostic.related_information.is_none(),
+            "{:?}",
+            diagnostic.related_information
+        );
+        assert_eq!(
+            diagnostic.message,
+            "msg\n\nnote: in an injected unit\n\nnote: in an unanalysed file"
+        );
     }
 
     /// Test helpers for the single-project behaviour tests (each builds exactly

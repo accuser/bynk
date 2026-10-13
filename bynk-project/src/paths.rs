@@ -450,10 +450,7 @@ pub fn duplicate_compatibility_flag_warning(
     error
         .notes
         .push("the duplicate is dropped; remove it from `bynk.toml`".to_string());
-    crate::AttributedError {
-        source_path: Some(manifest),
-        error,
-    }
+    crate::AttributedError::new(Some(manifest), error)
 }
 
 /// The `[workers]` table's typed content. Only the value shapes are checked

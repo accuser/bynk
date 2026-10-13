@@ -47,7 +47,7 @@ use crate::symbols::{
     uses_span_of,
 };
 use bynk_project::{
-    AttributedError, ParsedFile, UnitKind, check_directory_kind_consistency,
+    AttributedError, LabelFile, ParsedFile, UnitKind, check_directory_kind_consistency,
     check_directory_name_consistency, check_file_directory_conflicts, check_group_kind_consistency,
     check_group_module_docs, check_path_name_alignment, detect_consumes_cycles,
     discover_bynk_files, is_unpinned_range, normalize_rel, parse_sources, parse_sources_recovering,
@@ -65,7 +65,7 @@ pub use bynk_syntax::ast::{FnDecl, TypeDecl, Visibility};
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
 use bynk_syntax::parser;
-use bynk_syntax::span::Span;
+use bynk_syntax::span::{FileId, Span};
 
 /// Collection-point error sink (ADR 0052). Helpers keep their plain
 /// `&mut Vec<CompileError>` signatures; call sites attribute via
@@ -85,6 +85,10 @@ pub struct ErrorSink {
     /// gates — stay errors-only, while every warning source (commons-fn checks,
     /// service/agent handler validation, parser) is captured uniformly.
     warnings: Vec<AttributedError>,
+    /// The identity path of every parsed project file, by the `FileId` its
+    /// spans carry ([`Self::register_file`]). Read when the sink is drained,
+    /// to say which file each secondary label lies in (`label_files`).
+    files: HashMap<FileId, PathBuf>,
 }
 
 impl Default for ErrorSink {
@@ -98,13 +102,31 @@ impl ErrorSink {
         Self {
             entries: Vec::new(),
             warnings: Vec::new(),
+            files: HashMap::new(),
+        }
+    }
+    /// Record that spans carrying `file` lie in the project file `identity`.
+    pub fn register_file(&mut self, file: FileId, identity: PathBuf) {
+        self.files.insert(file, identity);
+    }
+    /// Register every file of `parsed` that was read from disk, by the durable
+    /// `FileId` its absolute path interns to (`parse_cache::file_id_for`) — the
+    /// one map both an error's file ([`Self::extend_attributed_by_span`]) and
+    /// each label's (when the sink is drained) are read from, so the two never
+    /// disagree. `phase_parse` registers every file it parses; a
+    /// toolchain-injected unit, with no absolute path, is never registered.
+    pub fn register_parsed(&mut self, parsed: &[ParsedFile]) {
+        for pf in parsed {
+            if let Some(abs) = pf.abs_path() {
+                self.register_file(
+                    bynk_project::parse_cache::file_id_for(&abs),
+                    pf.identity_path(),
+                );
+            }
         }
     }
     pub fn push_for(&mut self, file: Option<&Path>, error: CompileError) {
-        let attributed = AttributedError {
-            source_path: file.map(Path::to_path_buf),
-            error,
-        };
+        let attributed = AttributedError::new(file.map(Path::to_path_buf), error);
         match bynk_syntax::Severity::for_error(&attributed.error) {
             bynk_syntax::Severity::Warning => self.warnings.push(attributed),
             bynk_syntax::Severity::Error => self.entries.push(attributed),
@@ -126,24 +148,17 @@ impl ErrorSink {
     /// integration diagnostics were pushed unattributed, because threading a
     /// file through their many internal push sites was deferred, and rendered
     /// with no file, line or span. An error whose span matches no parsed file
-    /// stays unattributed, as before.
+    /// stays unattributed, as before. `parsed` is registered first
+    /// ([`Self::register_parsed`]), so a file `phase_parse` never saw is still
+    /// found.
     pub fn extend_attributed_by_span(
         &mut self,
         parsed: &[ParsedFile],
         errs: impl IntoIterator<Item = CompileError>,
     ) {
-        let by_id: HashMap<bynk_syntax::span::FileId, PathBuf> = parsed
-            .iter()
-            .filter_map(|pf| {
-                let abs = pf.abs_path()?;
-                Some((
-                    bynk_project::parse_cache::file_id_for(&abs),
-                    pf.identity_path(),
-                ))
-            })
-            .collect();
+        self.register_parsed(parsed);
         for e in errs {
-            let file = by_id.get(&e.span.file).cloned();
+            let file = self.files.get(&e.span.file).cloned();
             self.push_for(file.as_deref(), e);
         }
     }
@@ -154,18 +169,50 @@ impl ErrorSink {
     }
     /// Consume the sink, yielding the non-failing **warnings** (ADR 0117).
     pub fn into_warnings(self) -> Vec<AttributedError> {
-        self.warnings
+        let mut warnings = self.warnings;
+        attribute_labels(&self.files, &mut warnings);
+        warnings
     }
     /// Consume the sink, yielding errors then warnings — the full diagnostic
     /// list the LSP and a failed build render together.
     pub fn into_all(self) -> Vec<AttributedError> {
         let mut all = self.entries;
         all.extend(self.warnings);
+        attribute_labels(&self.files, &mut all);
         all
     }
     /// The count of **error-severity** diagnostics.
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+}
+
+/// Fill in each error's `label_files` from the `FileId` its labels' spans
+/// carry, against the files `phase_parse` registered. A label is in the
+/// error's own file when its span has the primary span's `FileId`, carries no
+/// file identity (`FileId::UNKNOWN`, a span built without one), or names the
+/// error's own `source_path`. One naming another registered file is
+/// [`LabelFile::Other`]; one naming a file never registered (a toolchain-injected
+/// unit) is [`LabelFile::Unavailable`], so it is never drawn against the
+/// primary file's text.
+fn attribute_labels(files: &HashMap<FileId, PathBuf>, errors: &mut [AttributedError]) {
+    for ae in errors {
+        let primary = ae.error.span.file;
+        ae.label_files = ae
+            .error
+            .labels
+            .iter()
+            .map(|(span, _)| {
+                if span.file == primary || span.file == FileId::UNKNOWN {
+                    return LabelFile::Primary;
+                }
+                match files.get(&span.file) {
+                    Some(path) if Some(path) == ae.source_path.as_ref() => LabelFile::Primary,
+                    Some(path) => LabelFile::Other(path.clone()),
+                    None => LabelFile::Unavailable,
+                }
+            })
+            .collect();
     }
 }
 
@@ -481,6 +528,7 @@ pub fn phase_parse(
             snapshots,
         );
     }
+    errors.register_parsed(&parsed);
     if !errors.is_empty() && parsed.is_empty() {
         return Err(());
     }
@@ -4419,6 +4467,56 @@ mod view_closure_tests {
             reach.hidden
         );
         assert!(types.contains_key("Repo"));
+    }
+}
+
+#[cfg(test)]
+mod label_attribution_tests {
+    use super::*;
+
+    /// Each label is attributed by the `FileId` its span carries: the error's
+    /// own file when it shares the primary span's id, has none, or names the
+    /// error's own path; another registered file by its path; and an
+    /// unregistered file (a toolchain-injected unit) as unavailable.
+    #[test]
+    fn labels_are_attributed_to_the_file_their_span_is_in() {
+        let (own, sibling, injected) = (FileId(10), FileId(11), FileId(12));
+        let mut sink = ErrorSink::new();
+        sink.register_file(own, PathBuf::from("src/app/z_more.bynk"));
+        sink.register_file(sibling, PathBuf::from("src/app/a_web.bynk"));
+        let error = CompileError::new(
+            "bynk.resolve.duplicate_service",
+            Span::new_in(own, 24, 27),
+            "service `api` is already declared",
+        )
+        .with_label(Span::new_in(own, 0, 1), "same id")
+        .with_label(Span::new(0, 1), "no id")
+        .with_label(Span::new_in(sibling, 21, 24), "sibling")
+        .with_label(Span::new_in(injected, 0, 1), "injected");
+        sink.push_for(Some(Path::new("src/app/z_more.bynk")), error);
+        let all = sink.into_all();
+        assert_eq!(
+            all[0].label_files,
+            vec![
+                LabelFile::Primary,
+                LabelFile::Primary,
+                LabelFile::Other(PathBuf::from("src/app/a_web.bynk")),
+                LabelFile::Unavailable,
+            ]
+        );
+    }
+
+    /// With no file identity on the primary span, a label is still the
+    /// error's own file when its id names the error's own path.
+    #[test]
+    fn a_label_naming_the_errors_own_path_is_primary() {
+        let own = FileId(20);
+        let mut sink = ErrorSink::new();
+        sink.register_file(own, PathBuf::from("src/a.bynk"));
+        let error = CompileError::new("bynk.test", Span::default(), "msg")
+            .with_label(Span::new_in(own, 0, 1), "here");
+        sink.push_for(Some(Path::new("src/a.bynk")), error);
+        assert_eq!(sink.into_all()[0].label_files, vec![LabelFile::Primary]);
     }
 }
 

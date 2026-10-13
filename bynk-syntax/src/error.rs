@@ -23,6 +23,19 @@ pub struct CompileError {
     pub suggestions: Vec<Suggestion>,
 }
 
+/// Which file one of a [`CompileError`]'s secondary labels lies in, for
+/// [`CompileError::report_in`]. A label's span is a byte offset into its own
+/// file's text, which need not be the file the error itself is reported in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelHome<'a> {
+    /// The file the error is reported in.
+    Primary,
+    /// Another file: the name to show it under and its text.
+    File { filename: &'a str, source: &'a str },
+    /// A file with no text to show — the label is rendered as a note.
+    Unavailable,
+}
+
 /// A structured fix for the error it is attached to (v0.26, ADR 0054).
 ///
 /// `edits` are span → replacement: an empty replacement deletes the span; an
@@ -141,7 +154,8 @@ impl CompileError {
 
     /// Build an [`ariadne::Report`] for this error, rendered against `source`
     /// (labelled `filename`). Colour is on (for the CLI and human-facing test
-    /// output).
+    /// output). Every secondary label is taken to lie in `source` too; see
+    /// [`Self::report_in`] for one whose labels may lie in other files.
     ///
     /// A **secondary** label whose span does not sit cleanly within `source`
     /// belongs to *another* file — a cross-file "declared here" pointing at a
@@ -151,16 +165,14 @@ impl CompileError {
     /// label is demoted to a note so the information survives without the
     /// misplacement or the panic. The demotion test is deliberately conservative:
     /// out-of-bounds **or** not on a char boundary of `source`. It cannot catch a
-    /// cross-file span that happens to be in-bounds and boundary-aligned — those
-    /// labels still need per-label file identity (a follow-up); the always
-    /// cross-file diagnostics (`kind_conflict`, `inconsistent_commons_name`)
-    /// avoid the ambiguity by carrying their cross-file provenance as a note.
+    /// cross-file span that happens to be in-bounds and boundary-aligned — a
+    /// caller that knows each label's file passes it to [`Self::report_in`].
     pub fn report_for<'a>(
         &'a self,
         filename: &'a str,
         source: &str,
     ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
-        self.report_with_config(filename, Config::default(), source)
+        self.report_with_config(filename, source, &[], Config::default())
     }
 
     /// [`Self::report_for`] with colour disabled, for transcripts committed to
@@ -171,7 +183,24 @@ impl CompileError {
         filename: &'a str,
         source: &str,
     ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
-        self.report_with_config(filename, Config::default().with_color(false), source)
+        self.report_with_config(filename, source, &[], Config::default().with_color(false))
+    }
+
+    /// [`Self::report_for`] for an error whose secondary labels may lie in other
+    /// files: `homes[i]` says which file `self.labels[i]` lies in (a label past
+    /// the end of `homes` is [`LabelHome::Primary`]). A label in another file is
+    /// drawn against that file's text, under its own filename, so the report's
+    /// cache must hold every [`LabelHome::File`] source as well as `source`.
+    /// `color` picks [`Self::report_for`]'s or [`Self::report_plain_for`]'s
+    /// output.
+    pub fn report_in<'a>(
+        &'a self,
+        filename: &'a str,
+        source: &str,
+        homes: &[LabelHome<'a>],
+        color: bool,
+    ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
+        self.report_with_config(filename, source, homes, Config::default().with_color(color))
     }
 
     /// True when `span` sits cleanly inside `source` — in-bounds and on char
@@ -186,8 +215,9 @@ impl CompileError {
     fn report_with_config<'a>(
         &'a self,
         filename: &'a str,
-        config: Config,
         source: &str,
+        homes: &[LabelHome<'a>],
+        config: Config,
     ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
         let primary_span = (filename, self.span.range());
         // ADR 0117: a warning-severity diagnostic must render as a warning, not
@@ -210,16 +240,24 @@ impl CompileError {
                     .with_color(Color::Red),
             );
 
-        for (span, label) in &self.labels {
-            if !Self::label_fits(span, source) {
-                // The label's span does not fit this file's source — demote to a
+        for (i, (span, label)) in self.labels.iter().enumerate() {
+            let (label_file, label_source) = match homes.get(i).unwrap_or(&LabelHome::Primary) {
+                LabelHome::Primary => (filename, source),
+                LabelHome::File { filename, source } => (*filename, *source),
+                LabelHome::Unavailable => {
+                    builder = builder.with_note(label);
+                    continue;
+                }
+            };
+            if !Self::label_fits(span, label_source) {
+                // The label's span does not fit its file's source — demote to a
                 // note rather than underlining unrelated text (or panicking on a
                 // mid-codepoint offset).
                 builder = builder.with_note(label);
                 continue;
             }
             builder = builder.with_label(
-                Label::new((filename, span.range()))
+                Label::new((label_file, span.range()))
                     .with_message(label)
                     .with_color(Color::Yellow),
             );
