@@ -159,5 +159,8 @@ fn every_ci_profile_job_outlasts_a_hung_test_and_its_retry() {
             );
         }
     }
-    assert!(seen >= SUITE_WORKFLOWS.len(), "found only {seen} ci-profile jobs");
+    assert!(
+        seen >= SUITE_WORKFLOWS.len(),
+        "found only {seen} ci-profile jobs"
+    );
 }
