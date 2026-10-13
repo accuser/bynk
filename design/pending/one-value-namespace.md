@@ -58,3 +58,9 @@ runs every local kind against an imported function and asset, unused and used
 in a function body and a handler body. One cell keeps another code: in a
 function body, `thing.url` on a local type reads as a static member of the
 type (`bynk.resolve.unknown_static_member`), rejected as before.
+
+Not covered: a unit's value named like a type it imports via `uses`. An
+imported type holds a value slot in the module too, so that pair still fails
+`tsc` once the type is used (#1927, which decides the rule). Two used commons
+declaring a function or asset the unit hides are no ambiguity:
+`phase_uses_name_conflicts` shares `local_value_kind`.
