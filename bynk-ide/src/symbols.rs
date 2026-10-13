@@ -1502,7 +1502,7 @@ pub(crate) fn describe_asset(a: &AssetDecl) -> String {
         None => format!(
             "Served at `{}` (content-hashed, cached as immutable).",
             bynk_check::assets::served_path_with_hash(
-                &bynk_check::assets::normalise_asset_path_for_display(&a.path),
+                &bynk_project::assets::normalise_asset_path(&a.path),
                 "<hash>"
             )
         ),

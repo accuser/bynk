@@ -479,6 +479,27 @@ impl IndexBuilder {
         self.defs.insert(key, (site, modifiers));
     }
 
+    /// #1883: register a symbol that can never enclose a call site (an
+    /// `asset`) — its def only, with no owner entry. Owners are keyed by
+    /// (unit, name) without the kind, so registering one here would let an
+    /// asset take over a same-named service's or agent's owner entry and
+    /// re-attribute that owner's refs to the asset's file.
+    pub fn add_leaf_def(
+        &mut self,
+        unit: &str,
+        kind: SymbolKind,
+        name: &str,
+        site: SiteRef,
+        modifiers: SymbolModifiers,
+    ) {
+        let key = SymbolKey {
+            unit: unit.to_string(),
+            kind,
+            name: name.to_string(),
+        };
+        self.defs.insert(key, (site, modifiers));
+    }
+
     /// v0.129 (#259): record that the `Type` `name` in `unit` is declared over
     /// builtin `base` (a refined/opaque type or plain alias) — its refinement
     /// family membership. The def site is looked up from `symbols` at query time,

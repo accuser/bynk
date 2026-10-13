@@ -1405,9 +1405,12 @@ fn free_function_candidates(
                 CommonsItem::Asset(a) => Some((
                     a.name.name.clone(),
                     format!(
-                        "asset {} = \"{}\"",
+                        "asset {} = \"{}\"{}",
                         a.name.name,
-                        bynk_fmt::escape_string(&a.path)
+                        bynk_fmt::escape_string(&a.path),
+                        a.at.as_ref()
+                            .map(|(p, _)| format!(" at \"{}\"", bynk_fmt::escape_string(p)))
+                            .unwrap_or_default()
                     ),
                     a.documentation.as_deref().map(str::to_string),
                 )),
@@ -2059,7 +2062,7 @@ mod tests {
         // #1883: an asset name resolves where a free function's would — the
         // unit's own assets, and those of a `uses`-imported unit; never one
         // the unit does not import.
-        let doc = "context app.page {\n  uses app.shared\n  asset logo = \"logo.svg\"\n}\n";
+        let doc = "context app.page {\n  uses app.shared\n  asset logo = \"logo.svg\"\n  asset icon = \"favicon.ico\" at \"/favicon.ico\"\n}\n";
         let mut files = HashMap::new();
         files.insert(
             PathBuf::from("/p/shared.bynk"),
@@ -2077,6 +2080,10 @@ mod tests {
         assert_eq!(
             logo.unwrap().detail.as_deref(),
             Some("asset logo = \"logo.svg\" — `this unit`")
+        );
+        assert_eq!(
+            find(&items, "icon", CompletionKind::Constant).and_then(|c| c.detail.as_deref()),
+            Some("asset icon = \"favicon.ico\" at \"/favicon.ico\" — `this unit`")
         );
         let style = find(&items, "style", CompletionKind::Constant);
         assert!(style.is_some(), "used unit's asset: {:?}", labels());

@@ -617,7 +617,7 @@ fn asset_reference_gets_the_asset_semantic_token() {
     let want_line = text[..off].matches('\n').count() as u32;
     let want_col = (off - text[..off].rfind('\n').map_or(0, |n| n + 1)) as u32;
     let (mut line, mut col) = (0u32, 0u32);
-    let mut found = None;
+    let mut found = Vec::new();
     for t in &tokens {
         if t.delta_line > 0 {
             line += t.delta_line;
@@ -626,8 +626,26 @@ fn asset_reference_gets_the_asset_semantic_token() {
             col += t.delta_start;
         }
         if (line, col) == (want_line, want_col) {
-            found = Some((t.length, t.token_type));
+            found.push((t.length, t.token_type));
         }
     }
-    assert_eq!(found, Some(("style".len() as u32, asset)));
+    assert_eq!(found, vec![("style".len() as u32, asset)]);
+}
+
+/// #1883 — an asset with an `at` path hovers as served at that fixed path,
+/// never at a content-hashed `/_assets/` one (review of #1924).
+#[test]
+fn fixed_path_asset_hovers_its_at_path() {
+    let (r, rel, text, root) = analysed(
+        "../bynkc/tests/fixtures/positive/1883_asset_fixed_paths_workers/src",
+        "board.bynk",
+    );
+    let hover = hover_at(&r, &rel, &text, &root, at(&text, "favicon.url", "favicon"))
+        .expect("hover on the `favicon` asset reference");
+    assert!(
+        hover.contains("asset favicon = \"assets/favicon.ico\" at \"/favicon.ico\""),
+        "{hover}"
+    );
+    assert!(hover.contains("Served at `/favicon.ico`."), "{hover}");
+    assert!(!hover.contains("/_assets/"), "{hover}");
 }

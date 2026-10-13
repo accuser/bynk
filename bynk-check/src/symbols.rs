@@ -276,9 +276,11 @@ pub fn assemble_index(
                 // #1883: an asset's declaration site, for hover, go-to-
                 // definition, references, rename and semantic tokens. A bare
                 // use in a unit that `uses` this one resolves here through the
-                // qualification pass, as a function's does.
+                // qualification pass, as a function's does. A leaf def: an
+                // asset encloses no call site, so it registers no owner (one
+                // would clash with a same-named service's — review of #1924).
                 CommonsItem::Asset(a) => {
-                    builder.add_def(
+                    builder.add_leaf_def(
                         &unit,
                         SymbolKind::Asset,
                         &a.name.name,

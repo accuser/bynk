@@ -140,13 +140,6 @@ pub fn served_path(source: &str, bytes: &[u8]) -> String {
     served_path_with_hash(source, &crate::contract::fnv1a64_hex(bytes))
 }
 
-/// `path` normalised as the build files it (`bynk_project::assets::
-/// normalise_asset_path`), for the editor's hover, which has `bynk-check` but
-/// not `bynk-project` in reach.
-pub fn normalise_asset_path_for_display(path: &str) -> String {
-    bynk_project::assets::normalise_asset_path(path)
-}
-
 /// [`served_path`] with the content hash supplied rather than computed — the
 /// one definition of the served name's shape, shared with the editor, which
 /// lists the `assets/` folder but never reads its bytes and so shows

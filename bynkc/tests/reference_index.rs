@@ -278,3 +278,48 @@ fn asset_references_resolve_to_their_declaration() {
         &["src/compat/theme.bynk", "src/compat/page.bynk"],
     );
 }
+
+/// #1883 (review of #1924): an asset's def must not register as an *owner*.
+/// Owners are keyed by (unit, name) alone, so an asset named like a service
+/// in the same context would take over the service's owner entry, and every
+/// ref inside the service's handlers would be re-attributed to the asset's
+/// file — at offsets that belong to the service's.
+#[test]
+fn an_asset_named_like_a_service_does_not_steal_its_refs() {
+    let root =
+        std::env::temp_dir().join(format!("bynk-refindex-asset-owner-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let files = [
+        (
+            "bynk.toml",
+            "[project]\nname = \"owner\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "src/app/a_web.bynk",
+            "context app\n\nfn greet() -> String {\n  \"hi\"\n}\n\nservice api from http {\n  on GET(\"/\") () -> Effect[HttpResult[String]] by Visitor {\n    Ok(greet())\n  }\n}\n",
+        ),
+        (
+            "src/app/z_files.bynk",
+            "context app\n\nasset api = \"assets/api.json\"\n",
+        ),
+        ("assets/api.json", "{}"),
+    ];
+    for (rel, text) in files {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, text).unwrap();
+    }
+    let (index, snapshots) = analyse_roots(&bynk_ide::AnalysisRoots::Project(root.clone()));
+    let _ = std::fs::remove_dir_all(&root);
+
+    // `greet()` in the handler is a ref in the service's file, spelling `greet`.
+    let greet = key("app", SymbolKind::Fn, "greet");
+    assert_sites_spell(&index, &snapshots, &greet, &["src/app/a_web.bynk"]);
+    assert_eq!(refs_in(&index, &greet, "src/app/a_web.bynk").len(), 1);
+    // The asset is still a symbol in its own right.
+    assert!(
+        index
+            .symbols
+            .contains_key(&key("app", SymbolKind::Asset, "api"))
+    );
+}
