@@ -96,6 +96,23 @@ used as a function), the reference is `bynk.uses.name_conflict`, naming both
 declarations. A local declaration that can answer one does: a call to a local
 agent constructs the agent. An unused shadow is legal.
 
+A local value (a function, asset, service, agent or provider) likewise hides a
+type of the same name from a commons the unit `uses`. The type stays
+resolvable, so an imported declaration that uses it still checks and a value
+of it still flows through the unit's code (`isDone(current())`). But the unit
+MUST NOT write its name (`bynk.uses.name_conflict`): not in a type position, a
+construction, a receiver (`Status.Done`), a pattern's qualifier or an `is`
+test, and not by constructing one of its variants bare (`Done`), which names
+the type in the emitted module too. Matching a bare variant is legal. A local
+value that can answer a receiver still does: a suite's `Status.GET("/")`
+addresses a service `Status`, and `Status.url` reads an asset `Status`. A unit
+suite may name no more than its target. A local type or event over an imported
+type is the type shadowing above.
+
+A context's local value MUST NOT share its name with a type a context it
+`consumes` exports (`bynk.consumes.name_conflict`, at the `consumes` clause),
+as a local type of that name already may not.
+
 ### §5.1a Module documentation {#module-docs}
 
 A doc-block ([§3.3.2](/book/spec/lexical-grammar/#332-doc-blocks)) immediately
