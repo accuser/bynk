@@ -469,7 +469,7 @@ fn emit_integration_module(
     // #1883, slice 3: the unit owning each asset a case may name. A
     // participant's own assets are exported by its `handlers.js` (already
     // imported above); a commons' come from that commons' module.
-    let asset_owners = system_asset_owners(view, participants, uses_targets, unit_tables);
+    let asset_owners = system_asset_owners(view, participants, unit_tables);
     for owner in asset_owners.keys() {
         if !participants.contains(owner) {
             let path = relative_import_for_test(&commons_dir_for(owner));
@@ -4155,6 +4155,24 @@ fn emit_test_scope_setup(
                 let types = aliased_types(table, |_| true);
                 let names: Vec<String> = types.iter().map(|(n, _)| n.clone()).collect();
                 crate::emitter::extend_printed_at(out, emit_ns_destructure(&ns, &names, &types), 2);
+                // #1883 (review of #1923): a consumed context's content-hashed
+                // assets, which the target's Worker ships too (its fixed paths
+                // stay with its own Worker, and are not nameable).
+                let mut hashed: Vec<String> = table
+                    .assets
+                    .iter()
+                    .filter(|(n, d)| d.at.is_none() && !target_local.contains(n))
+                    .filter(|(n, _)| seen_assets.insert(*n))
+                    .map(|(n, _)| n.clone())
+                    .collect();
+                hashed.sort();
+                if !hashed.is_empty() {
+                    crate::emitter::extend_printed_at(
+                        out,
+                        emit_ns_destructure(&ns, &hashed, &[]),
+                        2,
+                    );
+                }
             }
             // An `adapter` target has no `__makeSurface`/`deps.surface` entry —
             // its capabilities are already flattened onto `deps` directly
@@ -6760,13 +6778,13 @@ fn asset_harness(
     Some(out)
 }
 
-/// #1883, slice 3: each asset a `system` case may name ([`SuiteView::assets`]:
-/// the target's), grouped by the unit that declares it — the target first,
-/// then the commons it `uses` — sorted.
+/// #1883, slice 3: each asset a `system` case may name ([`SuiteView::assets`]),
+/// grouped by the unit that declares it — a participant first (whose
+/// `handlers.js` exports its own assets), then the commons that declare the
+/// rest — sorted.
 fn system_asset_owners(
     view: &test_suites::SuiteView,
     participants: &[String],
-    uses_targets: &[String],
     unit_tables: &HashMap<String, UnitTable>,
 ) -> BTreeMap<String, Vec<String>> {
     let mut owners: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -6779,13 +6797,7 @@ fn system_asset_owners(
                     .is_some_and(|d| d.path == decl.path && d.at == decl.at)
             })
             .map(|(u, _)| u)
-            .min_by_key(|u| {
-                (
-                    !participants.contains(u),
-                    !uses_targets.contains(u),
-                    (*u).clone(),
-                )
-            });
+            .min_by_key(|u| (!participants.contains(u), (*u).clone()));
         if let Some(owner) = owner {
             owners.entry(owner.clone()).or_default().push(name.clone());
         }

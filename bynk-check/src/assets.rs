@@ -1324,6 +1324,37 @@ mod tests {
         a.assert_reports("bynk.resolve.unknown_name");
     }
 
+    /// Review of #1923: a suite names exactly what the target's Worker ships
+    /// (`deployed_assets`) — so a consumed context's content-hashed asset is
+    /// nameable and fetchable, at both tiers, while its fixed path (served
+    /// only by its own Worker) is not.
+    #[test]
+    fn a_consumed_contexts_hashed_asset_is_nameable_but_its_fixed_one_is_not() {
+        let other = "context t.other\n\nasset badge = \"assets/a.css\"\nasset robots = \"assets/b.css\" at \"/robots.txt\"\n\nservice fragment {\n  on call() -> Effect[String] {\n    Effect.pure(badge.url)\n  }\n}\n";
+        let web = "context t.web\n\nconsumes t.other\n\nservice api from http {\n  on GET(\"/\") () -> Effect[HttpResult[String]] by Visitor {\n    let f <- t.other.fragment()\n    Ok(f)\n  }\n}\n";
+        for header in ["suite t.web", "suite t.web as system"] {
+            let suite = |body: &str| format!("{header} {{\n  case \"c\" {{\n{body}\n  }}\n}}\n");
+            analyse(&[
+                ("t/other.bynk", other),
+                ("t/web.bynk", web),
+                (
+                    "tests/web.bynk",
+                    &suite("    let r <- api.GET(badge)\n    expect r is Raw(_, _)"),
+                ),
+            ])
+            .assert_clean();
+            analyse(&[
+                ("t/other.bynk", other),
+                ("t/web.bynk", web),
+                (
+                    "tests/web.bynk",
+                    &suite("    let r <- api.GET(robots)\n    expect r is Raw(_, _)"),
+                ),
+            ])
+            .assert_reports("bynk.resolve.unknown_name");
+        }
+    }
+
     #[test]
     fn unsafe_asset_path_reason_accepts_relative_paths_and_rejects_escapes() {
         for ok in [

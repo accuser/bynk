@@ -1,0 +1,10 @@
+context t.web
+
+consumes t.other
+
+service api from http {
+  on GET("/") () -> Effect[HttpResult[String]] by Visitor {
+    let f <- t.other.fragment()
+    Ok(f)
+  }
+}

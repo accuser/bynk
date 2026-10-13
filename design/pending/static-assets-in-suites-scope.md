@@ -4,7 +4,7 @@ changelog: 'An asset fetch in a suite (`api.GET(style)`) is target-scoped: only 
 ---
 
 ## ADR: static-assets-in-suites-scope
-title: A suite names only its target's assets, and fetches them through an HTTP service
+title: A suite names exactly the assets its target's Worker ships, and fetches them through an HTTP service
 summary: Every asset a case can name is one the target's Worker ships; a non-HTTP service cannot fetch one
 
 **Context.** Slice 3 of #1883 (#1922, ADR "static-assets-in-suites") let a
@@ -17,10 +17,13 @@ accepted through any service, not only an HTTP one (review of #1922).
 
 **Decision.**
 
-- A case sees exactly the assets its target unit sees — its own and its
-  `uses`d commons' — every one a file the target's Worker ships. Another
-  participant's asset, or one from a `system` suite's own `uses` commons, is
-  an ordinary unknown name.
+- A case sees exactly the assets the target's Worker ships, mirroring
+  `assets::deployed_assets`: the target's own and its `uses`d commons'
+  (content-hashed and fixed-path), plus the content-hashed assets of the
+  contexts it consumes (review of #1923). A consumed context's fixed path, or
+  an asset of a `system` suite's own `uses` commons, is an ordinary unknown
+  name. A unit-tier asset fetch reaches no handler, so it never needs the
+  `system` tier for the cross-context calls a handler might make.
 - `svc.GET(asset)` is recorded as its own callee, `Callee::TestAssetFetch`.
 - `svc` must be a `from http` service; anything else is
   `bynk.test.service_bad_address`.
