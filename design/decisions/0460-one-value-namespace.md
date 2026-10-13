@@ -1,11 +1,6 @@
----
-level: patch
-changelog: 'A service, agent or bodied provider can no longer share its name with a function, asset, type, event, or each other in the same unit (`bynk.resolve.name_conflict`), and a local declaration of any kind now shadows a `uses`-imported function or asset of its name, with a reference it cannot answer reported as `bynk.uses.name_conflict`: the checker accepted both, and the emitted TypeScript failed `tsc` (#1925)'
----
+# 0460 — A unit's services, agents and providers share one namespace with its functions, assets, types and events
 
-## ADR: one-value-namespace
-title: A unit's services, agents and providers share one namespace with its functions, assets, types and events
-summary: Every top-level declaration except a capability or an actor is one scope of the emitted module, so none may share a name
+- **Status:** Accepted (v0.330.3)
 
 **Context.** The emitter writes a unit's functions, assets, types, events,
 services, agents and bodied providers into one TypeScript module scope
