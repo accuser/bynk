@@ -48,126 +48,6 @@ use std::sync::Arc;
 /// comes back, keyed by its resolved `stub` map, so the loop below is Phase
 /// 5 (TypeScript emission) alone, over exactly the targets ready for it.
 #[allow(clippy::too_many_arguments)]
-/// #1883, slice 3: the project's declared assets, for the test passes — each
-/// declaration's served path ([`bynk_check::assets::declared_served_paths`])
-/// and each declared file's bytes. Empty when no `assets/` folder was read.
-pub(crate) struct TestAssetFiles<'a> {
-    pub(crate) served: &'a BTreeMap<String, String>,
-    pub(crate) bytes: &'a BTreeMap<String, Vec<u8>>,
-}
-
-/// #1883, slice 3 ([DECISION F]): the TypeScript that lets a case fetch an
-/// asset — the files `target`'s Worker ships
-/// ([`bynk_check::assets::deployed_assets`]), embedded base64 by served path
-/// with the platform's content type, and `__bynkAssetGet(url)`, which answers
-/// as the platform's asset tier does: `HttpResult.Raw(bytes, contentType)`
-/// for a shipped file, `NotFound` otherwise. Embedding keeps a suite free of
-/// disk access at test time; it is harness data, not the compile-time
-/// `String` embedding [DECISION E] excludes. `None` when the Worker ships no
-/// files, so a module without assets is unchanged.
-fn asset_harness(
-    target: &str,
-    unit_uses: &HashMap<String, Vec<String>>,
-    unit_consumes: &HashMap<String, Vec<String>>,
-    unit_tables: &HashMap<String, UnitTable>,
-    files: &TestAssetFiles,
-) -> Option<String> {
-    let deployed = bynk_check::assets::deployed_assets(
-        target,
-        unit_uses,
-        unit_consumes,
-        unit_tables,
-        files.served,
-    );
-    if deployed.is_empty() {
-        return None;
-    }
-    let mut out = String::from(
-        "const __bynkAssetFiles: Record<string, { readonly body: string; readonly contentType: string }> = {\n",
-    );
-    for (served, source) in &deployed {
-        let bytes = files.bytes.get(source)?;
-        out.push_str(&format!(
-            "  {}: {{ body: \"{}\", contentType: {} }},\n",
-            bynk_project::json_string(served),
-            base64(bytes),
-            bynk_project::json_string(bynk_check::assets::content_type_for(served)),
-        ));
-    }
-    out.push_str(
-        "};\n\
-         function __bynkAssetGet(url: string): HttpResult<never> {\n\
-         \x20 const f = globalThis.Object.hasOwn(__bynkAssetFiles, url) ? __bynkAssetFiles[url] : undefined;\n\
-         \x20 if (f === undefined) return HttpResult.NotFound;\n\
-         \x20 const bin = atob(f.body);\n\
-         \x20 const bytes = new Uint8Array(bin.length);\n\
-         \x20 for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);\n\
-         \x20 return HttpResult.Raw(bytes, f.contentType);\n\
-         }\n",
-    );
-    Some(out)
-}
-
-/// #1883, slice 3: each asset a `system` case may name ([`SuiteView::assets`]),
-/// grouped by the unit that declares it — searched in the participants, then
-/// the units they `uses`, then the suite's own `uses` commons — sorted.
-fn system_asset_owners(
-    view: &test_suites::SuiteView,
-    participants: &[String],
-    uses_targets: &[String],
-    unit_tables: &HashMap<String, UnitTable>,
-) -> BTreeMap<String, Vec<String>> {
-    let mut owners: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (name, decl) in &view.assets {
-        let owner = unit_tables
-            .iter()
-            .filter(|(_, t)| {
-                t.assets
-                    .get(name)
-                    .is_some_and(|d| d.path == decl.path && d.at == decl.at)
-            })
-            .map(|(u, _)| u)
-            .min_by_key(|u| {
-                (
-                    !participants.contains(u),
-                    !uses_targets.contains(u),
-                    (*u).clone(),
-                )
-            });
-        if let Some(owner) = owner {
-            owners.entry(owner.clone()).or_default().push(name.clone());
-        }
-    }
-    for names in owners.values_mut() {
-        names.sort();
-    }
-    owners
-}
-
-/// Standard base64 (RFC 4648, with padding) of `bytes`, for
-/// [`asset_harness`]'s embedded files.
-fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b = [
-            chunk[0],
-            *chunk.get(1).unwrap_or(&0),
-            *chunk.get(2).unwrap_or(&0),
-        ];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-        for (i, shift) in [18u32, 12, 6, 0].into_iter().enumerate() {
-            if i <= chunk.len() {
-                out.push(ALPHABET[((n >> shift) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn process_tests(
     test_groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
@@ -6811,6 +6691,132 @@ fn sanitise_case_name(name: &str, index: &mut usize) -> String {
     }
     *index += 1;
     s
+}
+
+/// #1883, slice 3: the project's declared assets, for the test passes — each
+/// declaration's served path ([`bynk_check::assets::declared_served_paths`])
+/// and each declared file's bytes. Empty when no `assets/` folder was read.
+pub(crate) struct TestAssetFiles<'a> {
+    pub(crate) served: &'a BTreeMap<String, String>,
+    pub(crate) bytes: &'a BTreeMap<String, Vec<u8>>,
+}
+
+/// #1883, slice 3 ([DECISION F]): the TypeScript that lets a case fetch an
+/// asset — the files `target`'s Worker ships
+/// ([`bynk_check::assets::deployed_assets`]), embedded base64 by served path
+/// with the platform's content type, and `__bynkAssetGet(url)`, which answers
+/// as the platform's asset tier does: `HttpResult.Raw(bytes, contentType)`
+/// for a shipped file, `NotFound` otherwise. Embedding keeps a suite free of
+/// disk access at test time; it is harness data, not the compile-time
+/// `String` embedding [DECISION E] excludes. `None` when the Worker ships no
+/// files, so a module without assets is unchanged.
+fn asset_harness(
+    target: &str,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_tables: &HashMap<String, UnitTable>,
+    files: &TestAssetFiles,
+) -> Option<String> {
+    let deployed = bynk_check::assets::deployed_assets(
+        target,
+        unit_uses,
+        unit_consumes,
+        unit_tables,
+        files.served,
+    );
+    if deployed.is_empty() {
+        return None;
+    }
+    let mut out = String::from(
+        "const __bynkAssetFiles: Record<string, { readonly body: string; readonly contentType: string }> = {\n",
+    );
+    for (served, source) in &deployed {
+        // Review of #1922: every deployed file was read (`asset_served`
+        // comes from the same bytes), so a miss is a broken invariant, not
+        // something to degrade quietly into an undefined `__bynkAssetGet`.
+        let bytes = files.bytes.get(source).unwrap_or_else(|| {
+            panic!(
+                "bynk internal error: deployed asset `{source}` has no bytes for the test harness"
+            )
+        });
+        out.push_str(&format!(
+            "  {}: {{ body: \"{}\", contentType: {} }},\n",
+            bynk_project::json_string(served),
+            base64(bytes),
+            bynk_project::json_string(bynk_check::assets::content_type_for(served)),
+        ));
+    }
+    out.push_str(
+        "};\n\
+         function __bynkAssetGet(url: string): HttpResult<never> {\n\
+         \x20 const f = globalThis.Object.hasOwn(__bynkAssetFiles, url) ? __bynkAssetFiles[url] : undefined;\n\
+         \x20 if (f === undefined) return HttpResult.NotFound;\n\
+         \x20 const bin = atob(f.body);\n\
+         \x20 const bytes = new Uint8Array(bin.length);\n\
+         \x20 for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);\n\
+         \x20 return HttpResult.Raw(bytes, f.contentType);\n\
+         }\n",
+    );
+    Some(out)
+}
+
+/// #1883, slice 3: each asset a `system` case may name ([`SuiteView::assets`]:
+/// the target's), grouped by the unit that declares it — the target first,
+/// then the commons it `uses` — sorted.
+fn system_asset_owners(
+    view: &test_suites::SuiteView,
+    participants: &[String],
+    uses_targets: &[String],
+    unit_tables: &HashMap<String, UnitTable>,
+) -> BTreeMap<String, Vec<String>> {
+    let mut owners: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (name, decl) in &view.assets {
+        let owner = unit_tables
+            .iter()
+            .filter(|(_, t)| {
+                t.assets
+                    .get(name)
+                    .is_some_and(|d| d.path == decl.path && d.at == decl.at)
+            })
+            .map(|(u, _)| u)
+            .min_by_key(|u| {
+                (
+                    !participants.contains(u),
+                    !uses_targets.contains(u),
+                    (*u).clone(),
+                )
+            });
+        if let Some(owner) = owner {
+            owners.entry(owner.clone()).or_default().push(name.clone());
+        }
+    }
+    for names in owners.values_mut() {
+        names.sort();
+    }
+    owners
+}
+
+/// Standard base64 (RFC 4648, with padding) of `bytes`, for
+/// [`asset_harness`]'s embedded files.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for (i, shift) in [18u32, 12, 6, 0].into_iter().enumerate() {
+            if i <= chunk.len() {
+                out.push(ALPHABET[((n >> shift) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

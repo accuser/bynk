@@ -2911,10 +2911,10 @@ pub struct SuiteView {
     /// Review of #1814: each reached name the view already binds to another
     /// declaration (`project_model::close_view_types`).
     pub conflicts: Vec<crate::project_model::ViewConflict>,
-    /// #1883, slice 3 ([DECISION F]): the assets a case may name — those its
-    /// target unit sees (its own and its `uses`d commons'), plus the suite's
-    /// own `uses` commons' in a `system` suite. An asset name types as
-    /// `Asset`; `svc.GET(asset)` fetches the file.
+    /// #1883, slice 3 ([DECISION F]): the assets a case may name — exactly
+    /// those its target unit sees (its own and its `uses`d commons'), every
+    /// one a file the target's Worker ships. An asset name types as `Asset`;
+    /// `svc.GET(asset)` fetches the file.
     pub assets: HashMap<String, bynk_syntax::ast::AssetDecl>,
 }
 
@@ -3060,10 +3060,15 @@ pub fn integration_view(
                 view.merge(t, with_fns, true);
                 imported.push(u.clone());
             }
-            // #1883, slice 3: assets from both, so a case can fetch the
-            // target's files and name a used commons' `.url`.
-            view.merge_assets(u, unit_tables, unit_uses);
         }
+    }
+    // #1883, slice 3: the target's assets only — the files its Worker
+    // ships. Review of #1922: naming another participant's (or the suite's
+    // own `uses` commons') asset would type-check yet answer `NotFound`,
+    // since the target's Worker does not serve it; unnameable, it is an
+    // ordinary unknown name instead.
+    if let Some(target) = participants.first() {
+        view.merge_assets(target, unit_tables, unit_uses);
     }
     view.close(&imported, unit_tables, unit_uses);
     view
