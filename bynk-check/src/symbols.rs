@@ -822,6 +822,34 @@ pub fn build_unit_table(
     table
 }
 
+/// #1925: what `name` is in `table`'s own value namespace — its kind, as a
+/// diagnostic names it, and its declaration's name span — or `None` when the
+/// unit declares no value of that name. The predicate both compositions use
+/// to let a local declaration of any kind shadow a `uses`-imported function or
+/// asset (`project_model::compose_unit_symbols`,
+/// `assets::compose_unit_assets`), as the emitted module does.
+pub fn local_value_kind(table: &UnitTable, name: &str) -> Option<(&'static str, Span)> {
+    if let Some(f) = table.fns.get(name) {
+        Some(("function", f.name.ident().span))
+    } else if let Some(a) = table.assets.get(name) {
+        Some(("asset", a.name.span))
+    } else if let Some(e) = table.events.get(name) {
+        Some(("event", e.name.span))
+    } else if let Some(t) = table.types.get(name) {
+        Some(("type", t.name.span))
+    } else if let Some(s) = table.services.get(name) {
+        Some(("service", s.name.span))
+    } else if let Some(a) = table.agents.get(name) {
+        Some(("agent", a.name.span))
+    } else {
+        table
+            .providers
+            .values()
+            .find(|p| !p.external && p.provider_name.name == name)
+            .map(|p| ("provider", p.provider_name.span))
+    }
+}
+
 /// #1925: the kinds [`value_namespace_error`] checks, in the order the
 /// conflict pass meets them.
 #[derive(Clone, Copy, PartialEq, Eq)]

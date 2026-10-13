@@ -352,7 +352,9 @@ pub fn check_file_core(
         ctx.uses_commons_type_names.clone(),
     )
     // #1883, slice 1a: this unit's assets plus its `uses`d commons' ([DECISION G]).
-    .with_assets(crate::assets::compose_unit_assets(name, unit_info));
+    .with_assets(crate::assets::compose_unit_assets(name, unit_info))
+    // #1925: imports hidden behind a local declaration of another kind.
+    .with_shadowed_imports(crate::project_model::shadowed_imports(name, unit_info));
     refs.enter_file(&pf.identity_path(), name, pf.is_synthetic());
     // v0.27: synthetic and test/integration files record no hints — neither
     // surfaces in an editor (the `assemble_index` rule).

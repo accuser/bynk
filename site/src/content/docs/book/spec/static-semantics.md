@@ -88,6 +88,14 @@ types is not a crossing. If `t.app` declares `type Repo = Int` beside `uses
 t.core` and `uses t.model`, then `Run { repo: first(r) }` is legal in `t.app`,
 and `Run { repo: 42 }` and `r.repo + 1` are not.
 
+A unit's own declaration also shadows a function or asset of the same name
+from a commons it `uses`, whatever the local declaration's kind, as in the
+emitted module: the import is not in scope. Where the local declaration cannot
+answer a reference (a call to a type or service, a bare event name, an asset
+used as a function), the reference is `bynk.uses.name_conflict`, naming both
+declarations. A local declaration that can answer one does: a call to a local
+agent constructs the agent. An unused shadow is legal.
+
 ### §5.1a Module documentation {#module-docs}
 
 A doc-block ([§3.3.2](/book/spec/lexical-grammar/#332-doc-blocks)) immediately

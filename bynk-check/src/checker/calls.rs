@@ -534,7 +534,7 @@ pub(crate) fn check_call(
             .insert(expr_id, Callee::AgentInit(name.name.clone()));
         let key_ty = resolve_type_ref(&agent.key_type, &ctx.input.types, tys);
         if args.len() != 1 {
-            ctx.errors.push(CompileError::new(
+            let mut err = CompileError::new(
                 "bynk.agent.construction_arity",
                 span,
                 format!(
@@ -542,7 +542,16 @@ pub(crate) fn check_call(
                     name.name,
                     args.len()
                 ),
-            ));
+            );
+            // #1925: the agent hides a `uses`-imported value of its name,
+            // which may be what the call meant.
+            if let Some(s) = ctx.input.shadowed_imports.get(&name.name) {
+                err = err.with_note(format!(
+                    "this unit's agent `{}` hides the {} of that name from `{}`; rename one to use the {}",
+                    name.name, s.imported, s.unit, s.imported
+                ));
+            }
+            ctx.errors.push(err);
             for a in args {
                 let _ = type_of(a, None, ctx);
             }
@@ -621,6 +630,12 @@ pub(crate) fn check_call(
                 name.name, name.name
             ),
         ));
+        return None;
+    }
+    // #1925: no local function or agent answers the call, and a local
+    // declaration of another kind hides the import.
+    if let Some(err) = ctx.input.shadowed_import_error(&name.name, name.span) {
+        ctx.errors.push(err);
         return None;
     }
     if ctx.input.types.contains_key(&name.name) {

@@ -1467,6 +1467,7 @@ fn integration_typed_commons(
         ty_intern: Arc::clone(tys),
         actor_bindings: HashMap::new(),
         assets: HashMap::new(),
+        shadowed_imports: HashMap::new(),
     }
 }
 
@@ -3315,6 +3316,7 @@ fn synthetic_typed_commons_for_target(
         ty_intern: Arc::clone(tys),
         actor_bindings: HashMap::new(),
         assets: HashMap::new(),
+        shadowed_imports: HashMap::new(),
     }
 }
 

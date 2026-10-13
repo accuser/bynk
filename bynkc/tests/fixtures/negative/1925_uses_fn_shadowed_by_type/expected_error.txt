@@ -1,0 +1,2 @@
+bynk.uses.name_conflict
+`total` names this unit's type, which hides the function `total` from `lib.util`

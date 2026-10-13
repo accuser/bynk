@@ -98,6 +98,11 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<TyId>, ctx: &mut Ctx) -> 
                 ret,
             }));
         }
+        // #1925: a local function hiding an imported asset (`thing.url`).
+        if let Some(err) = ctx.input.shadowed_import_error(&id.name, id.span) {
+            ctx.errors.push(err);
+            return None;
+        }
         // Bare reference outside a function-typed position: the original
         // rule, with the checker's type knowledge behind it.
         ctx.errors.push(
@@ -165,6 +170,12 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<TyId>, ctx: &mut Ctx) -> 
                 id.name, id.name
             ),
         ));
+        return None;
+    }
+    // #1925: the local declaration of another kind (a type, event, service,
+    // agent or provider) is no value here, and it hides the import.
+    if let Some(err) = ctx.input.shadowed_import_error(&id.name, id.span) {
+        ctx.errors.push(err);
         return None;
     }
     if ctx.input.types.contains_key(&id.name) {
