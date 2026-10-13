@@ -4541,9 +4541,11 @@ mod label_attribution_tests {
 }
 
 /// #1925: a unit's own declaration of another kind shadowing a `uses`-imported
-/// function or asset. A local declaration wins, as in the emitted module; a
-/// reference it cannot answer is `bynk.uses.name_conflict`, in a function body
-/// (the resolver's walk) and a handler body (the checker's) alike.
+/// function or asset, and (#1927) a unit's own value shadowing an imported
+/// type. A local declaration wins, as in the emitted module; a reference it
+/// cannot answer, or a written hidden type name, is `bynk.uses.name_conflict`,
+/// in a function body (the resolver's walk) and a handler body (the
+/// checker's) alike.
 #[cfg(test)]
 mod shadowed_import_tests {
     use crate::testkit::analyse;

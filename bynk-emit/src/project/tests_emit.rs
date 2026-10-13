@@ -4095,16 +4095,6 @@ fn emit_test_scope_setup(
     // own `render` (a messages block's synthetic one) *and* `uses
     // bynk.locale` (which also declares `render`) destructured both into one
     // scope — `Cannot redeclare block-scoped variable 'render'` under `tsc`.
-    let target_local: std::collections::HashSet<&String> = unit_tables
-        .get(target_name)
-        .map(|t| {
-            t.types
-                .keys()
-                .chain(t.fns.keys())
-                .chain(t.assets.keys())
-                .collect()
-        })
-        .unwrap_or_default();
     // #1925: a used commons' function or asset is hidden by any value the
     // target declares — its services, agents and bodied providers too — as
     // the checker's view hides it (`bynk_check::project_model::shadowed_imports`).
@@ -4114,9 +4104,10 @@ fn emit_test_scope_setup(
     let target_values: std::collections::HashSet<&String> = unit_tables
         .get(target_name)
         .map(|t| {
-            target_local
-                .iter()
-                .copied()
+            t.types
+                .keys()
+                .chain(t.fns.keys())
+                .chain(t.assets.keys())
                 .chain(t.services.keys())
                 .chain(t.agents.keys())
                 .chain(
