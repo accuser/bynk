@@ -13,6 +13,7 @@ use std::process::ExitCode;
 
 use bynk_emit::project::{self, CompileOptions, ProjectPathsError, try_read_project_paths_with};
 use bynk_fmt::{FormatOptions, IndentStyle, format_source};
+use bynk_render::LabelHome;
 
 pub mod coverage;
 pub mod discovery;
@@ -220,7 +221,7 @@ pub fn print_project_failure(failure: &project::ProjectFailure) {
     for ae in &failure.errors {
         match attributed_snapshot(ae, &failure.snapshots, &failure.display_root) {
             Some((label, text)) => {
-                bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
+                print_attributed(ae, &label, text, &failure.snapshots, &failure.display_root);
             }
             None => {
                 eprintln!("[{}] {}", ae.error.category, ae.error.message);
@@ -249,9 +250,7 @@ pub fn print_project_warnings(
 ) {
     for w in warnings {
         match attributed_snapshot(w, snapshots, display_root) {
-            Some((label, text)) => {
-                bynk_render::print_errors(std::slice::from_ref(&w.error), text, &label)
-            }
+            Some((label, text)) => print_attributed(w, &label, text, snapshots, display_root),
             None => {
                 let where_ = w
                     .source_path
@@ -317,6 +316,39 @@ fn attributed_snapshot<'a>(
         .find(|(p, _)| p.as_path() == path)
         .map(|(_, t)| t.as_str())?;
     Some((display_path(display_root, path), text))
+}
+
+/// Render `ae` with ariadne against its own file's `text` (shown as `label`),
+/// each secondary label against the file it lies in: a "previously declared
+/// here" in a sibling file of a multi-file unit is drawn in a snippet of that
+/// file, from `snapshots`, not at the same offsets in this one. A label whose
+/// file has no snapshot becomes a note.
+fn print_attributed(
+    ae: &project::AttributedError,
+    label: &str,
+    text: &str,
+    snapshots: &[(PathBuf, String)],
+    display_root: &Path,
+) {
+    let others: Vec<Option<(String, &str)>> = (0..ae.error.labels.len())
+        .map(|i| match ae.label_file(i) {
+            project::LabelFile::Other(path) => snapshots
+                .iter()
+                .find(|(p, _)| p == path)
+                .map(|(_, t)| (display_path(display_root, path), t.as_str())),
+            _ => None,
+        })
+        .collect();
+    let homes: Vec<LabelHome<'_>> = others
+        .iter()
+        .enumerate()
+        .map(|(i, other)| match (ae.label_file(i), other) {
+            (project::LabelFile::Primary, _) => LabelHome::Primary,
+            (_, Some((filename, source))) => LabelHome::File { filename, source },
+            (_, None) => LabelHome::Unavailable,
+        })
+        .collect();
+    bynk_render::print_error_in(&ae.error, text, label, &homes);
 }
 
 /// #1772: the path a diagnostic names, as a user would type it from the
@@ -421,7 +453,7 @@ pub fn print_project_check(check: &project::ProjectCheck) {
     for ae in &check.errors {
         match attributed_snapshot(ae, &check.snapshots, &check.display_root) {
             Some((label, text)) => {
-                bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
+                print_attributed(ae, &label, text, &check.snapshots, &check.display_root);
             }
             None => {
                 eprintln!(

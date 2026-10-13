@@ -36,6 +36,7 @@ pub use bynk_check::analysis::ContextBoundaryInfo;
 /// carries build-only concerns), `ContextSequenceInfo`'s fields are already
 /// IDE-appropriate as-is, so this is a plain re-export rather than a lowering.
 pub use bynk_check::analysis::ContextSequenceInfo;
+pub use bynk_project::LabelFile;
 
 pub mod architecture;
 pub mod completion;
@@ -51,6 +52,18 @@ pub mod wire_contract;
 pub struct Diagnostic {
     pub error: CompileError,
     pub severity: Severity,
+    /// The file each of `error.labels` lies in, index for index, as
+    /// [`bynk_project::AttributedError::label_files`] says — a label in a
+    /// sibling file belongs to that file's URI, not this diagnostic's. Empty
+    /// (every label in this file) for a single-file diagnosis.
+    pub label_files: Vec<LabelFile>,
+}
+
+impl Diagnostic {
+    /// The file `error.labels[index]` lies in.
+    pub fn label_file(&self, index: usize) -> &LabelFile {
+        self.label_files.get(index).unwrap_or(&LabelFile::Primary)
+    }
 }
 
 /// Best-effort single-file compilation that always returns diagnostics.
@@ -72,6 +85,7 @@ pub fn diagnose(source: &str) -> Vec<Diagnostic> {
             diagnostics.push(Diagnostic {
                 severity: Severity::for_error(&e),
                 error: e,
+                label_files: Vec::new(),
             });
             return diagnostics;
         }
@@ -86,6 +100,7 @@ pub fn diagnose(source: &str) -> Vec<Diagnostic> {
         diagnostics.push(Diagnostic {
             severity: Severity::for_error(&e),
             error: e,
+            label_files: Vec::new(),
         });
     }
     let Some(unit) = unit_opt else {
@@ -99,6 +114,7 @@ pub fn diagnose(source: &str) -> Vec<Diagnostic> {
             diagnostics.extend(errs.into_iter().map(|e| Diagnostic {
                 severity: Severity::for_error(&e),
                 error: e,
+                label_files: Vec::new(),
             }));
         };
         // #1663 (Decision A): a resolve error no longer stops the checker. It
@@ -330,6 +346,7 @@ pub fn diagnose_project_with(
         let d = Diagnostic {
             severity: Severity::for_error(&ae.error),
             error: ae.error,
+            label_files: ae.label_files,
         };
         match ae.source_path {
             Some(p) => by_file.entry(p).or_default().push(d),

@@ -119,6 +119,7 @@ mod tests {
         // 17..21, fix inserting at the clause (14, far from the squiggle).
         bynk_ide::Diagnostic {
             severity: bynk_syntax::Severity::Error,
+            label_files: Vec::new(),
             error: CompileError::new(
                 "bynk.given.undeclared_capability",
                 Span::new(17, 21),
@@ -242,6 +243,7 @@ mod tests {
         let span = Span::new(start, start + "1 + 2".len());
         let diag = bynk_ide::Diagnostic {
             severity: bynk_syntax::Severity::Error,
+            label_files: Vec::new(),
             error: CompileError::new("bynk.test", span, "msg").with_suggestion(
                 "a fix",
                 vec![(span, "0".to_string())],
@@ -268,6 +270,7 @@ mod tests {
         let uri = Url::parse("file:///a.bynk").unwrap();
         let d = bynk_ide::Diagnostic {
             severity: bynk_syntax::Severity::Error,
+            label_files: Vec::new(),
             error: CompileError::new("bynk.test", Span::new(0, 1), "msg").with_suggestion(
                 "fill in <T>",
                 vec![(Span::new(0, 1), "<T>".to_string())],

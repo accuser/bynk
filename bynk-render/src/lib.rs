@@ -21,6 +21,10 @@ use ariadne::Source;
 use bynk_syntax::error::Severity;
 use bynk_syntax::{CompileError, span};
 
+/// Re-exported for [`render_error_in`]'s callers, which say with it which file
+/// each of an error's labels lies in.
+pub use bynk_syntax::error::LabelHome;
+
 /// Render a list of compile errors to a string (for tests) using the given
 /// filename as the diagnostic source label.
 pub fn render_errors(errors: &[CompileError], source: &str, filename: &str) -> String {
@@ -106,6 +110,135 @@ fn render_all(errors: &[CompileError], source: &str, filename: &str, color: bool
         out.extend(one);
     }
     out
+}
+
+/// Render one error whose secondary labels may lie in other files, coloured
+/// as [`render_errors`] is: `homes[i]` says which file `err.labels[i]` lies in
+/// (see [`CompileError::report_in`]). A label in another file is drawn in a
+/// snippet of that file, under its own name, rather than against `source`.
+pub fn render_error_in(
+    err: &CompileError,
+    source: &str,
+    filename: &str,
+    homes: &[LabelHome<'_>],
+) -> String {
+    String::from_utf8_lossy(&render_in(err, source, filename, homes, true)).into_owned()
+}
+
+/// [`render_error_in`] with colour disabled, byte-stable like
+/// [`render_errors_plain`].
+pub fn render_error_in_plain(
+    err: &CompileError,
+    source: &str,
+    filename: &str,
+    homes: &[LabelHome<'_>],
+) -> String {
+    String::from_utf8_lossy(&render_in(err, source, filename, homes, false)).into_owned()
+}
+
+/// [`render_error_in`] to stderr, coloured as [`print_errors`] is.
+pub fn print_error_in(err: &CompileError, source: &str, filename: &str, homes: &[LabelHome<'_>]) {
+    use std::io::Write;
+    let out = render_in(err, source, filename, homes, stderr_color());
+    let _ = std::io::stderr().lock().write_all(&out);
+}
+
+/// The report behind [`render_error_in`]. With every label in `source` it is
+/// [`render_all`]'s. Otherwise the labels in `source` are cut to fit its long
+/// lines as [`render_all`] cuts them (#1666), and the others are added after:
+/// another file is never cut, so a label on one of its long lines becomes a
+/// note instead.
+fn render_in(
+    err: &CompileError,
+    source: &str,
+    filename: &str,
+    homes: &[LabelHome<'_>],
+    color: bool,
+) -> Vec<u8> {
+    let home = |i: usize| homes.get(i).copied().unwrap_or(LabelHome::Primary);
+    if (0..err.labels.len()).all(|i| home(i) == LabelHome::Primary) {
+        return render_all(std::slice::from_ref(err), source, filename, color);
+    }
+    let mut local = err.clone();
+    local.labels.clear();
+    let mut elsewhere = Vec::new();
+    for (i, label) in err.labels.iter().enumerate() {
+        match home(i) {
+            LabelHome::Primary => local.labels.push(label.clone()),
+            other => elsewhere.push((label.clone(), other)),
+        }
+    }
+    let touches_long = |s: &span::Span, text: &str| {
+        fits(s, text)
+            && long_lines(text)
+                .iter()
+                .any(|&(start, end)| s.start <= end && s.end >= start)
+    };
+    let cut = std::iter::once(&local.span)
+        .chain(local.labels.iter().map(|(s, _)| s))
+        .any(|s| touches_long(s, source));
+    let (shown, mut shown_err) = if cut {
+        cropped(&local, source)
+    } else {
+        (source.to_string(), local)
+    };
+    let mut shown_homes = vec![LabelHome::Primary; shown_err.labels.len()];
+    for ((span, label), home) in elsewhere {
+        let home = match home {
+            LabelHome::File { source: text, .. } if touches_long(&span, text) => {
+                LabelHome::Unavailable
+            }
+            other => other,
+        };
+        shown_err.labels.push((span, label));
+        shown_homes.push(home);
+    }
+    let mut cache = Files(vec![(filename, Source::from(shown.as_str()))]);
+    for home in &shown_homes {
+        if let LabelHome::File { filename, source } = *home
+            && !cache.0.iter().any(|(f, _)| *f == filename)
+        {
+            cache.0.push((filename, Source::from(source)));
+        }
+    }
+    let mut out = Vec::new();
+    shown_err
+        .report_in(filename, &shown, &shown_homes, color)
+        .write(&mut cache, &mut out)
+        .expect("write to Vec<u8> cannot fail");
+    if cut {
+        // As in `render_all`: put back the primary span's column in the file.
+        let at_cut = span::line_col(&shown, shown_err.span.start);
+        let real = span::line_col(source, err.span.start);
+        if at_cut != real {
+            out = fix_header(
+                &out,
+                &format!("{filename}:{}:{}", at_cut.0, at_cut.1),
+                &format!("{filename}:{}:{}", real.0, real.1),
+            );
+        }
+    }
+    out
+}
+
+/// A report's sources by filename — the primary file's and each other file a
+/// label lies in. ariadne's own multi-source cache wants `'static` ids.
+struct Files<'a>(Vec<(&'a str, Source<&'a str>)>);
+
+impl<'a> ariadne::Cache<&'a str> for Files<'a> {
+    type Storage = &'a str;
+
+    fn fetch(&mut self, id: &&'a str) -> Result<&Source<&'a str>, impl std::fmt::Debug> {
+        self.0
+            .iter()
+            .find(|(name, _)| name == id)
+            .map(|(_, source)| source)
+            .ok_or_else(|| format!("no source for `{id}`"))
+    }
+
+    fn display<'b>(&self, id: &'b &'a str) -> Option<impl std::fmt::Display + 'b> {
+        Some(*id)
+    }
 }
 
 /// The `[start, end)` byte ranges (line endings excluded) of the lines of
@@ -708,5 +841,50 @@ mod tests {
                 .any(|l| l.starts_with(" 3 │ …") && l.contains("wbad")),
             "{rendered}"
         );
+    }
+
+    /// A label in another file is drawn in a snippet of that file; one with
+    /// no text to show, or on one of that file's long lines (#1666, which cuts
+    /// only the primary file), becomes a note.
+    #[test]
+    fn a_label_in_another_file_renders_against_that_file() {
+        let primary = "context app\n\n\nservice api {}\n";
+        let sibling = "context app\nservice api {}\n";
+        let at = |text: &str| text.find("api").unwrap();
+        let err = CompileError::new(
+            "bynk.resolve.duplicate_service",
+            Span::new(at(primary), at(primary) + 3),
+            "already declared",
+        )
+        .with_label(
+            Span::new(at(sibling), at(sibling) + 3),
+            "previously declared here",
+        )
+        .with_label(Span::new(0, 1), "in an injected unit");
+        let homes = [
+            LabelHome::File {
+                filename: "a.bynk",
+                source: sibling,
+            },
+            LabelHome::Unavailable,
+        ];
+        let rendered = render_error_in_plain(&err, primary, "z.bynk", &homes);
+        let (z, a) = rendered.split_once("─[ a.bynk:2:9 ]").expect(&rendered);
+        assert!(z.contains("─[ z.bynk:4:9 ]"), "{rendered}");
+        assert!(!z.contains("previously declared here"), "{rendered}");
+        assert!(a.contains(" 2 │ service api {}"), "{rendered}");
+        assert!(a.contains("previously declared here"), "{rendered}");
+        assert!(rendered.contains("Note: in an injected unit"), "{rendered}");
+
+        let long = format!("context app\n{} service api {{}}\n", "x".repeat(MAX_LINE));
+        let err = CompileError::new("bynk.test", Span::new(0, 7), "msg")
+            .with_label(Span::new(at(&long), at(&long) + 3), "on a long line");
+        let homes = [LabelHome::File {
+            filename: "a.bynk",
+            source: &long,
+        }];
+        let rendered = render_error_in_plain(&err, primary, "z.bynk", &homes);
+        assert!(!rendered.contains("a.bynk"), "{rendered}");
+        assert!(rendered.contains("Note: on a long line"), "{rendered}");
     }
 }

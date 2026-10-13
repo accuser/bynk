@@ -17,4 +17,42 @@ use bynk_syntax::error::CompileError;
 pub struct AttributedError {
     pub source_path: Option<PathBuf>,
     pub error: CompileError,
+    /// The file each of `error.labels` points into, index for index. A
+    /// secondary label may lie in a sibling file — a duplicate's "previously
+    /// declared here" in another file of the same multi-file unit — and its
+    /// span is an offset into *that* file's text, not `source_path`'s. Filled
+    /// in when the sink is drained, from the `FileId` each label's span
+    /// carries. Shorter than `error.labels` (empty, for an error built outside
+    /// the sink) means [`LabelFile::Primary`] for the rest; read it through
+    /// [`Self::label_file`].
+    pub label_files: Vec<LabelFile>,
+}
+
+/// Which file an [`AttributedError`]'s secondary label lies in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LabelFile {
+    /// The same file as the error itself — `source_path`'s text. Also what a
+    /// label whose span carries no file identity (`FileId::UNKNOWN`) means.
+    Primary,
+    /// Another project file, by identity path — `snapshots`' key for its text.
+    Other(PathBuf),
+    /// A known file with no text to show it against: a toolchain-injected
+    /// unit. Rendered as a note, never against the primary file's text.
+    Unavailable,
+}
+
+impl AttributedError {
+    /// `error`, attributed to `source_path`, every label in that same file.
+    pub fn new(source_path: Option<PathBuf>, error: CompileError) -> Self {
+        Self {
+            source_path,
+            error,
+            label_files: Vec::new(),
+        }
+    }
+
+    /// The file `error.labels[index]` lies in.
+    pub fn label_file(&self, index: usize) -> &LabelFile {
+        self.label_files.get(index).unwrap_or(&LabelFile::Primary)
+    }
 }
