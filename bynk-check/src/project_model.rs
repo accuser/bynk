@@ -1592,7 +1592,9 @@ pub fn phase_uses_name_conflicts(
                 }
             }
             for fn_name in used.fns.keys() {
-                if local.types.contains_key(fn_name) || local.fns.contains_key(fn_name) {
+                // #1925: any local value hides the import (`shadowed_imports`),
+                // so two used commons declaring it leave nothing ambiguous.
+                if crate::symbols::local_value_kind(local, fn_name).is_some() {
                     continue;
                 }
                 if let Some(prev) = imported.get(fn_name) {
@@ -1618,10 +1620,8 @@ pub fn phase_uses_name_conflicts(
             // #1883, slice 1a ([DECISION G]): a commons' assets come in
             // through `uses` like its functions, and share their namespace.
             for asset_name in used.assets.keys() {
-                if local.types.contains_key(asset_name)
-                    || local.fns.contains_key(asset_name)
-                    || local.assets.contains_key(asset_name)
-                {
+                // #1925: any local value hides the import, as above.
+                if crate::symbols::local_value_kind(local, asset_name).is_some() {
                     continue;
                 }
                 if let Some(prev) = imported.get(asset_name) {
@@ -4534,6 +4534,50 @@ mod shadowed_import_tests {
             ),
         ]);
         r.assert_clean();
+    }
+
+    /// Review of #1926: two used commons declaring one name are no ambiguity
+    /// when the unit hides both behind its own declaration — an unused
+    /// shadow stays legal (`phase_uses_name_conflicts` shares the predicate).
+    #[test]
+    fn a_local_service_hiding_two_used_imports_is_no_ambiguity() {
+        let r = analyse(&[
+            (
+                "lib/a.bynk",
+                "commons lib.a\n\nfn thing() -> Int {\n  1\n}\n",
+            ),
+            (
+                "lib/b.bynk",
+                "commons lib.b\n\nfn thing() -> Int {\n  2\n}\n",
+            ),
+            (
+                "app/main.bynk",
+                "context app\n\nuses lib.a\nuses lib.b\n\nservice thing {\n  on call() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n",
+            ),
+        ]);
+        r.assert_clean();
+    }
+
+    /// Review of #1926: a bare reference to a local function that hides an
+    /// imported asset means the function; only a field read (`thing.url`)
+    /// means the hidden asset.
+    #[test]
+    fn a_bare_local_function_keeps_its_own_advice() {
+        let lib = (
+            "lib/util.bynk",
+            "commons lib.util\n\nasset thing = \"assets/x.json\"\n",
+        );
+        let file = |body: &str| {
+            format!(
+                "context app\n\nuses lib.util\n\nfn thing() -> Int {{\n  1\n}}\n\nfn useIt() -> Int {{\n  {body}\n}}\n"
+            )
+        };
+        let bare = file("thing + 1");
+        let r = analyse(&[lib, ("app/main.bynk", &bare), ("assets/x.json", "{}")]);
+        assert_eq!(r.error_categories(), vec!["bynk.resolve.fn_without_call"]);
+        let read = file("let u = thing.url\n  1");
+        let r = analyse(&[lib, ("app/main.bynk", &read), ("assets/x.json", "{}")]);
+        assert_eq!(r.error_categories(), vec!["bynk.uses.name_conflict"]);
     }
 
     /// The diagnostic names both declarations and where the local one is.

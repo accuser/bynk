@@ -98,11 +98,6 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<TyId>, ctx: &mut Ctx) -> 
                 ret,
             }));
         }
-        // #1925: a local function hiding an imported asset (`thing.url`).
-        if let Some(err) = ctx.input.shadowed_import_error(&id.name, id.span) {
-            ctx.errors.push(err);
-            return None;
-        }
         // Bare reference outside a function-typed position: the original
         // rule, with the checker's type knowledge behind it.
         ctx.errors.push(
@@ -2770,6 +2765,18 @@ pub(crate) fn check_field_access(
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     let tys = ctx.tys;
+    // #1925: `thing.url` where a local function `thing` hides a `uses`-imported
+    // asset — a field read means the asset, which is out of scope. Only as a
+    // receiver: a bare `thing` elsewhere is the local function, and its own
+    // rule (`fn_without_call`) gives the useful advice.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && ctx.lookup(id.name.as_str()).is_none()
+        && ctx.input.fns.contains_key(&id.name)
+        && let Some(err) = ctx.input.shadowed_import_error(&id.name, id.span)
+    {
+        ctx.errors.push(err);
+        return None;
+    }
     // v0.158 (ADR 0184): `<map>.entries` / `.keys` / `.values` on a `store
     // Map[K, V]` field — the key-exposing lazy queries. Dispatched by receiver
     // provenance (a bare ident naming a store map, not shadowed by a local),
