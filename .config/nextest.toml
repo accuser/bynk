@@ -61,6 +61,21 @@ retries = { backoff = "fixed", count = 1, delay = "1s" }
 failure-output = "final"
 status-level = "fail"
 
+# A hung test is killed, named and retried, rather than holding the job until
+# its `timeout-minutes` cancels it. With `status-level = "fail"` nothing names a
+# test that is still running, so the v0.330.4 release's Windows leg sat on one
+# hung test (2340 of 2341 passed) until the 40-minute job limit cancelled it.
+# That skipped every publish job, and the log could not say which test it was.
+# A test past `period × terminate-after` is now a TIMEOUT failure: listed with
+# its output, and retried once under `retries` above.
+#
+# The limit is generous on purpose. The slowest tests (the workerd runtime
+# legs, `tsc_verify`) take about a minute on a fast Linux machine. A Windows
+# runner's whole test phase is about 6 minutes, so no single test there
+# approaches 10. A hang and its one retry cost at most about 20 minutes, inside
+# every gate's job limit.
+slow-timeout = { period = "120s", terminate-after = 5 }
+
 [profile.default]
 # Local runs keep the default (0) retries so flakes surface immediately.
 retries = 0
