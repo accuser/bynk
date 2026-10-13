@@ -106,10 +106,24 @@ impl ErrorSink {
         }
     }
     /// Record that spans carrying `file` lie in the project file `identity`.
-    /// `phase_parse` registers every file it parses, so a label pointing into a
-    /// sibling file is attributed to it however the error was pushed.
     pub fn register_file(&mut self, file: FileId, identity: PathBuf) {
         self.files.insert(file, identity);
+    }
+    /// Register every file of `parsed` that was read from disk, by the durable
+    /// `FileId` its absolute path interns to (`parse_cache::file_id_for`) — the
+    /// one map both an error's file ([`Self::extend_attributed_by_span`]) and
+    /// each label's (when the sink is drained) are read from, so the two never
+    /// disagree. `phase_parse` registers every file it parses; a
+    /// toolchain-injected unit, with no absolute path, is never registered.
+    pub fn register_parsed(&mut self, parsed: &[ParsedFile]) {
+        for pf in parsed {
+            if let Some(abs) = pf.abs_path() {
+                self.register_file(
+                    bynk_project::parse_cache::file_id_for(&abs),
+                    pf.identity_path(),
+                );
+            }
+        }
     }
     pub fn push_for(&mut self, file: Option<&Path>, error: CompileError) {
         let attributed = AttributedError::new(file.map(Path::to_path_buf), error);
@@ -134,24 +148,17 @@ impl ErrorSink {
     /// integration diagnostics were pushed unattributed, because threading a
     /// file through their many internal push sites was deferred, and rendered
     /// with no file, line or span. An error whose span matches no parsed file
-    /// stays unattributed, as before.
+    /// stays unattributed, as before. `parsed` is registered first
+    /// ([`Self::register_parsed`]), so a file `phase_parse` never saw is still
+    /// found.
     pub fn extend_attributed_by_span(
         &mut self,
         parsed: &[ParsedFile],
         errs: impl IntoIterator<Item = CompileError>,
     ) {
-        let by_id: HashMap<bynk_syntax::span::FileId, PathBuf> = parsed
-            .iter()
-            .filter_map(|pf| {
-                let abs = pf.abs_path()?;
-                Some((
-                    bynk_project::parse_cache::file_id_for(&abs),
-                    pf.identity_path(),
-                ))
-            })
-            .collect();
+        self.register_parsed(parsed);
         for e in errs {
-            let file = by_id.get(&e.span.file).cloned();
+            let file = self.files.get(&e.span.file).cloned();
             self.push_for(file.as_deref(), e);
         }
     }
@@ -521,14 +528,7 @@ pub fn phase_parse(
             snapshots,
         );
     }
-    for pf in &parsed {
-        if let Some(abs) = pf.abs_path() {
-            errors.register_file(
-                bynk_project::parse_cache::file_id_for(&abs),
-                pf.identity_path(),
-            );
-        }
-    }
+    errors.register_parsed(&parsed);
     if !errors.is_empty() && parsed.is_empty() {
         return Err(());
     }

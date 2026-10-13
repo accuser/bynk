@@ -887,4 +887,37 @@ mod tests {
         assert!(!rendered.contains("a.bynk"), "{rendered}");
         assert!(rendered.contains("Note: on a long line"), "{rendered}");
     }
+
+    /// A long primary line is cut (#1666) even when a label lies in another
+    /// file: the report heads with the primary span's column in the file, not
+    /// in the cut text, and the sibling's snippet keeps its own header.
+    #[test]
+    fn a_cut_primary_line_keeps_its_column_beside_a_label_in_another_file() {
+        let primary = format!(
+            "context app\n{} service api {{}}\n",
+            "x".repeat(2 * MAX_LINE)
+        );
+        let sibling = "context app\nservice api {}\n";
+        let at = |text: &str| text.find("api").unwrap();
+        let err = CompileError::new(
+            "bynk.resolve.duplicate_service",
+            Span::new(at(&primary), at(&primary) + 3),
+            "already declared",
+        )
+        .with_label(
+            Span::new(at(sibling), at(sibling) + 3),
+            "previously declared here",
+        );
+        let homes = [LabelHome::File {
+            filename: "a.bynk",
+            source: sibling,
+        }];
+        let rendered = render_error_in_plain(&err, &primary, "z.bynk", &homes);
+        let col = at(&primary) - primary.find('\n').unwrap();
+        let (z, a) = rendered.split_once("─[ a.bynk:2:9 ]").expect(&rendered);
+        assert!(z.contains(&format!("─[ z.bynk:2:{col} ]")), "{rendered}");
+        assert!(z.contains('…'), "the long primary line is cut: {rendered}");
+        assert!(!z.contains("previously declared here"), "{rendered}");
+        assert!(a.contains("previously declared here"), "{rendered}");
+    }
 }

@@ -4738,6 +4738,40 @@ mod tests {
         );
     }
 
+    /// A label with nowhere to point — in a toolchain-injected unit, or in a
+    /// file the round has no snapshot of — is a `note:` on the message, never
+    /// a `relatedInformation` entry at this document's own positions.
+    #[test]
+    fn a_label_with_no_file_to_point_at_becomes_a_note() {
+        let text = "context app\n";
+        let positions = crate::position::PositionMap::new(text);
+        let uri = Url::parse("file:///z.bynk").unwrap();
+        let d = bynk_ide::Diagnostic {
+            severity: bynk_syntax::Severity::Error,
+            error: bynk_syntax::CompileError::new(
+                "bynk.test",
+                bynk_syntax::span::Span::new(0, 7),
+                "msg",
+            )
+            .with_label(bynk_syntax::span::Span::new(0, 1), "in an injected unit")
+            .with_label(bynk_syntax::span::Span::new(0, 1), "in an unanalysed file"),
+            label_files: vec![
+                bynk_ide::LabelFile::Unavailable,
+                bynk_ide::LabelFile::Other(PathBuf::from("src/missing.bynk")),
+            ],
+        };
+        let diagnostic = make_diagnostic(&d, &positions, &uri, &ProjectFiles::new());
+        assert!(
+            diagnostic.related_information.is_none(),
+            "{:?}",
+            diagnostic.related_information
+        );
+        assert_eq!(
+            diagnostic.message,
+            "msg\n\nnote: in an injected unit\n\nnote: in an unanalysed file"
+        );
+    }
+
     /// Test helpers for the single-project behaviour tests (each builds exactly
     /// one project via `backend_at` or an equivalent insert). They read whatever
     /// the one entry's key is, so a test need not thread the canonical root.
