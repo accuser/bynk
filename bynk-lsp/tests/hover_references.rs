@@ -569,6 +569,9 @@ fn a_documented_variant_hovers_with_its_doc() {
 /// is the common case (a commons declares the asset, a context uses it).
 #[test]
 fn asset_reference_hovers_as_its_declaration() {
+    // Analysed from `src/`, so the asset files beside `bynk.toml` are not
+    // found (`bynk.asset.missing_file`); hover reads the declaration, never
+    // the file, so it answers all the same.
     let (r, rel, text, root) = analysed(
         "../bynkc/tests/fixtures/positive/1883_asset_workers/src",
         "board.bynk",
@@ -591,4 +594,40 @@ fn asset_reference_hovers_as_its_declaration() {
     let decl = hover_at(&r, &rel, &text, &root, at(&text, "asset style", "style"))
         .expect("hover on the declaration");
     assert_eq!(hover, decl);
+}
+
+/// #1883 — an asset reference is coloured as an asset: the `asset` token type
+/// (legend index 13), not a variable or a function.
+#[test]
+fn asset_reference_gets_the_asset_semantic_token() {
+    let (r, rel, text, _) = analysed(
+        "../bynkc/tests/fixtures/positive/1883_asset_workers/src",
+        "board.bynk",
+    );
+    let legend = bynk_lsp::index_queries::semantic_tokens_legend();
+    let asset = legend
+        .token_types
+        .iter()
+        .position(|t| t.as_str() == "asset")
+        .expect("`asset` is in the legend") as u32;
+    let tokens =
+        bynk_lsp::index_queries::semantic_tokens(&r.index, &[], &[], &[], &rel, &text, None);
+    // Decode the LSP delta encoding to absolute (line, column) positions.
+    let off = at(&text, "style.url", "style");
+    let want_line = text[..off].matches('\n').count() as u32;
+    let want_col = (off - text[..off].rfind('\n').map_or(0, |n| n + 1)) as u32;
+    let (mut line, mut col) = (0u32, 0u32);
+    let mut found = None;
+    for t in &tokens {
+        if t.delta_line > 0 {
+            line += t.delta_line;
+            col = t.delta_start;
+        } else {
+            col += t.delta_start;
+        }
+        if (line, col) == (want_line, want_col) {
+            found = Some((t.length, t.token_type));
+        }
+    }
+    assert_eq!(found, Some(("style".len() as u32, asset)));
 }
