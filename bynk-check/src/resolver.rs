@@ -202,6 +202,11 @@ pub struct ResolvedCommons {
     /// name is a value of type `Asset`. Empty unless set with
     /// [`ResolvedCommons::with_assets`].
     pub assets: HashMap<String, AssetDecl>,
+    /// #1925: the `uses`-imported values this unit's own declarations of
+    /// another kind shadow, by name. Empty unless set with
+    /// [`ResolvedCommons::with_shadowed_imports`]; read through
+    /// [`ResolvedCommons::shadowed_import_error`].
+    pub shadowed_imports: HashMap<String, ShadowedImport>,
 }
 
 /// Static information about the consuming context: the set of contexts it
@@ -400,6 +405,7 @@ impl ResolvedCommons {
             is_context,
             uses_commons_type_names,
             assets: HashMap::new(),
+            shadowed_imports: HashMap::new(),
         }
     }
 
@@ -411,6 +417,56 @@ impl ResolvedCommons {
         self.assets = assets;
         self
     }
+
+    /// #1925: the `uses`-imported values this unit's own declarations of
+    /// another kind shadow ([`crate::project_model::shadowed_imports`]).
+    pub fn with_shadowed_imports(mut self, shadowed: HashMap<String, ShadowedImport>) -> Self {
+        self.shadowed_imports = shadowed;
+        self
+    }
+
+    /// #1925: the conflict to report for a reference to `name` that the
+    /// unit's own declaration could not answer, when `name` is a shadowed
+    /// import — or `None`, and the caller reports its usual diagnostic.
+    pub fn shadowed_import_error(&self, name: &str, span: Span) -> Option<CompileError> {
+        self.shadowed_imports
+            .get(name)
+            .map(|s| shadowed_import_error(name, span, s))
+    }
+}
+
+/// #1925: a `uses`-imported function or asset that the unit hides behind its
+/// own declaration of the same name and another kind. A local declaration
+/// wins, as it does in the emitted module, so the import is out of scope; a
+/// reference the local declaration cannot answer (a call to a type, a bare
+/// service name) is reported as this conflict, not as an unknown name.
+#[derive(Debug, Clone)]
+pub struct ShadowedImport {
+    /// The commons that declares the import.
+    pub unit: String,
+    /// The import's kind: `"function"` or `"asset"`.
+    pub imported: &'static str,
+    /// The local declaration's kind, as `symbols::local_value_kind` names it.
+    pub local: &'static str,
+    /// The local declaration's name.
+    pub local_span: Span,
+}
+
+/// `bynk.uses.name_conflict` for a reference to `name`, a shadowed import.
+pub(crate) fn shadowed_import_error(name: &str, span: Span, s: &ShadowedImport) -> CompileError {
+    CompileError::new(
+        "bynk.uses.name_conflict",
+        span,
+        format!(
+            "`{name}` names this unit's {}, which hides the {} `{name}` from `{}`",
+            s.local, s.imported, s.unit
+        ),
+    )
+    .with_label(s.local_span, format!("{} declared here", s.local))
+    .with_note(format!(
+        "a unit's own declaration shadows a `uses`-imported one of the same name; rename one to use the {}",
+        s.imported
+    ))
 }
 
 /// Resolve names in a single-file (or already-merged) commons. Use this
@@ -648,7 +704,16 @@ pub fn resolve_recovering(commons: Commons) -> (ResolvedCommons, Vec<CompileErro
                 check_type_decl_refs(&e.as_type_decl(), &types, &mut sinks);
             }
             CommonsItem::Fn(f) => {
-                check_fn_refs(f, &types, &fns, &methods, &local_assets, &mut sinks);
+                check_fn_refs(
+                    f,
+                    &types,
+                    &fns,
+                    &methods,
+                    &local_assets,
+                    // A single file has no `uses` imports to shadow.
+                    &HashMap::new(),
+                    &mut sinks,
+                );
             }
             // v0.5 items' bodies are resolved via a separate context-level
             // pass; their signatures here (#1679).
@@ -693,6 +758,7 @@ pub fn resolve_recovering(commons: Commons) -> (ResolvedCommons, Vec<CompileErro
             uses_commons_type_names: HashSet::new(),
             event_type_names,
             assets: local_assets,
+            shadowed_imports: HashMap::new(),
         };
         (resolved, errors)
     }
@@ -848,6 +914,7 @@ pub fn resolve_file_record(
                     &resolved.fns,
                     &resolved.methods,
                     &resolved.assets,
+                    &resolved.shadowed_imports,
                     &mut sinks,
                 );
             }
@@ -1262,6 +1329,7 @@ fn check_fn_refs(
     fns: &HashMap<String, Arc<FnDecl>>,
     methods: &HashMap<String, MethodTable>,
     assets: &HashMap<String, AssetDecl>,
+    shadowed: &HashMap<String, ShadowedImport>,
     errors: &mut Sinks,
 ) {
     // Parameter types resolve.
@@ -1338,6 +1406,7 @@ fn check_fn_refs(
         fns,
         methods,
         assets,
+        shadowed,
         scopes: Vec::new(),
         errors,
     };
@@ -2154,6 +2223,8 @@ struct RefCheckCtx<'a, 'b> {
     methods: &'a HashMap<String, MethodTable>,
     /// #1883, slice 1a: the asset names in scope, values of type `Asset`.
     assets: &'a HashMap<String, AssetDecl>,
+    /// #1925: imports a local declaration of another kind hides.
+    shadowed: &'a HashMap<String, ShadowedImport>,
     scopes: Vec<HashMap<String, ()>>,
     errors: &'a mut Sinks<'b>,
 }
@@ -2339,6 +2410,12 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
                 // expression in resolver — the type checker will assign
                 // the correct sum type. Mark with no error.
                 let _ = sum_owner;
+            } else if let Some(s) = cx.shadowed.get(&id.name)
+                && !matches!(s.local, "function" | "asset")
+            {
+                // #1925: the local declaration (a type, event, service,
+                // agent or provider) is no value here, and it hides the import.
+                cx.errors.push(shadowed_import_error(&id.name, id.span, s));
             } else if cx.types.contains_key(&id.name) {
                 cx.errors.push(
                     CompileError::new(
@@ -2441,6 +2518,12 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
                                 name.name, name.name
                             ),
                         ));
+                    } else if let Some(s) = cx.shadowed.get(&name.name) {
+                        // #1925: no local function answers the call (one would
+                        // have matched above), and the local declaration of
+                        // another kind hides the import.
+                        cx.errors
+                            .push(shadowed_import_error(&name.name, name.span, s));
                     } else if cx.types.contains_key(&name.name) {
                         cx.errors.push(CompileError::new(
                             "bynk.resolve.type_as_function",

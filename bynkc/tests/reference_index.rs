@@ -18,23 +18,27 @@ fn smoke_root() -> PathBuf {
 }
 
 fn analyse(root: &Path) -> (ProjectIndex, HashMap<String, String>) {
-    let result = bynk_ide::diagnose_project(
-        root,
-        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
-            (root).to_path_buf(),
-        )),
-    );
-    for f in &result.files {
-        assert!(
-            f.diagnostics.is_empty(),
-            "fixture should be clean, got in {}: {:?}",
-            f.source_path.display(),
-            f.diagnostics
-                .iter()
-                .map(|d| d.error.category)
-                .collect::<Vec<_>>()
-        );
-    }
+    analyse_roots(&bynk_ide::AnalysisRoots::SingleTree(root.to_path_buf()))
+}
+
+fn analyse_roots(roots: &bynk_ide::AnalysisRoots) -> (ProjectIndex, HashMap<String, String>) {
+    analyse_roots_expecting(roots, &[])
+}
+
+/// [`analyse_roots`] for a project that reports exactly `expected` (by
+/// category, in order across files): the index is still built for a project
+/// with errors, as the editor sees one mid-edit.
+fn analyse_roots_expecting(
+    roots: &bynk_ide::AnalysisRoots,
+    expected: &[&str],
+) -> (ProjectIndex, HashMap<String, String>) {
+    let result = bynk_ide::diagnose_project_with(roots, &bynk_testkit::read_project_sources(roots));
+    let reported: Vec<&str> = result
+        .files
+        .iter()
+        .flat_map(|f| f.diagnostics.iter().map(|d| d.error.category))
+        .collect();
+    assert_eq!(reported, expected, "diagnostics reported by the fixture");
     let snapshots = result
         .files
         .iter()
@@ -248,5 +252,85 @@ fn smoke_existing_fixture_indexes_cleanly() {
         &snapshots,
         &key("commerce.payment", SymbolKind::Capability, "Logger"),
         &["commerce/payment.bynk"],
+    );
+}
+
+/// #1883: an asset is a symbol like a free function — its declaration is the
+/// def site, and each bare-name use is a ref, resolved through `uses` (so
+/// rename, references and go-to-definition reach it across files).
+#[test]
+fn asset_references_resolve_to_their_declaration() {
+    // Manifest-resolved roots, as the editor analyses a project: an asset
+    // names a file in the `assets/` folder beside `bynk.toml`, not in `src/`.
+    let (index, snapshots) = analyse_roots(&bynk_ide::AnalysisRoots::Project(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/positive/1883_asset_workers"),
+    ));
+
+    let style = key("compat.page", SymbolKind::Asset, "style");
+    assert_sites_spell(
+        &index,
+        &snapshots,
+        &style,
+        &["src/compat/page.bynk", "src/compat/board.bynk"],
+    );
+    assert_eq!(refs_in(&index, &style, "src/compat/board.bynk").len(), 1);
+
+    let palette = key("compat.theme", SymbolKind::Asset, "palette");
+    assert_sites_spell(
+        &index,
+        &snapshots,
+        &palette,
+        &["src/compat/theme.bynk", "src/compat/page.bynk"],
+    );
+}
+
+/// #1883 (review of #1924): an asset's def must not register as an *owner*.
+/// Owners are keyed by (unit, name) alone, so an asset named like a service
+/// in the same context would take over the service's owner entry, and every
+/// ref inside the service's handlers would be re-attributed to the asset's
+/// file — at offsets that belong to the service's.
+///
+/// Since #1925 the program is `bynk.resolve.name_conflict`, but the editor
+/// indexes it as typed, so the refs must still land in the right file.
+#[test]
+fn an_asset_named_like_a_service_does_not_steal_its_refs() {
+    let root =
+        std::env::temp_dir().join(format!("bynk-refindex-asset-owner-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let files = [
+        (
+            "bynk.toml",
+            "[project]\nname = \"owner\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "src/app/a_web.bynk",
+            "context app\n\nfn greet() -> String {\n  \"hi\"\n}\n\nservice api from http {\n  on GET(\"/\") () -> Effect[HttpResult[String]] by Visitor {\n    Ok(greet())\n  }\n}\n",
+        ),
+        (
+            "src/app/z_files.bynk",
+            "context app\n\nasset api = \"assets/api.json\"\n",
+        ),
+        ("assets/api.json", "{}"),
+    ];
+    for (rel, text) in files {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, text).unwrap();
+    }
+    let (index, snapshots) = analyse_roots_expecting(
+        &bynk_ide::AnalysisRoots::Project(root.clone()),
+        &["bynk.resolve.name_conflict"],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+
+    // `greet()` in the handler is a ref in the service's file, spelling `greet`.
+    let greet = key("app", SymbolKind::Fn, "greet");
+    assert_sites_spell(&index, &snapshots, &greet, &["src/app/a_web.bynk"]);
+    assert_eq!(refs_in(&index, &greet, "src/app/a_web.bynk").len(), 1);
+    // The asset is still a symbol in its own right.
+    assert!(
+        index
+            .symbols
+            .contains_key(&key("app", SymbolKind::Asset, "api"))
     );
 }

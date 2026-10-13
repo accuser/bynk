@@ -563,3 +563,89 @@ fn a_documented_variant_hovers_with_its_doc() {
         .expect("hover on the `Pass` declaration");
     assert!(pass.contains("Every canary check passed."), "{pass}");
 }
+
+/// #1883 — an asset reference hovers as its declaration: the declaration, where
+/// the platform serves the file, and its doc. Across a `uses` edge too, which
+/// is the common case (a commons declares the asset, a context uses it).
+#[test]
+fn asset_reference_hovers_as_its_declaration() {
+    // Analysed from `src/`, so the asset files beside `bynk.toml` are not
+    // found (`bynk.asset.missing_file`); hover reads the declaration, never
+    // the file, so it answers all the same.
+    let (r, rel, text, root) = analysed(
+        "../bynkc/tests/fixtures/positive/1883_asset_workers/src",
+        "board.bynk",
+    );
+    let hover = hover_at(&r, &rel, &text, &root, at(&text, "style.url", "style"))
+        .expect("hover on the `style` asset reference");
+    for want in [
+        "asset style = \"assets/board.css\"",
+        "Served at `/_assets/board.<hash>.css`",
+        "The board's stylesheet.",
+    ] {
+        assert!(hover.contains(want), "missing `{want}` in:\n{hover}");
+    }
+
+    // ADR 0190 D2: the declaration renders the same content.
+    let (r, rel, text, root) = analysed(
+        "../bynkc/tests/fixtures/positive/1883_asset_workers/src",
+        "page.bynk",
+    );
+    let decl = hover_at(&r, &rel, &text, &root, at(&text, "asset style", "style"))
+        .expect("hover on the declaration");
+    assert_eq!(hover, decl);
+}
+
+/// #1883 — an asset reference is coloured as an asset: the `asset` token type
+/// (legend index 13), not a variable or a function.
+#[test]
+fn asset_reference_gets_the_asset_semantic_token() {
+    let (r, rel, text, _) = analysed(
+        "../bynkc/tests/fixtures/positive/1883_asset_workers/src",
+        "board.bynk",
+    );
+    let legend = bynk_lsp::index_queries::semantic_tokens_legend();
+    let asset = legend
+        .token_types
+        .iter()
+        .position(|t| t.as_str() == "asset")
+        .expect("`asset` is in the legend") as u32;
+    let tokens =
+        bynk_lsp::index_queries::semantic_tokens(&r.index, &[], &[], &[], &rel, &text, None);
+    // Decode the LSP delta encoding to absolute (line, column) positions.
+    let off = at(&text, "style.url", "style");
+    let want_line = text[..off].matches('\n').count() as u32;
+    let want_col = (off - text[..off].rfind('\n').map_or(0, |n| n + 1)) as u32;
+    let (mut line, mut col) = (0u32, 0u32);
+    let mut found = Vec::new();
+    for t in &tokens {
+        if t.delta_line > 0 {
+            line += t.delta_line;
+            col = t.delta_start;
+        } else {
+            col += t.delta_start;
+        }
+        if (line, col) == (want_line, want_col) {
+            found.push((t.length, t.token_type));
+        }
+    }
+    assert_eq!(found, vec![("style".len() as u32, asset)]);
+}
+
+/// #1883 — an asset with an `at` path hovers as served at that fixed path,
+/// never at a content-hashed `/_assets/` one (review of #1924).
+#[test]
+fn fixed_path_asset_hovers_its_at_path() {
+    let (r, rel, text, root) = analysed(
+        "../bynkc/tests/fixtures/positive/1883_asset_fixed_paths_workers/src",
+        "board.bynk",
+    );
+    let hover = hover_at(&r, &rel, &text, &root, at(&text, "favicon.url", "favicon"))
+        .expect("hover on the `favicon` asset reference");
+    assert!(
+        hover.contains("asset favicon = \"assets/favicon.ico\" at \"/favicon.ico\""),
+        "{hover}"
+    );
+    assert!(hover.contains("Served at `/favicon.ico`."), "{hover}");
+    assert!(!hover.contains("/_assets/"), "{hover}");
+}

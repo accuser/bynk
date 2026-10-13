@@ -1,0 +1,13 @@
+context demo
+
+-- #1925: a service and a function are one scope of the emitted module.
+
+fn probe() -> Int {
+  1
+}
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(probe())
+  }
+}

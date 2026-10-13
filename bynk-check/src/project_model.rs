@@ -47,7 +47,7 @@ use crate::symbols::{
     uses_span_of,
 };
 use bynk_project::{
-    AttributedError, ParsedFile, UnitKind, check_directory_kind_consistency,
+    AttributedError, LabelFile, ParsedFile, UnitKind, check_directory_kind_consistency,
     check_directory_name_consistency, check_file_directory_conflicts, check_group_kind_consistency,
     check_group_module_docs, check_path_name_alignment, detect_consumes_cycles,
     discover_bynk_files, is_unpinned_range, normalize_rel, parse_sources, parse_sources_recovering,
@@ -65,7 +65,7 @@ pub use bynk_syntax::ast::{FnDecl, TypeDecl, Visibility};
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
 use bynk_syntax::parser;
-use bynk_syntax::span::Span;
+use bynk_syntax::span::{FileId, Span};
 
 /// Collection-point error sink (ADR 0052). Helpers keep their plain
 /// `&mut Vec<CompileError>` signatures; call sites attribute via
@@ -85,6 +85,10 @@ pub struct ErrorSink {
     /// gates — stay errors-only, while every warning source (commons-fn checks,
     /// service/agent handler validation, parser) is captured uniformly.
     warnings: Vec<AttributedError>,
+    /// The identity path of every parsed project file, by the `FileId` its
+    /// spans carry ([`Self::register_file`]). Read when the sink is drained,
+    /// to say which file each secondary label lies in (`label_files`).
+    files: HashMap<FileId, PathBuf>,
 }
 
 impl Default for ErrorSink {
@@ -98,13 +102,31 @@ impl ErrorSink {
         Self {
             entries: Vec::new(),
             warnings: Vec::new(),
+            files: HashMap::new(),
+        }
+    }
+    /// Record that spans carrying `file` lie in the project file `identity`.
+    pub fn register_file(&mut self, file: FileId, identity: PathBuf) {
+        self.files.insert(file, identity);
+    }
+    /// Register every file of `parsed` that was read from disk, by the durable
+    /// `FileId` its absolute path interns to (`parse_cache::file_id_for`) — the
+    /// one map both an error's file ([`Self::extend_attributed_by_span`]) and
+    /// each label's (when the sink is drained) are read from, so the two never
+    /// disagree. `phase_parse` registers every file it parses; a
+    /// toolchain-injected unit, with no absolute path, is never registered.
+    pub fn register_parsed(&mut self, parsed: &[ParsedFile]) {
+        for pf in parsed {
+            if let Some(abs) = pf.abs_path() {
+                self.register_file(
+                    bynk_project::parse_cache::file_id_for(&abs),
+                    pf.identity_path(),
+                );
+            }
         }
     }
     pub fn push_for(&mut self, file: Option<&Path>, error: CompileError) {
-        let attributed = AttributedError {
-            source_path: file.map(Path::to_path_buf),
-            error,
-        };
+        let attributed = AttributedError::new(file.map(Path::to_path_buf), error);
         match bynk_syntax::Severity::for_error(&attributed.error) {
             bynk_syntax::Severity::Warning => self.warnings.push(attributed),
             bynk_syntax::Severity::Error => self.entries.push(attributed),
@@ -126,24 +148,17 @@ impl ErrorSink {
     /// integration diagnostics were pushed unattributed, because threading a
     /// file through their many internal push sites was deferred, and rendered
     /// with no file, line or span. An error whose span matches no parsed file
-    /// stays unattributed, as before.
+    /// stays unattributed, as before. `parsed` is registered first
+    /// ([`Self::register_parsed`]), so a file `phase_parse` never saw is still
+    /// found.
     pub fn extend_attributed_by_span(
         &mut self,
         parsed: &[ParsedFile],
         errs: impl IntoIterator<Item = CompileError>,
     ) {
-        let by_id: HashMap<bynk_syntax::span::FileId, PathBuf> = parsed
-            .iter()
-            .filter_map(|pf| {
-                let abs = pf.abs_path()?;
-                Some((
-                    bynk_project::parse_cache::file_id_for(&abs),
-                    pf.identity_path(),
-                ))
-            })
-            .collect();
+        self.register_parsed(parsed);
         for e in errs {
-            let file = by_id.get(&e.span.file).cloned();
+            let file = self.files.get(&e.span.file).cloned();
             self.push_for(file.as_deref(), e);
         }
     }
@@ -154,18 +169,50 @@ impl ErrorSink {
     }
     /// Consume the sink, yielding the non-failing **warnings** (ADR 0117).
     pub fn into_warnings(self) -> Vec<AttributedError> {
-        self.warnings
+        let mut warnings = self.warnings;
+        attribute_labels(&self.files, &mut warnings);
+        warnings
     }
     /// Consume the sink, yielding errors then warnings — the full diagnostic
     /// list the LSP and a failed build render together.
     pub fn into_all(self) -> Vec<AttributedError> {
         let mut all = self.entries;
         all.extend(self.warnings);
+        attribute_labels(&self.files, &mut all);
         all
     }
     /// The count of **error-severity** diagnostics.
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+}
+
+/// Fill in each error's `label_files` from the `FileId` its labels' spans
+/// carry, against the files `phase_parse` registered. A label is in the
+/// error's own file when its span has the primary span's `FileId`, carries no
+/// file identity (`FileId::UNKNOWN`, a span built without one), or names the
+/// error's own `source_path`. One naming another registered file is
+/// [`LabelFile::Other`]; one naming a file never registered (a toolchain-injected
+/// unit) is [`LabelFile::Unavailable`], so it is never drawn against the
+/// primary file's text.
+fn attribute_labels(files: &HashMap<FileId, PathBuf>, errors: &mut [AttributedError]) {
+    for ae in errors {
+        let primary = ae.error.span.file;
+        ae.label_files = ae
+            .error
+            .labels
+            .iter()
+            .map(|(span, _)| {
+                if span.file == primary || span.file == FileId::UNKNOWN {
+                    return LabelFile::Primary;
+                }
+                match files.get(&span.file) {
+                    Some(path) if Some(path) == ae.source_path.as_ref() => LabelFile::Primary,
+                    Some(path) => LabelFile::Other(path.clone()),
+                    None => LabelFile::Unavailable,
+                }
+            })
+            .collect();
     }
 }
 
@@ -481,6 +528,7 @@ pub fn phase_parse(
             snapshots,
         );
     }
+    errors.register_parsed(&parsed);
     if !errors.is_empty() && parsed.is_empty() {
         return Err(());
     }
@@ -1592,7 +1640,9 @@ pub fn phase_uses_name_conflicts(
                 }
             }
             for fn_name in used.fns.keys() {
-                if local.types.contains_key(fn_name) || local.fns.contains_key(fn_name) {
+                // #1925: any local value hides the import (`shadowed_imports`),
+                // so two used commons declaring it leave nothing ambiguous.
+                if crate::symbols::local_value_kind(local, fn_name).is_some() {
                     continue;
                 }
                 if let Some(prev) = imported.get(fn_name) {
@@ -1618,10 +1668,8 @@ pub fn phase_uses_name_conflicts(
             // #1883, slice 1a ([DECISION G]): a commons' assets come in
             // through `uses` like its functions, and share their namespace.
             for asset_name in used.assets.keys() {
-                if local.types.contains_key(asset_name)
-                    || local.fns.contains_key(asset_name)
-                    || local.assets.contains_key(asset_name)
-                {
+                // #1925: any local value hides the import, as above.
+                if crate::symbols::local_value_kind(local, asset_name).is_some() {
                     continue;
                 }
                 if let Some(prev) = imported.get(asset_name) {
@@ -4040,7 +4088,11 @@ pub fn compose_unit_symbols(
             }
         }
         for (fn_name, decl) in &used.fns {
-            if !combined_fns.contains_key(fn_name) {
+            // #1925: a local declaration of any kind shadows the import, as
+            // it does in the emitted module ([`shadowed_imports`]).
+            if !combined_fns.contains_key(fn_name)
+                && crate::symbols::local_value_kind(local_table, fn_name).is_none()
+            {
                 combined_fns.insert(fn_name.clone(), decl.clone());
                 imported_from.insert(fn_name.clone(), t.clone());
                 imported_from_kind.insert(fn_name.clone(), UnitKind::Commons);
@@ -4049,9 +4101,9 @@ pub fn compose_unit_symbols(
         // #1883, slice 1b: a used commons' assets are visible here
         // (`assets::compose_unit_assets`); record where each came from, so
         // the emitter imports its constant from the declaring module. A
-        // local asset, function or type of the same name wins.
+        // local declaration of the same name, of any kind, wins (#1925).
         for asset_name in used.assets.keys() {
-            if !local_table.assets.contains_key(asset_name)
+            if crate::symbols::local_value_kind(local_table, asset_name).is_none()
                 && !combined_fns.contains_key(asset_name)
                 && !imported_from.contains_key(asset_name)
             {
@@ -4083,6 +4135,63 @@ pub fn compose_unit_symbols(
         imported_from,
         imported_from_kind,
     )
+}
+
+/// #1925: the `uses`-imported functions and assets that unit `name`'s own
+/// declarations of another kind shadow, by name. A local declaration wins, as
+/// in the emitted module, so both compositions leave these out
+/// ([`compose_unit_symbols`], [`crate::assets::compose_unit_assets`]); the
+/// resolver and checker report a reference the local declaration cannot answer
+/// as `bynk.uses.name_conflict` ([`ResolvedCommons::shadowed_import_error`]).
+/// A same-kind shadow (a local function over an imported one) is ordinary
+/// shadowing and is not listed. The first `uses` target to declare a name
+/// decides, as in the compositions.
+///
+/// [`ResolvedCommons::shadowed_import_error`]: crate::resolver::ResolvedCommons::shadowed_import_error
+pub fn shadowed_imports(
+    name: &str,
+    unit_info: &BTreeMap<String, UnitInfo>,
+) -> HashMap<String, crate::resolver::ShadowedImport> {
+    let Some(info) = unit_info.get(name) else {
+        return HashMap::new();
+    };
+    shadowed_imports_in(
+        &info.table,
+        info.uses
+            .iter()
+            .filter_map(|t| unit_info.get(t).map(|u| (t, &u.table))),
+    )
+}
+
+/// [`shadowed_imports`] over a unit's own table and its `uses` targets'
+/// tables, in `uses` order — for a caller holding tables rather than
+/// [`UnitInfo`]s (a suite's view of its target, `crate::test_suites`).
+pub fn shadowed_imports_in<'a>(
+    local: &UnitTable,
+    uses: impl Iterator<Item = (&'a String, &'a UnitTable)>,
+) -> HashMap<String, crate::resolver::ShadowedImport> {
+    let mut out = HashMap::new();
+    for (t, used) in uses {
+        let imports = used
+            .fns
+            .keys()
+            .map(|n| (n, "function"))
+            .chain(used.assets.keys().map(|n| (n, "asset")));
+        for (n, imported) in imports {
+            if let Some((kind, local_span)) = crate::symbols::local_value_kind(local, n)
+                && kind != imported
+            {
+                out.entry(n.clone())
+                    .or_insert_with(|| crate::resolver::ShadowedImport {
+                        unit: t.clone(),
+                        imported,
+                        local: kind,
+                        local_span,
+                    });
+            }
+        }
+    }
+    out
 }
 
 /// Phase 5c: detect `consumes` cycles. #696: record each `consumes`-clause
@@ -4358,5 +4467,239 @@ mod view_closure_tests {
             reach.hidden
         );
         assert!(types.contains_key("Repo"));
+    }
+}
+
+#[cfg(test)]
+mod label_attribution_tests {
+    use super::*;
+
+    /// Each label is attributed by the `FileId` its span carries: the error's
+    /// own file when it shares the primary span's id, has none, or names the
+    /// error's own path; another registered file by its path; and an
+    /// unregistered file (a toolchain-injected unit) as unavailable.
+    #[test]
+    fn labels_are_attributed_to_the_file_their_span_is_in() {
+        let (own, sibling, injected) = (FileId(10), FileId(11), FileId(12));
+        let mut sink = ErrorSink::new();
+        sink.register_file(own, PathBuf::from("src/app/z_more.bynk"));
+        sink.register_file(sibling, PathBuf::from("src/app/a_web.bynk"));
+        let error = CompileError::new(
+            "bynk.resolve.duplicate_service",
+            Span::new_in(own, 24, 27),
+            "service `api` is already declared",
+        )
+        .with_label(Span::new_in(own, 0, 1), "same id")
+        .with_label(Span::new(0, 1), "no id")
+        .with_label(Span::new_in(sibling, 21, 24), "sibling")
+        .with_label(Span::new_in(injected, 0, 1), "injected");
+        sink.push_for(Some(Path::new("src/app/z_more.bynk")), error);
+        let all = sink.into_all();
+        assert_eq!(
+            all[0].label_files,
+            vec![
+                LabelFile::Primary,
+                LabelFile::Primary,
+                LabelFile::Other(PathBuf::from("src/app/a_web.bynk")),
+                LabelFile::Unavailable,
+            ]
+        );
+    }
+
+    /// With no file identity on the primary span, a label is still the
+    /// error's own file when its id names the error's own path.
+    #[test]
+    fn a_label_naming_the_errors_own_path_is_primary() {
+        let own = FileId(20);
+        let mut sink = ErrorSink::new();
+        sink.register_file(own, PathBuf::from("src/a.bynk"));
+        let error = CompileError::new("bynk.test", Span::default(), "msg")
+            .with_label(Span::new_in(own, 0, 1), "here");
+        sink.push_for(Some(Path::new("src/a.bynk")), error);
+        assert_eq!(sink.into_all()[0].label_files, vec![LabelFile::Primary]);
+    }
+}
+
+/// #1925: a unit's own declaration of another kind shadowing a `uses`-imported
+/// function or asset. A local declaration wins, as in the emitted module; a
+/// reference it cannot answer is `bynk.uses.name_conflict`, in a function body
+/// (the resolver's walk) and a handler body (the checker's) alike.
+#[cfg(test)]
+mod shadowed_import_tests {
+    use crate::testkit::analyse;
+
+    /// Each imported kind: its declaration in `lib.util`, and an expression
+    /// using it with the type that expression has.
+    const IMPORTED: [(&str, &str, &str, &str); 2] = [
+        (
+            "function",
+            "fn thing() -> Int {\n  1\n}\n",
+            "thing()",
+            "Int",
+        ),
+        (
+            "asset",
+            "asset thing = \"assets/x.json\"\n",
+            "thing.url",
+            "String",
+        ),
+    ];
+
+    const LOCAL: [(&str, &str); 7] = [
+        ("function", "fn thing() -> Int {\n  2\n}\n"),
+        ("asset", "asset thing = \"assets/x.json\"\n"),
+        ("type", "type thing = { n: Int }\n"),
+        ("event", "event thing = { n: Int }\n"),
+        (
+            "service",
+            "service thing {\n  on call() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n",
+        ),
+        (
+            "agent",
+            "agent thing {\n  key id: String\n\n  store hits: Cell[Int]\n\n  on call ping() -> Effect[Int] {\n    1\n  }\n}\n",
+        ),
+        (
+            "provider",
+            "capability ProbeCap {\n  fn go() -> Effect[Int]\n}\n\nprovides ProbeCap = thing {\n  fn go() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n",
+        ),
+    ];
+
+    #[derive(Clone, Copy, Debug)]
+    enum Use {
+        None,
+        FnBody,
+        HandlerBody,
+    }
+
+    #[test]
+    fn every_local_kind_against_every_import_and_use_site() {
+        for (imported, idecl, expr, ty) in IMPORTED {
+            for (local, ldecl) in LOCAL {
+                for at in [Use::None, Use::FnBody, Use::HandlerBody] {
+                    let using = match at {
+                        Use::None => String::new(),
+                        Use::FnBody => format!("fn useIt() -> {ty} {{\n  {expr}\n}}\n"),
+                        Use::HandlerBody => format!(
+                            "service user {{\n  on call() -> Effect[{ty}] {{\n    Effect.pure({expr})\n  }}\n}}\n"
+                        ),
+                    };
+                    let lib = format!("commons lib.util\n\n{idecl}");
+                    let app = format!("context app\n\nuses lib.util\n\n{ldecl}\n{using}");
+                    let r = analyse(&[
+                        ("lib/util.bynk", &lib),
+                        ("app/main.bynk", &app),
+                        ("assets/x.json", "{}"),
+                    ]);
+                    let cats = r.error_categories();
+                    let case = format!("local {local} over imported {imported}, used {at:?}");
+                    let want: Vec<&str> = match at {
+                        // An unused shadow, and a same-kind one, are legal.
+                        Use::None => vec![],
+                        _ if local == imported => vec![],
+                        // In a function body the resolver reads `thing.url`
+                        // on a type name as a static member of the type, and
+                        // rejects it under that code.
+                        Use::FnBody if imported == "asset" && matches!(local, "type" | "event") => {
+                            vec!["bynk.resolve.unknown_static_member"]
+                        }
+                        // A local agent answers a call in a handler (agent
+                        // construction), wrongly here: one key, not none.
+                        // Its diagnostic notes the hidden import.
+                        Use::HandlerBody if imported == "function" && local == "agent" => {
+                            vec!["bynk.agent.construction_arity"]
+                        }
+                        _ => vec!["bynk.uses.name_conflict"],
+                    };
+                    assert_eq!(cats, want, "{case}");
+                }
+            }
+        }
+    }
+
+    /// A local declaration that can answer the reference does: a call to a
+    /// local agent is the agent, not the hidden import (before #1925 the
+    /// checker preferred the imported function, against the emitted module).
+    #[test]
+    fn a_local_agent_answers_its_own_call() {
+        let r = analyse(&[
+            (
+                "lib/util.bynk",
+                "commons lib.util\n\nfn thing() -> Int {\n  1\n}\n",
+            ),
+            (
+                "app/main.bynk",
+                "context app\n\nuses lib.util\n\nagent thing {\n  key id: String\n\n  store hits: Cell[Int]\n\n  on call ping() -> Effect[Int] {\n    1\n  }\n}\n\nservice web {\n  on call() -> Effect[Int] {\n    let n <- thing(\"k\").ping()\n    Effect.pure(n)\n  }\n}\n",
+            ),
+        ]);
+        r.assert_clean();
+    }
+
+    /// Review of #1926: two used commons declaring one name are no ambiguity
+    /// when the unit hides both behind its own declaration — an unused
+    /// shadow stays legal (`phase_uses_name_conflicts` shares the predicate).
+    #[test]
+    fn a_local_service_hiding_two_used_imports_is_no_ambiguity() {
+        let r = analyse(&[
+            (
+                "lib/a.bynk",
+                "commons lib.a\n\nfn thing() -> Int {\n  1\n}\n",
+            ),
+            (
+                "lib/b.bynk",
+                "commons lib.b\n\nfn thing() -> Int {\n  2\n}\n",
+            ),
+            (
+                "app/main.bynk",
+                "context app\n\nuses lib.a\nuses lib.b\n\nservice thing {\n  on call() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n",
+            ),
+        ]);
+        r.assert_clean();
+    }
+
+    /// Review of #1926: a bare reference to a local function that hides an
+    /// imported asset means the function; only a field read (`thing.url`)
+    /// means the hidden asset.
+    #[test]
+    fn a_bare_local_function_keeps_its_own_advice() {
+        let lib = (
+            "lib/util.bynk",
+            "commons lib.util\n\nasset thing = \"assets/x.json\"\n",
+        );
+        let file = |body: &str| {
+            format!(
+                "context app\n\nuses lib.util\n\nfn thing() -> Int {{\n  1\n}}\n\nfn useIt() -> Int {{\n  {body}\n}}\n"
+            )
+        };
+        let bare = file("thing + 1");
+        let r = analyse(&[lib, ("app/main.bynk", &bare), ("assets/x.json", "{}")]);
+        assert_eq!(r.error_categories(), vec!["bynk.resolve.fn_without_call"]);
+        let read = file("let u = thing.url\n  1");
+        let r = analyse(&[lib, ("app/main.bynk", &read), ("assets/x.json", "{}")]);
+        assert_eq!(r.error_categories(), vec!["bynk.uses.name_conflict"]);
+    }
+
+    /// The diagnostic names both declarations and where the local one is.
+    #[test]
+    fn the_conflict_names_both_declarations() {
+        let r = analyse(&[
+            (
+                "lib/util.bynk",
+                "commons lib.util\n\nfn thing() -> Int {\n  1\n}\n",
+            ),
+            (
+                "app/main.bynk",
+                "context app\n\nuses lib.util\n\ntype thing = { n: Int }\n\nfn useIt() -> Int {\n  thing()\n}\n",
+            ),
+        ]);
+        let e = r
+            .analysis
+            .errors
+            .iter()
+            .find(|e| e.error.category == "bynk.uses.name_conflict")
+            .expect("a conflict");
+        assert_eq!(
+            e.error.message,
+            "`thing` names this unit's type, which hides the function `thing` from `lib.util`"
+        );
     }
 }

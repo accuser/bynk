@@ -1,0 +1,2 @@
+bynk.resolve.name_conflict
+provider `probe` conflicts with a service of the same name

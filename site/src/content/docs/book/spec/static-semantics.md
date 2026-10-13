@@ -39,6 +39,13 @@ locals-in-scope tooling (ADR 0064) resolves as "latest in-scope def wins" —
 with each occurrence free to change type. The emitter gives a re-bound name
 its own emitted identifier so each `let` still lowers to a distinct binding.
 
+A unit's top-level declarations share one namespace, except capabilities and
+actors, which each keep their own. A function, an asset, a type or event, a
+service, an agent and a provider with a body (by its implementation name,
+`provides Cap = Name`) MUST NOT share a name, across all of the unit's files
+(`bynk.resolve.name_conflict`; two types, or a type and an event, are
+`bynk.resolve.duplicate_type`). They are all one scope of the emitted module.
+
 A bare reference to a **named function** is a value only where a function
 type is expected (v0.20a); elsewhere it MUST be called
 (`bynk.resolve.fn_without_call`). A call on an in-scope **value** is legal
@@ -80,6 +87,14 @@ A value moved from one such position directly into another that names the same
 types is not a crossing. If `t.app` declares `type Repo = Int` beside `uses
 t.core` and `uses t.model`, then `Run { repo: first(r) }` is legal in `t.app`,
 and `Run { repo: 42 }` and `r.repo + 1` are not.
+
+A unit's own declaration also shadows a function or asset of the same name
+from a commons it `uses`, whatever the local declaration's kind, as in the
+emitted module: the import is not in scope. Where the local declaration cannot
+answer a reference (a call to a type or service, a bare event name, an asset
+used as a function), the reference is `bynk.uses.name_conflict`, naming both
+declarations. A local declaration that can answer one does: a call to a local
+agent constructs the agent. An unused shadow is legal.
 
 ### §5.1a Module documentation {#module-docs}
 
@@ -1710,8 +1725,9 @@ declaring context say.
   check) skips this; a build with none treats the folder as empty. Only the
   files a declaration names are read; other files in the folder are not.
 - Its name MUST NOT be declared twice in one unit (`bynk.asset.duplicate`), and
-  MUST NOT equal the name of a free function or type in that unit
-  (`bynk.resolve.name_conflict`).
+  MUST NOT equal the name of another declaration in the unit's namespace
+  ([§5.1](#51-name-resolution--visibility)): a function, type, event, service,
+  agent or provider (`bynk.resolve.name_conflict`).
 - A unit sees its own assets and those of each commons it `uses`, one level, as
   with functions; a local declaration wins. Two used commons that declare the
   same name are `bynk.uses.name_conflict`.
@@ -1778,7 +1794,10 @@ unaffected.
 target's own and its `uses`d commons' (content-hashed and fixed-path), plus the
 content-hashed assets of the contexts it consumes. A consumed context's
 fixed-path assets, and those of a `system` suite's own `uses` commons, are not
-nameable. `svc.GET(a)`, for
+nameable, nor is an asset the target hides behind its own declaration of the
+same name ([§5.1](#51-name-resolution--visibility)); naming it in a unit suite
+is `bynk.uses.name_conflict`, as in the target. Its file still ships, since the
+commons that declares it may use it. `svc.GET(a)`, for
 an `Asset` `a` and any `from http` service `svc` of the target (any other
 service is `bynk.test.service_bad_address`), fetches `a` from the asset tier
 rather than a handler: it yields `Raw(body, contentType)` when the target's

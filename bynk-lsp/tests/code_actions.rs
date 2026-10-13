@@ -296,6 +296,32 @@ fn auto_uses_brings_a_commons_type_into_scope() {
 }
 
 #[test]
+fn auto_uses_brings_a_commons_asset_into_scope() {
+    // #1883: an asset is a commons value like a free fn — naming one without
+    // its `uses` offers the clause that brings it into scope.
+    let brand = canon("commons shared.brand\n\nasset logo = \"assets/logo.svg\"\n");
+    let use_src = canon("commons app.use\n\nfn logoUrl() -> String {\n  logo.url\n}\n");
+    let root = setup_project(
+        "autousesasset",
+        &[
+            ("shared/brand.bynk", brand.as_str()),
+            ("app/use.bynk", use_src.as_str()),
+            ("assets/logo.svg", "<svg/>"),
+        ],
+    );
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
+    let (text, actions) =
+        header_actions_for(&result, "app/use.bynk", "bynk.resolve.unknown_name", &root);
+    assert_eq!(actions.len(), 1, "one candidate commons → one `uses` fix");
+    let (title, edits) = action_parts(&actions[0]);
+    assert_eq!(title, "add `uses shared.brand`");
+    let fixed = apply_text_edits(&text, &edits);
+    assert_project_clean(&root, "app/use.bynk", &fixed);
+}
+
+#[test]
 fn auto_uses_offers_one_action_per_ambiguous_candidate() {
     // `Widget` is declared in two commons — DECISION A: one action each, no guess.
     let root = setup_project(

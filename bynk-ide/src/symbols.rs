@@ -919,6 +919,8 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
         // the same top-level, plain-name convention as Capability/Service/
         // Agent above.
         CommonsItem::Messages(m) if m.tag == name => Some(describe_messages(m)),
+        // #1883: an asset's hover and docs.
+        CommonsItem::Asset(a) if a.name.name == name => Some(describe_asset(a)),
         // #972 (Events slice 3a): an event, keyed by its plain name — the same
         // top-level convention as the arms above. Reuses `describe_type` via
         // the synthetic `TypeDecl` `as_type_decl` already builds for every
@@ -1491,8 +1493,22 @@ pub(crate) fn describe_asset(a: &AssetDecl) -> String {
         a.at.as_ref()
             .map(|(p, _)| format!(" at \"{}\"", bynk_fmt::escape_string(p)))
             .unwrap_or_default();
+    // #1883: where it is served. The editor lists the `assets/` folder but
+    // never reads its bytes, so a content-hashed URL shows its shape with
+    // `<hash>` in place of the content hash — from the same function the
+    // build uses, so the two cannot drift.
+    let served = match &a.at {
+        Some((p, _)) => format!("Served at `{p}`."),
+        None => format!(
+            "Served at `{}` (content-hashed, cached as immutable).",
+            bynk_check::assets::served_path_with_hash(
+                &bynk_project::assets::normalise_asset_path(&a.path),
+                "<hash>"
+            )
+        ),
+    };
     let mut out = format!(
-        "```bynk\nasset {} = \"{}\"{at}\n```\n\nPublic: served by the platform, never by the Worker.\n",
+        "```bynk\nasset {} = \"{}\"{at}\n```\n\n{served} Public: served by the platform, never by the Worker.\n",
         a.name.name,
         bynk_fmt::escape_string(&a.path)
     );

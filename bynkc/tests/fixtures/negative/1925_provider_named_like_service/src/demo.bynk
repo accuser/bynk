@@ -1,0 +1,20 @@
+context demo
+
+-- #1925: a bodied provider emits a class under its name, in the same scope
+-- as the context's services.
+
+capability Clockish {
+  fn now() -> Effect[Int]
+}
+
+provides Clockish = probe {
+  fn now() -> Effect[Int] {
+    Effect.pure(0)
+  }
+}
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

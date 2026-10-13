@@ -720,6 +720,9 @@ pub struct TypedCommons {
     /// [`ResolvedCommons::assets`] so a per-handler check built from this
     /// program (`context_checks`) still sees them.
     pub assets: HashMap<String, AssetDecl>,
+    /// #1925: the imports this unit's own declarations shadow, carried from
+    /// [`ResolvedCommons::shadowed_imports`] for the same per-handler checks.
+    pub shadowed_imports: HashMap<String, crate::resolver::ShadowedImport>,
 }
 
 impl TypedCommons {
@@ -753,6 +756,7 @@ impl TypedCommons {
             ty_intern: Arc::new(Types::new()),
             actor_bindings: HashMap::new(),
             assets: HashMap::new(),
+            shadowed_imports: HashMap::new(),
         }
     }
 
@@ -1001,6 +1005,7 @@ pub fn check_record_in(
                 ty_intern: Arc::clone(&ty_intern),
                 actor_bindings: HashMap::new(),
                 assets: input.assets,
+                shadowed_imports: input.shadowed_imports,
             }),
             ty_intern,
             typed_despite_errors: None,
@@ -1023,6 +1028,7 @@ pub fn check_record_in(
                 ty_intern: Arc::clone(&ty_intern),
                 actor_bindings: HashMap::new(),
                 assets: input.assets,
+                shadowed_imports: input.shadowed_imports,
             }),
             ty_intern,
         }

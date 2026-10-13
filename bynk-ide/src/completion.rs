@@ -70,6 +70,9 @@ pub enum CompletionKind {
     /// A free function in scope at expression position — the current unit's own
     /// top-level `fn`s and the `uses`-imported stdlib/project combinators.
     Function,
+    /// A named constant value at expression position — an `asset` (#1883),
+    /// in scope by the same rule as a free function.
+    Constant,
 }
 
 pub struct Completion {
@@ -1323,7 +1326,8 @@ fn expression_candidates(
     // `Type.` member context (slice 1) takes over once the user types the dot.
     out.extend(type_candidates(doc_text, files));
     // In-scope free functions — the current unit's own `fn`s and the combinators
-    // of every `uses`-imported module (project + stdlib) — ADR 0093 D3 / G5.
+    // of every `uses`-imported module (project + stdlib) — ADR 0093 D3 / G5 —
+    // plus their assets (#1883), in scope by the same rule.
     out.extend(free_function_candidates(doc_text, files));
     out
 }
@@ -1364,7 +1368,9 @@ fn free_fn_signature(name: &str, f: &bynk_syntax::ast::FnDecl) -> String {
 /// Free-function candidates at expression position: the current unit's own
 /// top-level `fn`s plus the free `fn`s of every `uses`-imported module (project
 /// commons and the embedded stdlib). Gated on the `uses` set so a combinator is
-/// offered only where it is actually in scope (ADR 0093 D3 / G5).
+/// offered only where it is actually in scope (ADR 0093 D3 / G5). The same
+/// units' `asset` declarations (#1883) ride the same pass and the same gate —
+/// an asset name resolves exactly where a free function's would.
 fn free_function_candidates(
     doc_text: &str,
     files: Option<&HashMap<PathBuf, String>>,
@@ -1373,10 +1379,11 @@ fn free_function_candidates(
         return Vec::new();
     };
     // One parse pass: collect each unit's name, its free `fn`s (name + signature),
-    // and its `uses` targets.
+    // its assets (name + declaration), and its `uses` targets.
     struct UnitFns {
         name: String,
         fns: Vec<(String, String)>,
+        assets: Vec<(String, String, Option<String>)>,
         uses: Vec<String>,
     }
     let mut units: Vec<UnitFns> = Vec::new();
@@ -1392,9 +1399,28 @@ fn free_function_candidates(
                 _ => None,
             })
             .collect();
+        let assets = items
+            .iter()
+            .filter_map(|it| match it {
+                CommonsItem::Asset(a) => Some((
+                    a.name.name.clone(),
+                    format!(
+                        "asset {} = \"{}\"{}",
+                        a.name.name,
+                        bynk_fmt::escape_string(&a.path),
+                        a.at.as_ref()
+                            .map(|(p, _)| format!(" at \"{}\"", bynk_fmt::escape_string(p)))
+                            .unwrap_or_default()
+                    ),
+                    a.documentation.as_deref().map(str::to_string),
+                )),
+                _ => None,
+            })
+            .collect();
         units.push(UnitFns {
             name: unit.name().joined(),
             fns,
+            assets,
             uses: uses.iter().map(|u| u.target.joined()).collect(),
         });
     });
@@ -1422,6 +1448,18 @@ fn free_function_candidates(
                     CompletionKind::Function,
                     Some(format!("{sig} — `{origin}`")),
                 ));
+            }
+        }
+        for (name, decl, doc) in &u.assets {
+            if seen.insert(name.clone()) {
+                out.push(
+                    Completion::item(
+                        name.clone(),
+                        CompletionKind::Constant,
+                        Some(format!("{decl} — `{origin}`")),
+                    )
+                    .with_doc(doc.as_deref()),
+                );
             }
         }
     }
@@ -1770,6 +1808,14 @@ pub fn value_member_candidates(
             )
         })
         .collect();
+    // An asset's one field (#1883).
+    if matches!(&*tys.get(ty), Ty::Asset) {
+        out.push(Completion::item(
+            "url",
+            CompletionKind::Field,
+            Some("String — the URL the platform serves the asset at".to_string()),
+        ));
+    }
     // Record fields — resolve the receiver's named type to its declaration.
     if let Ty::Named { name, .. } = &*tys.get(ty) {
         let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -2009,6 +2055,55 @@ mod tests {
                 "bynk.list.{name} offered without `uses bynk.list`"
             );
         }
+    }
+
+    #[test]
+    fn assets_offered_by_the_free_function_scope_rule() {
+        // #1883: an asset name resolves where a free function's would — the
+        // unit's own assets, and those of a `uses`-imported unit; never one
+        // the unit does not import.
+        let doc = "context app.page {\n  uses app.shared\n  asset logo = \"logo.svg\"\n  asset icon = \"favicon.ico\" at \"/favicon.ico\"\n}\n";
+        let mut files = HashMap::new();
+        files.insert(
+            PathBuf::from("/p/shared.bynk"),
+            "context app.shared {\n  --| The site stylesheet.\n  asset style = \"site.css\"\n}\n"
+                .to_string(),
+        );
+        files.insert(
+            PathBuf::from("/p/other.bynk"),
+            "context app.other {\n  asset banner = \"banner.png\"\n}\n".to_string(),
+        );
+        let items = complete("  let y = ", doc, Some(&files));
+        let labels = || items.iter().map(|i| &i.label).collect::<Vec<_>>();
+        let logo = find(&items, "logo", CompletionKind::Constant);
+        assert!(logo.is_some(), "own asset: {:?}", labels());
+        assert_eq!(
+            logo.unwrap().detail.as_deref(),
+            Some("asset logo = \"logo.svg\" — `this unit`")
+        );
+        assert_eq!(
+            find(&items, "icon", CompletionKind::Constant).and_then(|c| c.detail.as_deref()),
+            Some("asset icon = \"favicon.ico\" at \"/favicon.ico\" — `this unit`")
+        );
+        let style = find(&items, "style", CompletionKind::Constant);
+        assert!(style.is_some(), "used unit's asset: {:?}", labels());
+        assert_eq!(
+            style.unwrap().documentation.as_deref(),
+            Some("The site stylesheet.")
+        );
+        assert!(
+            find(&items, "banner", CompletionKind::Constant).is_none(),
+            "an asset of a unit not in `uses` leaked: {:?}",
+            labels()
+        );
+    }
+
+    #[test]
+    fn asset_member_completion_offers_url() {
+        // #1883: an asset value's one field.
+        let asset = TYS.intern(Ty::Asset);
+        let items = value_member_candidates(asset, &TYS, "context a.b\n", None);
+        assert!(find(&items, "url", CompletionKind::Field).is_some());
     }
 
     #[test]
