@@ -49,3 +49,17 @@ fn receiverUnchanged(xs: List[Int]) -> Bool {
 	let zs = xs.concat([8])
 	xs == [1, 2] && ys == [1, 2, 9] && zs == [1, 2, 8]
 }
+
+fn appendRows(xs: List[Int]) -> List[List[Int]] {
+	let none: List[List[Int]] = []
+	xs.fold(none, (acc, x) => acc.append([x, x * x]))
+}
+
+fn concatRows(a: List[List[Int]], b: List[List[Int]]) -> List[List[Int]] {
+	a.concat(b)
+}
+
+fn appendEmptyRows(n: Int) -> List[List[Int]] {
+	let none: List[List[Int]] = []
+	[1, 2, 3].take(n).fold(none, (acc, x) => acc.append([]))
+}
