@@ -38,4 +38,12 @@ suite demo.lists {
   case "append and concat leave the receiver unchanged" {
     expect receiverUnchanged([1, 2])
   }
+
+  case "append builds a nested list in order" {
+    expect appendRows([1, 2]) == [[1, 1], [2, 4]]
+  }
+
+  case "concat joins nested lists in order" {
+    expect concatRows([[1]], [[2, 3], []]) == [[1], [2, 3], []]
+  }
 }
