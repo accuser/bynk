@@ -2319,6 +2319,21 @@ fn lower_method_call(
     // <deps>)`, where `<deps>` folds in the call-site identity when present.
     // Slice B: a `system`-tier http address drives a real `worker.fetch` through
     // a driver (`__sysdrive_<svc>_<key>(rest, sub)`), not a direct handler call.
+    // #1883, slice 3 ([DECISION F]): `svc.GET(asset)` in a case — the
+    // checker classified it (`Callee::TestService` with an `"… asset"`
+    // address). The platform serves an asset before the Worker runs, so it
+    // reaches no handler in either tier: the module's `__bynkAssetGet` answers
+    // from the files the target's Worker ships (`asset_harness`).
+    if let ExprKind::Ident(_) = &receiver.kind
+        && matches!(
+            cx.commons().callees.get(&e.id),
+            Some(bynk_check::checker::Callee::TestService { address, .. }) if address.ends_with(" asset")
+        )
+        && let Some(first) = args.first()
+    {
+        let asset = pre.lower(first, cx);
+        return pre.finish(format!("__bynkAssetGet(({asset}).url)"));
+    }
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.is_system_http_service(&id.name)
         && let Some(verb) = IrHttpMethod::from_ident(&method.name)

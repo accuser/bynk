@@ -1,0 +1,15 @@
+context t.web
+
+uses t.page
+
+asset favicon = "assets/favicon.ico" at "/favicon.ico"
+
+service api from http {
+  on GET("/") () -> Effect[HttpResult[String]] by Visitor {
+    Ok(link())
+  }
+
+  on GET("/refuse") () -> Effect[HttpResult[String]] by Visitor {
+    BadRequest("no")
+  }
+}

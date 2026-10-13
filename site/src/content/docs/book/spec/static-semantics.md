@@ -1773,3 +1773,13 @@ in `bynk.deploy.lock`.
 **Single files.** A single file has no project root and no Worker, so building
 one that declares an asset is `bynk.asset.needs_project`. Checking it is
 unaffected.
+
+**In suites.** A case sees the assets its target unit sees (and, in a `system`
+suite, those of the suite's own `uses` commons). `svc.GET(a)`, for an `Asset`
+`a` and any HTTP service `svc` of the target, fetches `a` from the asset tier
+rather than a handler: it yields `Raw(body, contentType)` when the target's
+Worker ships `a.url` (with the content type the platform sends for the file's
+extension), and `NotFound` otherwise. The method MUST be `GET`
+(`bynk.test.asset_address_method`), the asset MUST be the only argument
+(`bynk.test.service_call_arity`), and the call MUST NOT carry a `by`
+(`bynk.test.principal_on_asset`).

@@ -4902,6 +4902,31 @@ impl<'a> LowerCtx<'a> {
         {
             return payload_prop(&f.name.name);
         }
+        // #1883, slice 3: an `HttpResult` variant's payload fields, named as
+        // the runtime union in `bynk-emit/runtime/src/http.ts` names them.
+        // Reached by a suite matching a service address's result, which the
+        // checker leaves untyped, recorded as `Ty::Error` (`Raw(body, ct)`, `BadRequest(m)`,
+        // `Found(url)`); the single-field fallback below named them all
+        // `value`, which `tsc` rejected for every variant but `Ok`, `Created`
+        // and `Accepted`. A typed user sum is resolved above, first.
+        if matches!(
+            disc_node.as_deref(),
+            None | Some(Ty::HttpResult(_)) | Some(Ty::Error)
+        ) && let Some(v) = bynk_syntax::ast::http_variant(variant)
+        {
+            use bynk_syntax::ast::HttpVariantPayload as P;
+            let fields: &[&str] = match v.payload {
+                P::None => &[],
+                P::Value => &["value"],
+                P::Message => &["message"],
+                P::Location => &["location"],
+                P::Streamed => &["stream"],
+                P::Raw => &["body", "contentType"],
+            };
+            if let Some(field) = fields.get(idx) {
+                return (*field).to_string();
+            }
+        }
         // Single-field fallback. The checker rejects mixed bindings already.
         "value".to_string()
     }

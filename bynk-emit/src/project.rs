@@ -2323,6 +2323,12 @@ fn run_checks(
             emitted_barrels.insert(commons_dir_for(name).with_extension("ts"));
         }
     }
+    // #1883, slice 3: the declared assets, for a case's `svc.GET(asset)`.
+    let no_asset_bytes = BTreeMap::new();
+    let test_asset_files = TestAssetFiles {
+        served: &asset_served,
+        bytes: asset_bytes.as_ref().unwrap_or(&no_asset_bytes),
+    };
     let (test_outputs, runnable_tests) = process_tests(
         &test_groups,
         &parsed,
@@ -2337,6 +2343,7 @@ fn run_checks(
         import_ext,
         contracts,
         &mut emitted_barrels,
+        &test_asset_files,
         &mut test_errors,
         &mut refs,
         tys,
@@ -2364,6 +2371,7 @@ fn run_checks(
         &unit_uses,
         &groups,
         &mut emitted_barrels,
+        &test_asset_files,
         &mut integration_errors,
         &mut refs,
         tys,

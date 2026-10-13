@@ -33,6 +33,34 @@ A route/schedule the service does not declare is `bynk.test.service_unknown_rout
 `svc.call(...)` on a service with no `on call` handler is
 `bynk.test.service_no_call_handler`.
 
+### Fetching a static asset — `svc.GET(asset)` {#assets}
+
+A case can name the target's [static assets](/book/reference/assets/) (its own
+and those of the commons it `uses`) and fetch one through any of its HTTP
+services by passing the asset instead of a route:
+
+```bynk,fragment
+suite t.web {
+  case "the stylesheet is served" {
+    let r <- api.GET(style)
+    match r {
+      Raw(body, ct) => expect ct == "text/css; charset=utf-8"
+      _ => expect false
+    }
+  }
+}
+```
+
+The platform serves an asset before the Worker runs, so no handler is
+involved, at any tier: the call answers as the platform would, with
+`Raw(body, contentType)` for a file the target's Worker ships (the content type
+the platform sends for its extension) and `NotFound` for any other path. Only
+`GET` fetches an asset (`bynk.test.asset_address_method`), it takes the asset
+alone (`bynk.test.service_call_arity`), and it carries no `by`: an asset is
+public (`bynk.test.principal_on_asset`). At the `system` tier, a request a
+handler route would receive for an asset's path still goes to the Worker; only
+`svc.GET(asset)` reaches the asset tier.
+
 ### Acting as an actor — `by <Actor>(<identity>)` {#call-site-by}
 
 A handler guarded by an actor (`by u: User`) runs as a verified identity. A case

@@ -827,7 +827,9 @@ pub fn typecheck_integration_case_body(
         // Test-scaffold body, not a real context emission — never rebranded.
         false,
         HashSet::new(),
-    );
+    )
+    // #1883, slice 3: the assets the case may name and fetch.
+    .with_assets(view.assets.clone());
 
     let unit_span = case.span;
     let synthetic_return = TypeRef::Effect(
@@ -2909,9 +2911,37 @@ pub struct SuiteView {
     /// Review of #1814: each reached name the view already binds to another
     /// declaration (`project_model::close_view_types`).
     pub conflicts: Vec<crate::project_model::ViewConflict>,
+    /// #1883, slice 3 ([DECISION F]): the assets a case may name — those its
+    /// target unit sees (its own and its `uses`d commons'), plus the suite's
+    /// own `uses` commons' in a `system` suite. An asset name types as
+    /// `Asset`; `svc.GET(asset)` fetches the file.
+    pub assets: HashMap<String, bynk_syntax::ast::AssetDecl>,
 }
 
 impl SuiteView {
+    /// #1883, slice 3: add the assets `unit` sees — its own and those of the
+    /// commons it `uses`, one level, as for functions — first name winning.
+    fn merge_assets(
+        &mut self,
+        unit: &str,
+        unit_tables: &HashMap<String, UnitTable>,
+        unit_uses: &HashMap<String, Vec<String>>,
+    ) {
+        let own = unit_tables.get(unit).into_iter();
+        let used = unit_uses
+            .get(unit)
+            .into_iter()
+            .flatten()
+            .filter_map(|u| unit_tables.get(u));
+        for table in own.chain(used) {
+            for (name, decl) in &table.assets {
+                self.assets
+                    .entry(name.clone())
+                    .or_insert_with(|| decl.clone());
+            }
+        }
+    }
+
     /// What the closure found, without the tables.
     pub fn reach(&self) -> crate::project_model::ViewReach {
         crate::project_model::ViewReach {
@@ -3007,6 +3037,7 @@ pub fn privileged_view(
             imported.push(t.clone());
         }
     }
+    view.merge_assets(owning_unit, unit_tables, unit_uses);
     view.close(&imported, unit_tables, unit_uses);
     Some(view)
 }
@@ -3029,6 +3060,9 @@ pub fn integration_view(
                 view.merge(t, with_fns, true);
                 imported.push(u.clone());
             }
+            // #1883, slice 3: assets from both, so a case can fetch the
+            // target's files and name a used commons' `.url`.
+            view.merge_assets(u, unit_tables, unit_uses);
         }
     }
     view.close(&imported, unit_tables, unit_uses);
@@ -3049,6 +3083,7 @@ pub fn build_privileged_resolved(
     let local = unit_tables.get(owning_unit)?;
     let view = privileged_view(owning_unit, unit_tables, unit_uses, unit_consumes)?;
     let reach = view.reach();
+    let assets = view.assets.clone();
     let SuiteView {
         types,
         fns,
@@ -3101,7 +3136,9 @@ pub fn build_privileged_resolved(
         HashMap::new(),
         false,
         HashSet::new(),
-    );
+    )
+    // #1883, slice 3: the target's assets, nameable and fetchable in a case.
+    .with_assets(assets);
     Some((resolved, reach))
 }
 

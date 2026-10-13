@@ -1840,6 +1840,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A call-site `by <Actor>(x)` supplies an identity to an actor that takes none — a unit-identity actor (e.g. `Visitor`) or `Nobody`.",
         &["case"],
     ),
+    d(
+        "bynk.test.asset_address_method",
+        "A suite fetches an asset with a method other than `GET`; the platform serves assets to `GET` and answers other methods with 405.",
+    ),
     dg(
         "bynk.test.credential_needs_system",
         "A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it.",
@@ -1859,6 +1863,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.test.principal_identity_mismatch",
         "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor.",
         &["case"],
+    ),
+    d(
+        "bynk.test.principal_on_asset",
+        "A suite's asset fetch carries a `by` clause; an asset is public and served before the Worker runs.",
     ),
     dg(
         "bynk.test.principal_on_wrong_method",

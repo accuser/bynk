@@ -103,6 +103,10 @@ the Worker as before. A Bundle build (`bynkc compile` without
 (`bynk.asset.not_served`). `bynk dev` rebuilds when a file in `assets/` changes,
 and `bynk deploy` records each Worker's served files in `bynk.deploy.lock`.
 
+A suite can name its target's assets and fetch one with `api.GET(style)`,
+which answers with the file as the platform would; see
+[Testing](/book/reference/testing/#assets).
+
 An `Asset` is not data: it may not appear in a record field, a boundary or an
 agent `store` field (`bynk.types.asset_at_boundary`). Store or send its `.url`
 instead.
