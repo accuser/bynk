@@ -1,0 +1,2 @@
+bynk.resolve.name_conflict
+agent `Probe` conflicts with a type of the same name

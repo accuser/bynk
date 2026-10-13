@@ -3074,6 +3074,14 @@ pub fn privileged_view(
     for consumed in unit_consumes.get(owning_unit).into_iter().flatten() {
         view.merge_assets_where(consumed, unit_tables, unit_uses, |d| d.at.is_none());
     }
+    // #1925: a function or asset the target hides behind its own declaration
+    // of another kind is out of scope here too, as in the target's module
+    // (`project_model::shadowed_imports`): a case names the target's own.
+    let hidden_by_local = |n: &String| crate::symbols::local_value_kind(local, n).is_some();
+    view.fns
+        .retain(|n, _| local.fns.contains_key(n) || !hidden_by_local(n));
+    view.assets
+        .retain(|n, _| local.assets.contains_key(n) || !hidden_by_local(n));
     view.close(&imported, unit_tables, unit_uses);
     Some(view)
 }
@@ -3109,6 +3117,14 @@ pub fn integration_view(
         view.merge_assets(target, unit_tables, unit_uses);
         for other in others {
             view.merge_assets_where(other, unit_tables, unit_uses, |d| d.at.is_none());
+        }
+        // #1925: an asset the target hides behind its own declaration of
+        // another kind is not nameable, as in `privileged_view`. Its file
+        // still ships: the commons that declares it may use it.
+        if let Some(local) = unit_tables.get(target) {
+            view.assets.retain(|n, _| {
+                local.assets.contains_key(n) || crate::symbols::local_value_kind(local, n).is_none()
+            });
         }
     }
     view.close(&imported, unit_tables, unit_uses);
@@ -3184,7 +3200,17 @@ pub fn build_privileged_resolved(
         HashSet::new(),
     )
     // #1883, slice 3: the target's assets, nameable and fetchable in a case.
-    .with_assets(assets);
+    .with_assets(assets)
+    // #1925: the imports the target hides, so a case naming one reports the
+    // conflict as the target's own code would.
+    .with_shadowed_imports(crate::project_model::shadowed_imports_in(
+        local,
+        unit_uses
+            .get(owning_unit)
+            .into_iter()
+            .flatten()
+            .filter_map(|t| unit_tables.get(t).map(|u| (t, u))),
+    ));
     Some((resolved, reach))
 }
 

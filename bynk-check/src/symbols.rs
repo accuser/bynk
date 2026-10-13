@@ -727,6 +727,56 @@ pub fn build_unit_table(
         }
         out.extend(errors.into_iter().map(|e| (parsed[i].identity_path(), e)));
     }
+    // #1925: a service, agent or provider shares one namespace with the
+    // unit's functions, assets, types and events (and with each other) — they
+    // are all one scope of the emitted TypeScript module, so a shared name
+    // would be declared twice. After every other pass, so each table is
+    // complete whatever the file and declaration order; reported at the
+    // service, agent or provider, the later kinds in this order. An external
+    // (bodiless) provider emits no declaration, so it takes no name.
+    let mut providers_seen: HashMap<&str, Span> = HashMap::new();
+    for &i in indices {
+        let mut errors: Vec<CompileError> = Vec::new();
+        for item in parsed[i].items() {
+            // Only the declaration registered: a duplicate has already
+            // reported `duplicate_service` / `duplicate_agent` /
+            // `duplicate_provider`.
+            let (what, name) = match item {
+                CommonsItem::Service(s)
+                    if table.services.get(&s.name.name).map(|p| p.name.span)
+                        == Some(s.name.span) =>
+                {
+                    (ValueKind::Service, &s.name)
+                }
+                CommonsItem::Agent(a)
+                    if table.agents.get(&a.name.name).map(|p| p.name.span) == Some(a.name.span) =>
+                {
+                    (ValueKind::Agent, &a.name)
+                }
+                CommonsItem::Provider(p)
+                    if !p.external
+                        && table.providers.get(&p.capability.name).map(|q| q.span)
+                            == Some(p.span) =>
+                {
+                    (ValueKind::Provider, &p.provider_name)
+                }
+                _ => continue,
+            };
+            // Provider against provider only. A provider meets a service or
+            // agent through their tables whichever comes first, so the pair
+            // is reported once, at the provider.
+            let earlier_provider = (what == ValueKind::Provider)
+                .then(|| providers_seen.get(name.name.as_str()).copied())
+                .flatten();
+            if let Some(err) = value_namespace_error(&table, what, name, earlier_provider) {
+                errors.push(err);
+            }
+            if what == ValueKind::Provider {
+                providers_seen.entry(&name.name).or_insert(name.span);
+            }
+        }
+        out.extend(errors.into_iter().map(|e| (parsed[i].identity_path(), e)));
+    }
     // message-bundles slice 1 (#859): a commons declaring at least one
     // `messages` block also gets a synthetic `render(tag: LocaleTag, msg:
     // Message) -> String` in its own local function table — not just emitted
@@ -770,6 +820,97 @@ pub fn build_unit_table(
         }
     }
     table
+}
+
+/// #1925: what `name` is in `table`'s own value namespace — its kind, as a
+/// diagnostic names it, and its declaration's name span — or `None` when the
+/// unit declares no value of that name. The predicate both compositions use
+/// to let a local declaration of any kind shadow a `uses`-imported function or
+/// asset (`project_model::compose_unit_symbols`,
+/// `assets::compose_unit_assets`), as the emitted module does.
+pub fn local_value_kind(table: &UnitTable, name: &str) -> Option<(&'static str, Span)> {
+    if let Some(f) = table.fns.get(name) {
+        Some(("function", f.name.ident().span))
+    } else if let Some(a) = table.assets.get(name) {
+        Some(("asset", a.name.span))
+    } else if let Some(e) = table.events.get(name) {
+        Some(("event", e.name.span))
+    } else if let Some(t) = table.types.get(name) {
+        Some(("type", t.name.span))
+    } else if let Some(s) = table.services.get(name) {
+        Some(("service", s.name.span))
+    } else if let Some(a) = table.agents.get(name) {
+        Some(("agent", a.name.span))
+    } else {
+        table
+            .providers
+            .values()
+            .find(|p| !p.external && p.provider_name.name == name)
+            .map(|p| ("provider", p.provider_name.span))
+    }
+}
+
+/// #1925: the kinds [`value_namespace_error`] checks, in the order the
+/// conflict pass meets them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ValueKind {
+    Service,
+    Agent,
+    Provider,
+}
+
+/// #1925: `bynk.resolve.name_conflict` for a service, agent or provider
+/// (`what`) whose `name` the unit also gives a function, an asset, a type or
+/// event, or a kind `what` follows in the pass: an agent conflicts with a
+/// service, a provider with a service, an agent or `earlier_provider`. `None`
+/// when the name is free.
+fn value_namespace_error(
+    table: &UnitTable,
+    what: ValueKind,
+    name: &Ident,
+    earlier_provider: Option<Span>,
+) -> Option<CompileError> {
+    let key = &name.name;
+    let services = || table.services.get(key).map(|s| s.name.span);
+    let agents = || table.agents.get(key).map(|a| a.name.span);
+    let (other, prev) = if let Some(f) = table.fns.get(key) {
+        ("function", f.name.ident().span)
+    } else if let Some(a) = table.assets.get(key) {
+        ("asset", a.name.span)
+    } else if let Some(e) = table.events.get(key) {
+        ("event", e.name.span)
+    } else if let Some(t) = table.types.get(key) {
+        ("type", t.name.span)
+    } else if let Some(span) = (what != ValueKind::Service).then(services).flatten() {
+        ("service", span)
+    } else if let Some(span) = (what == ValueKind::Provider).then(agents).flatten() {
+        ("agent", span)
+    } else if let Some(span) = earlier_provider {
+        ("provider", span)
+    } else {
+        return None;
+    };
+    let what = match what {
+        ValueKind::Service => "service",
+        ValueKind::Agent => "agent",
+        ValueKind::Provider => "provider",
+    };
+    let other_article = if matches!(other, "asset" | "event" | "agent") {
+        "an"
+    } else {
+        "a"
+    };
+    Some(
+        CompileError::new(
+            "bynk.resolve.name_conflict",
+            name.span,
+            format!("{what} `{key}` conflicts with {other_article} {other} of the same name"),
+        )
+        .with_label(prev, format!("{other} declared here"))
+        .with_note(
+            "a unit's services, agents, providers, functions, assets, types and events share one namespace",
+        ),
+    )
 }
 
 /// The synthetic `FnDecl` [`build_unit_table`] registers for a messages-bearing
@@ -1690,4 +1831,170 @@ pub fn parsed_alias_span(
 pub struct ConsumedType {
     pub owning_context: String,
     pub visibility: Visibility,
+}
+
+/// #1925: every pair of top-level declarations sharing one name, in one
+/// context, against the rule that a unit's services, agents, providers,
+/// functions, assets, types and events share one namespace — the scope of the
+/// emitted TypeScript module. Capabilities and actors keep their own.
+#[cfg(test)]
+mod value_namespace_tests {
+    use super::*;
+    use crate::testkit::analyse;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Kind {
+        Fn,
+        Type,
+        Event,
+        Asset,
+        Service,
+        Agent,
+        Provider,
+        Capability,
+        Actor,
+    }
+
+    const ALL: [Kind; 9] = [
+        Kind::Fn,
+        Kind::Type,
+        Kind::Event,
+        Kind::Asset,
+        Kind::Service,
+        Kind::Agent,
+        Kind::Provider,
+        Kind::Capability,
+        Kind::Actor,
+    ];
+
+    /// The kind a declaration names, and so the side of the rule it takes.
+    /// Exhaustive on purpose: a new declaration kind does not compile here
+    /// until it is placed in or out of the value namespace (and in [`ALL`]).
+    fn kind_of(item: &CommonsItem) -> Option<Kind> {
+        match item {
+            CommonsItem::Fn(_) => Some(Kind::Fn),
+            CommonsItem::Type(_) => Some(Kind::Type),
+            CommonsItem::Event(_) => Some(Kind::Event),
+            CommonsItem::Asset(_) => Some(Kind::Asset),
+            CommonsItem::Service(_) => Some(Kind::Service),
+            CommonsItem::Agent(_) => Some(Kind::Agent),
+            CommonsItem::Provider(_) => Some(Kind::Provider),
+            CommonsItem::Capability(_) => Some(Kind::Capability),
+            CommonsItem::Actor(_) => Some(Kind::Actor),
+            // Keyed by locale tag, in a commons only: it names nothing.
+            CommonsItem::Messages(_) => None,
+        }
+    }
+
+    fn shares_the_value_namespace(k: Kind) -> bool {
+        !matches!(k, Kind::Capability | Kind::Actor)
+    }
+
+    /// A declaration of `kind` named `n`. A provider brings the capability it
+    /// provides, under a name no other snippet uses.
+    fn decl(kind: Kind, n: &str) -> String {
+        match kind {
+            Kind::Fn => format!("fn {n}() -> Int {{\n  1\n}}\n"),
+            Kind::Type => format!("type {n} = {{ n: Int }}\n"),
+            Kind::Event => format!("event {n} = {{ n: Int }}\n"),
+            Kind::Asset => format!("asset {n} = \"assets/x.json\"\n"),
+            Kind::Service => {
+                format!(
+                    "service {n} {{\n  on call() -> Effect[Int] {{\n    Effect.pure(1)\n  }}\n}}\n"
+                )
+            }
+            Kind::Agent => format!(
+                "agent {n} {{\n  key id: String\n\n  store hits: Cell[Int]\n\n  on call ping() -> Effect[Int] {{\n    1\n  }}\n}}\n"
+            ),
+            Kind::Provider => format!(
+                "capability ProbeCap {{\n  fn go() -> Effect[Int]\n}}\n\nprovides ProbeCap = {n} {{\n  fn go() -> Effect[Int] {{\n    Effect.pure(1)\n  }}\n}}\n"
+            ),
+            Kind::Capability => format!("capability {n} {{\n  fn go() -> Effect[Int]\n}}\n"),
+            Kind::Actor => {
+                format!("actor {n} {{ auth = Bearer(secret = \"S\"), identity = ProbeId }}\n")
+            }
+        }
+    }
+
+    const HEADER: &str = "context app\n\ntype ProbeId = opaque String\n\n";
+
+    #[test]
+    fn each_snippet_declares_its_kind() {
+        for k in ALL {
+            let src = format!("{HEADER}{}", decl(k, "Thing"));
+            let tokens = bynk_syntax::lexer::tokenize(&src).expect("lexes");
+            let unit = bynk_syntax::parser::parse_unit(&tokens, &src).expect("parses");
+            let bynk_syntax::ast::SourceUnit::Context(c) = unit else {
+                panic!("a context")
+            };
+            assert!(
+                c.items.iter().any(|i| kind_of(i) == Some(k)),
+                "the {k:?} snippet declares no {k:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_pair_of_kinds_against_the_value_namespace() {
+        for (x, &a) in ALL.iter().enumerate() {
+            for &b in &ALL[x + 1..] {
+                // Both declaration orders, under both casings.
+                for (first, second) in [(a, b), (b, a)] {
+                    for n in ["thing", "Thing"] {
+                        let src = format!("{HEADER}{}\n{}", decl(first, n), decl(second, n));
+                        let r = analyse(&[("app/main.bynk", &src), ("assets/x.json", "{}")]);
+                        let cats = r.error_categories();
+                        if shares_the_value_namespace(a) && shares_the_value_namespace(b) {
+                            let want = if matches!((a, b), (Kind::Type, Kind::Event)) {
+                                "bynk.resolve.duplicate_type"
+                            } else {
+                                "bynk.resolve.name_conflict"
+                            };
+                            assert_eq!(cats, vec![want], "{first:?} then {second:?} `{n}`");
+                        } else {
+                            assert!(
+                                cats.is_empty(),
+                                "{first:?} then {second:?} `{n}` should check clean: {cats:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A context split across files is one namespace: the conflict is found
+    /// whichever file declares which, and reported in the service's file.
+    #[test]
+    fn a_split_context_is_one_namespace() {
+        for (svc_file, asset_file) in [("a.bynk", "z.bynk"), ("z.bynk", "a.bynk")] {
+            let svc = format!("context app\n\n{}", decl(Kind::Service, "api"));
+            let asset = format!("context app\n\n{}", decl(Kind::Asset, "api"));
+            let svc_path = format!("app/{svc_file}");
+            let asset_path = format!("app/{asset_file}");
+            let r = analyse(&[
+                (svc_path.as_str(), svc.as_str()),
+                (asset_path.as_str(), asset.as_str()),
+                ("assets/x.json", "{}"),
+            ]);
+            assert_eq!(r.error_categories(), vec!["bynk.resolve.name_conflict"]);
+            let d = &r.analysis.errors[0];
+            assert!(
+                d.source_path
+                    .as_deref()
+                    .is_some_and(|p| p.ends_with(svc_file)),
+                "reported in the service's file: {:?}",
+                d.source_path
+            );
+        }
+    }
+
+    /// Two bodied providers of different capabilities under one name each
+    /// emit a class of that name.
+    #[test]
+    fn two_providers_under_one_name_conflict() {
+        let src = "context app\n\ncapability A {\n  fn go() -> Effect[Int]\n}\n\ncapability B {\n  fn go() -> Effect[Int]\n}\n\nprovides A = Impl {\n  fn go() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n\nprovides B = Impl {\n  fn go() -> Effect[Int] {\n    Effect.pure(2)\n  }\n}\n";
+        let r = analyse(&[("app/main.bynk", src)]);
+        assert_eq!(r.error_categories(), vec!["bynk.resolve.name_conflict"]);
+    }
 }
