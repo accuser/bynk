@@ -137,6 +137,21 @@ pub fn bundle_not_served_warnings(items: &[CommonsItem]) -> Vec<CompileError> {
 /// `[A-Za-z0-9._-]` becomes `-`, so `.url` never needs percent-encoding.
 /// Reproducible: it depends only on the name and the bytes.
 pub fn served_path(source: &str, bytes: &[u8]) -> String {
+    served_path_with_hash(source, &crate::contract::fnv1a64_hex(bytes))
+}
+
+/// `path` normalised as the build files it (`bynk_project::assets::
+/// normalise_asset_path`), for the editor's hover, which has `bynk-check` but
+/// not `bynk-project` in reach.
+pub fn normalise_asset_path_for_display(path: &str) -> String {
+    bynk_project::assets::normalise_asset_path(path)
+}
+
+/// [`served_path`] with the content hash supplied rather than computed — the
+/// one definition of the served name's shape, shared with the editor, which
+/// lists the `assets/` folder but never reads its bytes and so shows
+/// `served_path_with_hash(source, "<hash>")` (#1883, editor tooling).
+pub fn served_path_with_hash(source: &str, hash: &str) -> String {
     let name = source.rsplit('/').next().unwrap_or(source);
     let clean: String = name
         .chars()
@@ -148,7 +163,6 @@ pub fn served_path(source: &str, bytes: &[u8]) -> String {
             }
         })
         .collect();
-    let hash = crate::contract::fnv1a64_hex(bytes);
     match clean.rfind('.') {
         Some(dot) if dot > 0 => {
             format!(

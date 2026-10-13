@@ -267,6 +267,7 @@ const DOC_LINK_BARE_KINDS: &[SymbolKind] = &[
     SymbolKind::Agent,
     SymbolKind::Provider,
     SymbolKind::Actor,
+    SymbolKind::Asset,
 ];
 
 /// #848: resolve one intra-doc-link candidate name (from
@@ -539,6 +540,10 @@ pub fn semantic_tokens_legend() -> tower_lsp::lsp_types::SemanticTokensLegend {
             // reordered); standard LSP type, with the `documentation`
             // modifier. A `---` block is left to the editor grammars.
             SemanticTokenType::COMMENT,
+            // #1883: `asset` names (static files). Appended at index 13
+            // (never reordered). Custom type — the VS Code extension declares
+            // it in package.json, as a `variable` subtype.
+            SemanticTokenType::new("asset"),
         ],
         token_modifiers: vec![
             SemanticTokenModifier::DECLARATION,
@@ -571,6 +576,8 @@ fn token_type_index(kind: SymbolKind) -> u32 {
         SymbolKind::Handler => 7,
         // message-bundles slice 1: `messages` bundles append `messages` at 11.
         SymbolKind::Messages => 11,
+        // #1883: asset names append `asset` at 13.
+        SymbolKind::Asset => 13,
     }
 }
 
@@ -980,6 +987,7 @@ mod tests {
                 "decorator", // v0.140 (ADR 0163): handler annotations — appended
                 "messages",  // message-bundles slice 1 (#859): messages bundles — appended
                 "comment",   // #1888: `--|` doc lines — appended
+                "asset",     // #1883: static asset names — appended
             ]
         );
         let modifiers: Vec<&str> = legend.token_modifiers.iter().map(|m| m.as_str()).collect();
@@ -1356,6 +1364,19 @@ mod tests {
         let scope = doc_scope_with(vec![("ratelimit", vec!["ratelimit", "window"])]);
         let def = resolve_doc_link(&index, &scope, "ratelimit", "decide").unwrap();
         assert_eq!(def.path, PathBuf::from("window.bynk"));
+    }
+
+    #[test]
+    fn resolve_doc_link_finds_an_asset_through_uses() {
+        // #1883: an asset is a bare top-level name like a fn.
+        let index = index_with(vec![(
+            key("page", SymbolKind::Asset, "style"),
+            site("page.bynk", 5, 10),
+            vec![],
+        )]);
+        let scope = doc_scope_with(vec![("board", vec!["board", "page"])]);
+        let def = resolve_doc_link(&index, &scope, "board", "style").unwrap();
+        assert_eq!(def.path, PathBuf::from("page.bynk"));
     }
 
     #[test]

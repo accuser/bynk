@@ -563,3 +563,32 @@ fn a_documented_variant_hovers_with_its_doc() {
         .expect("hover on the `Pass` declaration");
     assert!(pass.contains("Every canary check passed."), "{pass}");
 }
+
+/// #1883 — an asset reference hovers as its declaration: the declaration, where
+/// the platform serves the file, and its doc. Across a `uses` edge too, which
+/// is the common case (a commons declares the asset, a context uses it).
+#[test]
+fn asset_reference_hovers_as_its_declaration() {
+    let (r, rel, text, root) = analysed(
+        "../bynkc/tests/fixtures/positive/1883_asset_workers/src",
+        "board.bynk",
+    );
+    let hover = hover_at(&r, &rel, &text, &root, at(&text, "style.url", "style"))
+        .expect("hover on the `style` asset reference");
+    for want in [
+        "asset style = \"assets/board.css\"",
+        "Served at `/_assets/board.<hash>.css`",
+        "The board's stylesheet.",
+    ] {
+        assert!(hover.contains(want), "missing `{want}` in:\n{hover}");
+    }
+
+    // ADR 0190 D2: the declaration renders the same content.
+    let (r, rel, text, root) = analysed(
+        "../bynkc/tests/fixtures/positive/1883_asset_workers/src",
+        "page.bynk",
+    );
+    let decl = hover_at(&r, &rel, &text, &root, at(&text, "asset style", "style"))
+        .expect("hover on the declaration");
+    assert_eq!(hover, decl);
+}

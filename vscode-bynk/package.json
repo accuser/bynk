@@ -75,6 +75,11 @@
         "id": "messages",
         "superType": "struct",
         "description": "A Bynk message bundle (`messages <tag> { ... }`)."
+      },
+      {
+        "id": "asset",
+        "superType": "variable",
+        "description": "A Bynk asset (a static file the platform serves, `asset name = \"path\"`)."
       }
     ],
     "semanticTokenModifiers": [
@@ -109,6 +114,9 @@
           ],
           "actor": [
             "entity.name.type"
+          ],
+          "asset": [
+            "variable.other.constant"
           ],
           "type.refined": [
             "support.type"

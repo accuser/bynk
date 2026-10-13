@@ -46,6 +46,9 @@ pub enum SymbolKind {
     /// A `messages <tag> { ... }` bundle, keyed by its `tag` (message-bundles
     /// track, slice 1).
     Messages,
+    /// #1883: an `asset name = "path"` declaration — a value of type `Asset`,
+    /// keyed by its name in the declaring unit.
+    Asset,
 }
 
 impl SymbolKind {
@@ -63,6 +66,7 @@ impl SymbolKind {
             SymbolKind::Actor => "actor",
             SymbolKind::Handler => "handler",
             SymbolKind::Messages => "messages",
+            SymbolKind::Asset => "asset",
         }
     }
 }
