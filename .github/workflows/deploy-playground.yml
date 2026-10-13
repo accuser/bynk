@@ -190,14 +190,14 @@ jobs:
       # Cargo.lock: the glue it generates is matched to the module the crate
       # compiled. Its own check compares only a schema version, so a mismatch can
       # still build. xtask/tests/wasm_bindgen_pin.rs fails when the two differ.
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: wasm-bindgen-cli@0.2.127
       # wasm-opt (binaryen) shrinks the release artefact (-Oz, the size budget).
       # build-wasm.sh applies it only when present, so this is an optimisation.
       - name: Install binaryen (wasm-opt)
         run: sudo apt-get update && sudo apt-get install -y binaryen
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           # wrangler@4.112.0 (the deploy steps below) requires Node >=22; the
           # build steps run fine on it too. Keep in step with deploy-site.yml.

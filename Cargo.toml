@@ -115,7 +115,7 @@ which = "8"
 tower-lsp = "0.20"
 # #1667: dev-only, for driving `LspService` and reading its `ClientSocket` in
 # bynk-lsp's tests. Both are already in the tree through `tower-lsp`.
-tower = { version = "0.4", default-features = false, features = ["util"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "io-std", "io-util", "macros", "sync", "time", "fs"] }
 tracing = "0.1"

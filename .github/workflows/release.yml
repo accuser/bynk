@@ -84,7 +84,7 @@ jobs:
       # No Rust toolchain or tsc here any more: the test run moved to the
       # cross-OS `test` job below, and what is left reads manifests (`node -p`)
       # and walks history, so this leg stays cheap.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "20"
       - name: Check tag/version match
@@ -162,12 +162,12 @@ jobs:
       # nextest under the shared `ci` profile (.config/nextest.toml), one
       # process per test and the same retry policy — so a test that passes CI
       # cannot fail here for a harness reason. Same install, same pin as ci.yml.
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: nextest@0.9
       # #1671: Node 22 (the floor, NODE_MAJOR_FLOOR) so tsc_verify's strip-types
       # checks run here; under BYNK_REQUIRE_TSC they fail rather than skip.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "22"
       # Range-pinned to major 5, as in the verify job above — see #828.
@@ -270,7 +270,7 @@ jobs:
           "ASSET=$stage.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
           "RAW=$raw"        | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.target }}
           path: |
@@ -291,7 +291,7 @@ jobs:
       id-token: write # OIDC for build-provenance attestation
       attestations: write # record the attestation
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: dist
       # One SHA256SUMS over the archives AND the raw server binaries (basenames,
@@ -528,7 +528,7 @@ jobs:
         working-directory: tree-sitter-bynk
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           # npm@latest (>=12) requires Node >=22.22.2; Node 20 is too old for it.
           node-version: "22"
