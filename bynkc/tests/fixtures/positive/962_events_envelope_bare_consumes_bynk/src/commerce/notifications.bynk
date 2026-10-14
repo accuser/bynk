@@ -3,7 +3,7 @@ context commerce.notifications
 consumes commerce.order
 -- Events track, slice 2 (spine #936): bare `consumes bynk`, no braces, no
 -- capability at all — proving `EventEnvelope` (a plain `exports transparent`
--- record, `bynk-check/src/firstparty/bynk.bynk`) resolves as a parameter
+-- record, `bynk-std/lib/core/bynk.bynk`) resolves as a parameter
 -- type through the adapter's whole-target export flattening
 -- (`merge_consumed_exports`), with zero precedent for this shape anywhere
 -- else in the corpus before this fixture.

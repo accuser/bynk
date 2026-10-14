@@ -2,8 +2,9 @@
 //!
 //! Every library crate's README carries the same "Where it sits" diagram: a
 //! tree of the compiler's library crates in which each crate depends on its
-//! parent, plus the crates listed after its `+`. It is duplicated by hand across
-//! twelve READMEs, and its predecessor drifted silently — it once placed
+//! parent, plus the crates listed after its `+`. A crate with no in-workspace
+//! dependency (`bynk-std`) is drawn as a second root. It is duplicated by hand
+//! across thirteen READMEs, and its predecessor drifted silently — it once placed
 //! `bynk-ide` above `bynk-emit` (no such edge exists) and omitted six crates.
 //! This test makes both properties a CI contract:
 //!
@@ -38,6 +39,7 @@ const LIBRARY_CRATES: &[&str] = &[
     "bynk-strip",
     "bynk-driver",
     "bynk-ide",
+    "bynk-std",
 ];
 
 fn workspace_root() -> PathBuf {

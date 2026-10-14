@@ -17,6 +17,8 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0463](0463-bynk-std-owns-the-first-party-sources.md) | **The first-party sources live in a data-only `bynk-std` crate, with the platform layer in its own subtree** (v0.330.9) — `bynk-std` holds the stdlib's `.bynk` sources, TS bindings and metadata as data; `bynk-check` reads and re-exports them; `bynk.cloudflare` sits apart so it can be unbundled without renames | Accepted (v0.330.9) |
+| [0462](0462-worker-binding-names-are-checked-not-adjusted.md) | **A Worker's binding names are checked for clashes, never adjusted** (v0.330.8) — Two bindings with one name in a Worker are a compile error; no binding name is renamed or suffixed to avoid it | Accepted (v0.330.8) |
 | [0461](0461-imported-type-shadowing.md) | **A unit's own value hides a `uses`-imported type of its name; writing the name is the conflict** (v0.330.5) — An imported type follows the imported function and asset rule, through #1807's naming gate; a consumed export conflicts at the `consumes` clause | Accepted (v0.330.5) |
 | [0460](0460-one-value-namespace.md) | **A unit's services, agents and providers share one namespace with its functions, assets, types and events** (v0.330.3) — Every top-level declaration except a capability or an actor is one scope of the emitted module, so none may share a name | Accepted (v0.330.3) |
 | [0459](0459-static-assets-in-suites-scope.md) | **A suite names exactly the assets its target's Worker ships, and fetches them through an HTTP service** (v0.330.1) — Every asset a case can name is one the target's Worker ships; a non-HTTP service cannot fetch one | Accepted (v0.330.1) |
