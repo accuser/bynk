@@ -1,0 +1,4 @@
+# Neither Service Binding (both added for event subscribers) has a
+# declaration in `ops.hub`, so the clash is at the context's name.
+# exact
+bynk.context.duplicate_binding	ops/hub.bynk:1:9

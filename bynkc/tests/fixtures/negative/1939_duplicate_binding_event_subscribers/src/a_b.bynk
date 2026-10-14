@@ -1,0 +1,10 @@
+context a_b
+
+consumes ops.hub
+consumes bynk { Logger }
+
+service OnPing from Events(Pinged) {
+  on event(e: Pinged) -> Effect[()] given Logger {
+    Logger.info(e.id)
+  }
+}

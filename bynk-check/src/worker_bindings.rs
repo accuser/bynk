@@ -87,7 +87,10 @@ pub fn duplicate_bindings(bindings: &[WorkerBinding]) -> Vec<(&WorkerBinding, &W
 /// binding name once. `bindings` holds each context's bindings as its
 /// `wrangler.toml` would list them. One error per clash, at the declaration
 /// that brought in the second binding (an agent, or a `consumes` clause),
-/// naming both sources.
+/// preferring one the author wrote over `consumes bynk.cloudflare`, naming
+/// both sources. A clash between two sources with no declaration of their own
+/// (Service Bindings added for event subscribers) is reported at the
+/// context's name.
 pub fn phase_duplicate_bindings(
     parsed: &[ParsedFile],
     groups: &BTreeMap<String, Vec<usize>>,
@@ -97,14 +100,18 @@ pub fn phase_duplicate_bindings(
     for (ctx, ctx_bindings) in bindings {
         let indices = groups.get(ctx).map(Vec::as_slice).unwrap_or_default();
         for (earlier, later) in duplicate_bindings(ctx_bindings) {
-            let Some((file, span)) = declared_at(parsed, indices, later)
-                .or_else(|| declared_at(parsed, indices, earlier))
+            // At the declaration the author can change: the later source's,
+            // else the earlier's, but never the `bynk.cloudflare` clause
+            // while the other source has a declaration of its own.
+            let mut sources = [later, earlier];
+            sources.sort_by_key(|b| b.source == BindingSource::Kv);
+            let (file, span) = sources
+                .iter()
+                .find_map(|b| declared_at(parsed, indices, b))
                 .or_else(|| context_header(parsed, indices))
-            else {
-                continue;
-            };
+                .map_or((None, Span::default()), |(file, span)| (Some(file), span));
             errors.push_for(
-                Some(&file),
+                file.as_deref(),
                 CompileError::new(
                     "bynk.context.duplicate_binding",
                     span,

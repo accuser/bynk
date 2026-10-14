@@ -322,24 +322,29 @@ pub(crate) fn worker_bindings(
     // emit gets its own fan-out DO among the agents' — Cloudflare only cares
     // that `index.ts` (this Worker's `main`) exports a class with this name,
     // not which generated file it came from.
-    let mut class_names: Vec<&String> = table.agents.keys().collect();
-    let fanout = EVENTS_FANOUT_CLASS_NAME.to_string();
+    // Sources by provenance, not by name: an agent that happened to share
+    // the fan-out's class name is still an agent.
+    let mut objects: Vec<(String, BindingSource)> = table
+        .agents
+        .keys()
+        .map(|class_name| {
+            let source = BindingSource::Agent {
+                class_name: class_name.clone(),
+            };
+            (class_name.clone(), source)
+        })
+        .collect();
     if uses_emit {
-        class_names.push(&fanout);
-    }
-    class_names.sort();
-    for class_name in class_names {
-        let source = if *class_name == fanout {
-            BindingSource::EventsFanout {
-                class_name: class_name.clone(),
-            }
-        } else {
-            BindingSource::Agent {
-                class_name: class_name.clone(),
-            }
+        let class_name = EVENTS_FANOUT_CLASS_NAME.to_string();
+        let source = BindingSource::EventsFanout {
+            class_name: class_name.clone(),
         };
+        objects.push((class_name, source));
+    }
+    objects.sort_by(|a, b| a.0.cmp(&b.0));
+    for (class_name, source) in objects {
         bindings.push(WorkerBinding {
-            name: agent_binding_name(class_name),
+            name: agent_binding_name(&class_name),
             source,
         });
     }
