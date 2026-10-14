@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.330.9** | The first-party standard-library sources move into a new data-only `bynk-std` crate; emitted output is unchanged |
 | **v0.330.8** | A Workers build reports two bindings with one name in a Worker's `wrangler.toml`, such as an agent `Kv` and the `bynk.cloudflare` KV namespace (both `KV`), as `bynk.context.duplicate_binding` |
 | **v0.330.7** | 'A method on an asset''s `url` written on the chain (`sheet.url.startsWith("/")`) checks in a context and its test suites, as it already did in a commons. It was misread as a call into a context named `sheet.url` (`bynk.resolve.unconsumed_context`) (#1930)' |
 | **v0.330.6** | 'In a test case, matching or testing a service call''s outcome binds the fixed type of a variant''s payload (`Raw(body, contentType)` binds `Bytes` and `String`, a message or redirect variant `String`), so its methods work. The match''s arms are now checked, and the match has their type when they agree, and a method on a payload of the handler''s result type is `bynk.test.untyped_outcome` instead of TypeScript that failed `tsc` (#1931)' |
