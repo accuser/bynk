@@ -21,7 +21,7 @@
 //!
 //! T0.4′ widens this from cases to **totality**: every file the compiler's
 //! parser accepts — `examples/`, the vendored first-party `.bynk` sources
-//! (`bynk-check/src/firstparty`), every `bynkc` positive fixture — must have
+//! (`bynk-std/lib`), every `bynkc` positive fixture — must have
 //! zero `ERROR` and zero `MISSING` nodes under tree-sitter too, and every
 //! negative fixture whose `expected_error.txt` names a parse/lex-time
 //! category must be rejected by both. This corpus is compiled and checked
@@ -308,7 +308,7 @@ fn totality_positive_corpus_accepted_by_both_parsers() {
     let root = workspace_root();
     let mut files = Vec::new();
     collect_bynk_files_from(&root.join("examples"), &mut files);
-    collect_bynk_files_from(&root.join("bynk-check/src/firstparty"), &mut files);
+    collect_bynk_files_from(&root.join("bynk-std/lib"), &mut files);
     collect_bynk_files_from(&root.join("bynkc/tests/fixtures/positive"), &mut files);
     files.sort();
 

@@ -36,10 +36,13 @@ formatter), `diagnostics.rs` (the diagnostic-code registry), `cli.rs` (the clap
 CLI), and `keywords.rs` (the keyword registry).
 
 **First-party sources** (the `bynk` surface + platform adapters, the Bynk-written
-`bynk.list`/`bynk.map`/`bynk.string` commons, the per-platform TypeScript
-bindings, and the emitted runtime) live as real `.bynk`/`.ts` files under
-`bynkc/src/firstparty/` and are embedded at compile time via `include_str!`
-(ADR 0086). **Edit the file, not a string literal.** They are checked standalone
+`bynk.list`/`bynk.map`/`bynk.string`/`bynk.locale` commons, and the per-platform
+TypeScript bindings) live as real `.bynk`/`.ts` files in the data-only
+`bynk-std` crate, under `bynk-std/lib/` (`lib/core/` for the portable layers,
+`lib/cloudflare/` for the platform adapter), and are embedded at compile time via
+`include_str!` (ADR 0086). The emitted runtime is separate: its sources are in
+`bynk-emit/runtime/src/`, bundled into `bynk-emit/src/emitter/runtime.ts`.
+**Edit the file, not a string literal.** They are checked standalone
 (`tests/firstparty_sources.rs` parses + `bynk-fmt`-checks each `.bynk`;
 `tsc_verify.rs` type-checks the embedded `runtime.ts`), and vendored into every
 emitted project rather than published.

@@ -1,5 +1,5 @@
 //! v0.48: the first-party Bynk sources are now real files embedded via
-//! `include_str!` (see `bynkc/src/firstparty/`). These tests give them the
+//! `include_str!` (see `bynk-std/lib/`). These tests give them the
 //! standing guarantees they lacked as Rust string literals:
 //!
 //!  1. **Each source parses** — tokenises + `parse_unit` without errors, so the
@@ -55,7 +55,7 @@ fn every_first_party_source_is_fmt_clean() {
         match format_source(src, &opts) {
             Ok(formatted) if formatted == src => {}
             Ok(_) => failures.push(format!(
-                "{name}: not bynk-fmt-clean (run bynk-fmt over bynkc/src/firstparty/)"
+                "{name}: not bynk-fmt-clean (run bynk-fmt over bynk-std/lib/)"
             )),
             Err(e) => failures.push(format!("{name}: format failed ({} errors)", e.errors.len())),
         }
@@ -67,22 +67,21 @@ fn every_first_party_source_is_fmt_clean() {
     );
 }
 
-/// #901 drift guard: every `pub const *_SRC` in `firstparty.rs` must appear in
+/// #901 drift guard: every `pub const *_SRC` in `bynk-std/src/lib.rs` must appear in
 /// the `FIRSTPARTY_SOURCES` list, so the next first-party commons cannot be
-/// added to `firstparty.rs` yet silently left out of hover / completion / this
+/// added to `bynk-std/src/lib.rs` yet silently left out of hover / completion / this
 /// parse guard — the exact way `bynk.locale` and `bynk.locale.types` were.
 /// A pure text scan of the source file, since Rust has no const reflection.
 #[test]
 fn firstparty_sources_cover_every_src_const() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../bynk-check/src/firstparty.rs");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../bynk-std/src/lib.rs");
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
 
     // The `FIRSTPARTY_SOURCES = &[ … ];` array literal, as text.
     let list_start = text
         .find("pub const FIRSTPARTY_SOURCES")
-        .expect("FIRSTPARTY_SOURCES declared in firstparty.rs");
+        .expect("FIRSTPARTY_SOURCES declared in bynk-std/src/lib.rs");
     let list_end = text[list_start..]
         .find("];")
         .map(|rel| list_start + rel)
@@ -108,7 +107,7 @@ fn firstparty_sources_cover_every_src_const() {
 
     assert!(
         missing.is_empty(),
-        "these `*_SRC` consts are declared in firstparty.rs but missing from \
+        "these `*_SRC` consts are declared in bynk-std/src/lib.rs but missing from \
          FIRSTPARTY_SOURCES (add them, or hover/completion/parse-guard will skip \
          them — #901):\n{}",
         missing.join("\n")

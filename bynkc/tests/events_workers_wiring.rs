@@ -409,7 +409,7 @@ fn workers_events_pattern_leaves_fanout_routing_unchanged() {
 
 // Events track, slice 2 (spine #936): the same fixture again, but the
 // subscriber declares the optional `env: EventEnvelope` parameter.
-// `EventEnvelope` is a plain first-party record (`bynk-check/src/firstparty/
+// `EventEnvelope` is a plain first-party record (`bynk-std/lib/core/
 // bynk.bynk`, `exports transparent`), imported directly from the `bynk`
 // adapter's own module like any other first-party type — declaring it as a
 // handler parameter needs no generated codec of its own (confirmed: it is

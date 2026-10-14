@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "bynk-syntax",
+    "bynk-std",
     "bynk-ts",
     "bynk-render",
     "bynk-check",
@@ -67,6 +68,7 @@ wildcard_enum_match_arm = "warn"
 # dependency requirement; path is used for in-workspace builds. The one
 # exception is bynk-testkit at the bottom of this table — see its own entry.
 bynk-syntax = { path = "bynk-syntax", version = "0.330.8" }
+bynk-std = { path = "bynk-std", version = "0.330.8" }
 bynk-ts = { path = "bynk-ts", version = "0.330.8" }
 bynk-render = { path = "bynk-render", version = "0.330.8" }
 bynk-check = { path = "bynk-check", version = "0.330.8" }

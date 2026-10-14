@@ -443,7 +443,7 @@ fn emitted_typescript_passes_tsc_strict() {
 /// erase it either way) applies to shipped runtime/binding code exactly as
 /// much as to tree output. Both real violations are fixed at their source
 /// (`bynk-emit/runtime/src/boundary.ts`, re-bundled via `npm run bundle`;
-/// `bynk-check/src/firstparty/bindings/bynk-{node,cloudflare}.ts`), not
+/// `bynk-std/lib/core/bindings/bynk-{node,cloudflare}.ts`), not
 /// exempted here.
 ///
 /// **A known, separate gap this check cannot yet close:** no
