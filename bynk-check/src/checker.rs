@@ -1262,7 +1262,7 @@ pub fn check_handler_body(
         callees,
         scopes: vec![param_scope],
         loose_bindings: HashSet::new(),
-        loose_pending: HashSet::new(),
+        loose_is_tests: HashMap::new(),
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
@@ -1413,7 +1413,7 @@ pub fn check_body(
         callees,
         scopes: vec![scope],
         loose_bindings: HashSet::new(),
-        loose_pending: HashSet::new(),
+        loose_is_tests: HashMap::new(),
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
@@ -1563,7 +1563,7 @@ pub fn check_invariants(
             callees,
             scopes: vec![field_scope.clone()],
             loose_bindings: HashSet::new(),
-            loose_pending: HashSet::new(),
+            loose_is_tests: HashMap::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -1709,7 +1709,7 @@ pub fn check_contracts(
             callees,
             scopes: vec![scope],
             loose_bindings: HashSet::new(),
-            loose_pending: HashSet::new(),
+            loose_is_tests: HashMap::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -1934,7 +1934,7 @@ pub fn check_transitions(
             callees,
             scopes: vec![scope.clone()],
             loose_bindings: HashSet::new(),
-            loose_pending: HashSet::new(),
+            loose_is_tests: HashMap::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -2197,10 +2197,10 @@ pub(crate) struct Ctx<'a> {
     /// later error-typed binding of the name (#1663's absorbed failures).
     /// Read through [`Ctx::is_loose`].
     pub loose_bindings: HashSet<(String, usize)>,
-    /// #1931: the names an `is` test over a loose value binds loose. The
-    /// collector that finds them does not bind; the branch that binds them
-    /// adopts them ([`Ctx::adopt_loose`]).
-    pub loose_pending: HashSet<String>,
+    /// #1931: for each `is` test over a loose value, the names it binds loose.
+    /// The collector that finds them is memoised and does not bind; each
+    /// branch that binds a condition's tests adopts them ([`Ctx::adopt_loose`]).
+    pub loose_is_tests: HashMap<ExprId, Vec<String>>,
     /// Memoised `is`-pattern bindings, keyed by the condition sub-expression's
     /// span. `collect_is_bindings` runs at every `&&`/`implies` node and, for a
     /// left-nested `&&` chain, would otherwise re-walk each lhs subtree once per
@@ -2362,12 +2362,25 @@ impl<'a> Ctx<'a> {
         self.loose_bindings.insert((name.to_string(), depth));
     }
 
-    /// #1931: after binding an `is` test's `bindings` in the current frame,
-    /// mark loose those its collector found loose.
-    pub fn adopt_loose(&mut self, bindings: &[(String, TyId)]) {
-        for (name, ty) in bindings {
-            if matches!(&*self.tys.get(*ty), Ty::Error) && self.loose_pending.contains(name) {
-                self.mark_loose_here(name);
+    /// #1931: after binding the `is` tests `cond` proves matched (when
+    /// `when_true`) in the current frame, mark loose the names those tests
+    /// over a loose value bind loose. Keyed by test, so a later test that
+    /// binds the name to an absorbed failure (#1663) is not affected.
+    pub fn adopt_loose(&mut self, cond: &Expr, when_true: bool) {
+        let names: Vec<String> = crate::narrowing::matched_is_tests(cond, when_true)
+            .into_iter()
+            .filter_map(|t| self.loose_is_tests.get(&t.id))
+            .flatten()
+            .cloned()
+            .collect();
+        for name in names {
+            if self
+                .scopes
+                .last()
+                .and_then(|f| f.get(&name))
+                .is_some_and(|t| matches!(&*self.tys.get(*t), Ty::Error))
+            {
+                self.mark_loose_here(&name);
             }
         }
     }

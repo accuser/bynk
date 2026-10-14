@@ -806,7 +806,7 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
         for (name, ty) in &bindings {
             ctx.bind(name.clone(), *ty);
         }
-        ctx.adopt_loose(&bindings);
+        ctx.adopt_loose(lhs, true);
         let rt = type_of(rhs, Some(tys.intern(Ty::Base(BaseType::Bool))), ctx);
         ctx.pop_scope();
         let (lt, rt) = (lt?, rt?);
@@ -1742,7 +1742,7 @@ pub(crate) fn check_if(
         ctx.bind(name.clone(), *ty);
     }
     // #1931: those an `is` over a loose value bound loose.
-    ctx.adopt_loose(&bindings);
+    ctx.adopt_loose(cond, true);
     let then_ty = type_of_block(then_block, expected, ctx);
     ctx.pop_scope();
     // v0.146 (ADR 0170): an `if` with no `else` carries a synthesised `{ () }`
@@ -1788,7 +1788,7 @@ pub(crate) fn check_if(
     for (name, ty) in &else_bindings {
         ctx.bind(name.clone(), *ty);
     }
-    ctx.adopt_loose(&else_bindings);
+    ctx.adopt_loose(cond, false);
     let else_ty = type_of_block(else_block, expected, ctx);
     ctx.pop_scope();
     match (then_ty, else_ty) {
@@ -3172,11 +3172,16 @@ fn check_loose_arms(arms: &[MatchArm], expected: Option<TyId>, ctx: &mut Ctx) ->
 
 /// #1931: the names `pattern` binds over a test-service call's untyped outcome,
 /// each with its type, into `out`, for an `is` test's branch; the error-typed
-/// ones are recorded as pending loose, for the binder to adopt
+/// ones are recorded against `test`, for each branch that binds them to adopt
 /// ([`Ctx::adopt_loose`]). A pattern of predeclared `HttpResult` variants is
 /// typed through the variant table a typed `HttpResult[T]` uses, with `T`
 /// unknown; anything else binds loose.
-fn loose_pattern_bindings(pattern: &Pattern, ctx: &mut Ctx, out: &mut Vec<(String, TyId)>) {
+fn loose_pattern_bindings(
+    test: ExprId,
+    pattern: &Pattern,
+    ctx: &mut Ctx,
+    out: &mut Vec<(String, TyId)>,
+) {
     let tys = ctx.tys;
     let error = tys.intern(Ty::Error);
     let start = out.len();
@@ -3193,7 +3198,7 @@ fn loose_pattern_bindings(pattern: &Pattern, ctx: &mut Ctx, out: &mut Vec<(Strin
         .filter(|(_, t)| matches!(&*tys.get(*t), Ty::Error))
         .map(|(n, _)| n.clone())
         .collect();
-    ctx.loose_pending.extend(loose);
+    ctx.loose_is_tests.insert(test, loose);
 }
 
 /// #1931: whether `pattern` names a predeclared `HttpResult` variant (every
@@ -4413,7 +4418,7 @@ fn bindings_of_is_test(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, TyId)>
     // not at all.
     let value_ty = ctx.expr_types.get(&value.id).map(|te| te.ty);
     if value_ty.is_none_or(|t| matches!(&*tys.get(t), Ty::Error)) && ctx.reads_loose(value) {
-        loose_pattern_bindings(pattern, ctx, out);
+        loose_pattern_bindings(expr.id, pattern, ctx, out);
         return;
     }
     let Some(value_ty) = value_ty else {

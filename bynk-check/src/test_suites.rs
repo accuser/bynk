@@ -3382,6 +3382,9 @@ mod untyped_outcome_tests {
         case("    expect r.length() == 0").assert_reports("bynk.test.untyped_outcome");
         case("    if r is Ok(v) {\n      expect v.length() == 0\n    } else {\n      expect true\n    }")
             .assert_reports("bynk.test.untyped_outcome");
+        // Bound by both the `&&` and the `if` (one memoised collection).
+        case("    if r is Ok(v) && true {\n      expect v.length() == 0\n    } else {\n      expect true\n    }")
+            .assert_reports("bynk.test.untyped_outcome");
     }
 
     /// Review of #1935: a loose binding ends with its frame, so a sibling frame
