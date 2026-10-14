@@ -1,0 +1,2 @@
+bynk.test.untyped_outcome
+`.length()` is called on part of a service call's outcome, which a case does not type

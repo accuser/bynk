@@ -3333,3 +3333,59 @@ service api from http {
         .assert_reports("bynk.test.credential_needs_system");
     }
 }
+
+/// #1931: a case over a service call's outcome, which is untyped (ADR 0203).
+#[cfg(test)]
+mod untyped_outcome_tests {
+    const RAW_API: &str = "context app.web\n\nservice api from http {\n  on GET(\"/x\") () -> Effect[HttpResult[()]] by Visitor {\n    Raw(Bytes.fromUtf8(\"hi\"), \"text/plain\")\n  }\n}\n";
+
+    fn case(body: &str) -> crate::testkit::Analysed {
+        crate::testkit::analyse(&[
+            ("app/web.bynk", RAW_API),
+            (
+                "app/tests/web.test.bynk",
+                &format!(
+                    "suite app.web {{\n  case \"c\" {{\n    let r <- api.GET(\"/x\") by Visitor\n{body}\n  }}\n}}\n"
+                ),
+            ),
+        ])
+    }
+
+    /// A fixed payload binds its type, so a wrong method on it is reported
+    /// against `Bytes`, and a right one checks.
+    #[test]
+    fn a_raw_payload_binds_bytes() {
+        case("    match r {\n      Raw(body, _) => expect body.length() == 2\n      _ => expect false\n    }")
+            .assert_clean();
+        case("    match r {\n      Raw(body, _) => expect body.nosuch() == 2\n      _ => expect false\n    }")
+            .assert_reports("bynk.types.method_not_found");
+        case("    if r is Raw(body, _) {\n      expect body.nosuch() == 2\n    } else {\n      expect false\n    }")
+            .assert_reports("bynk.types.method_not_found");
+    }
+
+    /// The arms of a match on the outcome are checked: before #1931 they were
+    /// skipped, so an unknown name in one went unreported.
+    #[test]
+    fn the_arms_of_a_match_on_the_outcome_are_checked() {
+        case("    match r {\n      Raw(_, _) => expect nope == 1\n      _ => expect false\n    }")
+            .assert_reports("bynk.resolve.unknown_name");
+    }
+
+    /// A value of the handler's result type stays untyped, so a method on it,
+    /// or on a field of it, is reported rather than lowered on nothing.
+    #[test]
+    fn a_method_on_an_untyped_payload_is_reported() {
+        case("    match r {\n      Ok(v) => expect v.length() == 0\n      _ => expect true\n    }")
+            .assert_reports("bynk.test.untyped_outcome");
+        case("    match r {\n      Ok(v) => expect v.name.length() == 0\n      _ => expect true\n    }")
+            .assert_reports("bynk.test.untyped_outcome");
+        case("    expect r.length() == 0").assert_reports("bynk.test.untyped_outcome");
+    }
+
+    /// A real binding that shadows a loose one is typed, so it is not read as
+    /// loose.
+    #[test]
+    fn a_shadowing_binding_is_not_loose() {
+        case("    let r = \"text\"\n    expect r.length() == 4").assert_clean();
+    }
+}

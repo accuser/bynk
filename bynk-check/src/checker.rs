@@ -1261,6 +1261,7 @@ pub fn check_handler_body(
         requirements,
         callees,
         scopes: vec![param_scope],
+        loose_bindings: HashSet::new(),
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
@@ -1410,6 +1411,7 @@ pub fn check_body(
         requirements,
         callees,
         scopes: vec![scope],
+        loose_bindings: HashSet::new(),
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
@@ -1558,6 +1560,7 @@ pub fn check_invariants(
             requirements,
             callees,
             scopes: vec![field_scope.clone()],
+            loose_bindings: HashSet::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -1702,6 +1705,7 @@ pub fn check_contracts(
             requirements,
             callees,
             scopes: vec![scope],
+            loose_bindings: HashSet::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -1925,6 +1929,7 @@ pub fn check_transitions(
             requirements,
             callees,
             scopes: vec![scope.clone()],
+            loose_bindings: HashSet::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -2180,6 +2185,11 @@ pub(crate) struct Ctx<'a> {
     pub callees: &'a mut HashMap<ExprId, Callee>,
     /// Stack of in-scope name → type frames.
     pub scopes: Vec<HashMap<String, TyId>>,
+    /// #1931: names bound from a test-service call's outcome, which is
+    /// untyped (ADR 0203), or from a pattern over one: error-typed with no
+    /// error reported. Read through [`Ctx::is_loose`], which also requires the
+    /// name to be error-typed where it is read.
+    pub loose_bindings: HashSet<String>,
     /// Memoised `is`-pattern bindings, keyed by the condition sub-expression's
     /// span. `collect_is_bindings` runs at every `&&`/`implies` node and, for a
     /// left-nested `&&` chain, would otherwise re-walk each lhs subtree once per
@@ -2318,6 +2328,39 @@ impl<'a> Ctx<'a> {
     }
     pub fn bind(&mut self, name: String, ty: TyId) {
         self.scopes.last_mut().unwrap().insert(name, ty);
+    }
+
+    /// #1931: bind `name` to a value of no known type that is not an error: a
+    /// test-service call's outcome, or a binding drawn from one.
+    pub fn bind_loose(&mut self, name: String) {
+        let error = self.tys.intern(Ty::Error);
+        self.bind(name.clone(), error);
+        self.loose_bindings.insert(name);
+    }
+
+    /// #1931: mark `name` loose; it is bound error-typed, now or by the caller.
+    pub fn mark_loose(&mut self, name: &str) {
+        self.loose_bindings.insert(name.to_string());
+    }
+
+    /// #1931: whether `name` is loose in scope. A real binding that shadows a
+    /// loose one has a type, so it is never read as loose; a set entry left
+    /// from an earlier scope is harmless for the same reason.
+    pub fn is_loose(&self, name: &str) -> bool {
+        self.loose_bindings.contains(name)
+            && self
+                .lookup(name)
+                .is_some_and(|t| matches!(&*self.tys.get(t), Ty::Error))
+    }
+
+    /// #1931: whether `expr` reads a loose binding: the name itself, or a field
+    /// path rooted in it (`v.name`), which is untyped too.
+    pub fn reads_loose(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Ident(id) => self.is_loose(&id.name),
+            ExprKind::FieldAccess { receiver, .. } => self.reads_loose(receiver),
+            _ => false,
+        }
     }
 }
 
@@ -3151,7 +3194,17 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                 });
                 // The expected type for the RHS is `Effect[annot]` if annot present.
                 let rhs_expected = annot_ty.map(|t| tys.intern(Ty::Effect(t)));
+                let errors_before = ctx.errors.len();
                 let rhs_ty = type_of(&l.value, rhs_expected, ctx);
+                // #1931: a test-service call's outcome is untyped (ADR 0203).
+                // Bound loose below, rather than as a failed value, so its uses
+                // are checked as far as they can be.
+                let loose_outcome = rhs_ty.is_none()
+                    && ctx.errors.len() == errors_before
+                    && matches!(
+                        ctx.callees.get(&l.value.id),
+                        Some(Callee::TestService { .. } | Callee::TestAssetFetch { .. })
+                    );
                 check_unbound_effects(&l.value, true, ctx);
                 // v0.182 (#664): validate the call-site principal against the
                 // addressed handler — including the *absent* case, where an
@@ -3200,7 +3253,11 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                     // absorb instead of echoing as unknown names.
                     (None, None) => {
                         if l.name.name != "_" {
-                            ctx.bind(l.name.name.clone(), tys.intern(Ty::Error));
+                            if loose_outcome {
+                                ctx.bind_loose(l.name.name.clone());
+                            } else {
+                                ctx.bind(l.name.name.clone(), tys.intern(Ty::Error));
+                            }
                         }
                         continue;
                     }

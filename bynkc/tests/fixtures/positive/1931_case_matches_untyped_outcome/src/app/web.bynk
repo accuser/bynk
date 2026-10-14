@@ -1,0 +1,11 @@
+context app.web
+
+service api from http {
+  on GET("/raw") () -> Effect[HttpResult[()]] by Visitor {
+    Raw(Bytes.fromUtf8("hi"), "text/plain")
+  }
+
+  on GET("/refuse") () -> Effect[HttpResult[String]] by Visitor {
+    BadRequest("no thanks")
+  }
+}

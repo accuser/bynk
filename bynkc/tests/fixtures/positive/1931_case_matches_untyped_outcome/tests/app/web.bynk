@@ -1,0 +1,36 @@
+-- #1931: on the Bundle target, so the unit test module is golden and
+-- type-checked. A service call's outcome is untyped in a case, but a payload
+-- of fixed type binds that type: `Raw` binds `Bytes` and `String`, a message
+-- variant binds `String`, so their methods lower.
+suite app.web {
+  case "a Raw body, matched in the case" {
+    let r <- api.GET("/raw") by Visitor
+    match r {
+      Raw(body, ct) => expect body.length() == 2 && ct.startsWith("text/")
+      _ => expect false
+    }
+  }
+  case "a Raw body, through an is test" {
+    let r <- api.GET("/raw") by Visitor
+    if r is Raw(body, _) {
+      expect body.toBase64() == "aGk="
+    } else {
+      expect false
+    }
+  }
+  case "a match on the outcome, used as a value" {
+    let r <- api.GET("/raw") by Visitor
+    let n = match r {
+      Raw(body, _) => body.length()
+      _ => 0
+    }
+    expect n == 2
+  }
+  case "a message variant binds a String" {
+    let r <- api.GET("/refuse") by Visitor
+    match r {
+      BadRequest(m) => expect m.length() == 9
+      _ => expect false
+    }
+  }
+}

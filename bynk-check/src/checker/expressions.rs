@@ -3113,6 +3113,94 @@ fn join_ty(a: TyId, b: TyId, tys: &Types) -> Option<TyId> {
     None
 }
 
+/// #1931: the arms of a `match` on a test-service call's outcome, which is
+/// untyped (ADR 0203). Each arm still binds names and runs code, so it is
+/// checked as far as the outcome's shape allows: a pattern of a predeclared
+/// `HttpResult` variant binds that variant's fixed payload types (`Raw(body,
+/// contentType)` binds `Bytes` and `String`), and a payload of the result type
+/// `T` (`Ok(v)`) or any other pattern binds loose. Guards and bodies are typed
+/// as in any match.
+fn check_loose_arms(arms: &[MatchArm], expected: Option<TyId>, ctx: &mut Ctx) {
+    let tys = ctx.tys;
+    for arm in arms {
+        ctx.push_scope();
+        let mut bound = Vec::new();
+        loose_pattern_bindings(&arm.pattern, ctx, &mut bound);
+        for (name, ty) in bound {
+            ctx.bind(name, ty);
+        }
+        if let Some(guard) = &arm.guard {
+            let _ = type_of(guard, Some(tys.intern(Ty::Base(BaseType::Bool))), ctx);
+        }
+        let _ = match &arm.body {
+            MatchBody::Expr(e) => type_of(e, expected, ctx),
+            MatchBody::Block(b) => type_of_block(b, expected, ctx),
+        };
+        ctx.pop_scope();
+    }
+}
+
+/// #1931: the names `pattern` binds over a test-service call's untyped outcome,
+/// each with its type, into `out`; every error-typed one is marked loose. A
+/// predeclared `HttpResult` variant's fixed payload is typed through the same
+/// variant table a typed `HttpResult[T]` uses ([`variants_of`]), with `T`
+/// unknown; anything else binds loose.
+fn loose_pattern_bindings(pattern: &Pattern, ctx: &mut Ctx, out: &mut Vec<(String, TyId)>) {
+    let tys = ctx.tys;
+    let error = tys.intern(Ty::Error);
+    let start = out.len();
+    if is_http_variant_pattern(pattern) {
+        let outcome = tys.intern(Ty::HttpResult(error));
+        gather_pattern_bindings(outcome, pattern, &ctx.input.types, out, tys);
+    } else {
+        let mut names = Vec::new();
+        pattern_binding_names(pattern, &mut names);
+        out.extend(names.into_iter().map(|n| (n, error)));
+    }
+    let loose: Vec<String> = out[start..]
+        .iter()
+        .filter(|(_, t)| matches!(&*tys.get(*t), Ty::Error))
+        .map(|(n, _)| n.clone())
+        .collect();
+    for name in loose {
+        ctx.mark_loose(&name);
+    }
+}
+
+/// #1931: whether `pattern` names a predeclared `HttpResult` variant (every
+/// alternative, for an or-pattern).
+fn is_http_variant_pattern(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Variant {
+            type_name, variant, ..
+        } => {
+            type_name.as_ref().is_none_or(|t| t.name == "HttpResult")
+                && http_variant(&variant.name).is_some()
+        }
+        Pattern::Or(alts, _) => alts.iter().all(is_http_variant_pattern),
+        _ => false,
+    }
+}
+
+/// Every name `pattern` binds, at any depth.
+fn pattern_binding_names(pattern: &Pattern, out: &mut Vec<String>) {
+    match pattern {
+        Pattern::Binding(id) => out.push(id.name.clone()),
+        Pattern::Variant { bindings, .. } => {
+            for b in bindings {
+                pattern_binding_names(b.pattern(), out);
+            }
+        }
+        Pattern::Refined { inner, .. } => pattern_binding_names(inner, out),
+        Pattern::Or(alts, _) => {
+            if let Some(first) = alts.first() {
+                pattern_binding_names(first, out);
+            }
+        }
+        Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
+    }
+}
+
 pub(crate) fn check_match(
     discriminant: &Expr,
     arms: &[MatchArm],
@@ -3121,7 +3209,14 @@ pub(crate) fn check_match(
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     let tys = ctx.tys;
-    let disc_ty = type_of(discriminant, None, ctx)?;
+    let Some(disc_ty) = type_of(discriminant, None, ctx) else {
+        // #1931: a test-service call's outcome is untyped, but its arms still
+        // bind names and run code, so check them as far as they can be.
+        if ctx.reads_loose(discriminant) {
+            check_loose_arms(arms, expected, ctx);
+        }
+        return None;
+    };
     // v0.130 (DECISION D): a match is *either* variant-kind (sum/`Result`/
     // `Option`) *or* literal-kind (a primitive `Int`/`String`/`Bool` scrutinee,
     // including a refined type over one of those bases). Anything else — a
@@ -3904,7 +3999,13 @@ pub(crate) fn check_is(
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     let tys = ctx.tys;
-    let value_ty = type_of(value, None, ctx)?;
+    let Some(value_ty) = type_of(value, None, ctx) else {
+        // #1931: testing a test-service call's untyped outcome is still a
+        // `Bool`; its bindings come from `bindings_of_is_test`.
+        return ctx
+            .reads_loose(value)
+            .then(|| tys.intern(Ty::Base(BaseType::Bool)));
+    };
     let variants = variants_of(value_ty, &ctx.input.types, tys);
     check_is_pattern(pattern, value_ty, &variants, ctx);
     Some(tys.intern(Ty::Base(BaseType::Bool)))
@@ -4271,7 +4372,14 @@ fn bindings_of_is_test(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, TyId)>
     };
     // Recompute value type from the expr_types side-table; this avoids
     // mutating type-checking state.
-    let Some(value_ty) = ctx.expr_types.get(&value.id).map(|te| te.ty) else {
+    // #1931: a test-service call's untyped outcome, recorded error-typed or
+    // not at all.
+    let value_ty = ctx.expr_types.get(&value.id).map(|te| te.ty);
+    if value_ty.is_none_or(|t| matches!(&*tys.get(t), Ty::Error)) && ctx.reads_loose(value) {
+        loose_pattern_bindings(pattern, ctx, out);
+        return;
+    }
+    let Some(value_ty) = value_ty else {
         return;
     };
     // v0.13 refinement narrowing: `ident is RefinedType` re-binds the

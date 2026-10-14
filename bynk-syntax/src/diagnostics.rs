@@ -1906,6 +1906,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["case"],
     ),
     dg(
+        "bynk.test.untyped_outcome",
+        "A case calls a method on part of a service call's outcome whose type the case does not know (a value of the handler's result type).",
+        &["case"],
+    ),
+    dg(
         "bynk.test.wire_needs_system",
         "A `Wire(...)` raw argument is used outside a `system`-tier service address; `Wire` hands pre-validation input to the boundary and is meaningless at `unit` or in any other position.",
         &["case"],

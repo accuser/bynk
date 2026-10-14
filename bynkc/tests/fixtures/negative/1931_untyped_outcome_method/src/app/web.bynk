@@ -1,0 +1,7 @@
+context app.web
+
+service api from http {
+  on GET("/name") () -> Effect[HttpResult[String]] by Visitor {
+    Ok("bynk")
+  }
+}

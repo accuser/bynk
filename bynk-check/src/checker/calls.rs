@@ -148,6 +148,7 @@ pub(crate) fn check_fn(
         requirements,
         callees,
         scopes: vec![param_scope],
+        loose_bindings: std::collections::HashSet::new(),
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
@@ -250,6 +251,7 @@ fn check_static_initialiser(
             requirements: &mut init_requirements,
             callees,
             scopes: vec![HashMap::new()],
+            loose_bindings: std::collections::HashSet::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: field_ty,
@@ -2171,6 +2173,17 @@ pub(crate) fn check_method_call(
         }
         return None;
     }
+    // #1931: a method on part of a test-service call's outcome, which is
+    // untyped (ADR 0203). Neither a kernel method nor a declared one can be
+    // lowered without the receiver's type, so this is reported here rather
+    // than emitted as a call on nothing.
+    if ctx.reads_loose(receiver) {
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        ctx.errors.push(untyped_outcome_receiver(receiver, method));
+        return None;
+    }
     // v0.25 / v0.178: a test body invokes the target's service as
     // `svc.call(args)`. The emitter wires the call from the same service set;
     // the checker resolves the service's `on call` handler and verifies the
@@ -3012,6 +3025,22 @@ fn check_generic_method_call(
         }
     }
     Some(substitute(ret_pattern, &subst, tys))
+}
+
+/// #1931: `bynk.test.untyped_outcome` for `.method()` called on `receiver`,
+/// part of a test-service call's untyped outcome.
+fn untyped_outcome_receiver(receiver: &Expr, method: &Ident) -> CompileError {
+    CompileError::new(
+        "bynk.test.untyped_outcome",
+        receiver.span,
+        format!(
+            "`.{}()` is called on part of a service call's outcome, which a case does not type",
+            method.name
+        ),
+    )
+    .with_note(
+        "a case types an outcome's payload only where its type is fixed: `Raw(body, contentType)` binds `Bytes` and `String`, a message or redirect variant binds `String`; a value of the handler's result type (`Ok(v)`) is untyped. Call the method in a source function the case calls, or compare the value instead",
+    )
 }
 
 /// v0.178 (#662) / v0.182 (#664): resolve a test-body service invocation against
