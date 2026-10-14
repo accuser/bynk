@@ -1,2 +1,2 @@
 bynk.uses.name_conflict
-`Status` names this unit's function, which hides the type `Status` from `lib.st`
+`Done` constructs a variant of `Status` from `lib.st`, which this unit's function `Status` hides

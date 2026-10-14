@@ -4201,13 +4201,27 @@ pub fn shadowed_imports_in<'a>(
                 && kind != imported
                 && !(imported == "type" && kind == "event")
             {
-                out.entry(n.clone())
-                    .or_insert_with(|| crate::resolver::ShadowedImport {
-                        unit: t.clone(),
-                        imported,
-                        local: kind,
-                        local_span,
-                    });
+                let hidden = crate::resolver::ShadowedImport {
+                    unit: t.clone(),
+                    imported,
+                    local: kind,
+                    local_span,
+                };
+                // The first `uses` target to declare a name decides, except
+                // that a type replaces a function or asset (review of #1933).
+                // The local value hides both imports, but only the type stays
+                // composed, so only its entry gates the name: kept second, it
+                // would let `uses` order decide whether the unit may write it.
+                match out.entry(n.clone()) {
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(hidden);
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                        if imported == "type" && e.get().imported != "type" {
+                            e.insert(hidden);
+                        }
+                    }
+                }
             }
         }
     }
@@ -4765,6 +4779,46 @@ mod shadowed_import_tests {
                 "commons app\n\nuses lib.st\n\nasset Status = \"assets/x.json\"\n\nfn f() -> String {\n  Status.url\n}\n",
             ),
             ("assets/x.json", "{}"),
+        ]);
+        r.assert_clean();
+    }
+
+    /// Review of #1933: two used commons declaring the hidden name as a type
+    /// and as a function. The local value hides both, and the type still
+    /// gates the name whichever `uses` comes first.
+    #[test]
+    fn a_hidden_type_gates_whatever_the_uses_order() {
+        let a = ("lib/a.bynk", "commons lib.a\n\ntype Status = { n: Int }\n");
+        let b = (
+            "lib/b.bynk",
+            "commons lib.b\n\nfn Status() -> Int {\n  1\n}\n",
+        );
+        for (first, second) in [("lib.a", "lib.b"), ("lib.b", "lib.a")] {
+            let app = format!(
+                "context app\n\nuses {first}\nuses {second}\n\nservice Status {{\n  on call() -> Effect[Int] {{\n    Effect.pure(1)\n  }}\n}}\n\nfn f(s: Status) -> Int {{\n  s.n\n}}\n"
+            );
+            let r = analyse(&[a, b, ("app/main.bynk", &app)]);
+            assert_eq!(
+                r.error_categories(),
+                vec!["bynk.uses.name_conflict"],
+                "uses {first} then {second}"
+            );
+        }
+    }
+
+    /// Review of #1933: a local function hiding an imported type answers a
+    /// bare reference as a function value.
+    #[test]
+    fn a_local_function_hiding_a_type_is_a_function_value() {
+        let r = analyse(&[
+            (
+                "lib/util.bynk",
+                "commons lib.util\n\ntype thing = { n: Int }\n",
+            ),
+            (
+                "app/main.bynk",
+                "commons app\n\nuses lib.util\n\nfn thing(x: Int) -> Int {\n  x + 1\n}\n\nfn f() -> List[Int] {\n  [1, 2].map(thing)\n}\n",
+            ),
         ]);
         r.assert_clean();
     }

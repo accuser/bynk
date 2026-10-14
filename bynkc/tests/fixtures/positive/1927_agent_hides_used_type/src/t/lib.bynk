@@ -1,0 +1,11 @@
+commons t.lib
+
+type Cart = { items: Int }
+
+fn carts() -> List[Cart] {
+  [Cart { items: 2 }, Cart { items: 0 }]
+}
+
+fn isFull(c: Cart) -> Bool {
+  c.items > 0
+}

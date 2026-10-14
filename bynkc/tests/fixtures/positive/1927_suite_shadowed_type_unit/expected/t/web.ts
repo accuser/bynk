@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, HttpResult } from "../runtime.js";
 
-import { current, isDone } from "./lib.js";
+import { all, current, isDone } from "./lib.js";
 
 export function label(): string {
   const __r0 = current();
@@ -16,6 +16,10 @@ export function label(): string {
     }
   }
   throw new globalThis.Error("non-exhaustive match");
+}
+
+export function countDone(): number {
+  return ((all()).filter((__x: import("./lib.js").Status) => ((s) => isDone(s))(__x))).length;
 }
 
 export const Status = {

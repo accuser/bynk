@@ -3,7 +3,8 @@ context t.web
 uses t.lib
 
 -- #1927: the service `Status` hides `t.lib`'s type `Status`. A value of the
--- type still flows through, and a match still names its variants.
+-- type still flows through, a match still names its variants, and a kernel
+-- over a list of them lowers with an annotation naming the hidden type.
 
 service Status from http {
   on GET("/") () -> Effect[HttpResult[String]] by Visitor {
@@ -16,4 +17,8 @@ fn label() -> String {
     Done => "done"
     Pending => "pending"
   }
+}
+
+fn countDone() -> Int {
+  all().filter((s) => isDone(s)).length()
 }

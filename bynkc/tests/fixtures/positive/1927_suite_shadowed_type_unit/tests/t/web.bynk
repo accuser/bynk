@@ -7,5 +7,7 @@ suite t.web {
   }
   case "a value of the hidden type flows" {
     expect isDone(current())
+    expect all().filter((s) => isDone(s)).length() == 1
+    expect countDone() == 1
   }
 }

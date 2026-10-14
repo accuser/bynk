@@ -1454,16 +1454,30 @@ impl Gate<'_> {
         }
     }
     /// #1927: a bare variant constructed (`Done`, `Done(x)`) of a gated sum.
+    /// It names the sum in the emitted module (`Status.Done`), so it is the
+    /// conflict; the error says so, since matching the same variant is legal.
     fn bare_variant(&mut self, id: &Ident) {
-        if let Some(sum) = self.variants.get(&id.name)
-            && let Some(owner) = self.hidden.get(sum)
-        {
-            let at = Ident {
-                name: sum.clone(),
-                span: id.span,
-            };
-            self.errors.push((self.report)(&at, owner));
-        }
+        let Some(sum) = self.variants.get(&id.name) else {
+            return;
+        };
+        let Some(s) = self.locals.and_then(|l| l.get(sum)) else {
+            return;
+        };
+        self.errors.push(
+            CompileError::new(
+                "bynk.uses.name_conflict",
+                id.span,
+                format!(
+                    "`{}` constructs a variant of `{sum}` from `{}`, which this unit's {} `{sum}` hides",
+                    id.name, s.unit, s.local
+                ),
+            )
+            .with_label(s.local_span, format!("{} declared here", s.local))
+            .with_note(format!(
+                "constructing a variant bare still names its type (`{sum}.{}`); match on it instead, or rename one of the two",
+                id.name
+            )),
+        );
     }
     fn type_ref(&mut self, r: &TypeRef) {
         match r {
@@ -2555,6 +2569,17 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
                 // expression in resolver — the type checker will assign
                 // the correct sum type. Mark with no error.
                 let _ = sum_owner;
+            } else if cx.fns.contains_key(&id.name)
+                && cx
+                    .shadowed
+                    .get(&id.name)
+                    .is_some_and(|s| s.imported == "type")
+            {
+                // Review of #1933: a local function hiding an imported type of
+                // its name answers a bare reference (a function value), as in
+                // the emitted module; the checker judges the position
+                // (`check_ident`'s function arm, met before types).
+                cx.errors.refs.record(id.span, SymbolKind::Fn, &id.name);
             } else if cx.assets.contains_key(&id.name)
                 && cx
                     .shadowed

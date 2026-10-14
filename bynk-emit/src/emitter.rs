@@ -5530,6 +5530,55 @@ fn ts_array_elem(elem_ts: &str) -> String {
     }
 }
 
+/// #1927: how the module being emitted spells a type it names. A unit's own
+/// value (a function, asset, service, agent or provider) can hide a
+/// `uses`-imported type of its name. The unit's source may not write that
+/// type, but the lowering still names the types of checked expressions (#1778:
+/// a kernel's `(__x: Name) => …`, an `if` slot, `List.empty`), and in this
+/// module `Name` is the local value: a `const`, or for an agent or provider a
+/// `class`, whose instance type would capture the annotation. So while such a
+/// module is emitted, each hidden type is spelled as an inline import type,
+/// `import("<module>").Name`, which needs no import statement and names the
+/// declaring module's type whatever this module declares. Agents are never
+/// `Ty::Named`, so within the unit a hidden name always means the imported
+/// type.
+///
+/// Scoped per module, not threaded: [`ts_ty`] has ~45 callers and no module
+/// context. [`type_renames::enter`] sets the spellings for this thread until its
+/// guard drops, and a module is lowered on one thread.
+pub(crate) mod type_renames {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    thread_local! {
+        static SPELLINGS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    }
+
+    /// Restores the spellings in force before [`enter`] when it drops.
+    pub(crate) struct Guard(HashMap<String, String>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let previous = std::mem::take(&mut self.0);
+            SPELLINGS.with(|s| *s.borrow_mut() = previous);
+        }
+    }
+
+    /// Spell each type in `spellings` (name → TypeScript text) until the
+    /// returned guard drops.
+    #[must_use]
+    pub(crate) fn enter(spellings: HashMap<String, String>) -> Guard {
+        Guard(SPELLINGS.with(|s| std::mem::replace(&mut *s.borrow_mut(), spellings)))
+    }
+
+    /// How the current module spells the type `name`: its rename, if any.
+    pub(crate) fn spelling(name: &str) -> String {
+        SPELLINGS
+            .with(|s| s.borrow().get(name).cloned())
+            .unwrap_or_else(|| name.to_string())
+    }
+}
+
 fn ts_ty_to_ts_type(t: TyId, tys: &Arc<Types>) -> TsType {
     match &*tys.get(t) {
         // bynk internal error (finding #28, R4.3): `Ty::Error` records a
@@ -5544,9 +5593,11 @@ fn ts_ty_to_ts_type(t: TyId, tys: &Arc<Types>) -> TsType {
         Ty::Base(b) => TsType::named(ts_base(*b)),
         // v0.157 (ADR 0183): a generic record instantiation renders as the
         // erased TS generic `Name<Arg, …>`; a non-generic named type is bare.
-        Ty::Named { name, args, .. } if args.is_empty() => TsType::named(name.clone()),
+        Ty::Named { name, args, .. } if args.is_empty() => {
+            TsType::named(type_renames::spelling(name))
+        }
         Ty::Named { name, args, .. } => TsType::named_with_args(
-            name.clone(),
+            type_renames::spelling(name),
             args.iter().map(|a| ts_ty_to_ts_type(*a, tys)).collect(),
         ),
         Ty::Result(t, e) => TsType::named_with_args(

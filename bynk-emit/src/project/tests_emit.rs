@@ -4095,19 +4095,30 @@ fn emit_test_scope_setup(
     // own `render` (a messages block's synthetic one) *and* `uses
     // bynk.locale` (which also declares `render`) destructured both into one
     // scope — `Cannot redeclare block-scoped variable 'render'` under `tsc`.
-    // #1925: a used commons' function or asset is hidden by any value the
-    // target declares — its services, agents and bodied providers too — as
-    // the checker's view hides it (`bynk_check::project_model::shadowed_imports`).
-    // #1927: so is a used commons' type: a case may not name it
-    // (`check_shadowed_type_names_in_suite`), and binding it would take the
-    // target value's name.
-    let target_values: std::collections::HashSet<&String> = unit_tables
+    let target_local: std::collections::HashSet<&String> = unit_tables
         .get(target_name)
         .map(|t| {
             t.types
                 .keys()
                 .chain(t.fns.keys())
                 .chain(t.assets.keys())
+                .collect()
+        })
+        .unwrap_or_default();
+    // #1925: a used commons' function or asset is hidden by any value the
+    // target declares — its services, agents and bodied providers too — as
+    // the checker's view hides it (`bynk_check::project_model::shadowed_imports`).
+    // #1927: so is a used commons' type's *value* (its constructors), which a
+    // case may not name (`check_shadowed_type_names_in_suite`). Its type
+    // alias (`type X = ns.X`, below) is still bound: it lives in TypeScript's
+    // type space, beside the target value's `const`, and the lowering names
+    // the types of checked expressions (`(__x: X) => …`, #1778).
+    let target_values: std::collections::HashSet<&String> = unit_tables
+        .get(target_name)
+        .map(|t| {
+            target_local
+                .iter()
+                .copied()
                 .chain(t.services.keys())
                 .chain(t.agents.keys())
                 .chain(
@@ -4138,7 +4149,7 @@ fn emit_test_scope_setup(
                     .collect();
                 names.sort();
                 names.dedup();
-                let type_names = aliased_types(table, |n| !target_values.contains(n));
+                let type_names = aliased_types(table, |n| !target_local.contains(n));
                 crate::emitter::extend_printed_at(
                     out,
                     emit_ns_destructure(&ns, &names, &type_names),

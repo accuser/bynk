@@ -34,8 +34,9 @@ function __makeTestDeps() {
 async function test_the_service_answers() {
   try {
     const deps = __makeTestDeps();
-    const { Status, label } = __ns_t_web;
-    const { current, isDone } = __ns_t_lib;
+    const { Status, countDone, label } = __ns_t_web;
+    const { all, current, isDone } = __ns_t_lib;
+    type Status = __ns_t_lib.Status;
     const r = await Status.http_GET(deps);
     if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/t/web.bynk:6:12", 227, 237, "expect r is Ok(_)"); }
     return { pass: true };
@@ -51,9 +52,12 @@ async function test_the_service_answers() {
 async function test_a_value_of_the_hidden_type_flows() {
   try {
     const deps = __makeTestDeps();
-    const { Status, label } = __ns_t_web;
-    const { current, isDone } = __ns_t_lib;
+    const { Status, countDone, label } = __ns_t_web;
+    const { all, current, isDone } = __ns_t_lib;
+    type Status = __ns_t_lib.Status;
     if (!(isDone(current()))) { throw __bynkExpectFailure("tests/t/web.bynk:9:12", 297, 314, "expect isDone(current())"); }
+    if (!(((all()).filter((__x: Status) => ((s) => isDone(s))(__x))).length === 1)) { throw __bynkExpectFailure("tests/t/web.bynk:10:12", 326, 370, "expect all().filter((s) => isDone(s)).length() == 1\n  expected: all().filter((s) => isDone(s)).length() == 1\n  actual:   " + __bynkShow((((all()).filter((__x: Status) => ((s) => isDone(s))(__x))).length)) + " == " + __bynkShow((1))); }
+    if (!(countDone() === 1)) { throw __bynkExpectFailure("tests/t/web.bynk:11:12", 382, 398, "expect countDone() == 1\n  expected: countDone() == 1\n  actual:   " + __bynkShow((countDone())) + " == " + __bynkShow((1))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

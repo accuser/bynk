@@ -16,6 +16,10 @@ export function current(): Status {
   return Status.Done;
 }
 
+export function all(): readonly Status[] {
+  return [Status.Done, Status.Pending];
+}
+
 export function isDone(s: Status): boolean {
   switch (s.tag) {
     case "Done": {
