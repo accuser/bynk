@@ -1,8 +1,7 @@
 # The Bynk standard library — layers, placement, and admitting the Workers surface
 
-- **Status:** Draft (settling). Direction not yet merged; no slice authorised.
-  The headline decisions (§8, D1–D9) were settled in discussion before the spine
-  opened and are recorded here for line-anchored review.
+- **Status:** Settling. All open questions are closed (§8 D1–D9, §11 Q1–Q7).
+  Merging settles direction; it authorises no slice.
 - **Realises:** `design/bynk-design-notes.md` "Three-tier output" (the runtime
   library and per-platform bindings, including the unbuilt `Crypto`),
   [ADR 0034](../decisions/0034-collections-hybrid-kernel-stdlib.md)'s promise
@@ -253,8 +252,12 @@ Every stdlib addition, in any layer, must meet these.
 ### Stability
 
 - **R-17 Stability is marked per item.** Each exported item is *stable* or
-  *experimental*. Experimental use is visible to the user: a warning on ADR
-  0117's non-failing warning channel, or a required opt-in. The marker is first-party metadata, not syntax (the ADR
+  *experimental*. Using an experimental item requires an explicit opt-in in
+  `bynk.toml`, e.g. `[unstable] allow = ["bynk.cloudflare.D1"]` (§11 Q6).
+  Using an unlisted experimental item is an error whose suggestion adds the
+  line, so the edge of the 1.0 promise is visible in the manifest. A warning
+  per use was rejected because warnings cannot be silenced today, so it would
+  be constant noise. The marker is first-party metadata, not syntax (the ADR
   0024 pattern), until third parties need it. This is what lets the Workers
   surface land incrementally, including Cloudflare's own beta products,
   without every op becoming a 1.0 promise.
@@ -333,7 +336,7 @@ the resource-instance model (PR-2).
 | Queues (producer) | D (ADRs 0002, 0122) | L3 `Queue` | yes | Consumer side shipped as protocol. Typed message via codec |
 | D1 | A | L3 `D1` | **yes** | D4 (typed rows), migrations story vs state-migrations gate, `Bytes` |
 | R2 | A | L3 `R2` | **yes** | Byte streams, `Bytes` ops, metadata, multipart, conditional ops |
-| Rate Limiting | A | L3 | yes | Small surface: good early candidate |
+| Rate Limiting | A | L3 | yes | Small surface, a good early candidate. `[[ratelimits]]`; user-chosen `namespace_id` (§11 Q7) |
 | Analytics Engine | A | L3 | yes | Write-only `writeDataPoint`: good early candidate |
 | Analytics SQL binding | A | L3 | | Verify scope before admitting |
 | Version metadata | A | L3 | | Trivial; observability |
@@ -426,10 +429,14 @@ ADR.
   - **Stable L0 and L1 items join the Foundations layer.** A breaking change
     to one is a 2.0 event.
   - **Stable L2 and L3 items are additive-only through 1.x.** New items and
-    operations may be added. Whether a *variant* may be added to a stable
-    enum is **not** settled here (§11 Q5): exhaustiveness is enforced
-    (`bynk.types.non_exhaustive_match`), so a new variant breaks every user
-    `match` that covers the enum today. An existing stable item may be
+    operations may be added. A *variant* may be added only to an exported
+    enum marked **extensible** (§11 Q5). The marker is first-party metadata,
+    and a user `match` on such an enum must carry a wildcard arm, which a
+    diagnostic enforces. Error enums (`FetchError`, and future `KvError` or
+    `SqlError`) and growing vocabularies (`Method`) are marked extensible.
+    Every other stable enum is closed: exhaustiveness is enforced
+    (`bynk.types.non_exhaustive_match`), so a new variant is a major-release
+    event. An existing stable item may be
     *deprecated* in a minor release (a warning on
     ADR 0117's channel, with a suggestion where one is mechanical) but
     *removed or reshaped* only in a major release.
@@ -469,8 +476,11 @@ ADR.
     - **Meaning.** `capability X = K` declares a new capability `X` whose
       operations are those of platform capability `K`. Each declaration is a
       **distinct resource instance**, not an alias: two derivations of `Kv`
-      are two namespaces. The spec and hover must say this plainly, because
-      `=` could otherwise read as an alias.
+      are two namespaces. This is the meaning `=` already has in Bynk
+      declarations: `type Id = Int` is a *distinct* nominal type over `Int`,
+      not an alias (spec §6.1.2, §6.5). `capability Sessions = Kv` is a
+      distinct instance over `Kv` in the same way (§11 Q1). Hover and the
+      spec say "a distinct instance of `Kv`" and cite that parallel.
     - **Implied provision.** The user writes no `provides`. `X` is provided by
       `K`'s platform provider (e.g. `WorkersKv`), bound to `X`'s own binding,
       just as `consumes bynk.cloudflare { Kv }` gets `WorkersKv` today. This
@@ -597,13 +607,13 @@ increment** (ADR 0023), and the ordering follows §13.
 | S0 | Extract `bynk-std`: move the data in `firstparty.rs` and the `firstparty/` tree into a leaf crate; `bynk-check` re-exports `Platform`; output byte-identical; 17th crate in `release.yml`'s publish order | D1, D9 hedge (L3 in its own subtree) |
 | S1 | First-party unit registry: one table (unit, kind, sources, dependencies with computed closure, per-platform bindings, nativity, env-taking providers, wrangler derivation) replaces the seven injection blocks; byte-identical | PR-1, R-6, P-5 |
 | S2 | Standalone binding test scaffold: each TS binding `tsc --strict` on its own, behavioural tests against contract-faithful fakes, Miniflare where semantics matter | PR-3, R-12, R-13 |
-| S3 | Stable/experimental marking (first-party metadata; ADR 0117 warning or opt-in, §11 Q6), the D2 ADR, and the `bynk-1.0-definition.md` Gate 1 amendment | PR-4, D2 |
+| S3 | Stable/experimental marking (first-party metadata) with the `bynk.toml` `[unstable] allow` opt-in (§11 Q6); the extensible-enum marker and its wildcard-arm diagnostic (§11 Q5); the D2 ADR; and the `bynk-1.0-definition.md` Gate 1 amendment | PR-4, D2 |
 
 **Instances:**
 
 | Slice | What | Needs |
 |---|---|---|
-| S4 | Derived capabilities for KV: `capability X = Kv` grammar, checker rules 1–6 (D3), kind-prefixed binding emission, implied provision, ledger keyed by (environment, Worker, capability), deploy plan shows creates and orphans; bare `Kv` byte-identical where it is referenced, and its stanza gated on reference (rule 4) | S1, D3 |
+| S4 | Derived capabilities for KV: `capability X = Kv` grammar, checker rules 1–6 (D3), kind-prefixed binding emission, implied provision, ledger keyed by (environment, Worker, capability), the per-Worker binding-name uniqueness check extended to derived capabilities (§11 Q2), deploy plan shows creates and orphans; bare `Kv` byte-identical where it is referenced, and its stanza gated on reference (rule 4) | S1, D3 |
 
 **Core (L0–L2):**
 
@@ -622,7 +632,7 @@ increment** (ADR 0023), and the ordering follows §13.
 |---|---|---|
 | P1 | Complete KV: `Bytes` values, metadata, list cursors and limits, a `putWith` options record (ADR 0051) | S4, K1 |
 | P2 | Queue producer: `capability X = Queue @queue("…")`, `send` with `Json.encode` | S4, D4 |
-| P3 | Rate Limiting, Analytics Engine | S4 |
+| P3 | Rate Limiting (`@limit`, `@period`; ledger-allocated `namespace_id`, §11 Q7), Analytics Engine | S4 |
 | P4 | D1: `SqlValue` parameters, two-step rows, the 0/1-Bool and blob codec gaps, the `migrations_dir` question | S4, K1, D4 |
 | P5 | R2: byte streams, metadata, conditional ops, physical-name scope confirmed (§11 Q3) | S4, K1 |
 | later | Cache API, Vectorize, Workers AI, Hyperdrive, TCP sockets, HTMLRewriter | case by case |
@@ -640,47 +650,83 @@ slice that first depends on it. Numbers are assigned at merge.
    third-party code") and D6's flat-sibling-unit rule. Lands with S1.
 2. **`bynk-std` owns the first-party sources.** D1, with D9's commitment and
    hedge. Lands with S0.
-3. **The stdlib's 1.0 stability tiers.** D2, with the Gate 1 amendment. Lands
-   with S3.
+3. **The stdlib's 1.0 stability tiers.** D2, with the Gate 1 amendment, the
+   `[unstable] allow` opt-in (§11 Q6) and the extensible-enum marker (§11 Q5).
+   Lands with S3.
 4. **Derived capabilities name context-owned platform resources.** D3:
    meaning, implied provision, `@annotation` options, the `wrangler.toml`
    three-name mapping, ownership and the six rules. Lands with S4.
 5. **Structured platform payloads decode in two steps.** D4. Lands with the
    first slice that returns a structured payload (P2 or P4).
 
-## 11. Open questions for the settling review
+## 11. Settling-review questions (all resolved)
 
-1. **Derived-capability wording.** `capability Sessions = Kv` declares a
-   distinct instance, not an alias. Is that unmistakable in the spec, hover and
-   diagnostics? Would a different operator read better than `=`?
-2. **Binding-name scheme.** Kind-prefixed names (`KV_SESSIONS`) against
-   existing service-binding (`OTHER_CONTEXT`) and Durable Object
-   (`ORDER_ENTITY`) names. Is a collision possible, e.g. a context named `kv`?
-3. **Physical-name derivation. Resolved in review.** The question's
-   premise was wrong. R2 bucket names are scoped to the **account** (R2
-   addresses buckets under the account, `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`),
+Each question was raised in the settling review. All were closed on
+2026-10-14: Q3 from the review evidence, and the rest with the maintainer.
+
+1. **Derived-capability wording. Resolved: keep `=`.** In Bynk declarations
+   `=` already introduces something distinct from its base: `type Id = Int` is
+   a distinct nominal type, not an alias (spec §6.1.2: "a distinct named type
+   over its base"; §6.5: "within a context, type identity is nominal").
+   `capability Sessions = Kv` reads the same way. `:` ("an instance of a
+   kind", as in `store live: Cache[…]`) was considered, but no other
+   declaration uses `capability X: Y`. Hover and the spec use the wording "a
+   distinct instance of `Kv`" (D3).
+2. **Binding-name scheme. Resolved: kind prefixes, plus a per-Worker
+   uniqueness check.** Prefixes alone cannot prevent collisions: service
+   bindings are derived by uppercasing the dotted context name
+   (`consumed_binding_name`: `kv.sessions` → `KV_SESSIONS`), and Durable
+   Object bindings by screaming-snake-casing the agent (`agent_binding_name`:
+   `KvSessions` → `KV_SESSIONS`). The collision is **already live**: a context
+   that consumes `bynk.cloudflare { Kv }` and declares `agent Kv` emits two
+   bindings named `KV` (one `[[kv_namespaces]]`, one
+   `[[durable_objects.bindings]]`) with no diagnostic. This was reproduced
+   with `bynkc` 0.314.23, and the derivation code on `main` is unchanged. It
+   is being fixed outside this track as a general per-Worker binding-name
+   uniqueness diagnostic. S4 depends on that check and extends it to derived
+   capabilities. Existing names are not renamed.
+3. **Physical-name derivation. Resolved in review.** The question's premise
+   was wrong. R2 bucket names are scoped to the **account** (R2 addresses
+   buckets under the account, `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`),
    not to all of Cloudflare. The derivation in A12 (Worker name plus
    declaration, `env_qualify`-ed) is therefore unique within the account
    whenever Worker names are, and Worker names already have to be unique per
    account. No prefix or hash is needed. P5 confirms the scope against R2's
    documentation before shipping.
-4. **Provisioning.** Should `bynk deploy` keep minting ids through its ledger,
-   or delegate to wrangler's automatic provisioning (KV, D1, R2, Queues)? ADR
-   0194: the ledger "records nothing where another tool owns the state".
-5. **Adding a variant to a stable enum** under D2. Exhaustiveness is enforced
-   (`bynk.types.non_exhaustive_match`), and the L2 surface already exports
-   enums transparently (`FetchError`). Adding a variant is therefore
-   *breaking* as the language stands. The cost of leaving it so falls on R-1:
-   every stable error enum (`FetchError`, a future `KvError` or `SqlError`)
-   would be frozen for all of 1.x, so a new failure condition could surface
-   only at a major. Options: (a) accept that; (b) an *extensible* marker on
-   an exported enum that requires a wildcard arm in user `match`es, so
-   variants can be added; (c) keep stable error enums experimental until
-   they stop growing. This must close before the doc is marked ready.
-6. **Experimental-item UX.** A warning on the ADR 0117 channel, or an explicit
-   opt-in?
-7. **Rate Limiting configuration** is not on wrangler's configuration page.
-   Verify its shape before P3.
+4. **Provisioning. Resolved: keep the ledger.** Wrangler's automatic
+   provisioning writes created ids *back into `wrangler.toml`*, but Bynk
+   regenerates that file on every build, so the ids would be lost. Wrangler's
+   documentation also does not say how it reuses an existing resource. The
+   ledger already carries the CI gate for unrecorded namespaces and the
+   `confirm_prune` gate, and ADR 0194's "the ledger owns the ids it mints"
+   stands. Revisit if wrangler documents idempotent reuse by name.
+5. **Adding a variant to a stable enum. Resolved: an extensible marker.**
+   Exhaustiveness is enforced and the L2 surface exports enums transparently,
+   so without a marker every stable error enum would be frozen for 1.x (the
+   cost to R-1). First-party metadata (the ADR 0024 pattern, no syntax) marks
+   selected exported enums as extensible. A user `match` on one must carry a
+   wildcard arm, which a diagnostic enforces, so variants can be added in a
+   minor release. The marker applies to error enums and growing vocabularies
+   (`FetchError`, `Method`, and future `KvError`/`SqlError`). Other stable
+   enums stay closed. Before 1.0 nothing is frozen, so K5 can add `Patch`,
+   `Head` and `Options` to `Method` freely. The marker, and its one-time
+   wildcard-arm migration for existing `match`es, lands with S3.
+6. **Experimental-item UX. Resolved: an explicit opt-in in `bynk.toml`.**
+   `[unstable] allow = ["<unit>.<Item>", …]`. An unlisted use is an error, and
+   its suggestion adds the line. A warning per use was rejected because
+   warnings cannot be silenced today. The new manifest table lands with S3
+   (R-17).
+7. **Rate Limiting configuration. Resolved: shape verified** on Cloudflare's
+   Rate Limiting binding page (2026-10-14):
+   `[[ratelimits]] name, namespace_id, [ratelimits.simple] limit, period`,
+   where `period` is 10 or 60. The binding key is `name`, not `binding`.
+   `namespace_id` is a positive-integer string *chosen by the user*, unique
+   per account, and bindings sharing one share counters. So a derived
+   `capability Login = RateLimit @limit(100) @period(60.seconds)` takes
+   `limit` and `period` as annotations, and `bynk deploy` allocates
+   `namespace_id` per (environment, Worker, capability) and records it in
+   the ledger. Whether a collision with ids used outside Bynk can be detected
+   depends on a listing API, which P3 checks.
 
 ## 12. Threat model
 
@@ -1197,7 +1243,7 @@ Per kind, from Cloudflare's configuration reference (2026-10-14):
 | Analytics Engine | `[[analytics_engine_datasets]]` | `dataset` (defaults to binding) | none | yes | Datasets appear on first write; no provisioning |
 | Hyperdrive | `[[hyperdrive]]` | config name | `id` | yes | Creation needs a database connection string, which is a *secret* input to deploy |
 | Workers AI | `[ai]` | none | none | **no**: one per Worker | Stays a plain capability (`consumes bynk.cloudflare { Ai }`), with no derived capability |
-| Rate limiting | not on the configuration page | | | | Verify before admitting |
+| Rate limiting | `[[ratelimits]]` (key `name`, not `binding`) | none | `namespace_id`: an integer the *user* picks, unique per account; the ledger allocates it | yes | `limit`, and `period` of 10 or 60, are creation annotations (§11 Q7) |
 
 **Consequences for the design:**
 
