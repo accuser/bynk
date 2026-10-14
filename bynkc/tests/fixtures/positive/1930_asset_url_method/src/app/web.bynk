@@ -1,0 +1,18 @@
+context app.web
+
+uses app.brand
+
+-- #1930: a method on an asset's `url`, written straight on the chain, is a
+-- method on a `String`, not a call into a context named `sheet.url`.
+
+asset sheet = "assets/site.css"
+
+fn hashed() -> Bool {
+  sheet.url.startsWith("/_assets/") && brand.url.length() > 0
+}
+
+service web from http {
+  on GET("/") () -> Effect[HttpResult[String]] by Visitor {
+    Ok(if hashed() { sheet.url } else { "" })
+  }
+}

@@ -2238,7 +2238,14 @@ pub(crate) fn check_method_call(
         // isn't actually consumed, surface an explicit diagnostic so the user
         // can fix the missing `consumes` clause rather than seeing a silent
         // "no methods" error later.
+        //
+        // #1930: not for a chain rooted in an asset (`sheet.url.startsWith(…)`),
+        // which is a method on the asset's `url`. Only here, after both
+        // resolutions above failed: an asset named like a consumed context's
+        // root segment (`shop` beside `consumes shop.payment`) still lets a
+        // real cross-context call resolve (review of #1937).
         if let ExprKind::FieldAccess { .. } = &receiver.kind
+            && !ctx.root_ident_is_asset(receiver)
             && let Some(chain) = flatten_ident_chain(receiver)
             && chain.contains('.')
         {
