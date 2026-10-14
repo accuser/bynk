@@ -67,25 +67,27 @@ fn every_first_party_source_is_fmt_clean() {
     );
 }
 
-/// #901 drift guard: every `pub const *_SRC` in `bynk-std/src/lib.rs` must appear in
-/// the `FIRSTPARTY_SOURCES` list, so the next first-party commons cannot be
-/// added to `bynk-std/src/lib.rs` yet silently left out of hover / completion / this
-/// parse guard — the exact way `bynk.locale` and `bynk.locale.types` were.
-/// A pure text scan of the source file, since Rust has no const reflection.
+/// #901 drift guard: every `pub const *_SRC` in `bynk-std/src/lib.rs` must be a
+/// `source:` of an entry in the `UNITS` registry, which `FIRSTPARTY_SOURCES` is
+/// a view over (S1, #1945). Otherwise the next first-party commons could be
+/// added to `bynk-std/src/lib.rs` yet silently left out of injection, hover,
+/// completion and this parse guard — the exact way `bynk.locale` and
+/// `bynk.locale.types` were. A pure text scan of the source file, since Rust has
+/// no const reflection.
 #[test]
 fn firstparty_sources_cover_every_src_const() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../bynk-std/src/lib.rs");
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
 
-    // The `FIRSTPARTY_SOURCES = &[ … ];` array literal, as text.
+    // The `UNITS: &[Unit] = &[ … ];` registry literal, as text.
     let list_start = text
-        .find("pub const FIRSTPARTY_SOURCES")
-        .expect("FIRSTPARTY_SOURCES declared in bynk-std/src/lib.rs");
+        .find("pub const UNITS: &[Unit] = &[")
+        .expect("UNITS declared in bynk-std/src/lib.rs");
     let list_end = text[list_start..]
-        .find("];")
+        .find("\n];")
         .map(|rel| list_start + rel)
-        .expect("FIRSTPARTY_SOURCES array is closed with `];`");
+        .expect("the UNITS array is closed with `];` at column 0");
     let list_block = &text[list_start..list_end];
 
     // Every exported source const: `pub const <NAME>_SRC: &str = include_str!(…)`.
@@ -100,7 +102,7 @@ fn firstparty_sources_cover_every_src_const() {
         };
         let ident = ident.trim();
         // The `.bynk` source consts, not the list itself or binding paths.
-        if ident.ends_with("_SRC") && !list_block.contains(ident) {
+        if ident.ends_with("_SRC") && !list_block.contains(&format!("source: {ident},")) {
             missing.push(ident.to_string());
         }
     }
@@ -108,8 +110,8 @@ fn firstparty_sources_cover_every_src_const() {
     assert!(
         missing.is_empty(),
         "these `*_SRC` consts are declared in bynk-std/src/lib.rs but missing from \
-         FIRSTPARTY_SOURCES (add them, or hover/completion/parse-guard will skip \
-         them — #901):\n{}",
+         the UNITS registry (add an entry, or injection/hover/completion/parse-guard \
+         will skip them — #901):\n{}",
         missing.join("\n")
     );
 }

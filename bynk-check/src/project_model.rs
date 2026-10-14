@@ -360,13 +360,12 @@ pub fn check_discovered_files(
 }
 
 /// A memoized parse of one first-party synthetic source, keyed by the
-/// call-site's own `cache` static — each of `phase_parse`'s 7 injection sites
-/// below passes a distinct one. Finding #55/#65: the source text is a fixed
-/// `include_str!` constant, so its parse is a pure function of that constant
-/// and only needs computing once per process, not once per compile/analyse
-/// round. The gating below (`consumes_bynk`, `uses_map`, etc.) is unaffected —
-/// it still runs fresh for every project from that project's own parsed
-/// `uses`/`consumes`; only the parse *result* being gated is cached.
+/// caller's `cache` — [`inject_firstparty`] passes one per registry entry.
+/// Finding #55/#65: the source text is a fixed `include_str!` constant, so its
+/// parse is a pure function of that constant and only needs computing once per
+/// process, not once per compile/analyse round. Which units a project injects
+/// is still decided fresh for every project from its own parsed
+/// `uses`/`consumes`; only the parse *result* is cached.
 /// T3.4 (R2.4): each first-party synthetic unit reserves its own 1M-wide
 /// `ExprId` block, spaced far above anything a real project's own file count
 /// could ever reach — see [`firstparty_parsed`]'s doc comment for why a fixed
@@ -386,9 +385,9 @@ pub fn firstparty_parsed(
     // here (this parse doesn't know, and must never depend on, which compile
     // triggers it first); a fixed, permanently-reserved range that no real
     // project could ever grow into does. Call sites space their bases
-    // `FIRSTPARTY_ID_BLOCK` apart so the (currently seven) first-party units
-    // can never collide with each other either, however many of them one
-    // project ends up injecting together.
+    // `FIRSTPARTY_ID_BLOCK` apart, one block per registry entry
+    // (`firstparty::Unit::id_block`), so first-party units can never collide
+    // with each other either, however many of them one project injects.
     id_base: u32,
 ) -> Result<ParsedFile, Vec<CompileError>> {
     cache
@@ -425,12 +424,10 @@ fn all_syntax_errors(source: &str, strict: Vec<CompileError>) -> Vec<CompileErro
 
 /// Phase 2: parse every discovered file into a `ParsedFile`, recording each
 /// file's source text into `snapshots` and any parse errors into `errors`.
-/// Then inject the first-party synthetic units (the `bynk`/`bynk.cloudflare`
-/// adapters and the `bynk.{list,map,string}` commons) that the project
-/// consumes/uses. Returns the parsed units plus whether the `bynk` and
-/// `bynk.cloudflare` adapters were injected, and (#1710) each unit's
-/// [`BrokenDeclNames`]; signals a pipeline bail via `Err(())` when parsing
-/// produced errors and yielded no units at all.
+/// Then inject the first-party units the project consumes or uses
+/// ([`inject_firstparty`]). Returns the parsed units, the registry entries
+/// injected, and (#1710) each unit's [`BrokenDeclNames`]; signals a pipeline
+/// bail via `Err(())` when parsing produced errors and yielded no units at all.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::result_unit_err)]
 pub fn phase_parse(
@@ -441,7 +438,7 @@ pub fn phase_parse(
     overlay: &HashMap<PathBuf, String>,
     errors: &mut ErrorSink,
     snapshots: &mut Vec<(PathBuf, String)>,
-) -> Result<(Vec<ParsedFile>, bool, bool, BrokenDeclNames), ()> {
+) -> Result<(Vec<ParsedFile>, InjectedUnits, BrokenDeclNames), ()> {
     let mut parsed: Vec<ParsedFile> = Vec::new();
     let mut broken: BrokenDeclNames = HashMap::new();
     // P8.4 (#1515): `FileId`/`ExprId` allocation is no longer threaded through
@@ -533,149 +530,78 @@ pub fn phase_parse(
         return Err(());
     }
 
-    // v0.17: if any user unit consumes the first-party `bynk` surface, inject it
-    // as a synthetic adapter so it flows through the normal pipeline (tables,
-    // exports, emission, compose). Its binding is supplied by the toolchain for
-    // the selected platform (§4.2). Injected only when consumed, so adapter-free
-    // projects are unchanged.
-    let consumes_bynk = parsed.iter().any(|pf| {
-        pf.consumes()
-            .iter()
-            .any(|c| c.target.joined() == firstparty::BYNK_UNIT)
-    });
-    if consumes_bynk {
-        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
-        match firstparty_parsed(
-            &CACHE,
-            "bynk.bynk",
-            firstparty::BYNK_ADAPTER_SRC,
-            UnitKind::Adapter,
-            FIRSTPARTY_ID_BASE,
-        ) {
-            Ok(pf) => parsed.push(pf),
-            Err(errs) => errors.extend_for(None, errs),
-        }
-    }
-    // v0.19: likewise the first-party `bynk.cloudflare` platform adapter —
-    // injected only when consumed, binding supplied by the toolchain. The
-    // unit name sits inside the reserved `bynk.*` prefix (decision 0026).
-    let consumes_cloudflare = parsed.iter().any(|pf| {
-        pf.consumes()
-            .iter()
-            .any(|c| c.target.joined() == firstparty::CLOUDFLARE_UNIT)
-    });
-    if consumes_cloudflare {
-        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
-        match firstparty_parsed(
-            &CACHE,
-            "bynk/cloudflare.bynk",
-            firstparty::CLOUDFLARE_ADAPTER_SRC,
-            UnitKind::Adapter,
-            FIRSTPARTY_ID_BASE + FIRSTPARTY_ID_BLOCK,
-        ) {
-            Ok(pf) => parsed.push(pf),
-            Err(errs) => errors.extend_for(None, errs),
-        }
-    }
-    // v0.20b: the first-party collection commons. Unlike the adapters above
-    // these are *library* units — plain Bynk commons of generic functions —
-    // imported via `uses` rather than `consumes`, and injected the same way
-    // so they flow through the ordinary commons pipeline (tables, uses
-    // resolution, emission). `bynk.map` itself `uses bynk.list`, so using
-    // the former injects both.
-    let uses_unit = |parsed: &[ParsedFile], unit: &str| {
-        parsed
-            .iter()
-            .any(|pf| pf.uses().iter().any(|u| u.target.joined() == unit))
-    };
-    let uses_map = uses_unit(&parsed, firstparty::MAP_UNIT);
-    // `bynk.locale` itself `uses bynk.list` and `uses bynk.string`; compute it
-    // up front so both injections below can OR it in the same way `uses_map`
-    // is OR'd into the `bynk.list` check.
-    let uses_locale = uses_unit(&parsed, firstparty::LOCALE_UNIT);
-    // `bynk.locale` itself now `uses bynk.locale.types` (locale-negotiation-
-    // slice-2 follow-up, #886 — split out so a context can reach `LocaleTag`
-    // without also reaching `bynk.locale`'s `render`), and the `bynk` adapter
-    // `uses bynk.locale.types` directly for `capability Locale`'s
-    // `LocaleTag` — so this needs the same `|| uses_locale` cascade `uses_map`
-    // gets from `bynk.map` into the `bynk.list` check just below.
-    let uses_locale_types = uses_locale || uses_unit(&parsed, firstparty::LOCALE_TYPES_UNIT);
-    if uses_map {
-        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
-        match firstparty_parsed(
-            &CACHE,
-            "bynk/map.bynk",
-            firstparty::BYNK_MAP_SRC,
-            UnitKind::Commons,
-            FIRSTPARTY_ID_BASE + 2 * FIRSTPARTY_ID_BLOCK,
-        ) {
-            Ok(pf) => parsed.push(pf),
-            Err(errs) => errors.extend_for(None, errs),
-        }
-    }
-    if uses_map || uses_locale || uses_unit(&parsed, firstparty::LIST_UNIT) {
-        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
-        match firstparty_parsed(
-            &CACHE,
-            "bynk/list.bynk",
-            firstparty::BYNK_LIST_SRC,
-            UnitKind::Commons,
-            FIRSTPARTY_ID_BASE + 3 * FIRSTPARTY_ID_BLOCK,
-        ) {
-            Ok(pf) => parsed.push(pf),
-            Err(errs) => errors.extend_for(None, errs),
-        }
-    }
-    // v0.22a: the first-party string commons — derived helpers over the
-    // built-in string kernel (ADR 0046).
-    if uses_locale || uses_unit(&parsed, firstparty::STRING_UNIT) {
-        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
-        match firstparty_parsed(
-            &CACHE,
-            "bynk/string.bynk",
-            firstparty::BYNK_STRING_SRC,
-            UnitKind::Commons,
-            FIRSTPARTY_ID_BASE + 4 * FIRSTPARTY_ID_BLOCK,
-        ) {
-            Ok(pf) => parsed.push(pf),
-            Err(errs) => errors.extend_for(None, errs),
-        }
-    }
-    // Locale-negotiation-slice-2 follow-up (#886): the locale value types
-    // (`LocaleTag`/`MessageArg`/`Message`), split out to a dependency-free
-    // leaf so `bynk.bynk`'s own `uses` (for `capability Locale`'s
-    // `LocaleTag`) and a message-bundle commons's `uses bynk.locale` (for
-    // `render`) no longer have to be the same clause.
-    if uses_locale_types {
-        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
-        match firstparty_parsed(
-            &CACHE,
-            "bynk/locale/types.bynk",
-            firstparty::BYNK_LOCALE_TYPES_SRC,
-            UnitKind::Commons,
-            FIRSTPARTY_ID_BASE + 5 * FIRSTPARTY_ID_BLOCK,
-        ) {
-            Ok(pf) => parsed.push(pf),
-            Err(errs) => errors.extend_for(None, errs),
-        }
-    }
-    // Locale capability track, slice 1 (#844): the bundle-free `render`
-    // helper and the `message`/`with*` builder API.
-    if uses_locale {
-        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
-        match firstparty_parsed(
-            &CACHE,
-            "bynk/locale.bynk",
-            firstparty::BYNK_LOCALE_SRC,
-            UnitKind::Commons,
-            FIRSTPARTY_ID_BASE + 6 * FIRSTPARTY_ID_BLOCK,
-        ) {
-            Ok(pf) => parsed.push(pf),
-            Err(errs) => errors.extend_for(None, errs),
-        }
-    }
+    let injected = inject_firstparty(&mut parsed, errors);
+    Ok((parsed, injected, broken))
+}
 
-    Ok((parsed, consumes_bynk, consumes_cloudflare, broken))
+/// The first-party units a project injected, as registry entries in ascending
+/// [`firstparty::Unit::id_block`] order. A unit whose source failed to parse is
+/// still listed (its binding is still supplied), as before the registry.
+pub type InjectedUnits = Vec<&'static firstparty::Unit>;
+
+/// Inject the first-party units the project reaches (standard-library S1,
+/// #1945). A unit in the [`firstparty::UNITS`] registry is reached when a parsed
+/// unit `consumes` it (an adapter) or `uses` it (a commons). The units it reaches
+/// in turn are its own source's `uses`/`consumes` lines, so injection repeats
+/// until nothing new is reached: the dependencies between first-party units
+/// (`bynk.map` uses `bynk.list`; the `bynk` adapter uses `bynk.locale.types`)
+/// come from their sources, never a hand-kept list. Each injected unit flows
+/// through the normal pipeline (tables, exports, emission, compose), and an
+/// adapter's binding is supplied by the toolchain (§4.2). Units are pushed in
+/// [`firstparty::Unit::id_block`] order, whatever order they were reached in.
+pub fn inject_firstparty(parsed: &mut Vec<ParsedFile>, errors: &mut ErrorSink) -> InjectedUnits {
+    const N: usize = firstparty::UNITS.len();
+    static CACHES: [OnceLock<Result<ParsedFile, Vec<CompileError>>>; N] =
+        [const { OnceLock::new() }; N];
+    let reaches = |pf: &ParsedFile, unit: &firstparty::Unit| match unit.kind {
+        firstparty::UnitKind::Adapter => {
+            pf.consumes().iter().any(|c| c.target.joined() == unit.name)
+        }
+        firstparty::UnitKind::Commons => pf.uses().iter().any(|u| u.target.joined() == unit.name),
+    };
+    let mut reached: Vec<Option<Option<ParsedFile>>> = vec![None; N];
+    loop {
+        let mut grew = false;
+        for (i, unit) in firstparty::UNITS.iter().enumerate() {
+            if reached[i].is_some() {
+                continue;
+            }
+            let injected = reached.iter().flatten().flatten();
+            if !parsed.iter().chain(injected).any(|pf| reaches(pf, unit)) {
+                continue;
+            }
+            let kind = match unit.kind {
+                firstparty::UnitKind::Adapter => UnitKind::Adapter,
+                firstparty::UnitKind::Commons => UnitKind::Commons,
+            };
+            let parse = firstparty_parsed(
+                &CACHES[i],
+                unit.identity_path,
+                unit.source,
+                kind,
+                FIRSTPARTY_ID_BASE + unit.id_block * FIRSTPARTY_ID_BLOCK,
+            );
+            reached[i] = Some(match parse {
+                Ok(pf) => Some(pf),
+                Err(errs) => {
+                    errors.extend_for(None, errs);
+                    None
+                }
+            });
+            grew = true;
+        }
+        if !grew {
+            break;
+        }
+    }
+    let mut order: Vec<usize> = (0..N).filter(|&i| reached[i].is_some()).collect();
+    order.sort_by_key(|&i| firstparty::UNITS[i].id_block);
+    for &i in &order {
+        if let Some(Some(pf)) = reached[i].take() {
+            parsed.push(pf);
+        }
+    }
+    order.into_iter().map(|i| &firstparty::UNITS[i]).collect()
 }
 
 /// #1710: for each unit with a file the strict parse rejected, the names of
@@ -731,8 +657,7 @@ pub fn phase_group(
     parsed: &[ParsedFile],
     trees: &[(PathBuf, PathBuf)],
     platform: Platform,
-    consumes_bynk: bool,
-    consumes_cloudflare: bool,
+    injected: &[&'static firstparty::Unit],
     overlay: &HashMap<PathBuf, String>,
     errors: &mut ErrorSink,
 ) -> (
@@ -861,26 +786,19 @@ pub fn phase_group(
     // source file) and read it, so compose can import the external provider
     // symbols and the binding is copied into the output for the `tsc` gate.
     let mut adapter_bindings: HashMap<String, AdapterBinding> = HashMap::new();
-    // v0.17: the toolchain supplies the `bynk` surface's binding, platform-keyed.
-    if consumes_bynk {
-        adapter_bindings.insert(
-            firstparty::BYNK_UNIT.to_string(),
-            AdapterBinding {
-                output_path: PathBuf::from(platform.bynk_binding_filename()),
-                content: platform.bynk_binding_source().to_string(),
-            },
-        );
-    }
-    // v0.19: the platform adapter's binding is single — it runs only on its
-    // own platform (the lock check rejects other `--platform` selections).
-    if consumes_cloudflare {
-        adapter_bindings.insert(
-            firstparty::CLOUDFLARE_UNIT.to_string(),
-            AdapterBinding {
-                output_path: PathBuf::from(firstparty::CLOUDFLARE_BINDING_FILENAME),
-                content: firstparty::cloudflare_binding_source().to_string(),
-            },
-        );
+    // v0.17/v0.19: the toolchain supplies each injected first-party adapter's
+    // binding — the `bynk` surface's per platform, a platform adapter's single
+    // one (the lock check rejects other `--platform` selections).
+    for unit in injected {
+        if let Some((output_path, content)) = unit.binding_for(platform) {
+            adapter_bindings.insert(
+                unit.name.to_string(),
+                AdapterBinding {
+                    output_path: PathBuf::from(output_path),
+                    content: content.to_string(),
+                },
+            );
+        }
     }
     for pf in parsed {
         let Some(a) = pf.adapter() else { continue };
@@ -4869,5 +4787,152 @@ mod shadowed_import_tests {
             e.error.message,
             "`thing` names this unit's type, which hides the function `thing` from `lib.util`"
         );
+    }
+}
+
+#[cfg(test)]
+mod firstparty_injection_tests {
+    use super::{ErrorSink, ParsedFile, UnitKind, firstparty, inject_firstparty, lexer, parser};
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    /// The seven references a project can make to a first-party unit, in a
+    /// fixed order: `consumes` for the two adapters, `uses` for the commons.
+    const REFS: [&str; 7] = [
+        "consumes bynk { Clock }",
+        "consumes bynk.cloudflare { Kv }",
+        "uses bynk.map",
+        "uses bynk.list",
+        "uses bynk.string",
+        "uses bynk.locale",
+        "uses bynk.locale.types",
+    ];
+
+    /// A one-file project whose context makes the references `mask` selects.
+    fn project(mask: u32) -> Vec<ParsedFile> {
+        let mut uses = String::new();
+        let mut consumes = String::new();
+        for (bit, line) in REFS.iter().enumerate() {
+            if mask & (1 << bit) != 0 {
+                let into = if line.starts_with("uses") {
+                    &mut uses
+                } else {
+                    &mut consumes
+                };
+                into.push_str(line);
+                into.push('\n');
+            }
+        }
+        let src = format!("context t\n\n{uses}{consumes}\nfn f() -> Int {{ 1 }}\n");
+        let toks = lexer::tokenize(&src).expect("lexes");
+        let (unit, _) =
+            parser::parse_unit_with_warnings_from(&toks, &src, &mut { 0 }).expect("parses");
+        vec![ParsedFile::synthetic(
+            PathBuf::from("t.bynk"),
+            PathBuf::from("t.bynk"),
+            src,
+            unit,
+            UnitKind::Context,
+        )]
+    }
+
+    /// The units the hand-written injection (before S1, #1945) chose for the
+    /// references in `mask`, written out from its gates.
+    fn previous_injection(mask: u32) -> BTreeSet<&'static str> {
+        let has = |bit: u32| mask & (1 << bit) != 0;
+        let (bynk, cloudflare) = (has(0), has(1));
+        let (map, list, string, locale, locale_types) = (has(2), has(3), has(4), has(5), has(6));
+        let mut out = BTreeSet::new();
+        let mut add = |cond: bool, name: &'static str| {
+            if cond {
+                out.insert(name);
+            }
+        };
+        add(bynk, "bynk");
+        add(cloudflare, "bynk.cloudflare");
+        add(map, "bynk.map");
+        add(map || locale || list, "bynk.list");
+        add(locale || string, "bynk.string");
+        // The `bynk` adapter's own `uses bynk.locale.types`, seen because the
+        // adapter was injected before the scan ran.
+        add(locale || locale_types || bynk, "bynk.locale.types");
+        add(locale, "bynk.locale");
+        out
+    }
+
+    /// Following the sources' own `uses`/`consumes` injects exactly what the
+    /// hand-written gates did, for every combination of references.
+    #[test]
+    fn the_closure_matches_the_previous_gates_for_every_combination() {
+        for mask in 0..(1u32 << REFS.len()) {
+            let mut parsed = project(mask);
+            let mut errors = ErrorSink::new();
+            let injected = inject_firstparty(&mut parsed, &mut errors);
+            assert!(
+                errors.is_empty(),
+                "mask {mask:#09b}: a first-party source failed to parse"
+            );
+            let names: BTreeSet<&str> = injected.iter().map(|u| u.name).collect();
+            assert_eq!(names, previous_injection(mask), "mask {mask:#09b}");
+        }
+    }
+
+    /// Injected units are pushed after the project's own, in ascending
+    /// `id_block` order — the order the hand-written blocks pushed them in —
+    /// and the returned entries follow the same order.
+    #[test]
+    fn injected_units_are_pushed_in_id_block_order() {
+        let mut parsed = project((1 << REFS.len()) - 1);
+        let mut errors = ErrorSink::new();
+        let injected = inject_firstparty(&mut parsed, &mut errors);
+        let pushed: Vec<String> = parsed[1..]
+            .iter()
+            .map(|pf| pf.unit().name().joined())
+            .collect();
+        assert_eq!(
+            pushed,
+            [
+                "bynk",
+                "bynk.cloudflare",
+                "bynk.map",
+                "bynk.list",
+                "bynk.string",
+                "bynk.locale.types",
+                "bynk.locale",
+            ]
+        );
+        let returned: Vec<&str> = injected.iter().map(|u| u.name).collect();
+        assert_eq!(returned, pushed);
+        assert!(injected.windows(2).all(|w| w[0].id_block < w[1].id_block));
+    }
+
+    /// A project that references no first-party unit injects nothing.
+    #[test]
+    fn nothing_is_injected_unreferenced() {
+        let mut parsed = project(0);
+        let injected = inject_firstparty(&mut parsed, &mut ErrorSink::new());
+        assert!(injected.is_empty());
+        assert_eq!(parsed.len(), 1);
+    }
+
+    /// The injection names no first-party unit: adding one to the standard
+    /// library is a `bynk-std` registry entry plus its files (R-6). A per-unit
+    /// constant reappearing here means a unit is being special-cased again.
+    #[test]
+    fn injection_is_registry_driven() {
+        let src = include_str!("project_model.rs");
+        let start = src.find("pub fn phase_parse(").expect("phase_parse");
+        let end = src[start..]
+            .find("\n/// #1710: for each unit with a file the strict parse rejected")
+            .map(|rel| start + rel)
+            .expect("the item after inject_firstparty");
+        let body = &src[start..end];
+        for name in firstparty::UNITS.iter().map(|u| u.name) {
+            assert!(!body.contains(&format!("\"{name}\"")), "names {name}");
+        }
+        let per_unit_constant = body
+            .lines()
+            .find(|l| l.contains("firstparty::") && (l.contains("_UNIT") || l.contains("_SRC")));
+        assert_eq!(per_unit_constant, None, "references a per-unit constant");
     }
 }

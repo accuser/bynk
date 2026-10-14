@@ -47,6 +47,13 @@ TypeScript bindings) live as real `.bynk`/`.ts` files in the data-only
 `tsc_verify.rs` type-checks the embedded `runtime.ts`), and vendored into every
 emitted project rather than published.
 
+Each first-party unit is one entry in `bynk-std`'s `UNITS` registry: its name,
+kind (adapter or commons), source, binding, permanent id block, platform
+nativity and `env`-taking providers. **Adding a unit is a registry entry plus
+its files**: `bynk-check` injects whatever a project `consumes` or `uses` by
+reading the table, and follows each injected unit's own `uses`/`consumes` lines,
+so dependencies between first-party units are never listed by hand.
+
 ## Entry points
 
 The library (`lib.rs`) exposes the flows the CLI and LSP build on:

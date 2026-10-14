@@ -289,7 +289,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     }
 
     // -- 2. Parse. --
-    let (mut parsed, consumes_bynk, consumes_cloudflare, broken) =
+    let (mut parsed, injected, broken) =
         match project_model::phase_parse(&trees, &file_lists, overlay, &mut errors, &mut snapshots)
         {
             Ok(out) => out,
@@ -309,8 +309,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
             &parsed,
             &trees,
             Platform::default(),
-            consumes_bynk,
-            consumes_cloudflare,
+            &injected,
             overlay,
             &mut errors,
         );

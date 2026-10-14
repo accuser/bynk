@@ -95,11 +95,10 @@ pub const KV_BINDING_NAME: &str = "KV";
 /// (unit, provider class). `SecretsProvider` accepts an optional env with a
 /// `globalThis` probe fallback; `WorkersKv` *requires* env on use — KV
 /// namespaces exist only on the Worker `env`, never on `globalThis`.
+///
+/// A view over [`UNITS`]: each entry's [`Unit::env_providers`].
 pub fn provider_takes_env(unit: &str, provider: &str) -> bool {
-    matches!(
-        (unit, provider),
-        (BYNK_UNIT, "SecretsProvider") | (CLOUDFLARE_UNIT, "WorkersKv")
-    )
+    self::unit(unit).is_some_and(|u| u.env_providers.contains(&provider))
 }
 
 /// v0.19 decision 0024: which first-party units are **platform-native** —
@@ -108,11 +107,10 @@ pub fn provider_takes_env(unit: &str, provider: &str) -> bool {
 /// typing, and `wrangler.toml` stanza derivation; no user-facing marker
 /// syntax exists (additive later, when third-party platform adapters become
 /// a goal).
+///
+/// A view over [`UNITS`]: each entry's [`Unit::platform`].
 pub fn platform_of(unit: &str) -> Option<Platform> {
-    match unit {
-        CLOUDFLARE_UNIT => Some(Platform::Cloudflare),
-        _ => None,
-    }
+    self::unit(unit).and_then(|u| u.platform)
 }
 
 /// The unit names of the first-party collection commons (v0.20b): the
@@ -218,19 +216,25 @@ pub const CLOUDFLARE_ADAPTER_SRC: &str = include_str!("../lib/cloudflare/bynk.cl
 /// (`every_first_party_source_parses`). Before this list each consumer kept its
 /// own hand-maintained copy, and `bynk.locale`/`bynk.locale.types` were added to
 /// none of them — so the whole locale surface hovered as nothing and was absent
-/// from completion (#901). Add a first-party commons here once; the
+/// from completion (#901).
+///
+/// A view over [`UNITS`], in its order, which is observable: hover takes the
+/// first source declaring a name, and completion lists units in this order. The
 /// `firstparty_sources_cover_every_src_const` drift guard
-/// (`bynkc/tests/firstparty_sources.rs`) fails if a `*_SRC` const is left out
-/// of this file's list.
-pub const FIRSTPARTY_SOURCES: &[(&str, &str)] = &[
-    (BYNK_UNIT, BYNK_ADAPTER_SRC),
-    (CLOUDFLARE_UNIT, CLOUDFLARE_ADAPTER_SRC),
-    (LIST_UNIT, BYNK_LIST_SRC),
-    (MAP_UNIT, BYNK_MAP_SRC),
-    (STRING_UNIT, BYNK_STRING_SRC),
-    (LOCALE_UNIT, BYNK_LOCALE_SRC),
-    (LOCALE_TYPES_UNIT, BYNK_LOCALE_TYPES_SRC),
-];
+/// (`bynkc/tests/firstparty_sources.rs`) fails if a `*_SRC` const is left out of
+/// [`UNITS`].
+pub const FIRSTPARTY_SOURCES: &[(&str, &str)] = &SOURCES;
+
+/// [`FIRSTPARTY_SOURCES`]' backing array, built from [`UNITS`] at compile time.
+const SOURCES: [(&str, &str); UNITS.len()] = {
+    let mut out = [("", ""); UNITS.len()];
+    let mut i = 0;
+    while i < UNITS.len() {
+        out[i] = (UNITS[i].name, UNITS[i].source);
+        i += 1;
+    }
+    out
+};
 
 /// The output path of the Cloudflare platform adapter's binding module,
 /// beside the adapter's emitted `bynk/cloudflare.ts` (distinct from the
@@ -248,9 +252,272 @@ pub fn cloudflare_binding_source() -> &'static str {
     CLOUDFLARE_BINDING
 }
 
+/// What a first-party unit is, and so how a project brings it in: an adapter is
+/// injected when a unit `consumes` it, a commons when a unit `uses` it. Local to
+/// this crate, which has no dependencies; `bynk-check` maps it onto its own
+/// unit kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnitKind {
+    Adapter,
+    Commons,
+}
+
+/// The TypeScript binding the toolchain supplies for a first-party unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Binding {
+    /// A commons: Bynk-written, so nothing to bind.
+    None,
+    /// One binding per [`Platform`] ([`Platform::bynk_binding_filename`] and
+    /// [`Platform::bynk_binding_source`]): the portable `bynk` surface.
+    PerPlatform,
+    /// A single binding, for a platform-native adapter that runs only on its own
+    /// platform (the platform lock rejects every other `--platform`).
+    Fixed {
+        filename: &'static str,
+        source: &'static str,
+    },
+}
+
+/// One first-party unit, as data (standard-library track, S1 #1945). Adding a
+/// unit to the standard library is an entry in [`UNITS`] plus its files; the
+/// checker's injection reads this table and needs no change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unit {
+    /// The unit's dotted name, inside the reserved `bynk.*` prefix.
+    pub name: &'static str,
+    /// Whether a project `consumes` it (an adapter) or `uses` it (a commons).
+    pub kind: UnitKind,
+    /// The synthetic path the injected unit is parsed under. Diagnostics and
+    /// emission name the unit by it, so it never changes.
+    pub identity_path: &'static str,
+    /// The unit's `.bynk` source.
+    pub source: &'static str,
+    /// The binding the toolchain supplies for it.
+    pub binding: Binding,
+    /// Its permanent `ExprId` block: the checker parses it at
+    /// `FIRSTPARTY_ID_BASE + id_block * FIRSTPARTY_ID_BLOCK`, and injects units
+    /// in ascending `id_block` order. A block is never reused or moved, so ids
+    /// and injection order stay stable as units are added; a new unit takes the
+    /// next free block.
+    pub id_block: u32,
+    /// The platform that consuming it locks a deployment unit to (decision
+    /// 0024), if it is platform-native.
+    pub platform: Option<Platform>,
+    /// The provider classes whose constructor takes the Worker `env` (decisions
+    /// 0021/0025).
+    pub env_providers: &'static [&'static str],
+}
+
+impl Unit {
+    /// The binding module to emit for this unit on `platform`, as
+    /// `(output path, source)`, or `None` for a commons.
+    pub fn binding_for(&self, platform: Platform) -> Option<(&'static str, &'static str)> {
+        match self.binding {
+            Binding::None => None,
+            Binding::PerPlatform => Some((
+                platform.bynk_binding_filename(),
+                platform.bynk_binding_source(),
+            )),
+            Binding::Fixed { filename, source } => Some((filename, source)),
+        }
+    }
+}
+
+/// The standard library's first-party units. Dependencies between them are not
+/// listed here: they are the `uses`/`consumes` lines of each unit's own source,
+/// which the checker follows when it injects. The table's order is
+/// [`FIRSTPARTY_SOURCES`]' order; injection follows [`Unit::id_block`].
+pub const UNITS: &[Unit] = &[
+    Unit {
+        name: BYNK_UNIT,
+        kind: UnitKind::Adapter,
+        identity_path: "bynk.bynk",
+        source: BYNK_ADAPTER_SRC,
+        binding: Binding::PerPlatform,
+        id_block: 0,
+        platform: None,
+        env_providers: &["SecretsProvider"],
+    },
+    Unit {
+        name: CLOUDFLARE_UNIT,
+        kind: UnitKind::Adapter,
+        identity_path: "bynk/cloudflare.bynk",
+        source: CLOUDFLARE_ADAPTER_SRC,
+        binding: Binding::Fixed {
+            filename: CLOUDFLARE_BINDING_FILENAME,
+            source: CLOUDFLARE_BINDING,
+        },
+        id_block: 1,
+        platform: Some(Platform::Cloudflare),
+        env_providers: &["WorkersKv"],
+    },
+    Unit {
+        name: LIST_UNIT,
+        kind: UnitKind::Commons,
+        identity_path: "bynk/list.bynk",
+        source: BYNK_LIST_SRC,
+        binding: Binding::None,
+        id_block: 3,
+        platform: None,
+        env_providers: &[],
+    },
+    Unit {
+        name: MAP_UNIT,
+        kind: UnitKind::Commons,
+        identity_path: "bynk/map.bynk",
+        source: BYNK_MAP_SRC,
+        binding: Binding::None,
+        id_block: 2,
+        platform: None,
+        env_providers: &[],
+    },
+    Unit {
+        name: STRING_UNIT,
+        kind: UnitKind::Commons,
+        identity_path: "bynk/string.bynk",
+        source: BYNK_STRING_SRC,
+        binding: Binding::None,
+        id_block: 4,
+        platform: None,
+        env_providers: &[],
+    },
+    Unit {
+        name: LOCALE_UNIT,
+        kind: UnitKind::Commons,
+        identity_path: "bynk/locale.bynk",
+        source: BYNK_LOCALE_SRC,
+        binding: Binding::None,
+        id_block: 6,
+        platform: None,
+        env_providers: &[],
+    },
+    Unit {
+        name: LOCALE_TYPES_UNIT,
+        kind: UnitKind::Commons,
+        identity_path: "bynk/locale/types.bynk",
+        source: BYNK_LOCALE_TYPES_SRC,
+        binding: Binding::None,
+        id_block: 5,
+        platform: None,
+        env_providers: &[],
+    },
+];
+
+/// The registry entry for `name`, if it is a first-party unit.
+pub fn unit(name: &str) -> Option<&'static Unit> {
+    UNITS.iter().find(|u| u.name == name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each unit's `ExprId` block is permanent: emitted output and the
+    /// process-wide parse cache depend on it. These are the blocks the
+    /// hand-written injection used before the registry (S1, #1945); a new
+    /// unit takes a new block and never moves one of these.
+    #[test]
+    fn id_blocks_are_pinned_and_distinct() {
+        let blocks: Vec<(&str, u32)> = UNITS.iter().map(|u| (u.name, u.id_block)).collect();
+        assert_eq!(
+            blocks,
+            [
+                ("bynk", 0),
+                ("bynk.cloudflare", 1),
+                ("bynk.list", 3),
+                ("bynk.map", 2),
+                ("bynk.string", 4),
+                ("bynk.locale", 6),
+                ("bynk.locale.types", 5),
+            ]
+        );
+        let mut sorted: Vec<u32> = UNITS.iter().map(|u| u.id_block).collect();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), UNITS.len(), "two units share an id block");
+    }
+
+    /// Hover and completion read [`FIRSTPARTY_SOURCES`] in order, so it is
+    /// pinned to the order the hand-written list had.
+    #[test]
+    fn firstparty_sources_keep_their_order() {
+        let names: Vec<&str> = FIRSTPARTY_SOURCES.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            names,
+            [
+                "bynk",
+                "bynk.cloudflare",
+                "bynk.list",
+                "bynk.map",
+                "bynk.string",
+                "bynk.locale",
+                "bynk.locale.types",
+            ]
+        );
+        for (unit, (name, source)) in UNITS.iter().zip(FIRSTPARTY_SOURCES) {
+            assert_eq!((unit.name, unit.source), (*name, *source));
+        }
+    }
+
+    /// The views over the table answer as the hand-written matches did.
+    #[test]
+    fn metadata_views_match_the_previous_answers() {
+        assert_eq!(platform_of("bynk.cloudflare"), Some(Platform::Cloudflare));
+        for name in [
+            "bynk",
+            "bynk.list",
+            "bynk.map",
+            "bynk.string",
+            "bynk.locale",
+            "user.unit",
+        ] {
+            assert_eq!(platform_of(name), None, "{name}");
+        }
+        assert!(provider_takes_env("bynk", "SecretsProvider"));
+        assert!(provider_takes_env("bynk.cloudflare", "WorkersKv"));
+        assert!(!provider_takes_env("bynk", "WorkersKv"));
+        assert!(!provider_takes_env("bynk.cloudflare", "SecretsProvider"));
+        assert!(!provider_takes_env("bynk", "ClockProvider"));
+        assert!(!provider_takes_env("user.unit", "SecretsProvider"));
+    }
+
+    /// An adapter carries a binding and a commons does not, and every name is
+    /// unique and inside the reserved prefix.
+    #[test]
+    fn entries_are_well_formed() {
+        for u in UNITS {
+            assert!(
+                u.name == "bynk" || u.name.starts_with("bynk."),
+                "{}",
+                u.name
+            );
+            assert_eq!(
+                UNITS.iter().filter(|o| o.name == u.name).count(),
+                1,
+                "{}",
+                u.name
+            );
+            match u.kind {
+                UnitKind::Adapter => assert_ne!(u.binding, Binding::None, "{}", u.name),
+                UnitKind::Commons => {
+                    assert_eq!(u.binding, Binding::None, "{}", u.name);
+                    assert!(u.env_providers.is_empty(), "{}", u.name);
+                }
+            }
+        }
+        assert_eq!(
+            unit("bynk.cloudflare").and_then(|u| u.binding_for(Platform::Node)),
+            Some((CLOUDFLARE_BINDING_FILENAME, CLOUDFLARE_BINDING))
+        );
+        assert_eq!(
+            unit("bynk").and_then(|u| u.binding_for(Platform::Browser)),
+            Some(("bynk-browser.ts", BYNK_BROWSER_BINDING))
+        );
+        assert_eq!(
+            unit("bynk.list").and_then(|u| u.binding_for(Platform::Node)),
+            None
+        );
+    }
 
     /// The hardcoded [`BYNK_SURFACE_CAPABILITIES`] must match the adapter's
     /// `exports capability { … }` line — otherwise the unknown-name quick-fix
