@@ -3382,6 +3382,9 @@ mod untyped_outcome_tests {
         case("    expect r.length() == 0").assert_reports("bynk.test.untyped_outcome");
         case("    if r is Ok(v) {\n      expect v.length() == 0\n    } else {\n      expect true\n    }")
             .assert_reports("bynk.test.untyped_outcome");
+        // Bound in the else branch of a negated test.
+        case("    if !(r is Ok(v)) {\n      expect true\n    } else {\n      expect v.length() == 0\n    }")
+            .assert_reports("bynk.test.untyped_outcome");
         // Bound by the `&&` alone, in its right operand.
         case("    expect r is Ok(v) && v.length() == 0")
             .assert_reports("bynk.test.untyped_outcome");
