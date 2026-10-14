@@ -17,9 +17,9 @@ accepts the config, and one binding silently hides the other in `env`. The
 standard-library track plans more kinds of binding (kind-prefixed names such as
 `KV_SESSIONS`), each another derivation that can meet the rest.
 
-**Decision.** Every binding a Worker declares comes from one list
-(`emitter::wrangler::worker_bindings`), which `emit_wrangler_toml` writes and a
-Workers-build check reads. A name that occurs twice is the compile error
+**Decision.** Every binding a Worker declares comes from one list, which
+`emit_wrangler_toml` writes and a Workers-build check
+(`bynk_check::worker_bindings`) reads. A name that occurs twice is the compile error
 `bynk.context.duplicate_binding`, reported at the declaration that brought in
 the second binding (an agent, or a `consumes` clause) and naming both sources.
 No binding name is renamed, suffixed or otherwise adjusted to avoid a clash:

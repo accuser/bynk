@@ -1,34 +1,22 @@
-//! Per-Worker binding inputs, and the check that a Worker's binding names are
-//! unique (`bynk.context.duplicate_binding`).
+//! Per-Worker binding inputs, shared by the Workers build and the
+//! duplicate-binding check.
 //!
-//! A Worker's bindings come from three derivations that know nothing of each
-//! other: the KV namespace's fixed [`firstparty::KV_BINDING_NAME`], a
-//! consumed context's [`consumed_binding_name`](crate::emitter::wrangler::consumed_binding_name)
-//! (`a.b` → `A_B`) and an agent's [`agent_binding_name`](crate::emitter::wrangler::agent_binding_name)
-//! (`OrderEntity` → `ORDER_ENTITY`). Two of them can meet: an agent `Kv` in a
-//! context that consumes `bynk.cloudflare { Kv }` is `KV` twice. Wrangler takes
-//! such a config without complaint and one binding hides the other, so the
-//! clash is a compile error. The names themselves are never adjusted to
-//! avoid it, because deployed Workers depend on them.
-//!
-//! The inputs here are the ones the Workers build passes to
-//! `emit_wrangler_toml`, built by the same helpers, so the check sees exactly
-//! the bindings the build would write.
+//! The check itself (`bynk.context.duplicate_binding`) is
+//! [`bynk_check::worker_bindings::phase_duplicate_bindings`]; the names are the
+//! emitter's ([`worker_bindings`]). The inputs here are the ones the Workers
+//! build passes to `emit_wrangler_toml`, built by the same helpers, so the
+//! check sees exactly the bindings the build would write.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::PathBuf;
 
 use bynk_check::checker::{Callee, ExprId};
 use bynk_check::firstparty::{self, Platform};
-use bynk_syntax::ast::{CommonsItem, SourceUnit};
-use bynk_syntax::error::CompileError;
-use bynk_syntax::span::Span;
 
 use super::{
     AdapterBinding, BuildTarget, ErrorSink, ParsedFile, UnitKind, UnitTable,
     native_platforms_of_context, unit_table_uses_emit,
 };
-use crate::emitter::wrangler::{BindingSource, WorkerBinding, duplicate_bindings, worker_bindings};
+use crate::emitter::wrangler::worker_bindings;
 
 /// v0.19 (decision 0025): each context whose in-process closure reaches a
 /// platform-native unit, with those platforms. Drives env threading (bundle)
@@ -108,11 +96,10 @@ pub(super) fn own_event_routes(
 }
 
 /// `bynk.context.duplicate_binding`: on a Workers build, each context's
-/// Worker must declare every binding name once. One error per clash, at the
-/// declaration that brought in the second binding (an agent, or a `consumes`
-/// clause), naming both sources. Run on an otherwise clean program: the KV
-/// input walks the provider graph, whose acyclicity the earlier checks
-/// establish.
+/// bindings as its `wrangler.toml` would list them, checked by
+/// [`bynk_check::worker_bindings::phase_duplicate_bindings`]. Run on an
+/// otherwise clean program: the KV input walks the provider graph, whose
+/// acyclicity the earlier checks establish.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn phase_duplicate_bindings(
     target: BuildTarget,
@@ -139,6 +126,7 @@ pub(super) fn phase_duplicate_bindings(
     );
     let event_subscribers =
         bynk_check::symbols::discover_event_subscribers(unit_tables, unit_consumes);
+    let mut bindings = BTreeMap::new();
     for (ctx, kind) in kinds {
         if *kind != UnitKind::Context {
             continue;
@@ -154,77 +142,15 @@ pub(super) fn phase_duplicate_bindings(
             adapter_bindings,
             &own_event_routes(ctx, &event_subscribers),
         );
-        let bindings = worker_bindings(
-            table,
-            &consumes,
-            needs_kv(&context_native, ctx),
-            unit_table_uses_emit(table, unit_callees.get(ctx)),
+        bindings.insert(
+            ctx.clone(),
+            worker_bindings(
+                table,
+                &consumes,
+                needs_kv(&context_native, ctx),
+                unit_table_uses_emit(table, unit_callees.get(ctx)),
+            ),
         );
-        let indices = groups.get(ctx).map(Vec::as_slice).unwrap_or_default();
-        for (earlier, later) in duplicate_bindings(&bindings) {
-            let Some((file, span)) = declared_at(parsed, indices, later)
-                .or_else(|| declared_at(parsed, indices, earlier))
-                .or_else(|| context_header(parsed, indices))
-            else {
-                continue;
-            };
-            errors.push_for(
-                Some(&file),
-                CompileError::new(
-                    "bynk.context.duplicate_binding",
-                    span,
-                    format!(
-                        "the Worker for `{ctx}` would declare two bindings named `{}`: {} and {}",
-                        later.name,
-                        earlier.source.describe(),
-                        later.source.describe(),
-                    ),
-                )
-                .with_note(
-                    "a Worker's bindings share one `env`, so each name must be unique; binding names follow agent and context names, so rename the agent or context behind one of them",
-                ),
-            );
-        }
     }
-}
-
-/// Where the context declares the source of `binding`: an agent's name, or
-/// the `consumes` clause naming a context (or `bynk.cloudflare`, for the KV
-/// namespace). `None` for a source with no declaration of its own: the events
-/// fan-out, or a Service Binding added for an event subscriber.
-fn declared_at(
-    parsed: &[ParsedFile],
-    indices: &[usize],
-    binding: &WorkerBinding,
-) -> Option<(PathBuf, Span)> {
-    indices.iter().find_map(|&i| {
-        let SourceUnit::Context(c) = parsed[i].unit() else {
-            return None;
-        };
-        let consumed = |target: &str| {
-            c.consumes
-                .iter()
-                .find(|d| d.target.joined() == target)
-                .map(|d| d.span)
-        };
-        let span = match &binding.source {
-            BindingSource::Agent { class_name } => c.items.iter().find_map(|item| match item {
-                CommonsItem::Agent(a) if a.name.name == *class_name => Some(a.name.span),
-                _ => None,
-            }),
-            BindingSource::Service { context } => consumed(context),
-            BindingSource::Kv => consumed(firstparty::CLOUDFLARE_UNIT),
-            BindingSource::EventsFanout { .. } => None,
-        }?;
-        Some((parsed[i].identity_path(), span))
-    })
-}
-
-/// The context's name in its first file: where a clash between two sources
-/// with no declaration of their own is reported.
-fn context_header(parsed: &[ParsedFile], indices: &[usize]) -> Option<(PathBuf, Span)> {
-    indices.iter().find_map(|&i| match parsed[i].unit() {
-        SourceUnit::Context(c) => Some((parsed[i].identity_path(), c.name.span)),
-        _ => None,
-    })
+    bynk_check::worker_bindings::phase_duplicate_bindings(parsed, groups, &bindings, errors);
 }

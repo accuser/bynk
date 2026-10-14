@@ -6,6 +6,7 @@
 
 use crate::emitter::toml_doc::{TomlBlock, TomlDocument, TomlEntry, TomlValue};
 use crate::project::{UnitTable, worker_dir_name};
+pub(crate) use bynk_check::worker_bindings::{BindingSource, WorkerBinding};
 
 /// Compile-time pinned compatibility date. Cloudflare uses this to lock
 /// Workers runtime behaviour. When to bump it, and the gate a bump must pass,
@@ -286,56 +287,14 @@ pub(crate) fn emit_wrangler_toml(
     doc
 }
 
-/// What put a binding into a Worker's `wrangler.toml`: the source a
-/// `bynk.context.duplicate_binding` diagnostic names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum BindingSource {
-    /// A `[[services]]` Service Binding to another context's Worker: one the
-    /// context consumes, or one subscribing to an event it publishes.
-    Service { context: String },
-    /// The `[[kv_namespaces]]` binding the cloudflare adapter's `Kv` reads.
-    Kv,
-    /// A `[[durable_objects.bindings]]` entry for one of the context's agents.
-    Agent { class_name: String },
-    /// The `[[durable_objects.bindings]]` entry for the events fan-out class
-    /// ([`EVENTS_FANOUT_CLASS_NAME`]) of a context whose handlers emit.
-    EventsFanout { class_name: String },
-}
-
-impl BindingSource {
-    /// The source in a diagnostic's words.
-    pub(crate) fn describe(&self) -> String {
-        match self {
-            Self::Service { context } => format!("the Service Binding to context `{context}`"),
-            Self::Kv => format!(
-                "the KV namespace binding of `{}`'s `Kv`",
-                bynk_check::firstparty::CLOUDFLARE_UNIT
-            ),
-            Self::Agent { class_name } => {
-                format!("the Durable Object binding of agent `{class_name}`")
-            }
-            Self::EventsFanout { .. } => {
-                "the Durable Object binding of the events fan-out".to_string()
-            }
-        }
-    }
-}
-
-/// One binding a Worker declares: the name its `env` field and its
-/// `wrangler.toml` entry share, and where that name came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WorkerBinding {
-    pub name: String,
-    pub source: BindingSource,
-}
-
 /// Every binding a Worker's `wrangler.toml` declares, in emission order:
 /// Service Bindings by target, then the KV namespace, then the Durable
 /// Objects by class name. [`emit_wrangler_toml`] writes exactly this list and
-/// the duplicate check reads it, so a new kind of binding is checked as soon
-/// as it is emitted. Each kind derives its names independently, so two can
-/// meet (an agent `Kv` and the KV namespace are both `KV`); names are never
-/// adjusted to avoid that, because deployed Workers depend on them.
+/// the duplicate check (`bynk_check::worker_bindings`) reads it, so a new kind
+/// of binding is checked as soon as it is emitted. Each kind derives its names
+/// independently, so two can meet (an agent `Kv` and the KV namespace are both
+/// `KV`); names are never adjusted to avoid that, because deployed Workers
+/// depend on them.
 pub(crate) fn worker_bindings(
     table: &UnitTable,
     consumes: &[String],
@@ -385,25 +344,6 @@ pub(crate) fn worker_bindings(
         });
     }
     bindings
-}
-
-/// The bindings in `bindings` whose name an earlier one already took, each
-/// paired with that earlier one, in list order.
-pub(crate) fn duplicate_bindings(
-    bindings: &[WorkerBinding],
-) -> Vec<(&WorkerBinding, &WorkerBinding)> {
-    let mut first: std::collections::HashMap<&str, &WorkerBinding> =
-        std::collections::HashMap::new();
-    let mut duplicates = Vec::new();
-    for binding in bindings {
-        match first.get(binding.name.as_str()) {
-            Some(earlier) => duplicates.push((*earlier, binding)),
-            None => {
-                first.insert(&binding.name, binding);
-            }
-        }
-    }
-    duplicates
 }
 
 /// Service Binding identifier for a consumed context: uppercase with
@@ -681,6 +621,7 @@ mod compatibility_flags_tests {
 #[cfg(test)]
 mod binding_tests {
     use super::*;
+    use bynk_check::worker_bindings::duplicate_bindings;
 
     fn names(bindings: &[WorkerBinding]) -> Vec<&str> {
         bindings.iter().map(|b| b.name.as_str()).collect()
@@ -720,28 +661,5 @@ mod binding_tests {
             }
         );
         assert_eq!(later.source, BindingSource::Kv);
-    }
-
-    /// Three bindings on one name are two clashes, each against the first.
-    #[test]
-    fn every_repeat_is_reported_against_the_first() {
-        let binding = |name: &str, context: &str| WorkerBinding {
-            name: name.to_string(),
-            source: BindingSource::Service {
-                context: context.to_string(),
-            },
-        };
-        let bindings = [
-            binding("A_B", "a.b"),
-            binding("A_B", "a_b"),
-            binding("A_B", "x"),
-        ];
-        let duplicates = duplicate_bindings(&bindings);
-        assert_eq!(duplicates.len(), 2);
-        assert!(
-            duplicates
-                .iter()
-                .all(|(earlier, _)| *earlier == &bindings[0])
-        );
     }
 }
