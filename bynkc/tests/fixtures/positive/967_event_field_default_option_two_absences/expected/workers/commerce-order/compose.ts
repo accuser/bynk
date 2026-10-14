@@ -5,6 +5,7 @@ import { type __ServiceBinding, __dispatchToEventsFanout } from "../../runtime.j
 import * as handlers from "./handlers.js";
 
 export interface Env {
+  COMMERCE_NOTIFICATIONS: __ServiceBinding;
   ___EVENTS_FANOUT: __DurableObjectNamespace;
 }
 

@@ -15,7 +15,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use crate::emitter::http_handler_method_name_ir;
 use crate::emitter::ts_ident;
 use crate::emitter::wrangler::{
-    EVENTS_FANOUT_CLASS_NAME, agent_binding_name, consumed_binding_name,
+    BindingSource, EVENTS_FANOUT_CLASS_NAME, WorkerBinding, agent_binding_name,
 };
 use crate::emitter::{
     BOUNDARY_CODEC_RUNTIME_IMPORTS, BYTES_RUNTIME_IMPORTS, JSON_CODEC_RUNTIME_IMPORTS, RuntimeUse,
@@ -295,6 +295,9 @@ pub(crate) fn emit_worker_compose(
     // bare `bool`, not the `Callee` map itself: this function has exactly
     // one use for it.
     uses_emit: bool,
+    // #1944: every binding this Worker declares (`wrangler::worker_bindings`),
+    // the list its `wrangler.toml` is written from; `Env` types exactly it.
+    bindings: &[WorkerBinding],
 ) -> (TsProgram, bool) {
     // v0.15: cross-context capabilities this Worker uses (in handlers or in a
     // local provider's `given`) → `deps_key → consumed_context`. Their
@@ -840,34 +843,21 @@ pub(crate) fn emit_worker_compose(
         program.push(li);
     }
 
-    // Env shape: one Service Binding per consumed context + DO bindings.
-    // v0.19: plus the typed KV namespace when the closure reaches the
-    // cloudflare platform adapter (decision C1 — one fixed `KV` binding).
-    let mut env_members: Vec<TsTypeMember> = Vec::new();
-    for t in &sorted_consumes {
-        env_members.push(TsTypeMember::prop(
-            consumed_binding_name(t),
-            TsType::named("__ServiceBinding"),
-        ));
-    }
-    if needs_kv {
-        env_members.push(TsTypeMember::prop(
-            bynk_check::firstparty::KV_BINDING_NAME.to_string(),
-            TsType::named("__KVNamespace"),
-        ));
-    }
-    for a in &agent_names {
-        env_members.push(TsTypeMember::prop(
-            agent_binding_name(a),
-            TsType::named("__DurableObjectNamespace"),
-        ));
-    }
-    if uses_emit {
-        env_members.push(TsTypeMember::prop(
-            agent_binding_name(EVENTS_FANOUT_CLASS_NAME),
-            TsType::named("__DurableObjectNamespace"),
-        ));
-    }
+    // Env shape: one member per binding the Worker's `wrangler.toml`
+    // declares, from the same list (#1944), so the two cannot drift.
+    let env_members: Vec<TsTypeMember> = bindings
+        .iter()
+        .map(|b| {
+            let ty = match b.source {
+                BindingSource::Service { .. } => "__ServiceBinding",
+                BindingSource::Kv => "__KVNamespace",
+                BindingSource::Agent { .. } | BindingSource::EventsFanout { .. } => {
+                    "__DurableObjectNamespace"
+                }
+            };
+            TsTypeMember::prop(b.name.clone(), TsType::named(ty))
+        })
+        .collect();
     program.push(TsStmt::decl(
         TsDecl::Export(Box::new(TsDecl::Interface {
             name: "Env".to_string(),

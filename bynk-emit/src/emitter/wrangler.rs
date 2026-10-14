@@ -130,9 +130,7 @@ pub(crate) fn asset_headers() -> String {
 /// `table.services`. Both used to match a handler's cron-schedule kind and a
 /// service's queue-binding protocol directly, straight off the syntax tree —
 /// this file's entire raw-syntax footprint, per #1191's own grounding.
-/// `table` already only needs `agents`/`unit_table_uses_emit` (neither
-/// syntax-typed from this file's perspective), so relocating just these two
-/// matches removes `wrangler.rs` from the `ast_importers` probe outright — no
+/// Relocating just these two matches removed `wrangler.rs` from the `ast_importers` probe outright — no
 /// `bynk_ir` equivalent exists to route through instead: nothing builds a
 /// project-wide service IR at the call site (#1191's Framing), and after
 /// #1542's Slice D2 nothing builds one anywhere.
@@ -144,14 +142,11 @@ pub(crate) fn asset_headers() -> String {
 /// into pushing typed blocks. String-escaping moved with it: every value
 /// below is escaped unconditionally by the printer now, not selectively by
 /// this function (`emitter/toml_doc.rs`'s own module doc has the reasoning).
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_wrangler_toml(
     context: &str,
-    table: &UnitTable,
-    consumes: &[String],
-    // v0.19 (C1): this Worker's closure reaches bynk.cloudflare — declare the
-    // KV namespace binding (the `id` is a deploy-time placeholder).
-    needs_kv: bool,
+    // #1944: every binding this Worker declares, [`worker_bindings`]' list —
+    // the same one its `Env` interface and the duplicate check read.
+    bindings: &[WorkerBinding],
     // v0.10a: every `on cron "expr"` schedule in the context, sorted+deduped.
     // Sorting is load-bearing, not cosmetic (review of #1192): the caller
     // walks `table.services`, a `HashMap`, so unsorted input makes
@@ -160,12 +155,6 @@ pub(crate) fn emit_wrangler_toml(
     // v0.10b/v0.44: every `from queue("name")` service's bound queue name,
     // sorted+deduped (same reproducibility requirement as `crons`).
     queues: &[String],
-    // #1187's slice 6 plumbing: `unit_table_uses_emit(table, callees)`,
-    // precomputed by the caller — passing a bare `bool` rather than the
-    // `Callee` map itself keeps this file's own hard-won zero `bynk_syntax::
-    // ast` footprint (#1191) intact; the map's own element type would have
-    // reintroduced exactly the literal spelling that slice removed.
-    uses_emit: bool,
     // #1890: the merged flag list, [`compatibility_flags`]' first result.
     // The same for every Worker in the project, so the caller merges (and
     // warns about duplicates) once, not per Worker.
@@ -185,11 +174,8 @@ pub(crate) fn emit_wrangler_toml(
         ],
     );
 
-    // Every binding this Worker declares, from the one list the duplicate
-    // check (`bynk.context.duplicate_binding`) also reads.
-    let bindings = worker_bindings(table, consumes, needs_kv, uses_emit);
     let mut class_names: Vec<&str> = Vec::new();
-    for binding in &bindings {
+    for binding in bindings {
         let name = TomlValue::str(binding.name.clone());
         let block = match &binding.source {
             BindingSource::Service { context } => TomlBlock::array_table(
@@ -289,9 +275,10 @@ pub(crate) fn emit_wrangler_toml(
 
 /// Every binding a Worker's `wrangler.toml` declares, in emission order:
 /// Service Bindings by target, then the KV namespace, then the Durable
-/// Objects by class name. [`emit_wrangler_toml`] writes exactly this list and
-/// the duplicate check (`bynk_check::worker_bindings`) reads it, so a new kind
-/// of binding is checked as soon as it is emitted. Each kind derives its names
+/// Objects by class name. [`emit_wrangler_toml`] writes exactly this list, the
+/// Worker's `Env` interface (`emitter::workers`) types it, and the duplicate
+/// check (`bynk_check::worker_bindings`) reads it, so a new kind of binding
+/// is declared, typed and checked from one place (#1944). Each kind derives its names
 /// independently, so two can meet (an agent `Kv` and the KV namespace are both
 /// `KV`); names are never adjusted to avoid that, because deployed Workers
 /// depend on them.
