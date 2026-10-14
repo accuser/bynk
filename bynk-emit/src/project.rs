@@ -76,6 +76,7 @@ use bynk_ts::{TsBindingName, TsDecl, TsExpr, TsLit, TsParam, TsProgram, TsStmt, 
 mod diagnostics;
 mod schema_registry;
 mod tests_emit;
+mod worker_bindings;
 
 use bynk_check::symbols::*;
 use bynk_project::discovery::*;
@@ -2425,6 +2426,23 @@ fn run_checks(
             &mut errors,
         );
     }
+    // On Workers, each Worker's binding names are unique. Gated the same way:
+    // the KV input walks the same provider graph.
+    if errors.is_empty() {
+        worker_bindings::phase_duplicate_bindings(
+            target,
+            &parsed,
+            &groups,
+            &kinds,
+            &unit_tables,
+            &unit_consumes,
+            &unit_consumes_aliases,
+            &unit_flattened,
+            &unit_callees,
+            &adapter_bindings,
+            &mut errors,
+        );
+    }
 
     // v0.176 (#642): the `Bytes`-at-a-workers-boundary guard (ADR 0142 D8) is
     // retired here. It existed because the workers boundary carried its own
@@ -2564,22 +2582,13 @@ fn build_output(
     // v0.19 (decision 0025): does any context's in-process closure reach a
     // platform-native unit? Drives env threading (bundle) and the per-Worker
     // Env/`wrangler.toml` resource derivation (workers).
-    let context_native: HashMap<String, std::collections::BTreeMap<Platform, String>> = kinds
-        .iter()
-        .filter(|(_, k)| **k == UnitKind::Context)
-        .filter_map(|(name, _)| {
-            let table = unit_tables.get(name)?;
-            let native = native_platforms_of_context(
-                name,
-                table,
-                &unit_tables,
-                &unit_consumes,
-                &unit_consumes_aliases,
-                &unit_flattened,
-            );
-            (!native.is_empty()).then(|| (name.clone(), native))
-        })
-        .collect();
+    let context_native = worker_bindings::contexts_native(
+        &kinds,
+        &unit_tables,
+        &unit_consumes,
+        &unit_consumes_aliases,
+        &unit_flattened,
+    );
 
     // Events track, slice 0 (spine #936): project-wide "who subscribes to
     // what", built once and shared by both targets — Bundle mode's
@@ -2655,9 +2664,7 @@ fn build_output(
                 let flattened = unit_flattened.get(ctx_name).cloned().unwrap_or_default();
                 // v0.19 (C1): this Worker needs the KV namespace binding when
                 // its in-process closure reaches the cloudflare adapter.
-                let needs_kv = context_native
-                    .get(ctx_name)
-                    .is_some_and(|n| n.values().any(|u| u == firstparty::CLOUDFLARE_UNIT));
+                let needs_kv = worker_bindings::needs_kv(&context_native, ctx_name);
                 // Locale capability track, slice 2 (#882, Decision A): real
                 // negotiation is Cloudflare-only — `BuildTarget::Workers`
                 // isn't itself restricted to `Platform::Cloudflare`, so a
@@ -2709,32 +2716,16 @@ fn build_output(
                     needs_locale_request,
                     ctx_uses_emit,
                 );
-                // Adapters are not Workers, so they get no Service Binding in
-                // the consumer's wrangler config — drop them from the list.
-                let mut service_consumes: BTreeSet<String> = consumes_targets
-                    .iter()
-                    .filter(|t| !binding_modules.contains_key(*t))
-                    .cloned()
-                    .collect();
-                // Events track, slice 0 (spine #936, ADR 0284): this
-                // context's own published events → their subscribers,
-                // sliced from the project-wide table. A subscriber
-                // `consumes` the publisher for the event *type*; nothing
-                // upstream gives the publisher a binding back to the
-                // subscriber, so its Worker needs one added here — the
-                // reverse direction of an ordinary `consumes` edge.
-                let own_event_routes: BTreeMap<String, Vec<(String, String)>> = event_subscribers
-                    .iter()
-                    .filter(|((owner, _), _)| owner == ctx_name)
-                    .map(|((_, name), subs)| (name.clone(), subs.clone()))
-                    .collect();
-                service_consumes.extend(
-                    own_event_routes
-                        .values()
-                        .flatten()
-                        .map(|(sub_ctx, _)| sub_ctx.clone()),
+                // Adapters are not Workers, so get no Service Binding; each
+                // subscriber to this context's events does (Events track,
+                // slice 0, spine #936, ADR 0284).
+                let own_event_routes =
+                    worker_bindings::own_event_routes(ctx_name, &event_subscribers);
+                let service_consumes = worker_bindings::service_consumes(
+                    &consumes_targets,
+                    &adapter_bindings,
+                    &own_event_routes,
                 );
-                let service_consumes: Vec<String> = service_consumes.into_iter().collect();
                 // P6.x cutover slice 2 (#1191): collected here, not inside
                 // `emit_wrangler_toml` itself, so that function's own file
                 // needs no raw-AST match. P6.46 (#1137): the walk itself

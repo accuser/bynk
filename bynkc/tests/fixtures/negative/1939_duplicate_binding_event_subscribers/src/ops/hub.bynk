@@ -1,0 +1,14 @@
+context ops.hub
+
+consumes bynk { Events }
+exports transparent { Pinged }
+
+event Pinged = {
+  id: String,
+}
+
+service ping {
+  on call(id: String) -> Effect[()] given Events {
+    Events.emit[Pinged](Pinged { id: id })
+  }
+}
