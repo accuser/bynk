@@ -1580,30 +1580,54 @@ fn is_enumerated_emit_abi_or_capability_surface(ident: &str) -> bool {
     EMIT_ABI.contains(&ident) || CAPABILITY_SURFACE.contains(&ident)
 }
 
+/// The directories holding the vendored first-party TypeScript bindings, relative to
+/// the repo root (standard-library track, #1940): the `bynk` surface's per-platform
+/// bindings in `bynk-std`'s portable layer, and the Cloudflare platform adapter's
+/// binding in its own subtree. [`emit_abi_shapes`] reads every `.ts` file in each,
+/// non-recursively, so a binding added to a new subtree must be listed here.
+const EMIT_ABI_BINDING_DIRS: &[&str] = &["bynk-std/lib/core/bindings", "bynk-std/lib/cloudflare"];
+
 /// ADR 0310's probe (#999 Decision E). The vendored first-party bindings under
-/// `bynk-check/src/firstparty/bindings/` must reference only [`EMIT_ABI`]'s nine names.
+/// [`EMIT_ABI_BINDING_DIRS`] must reference only [`EMIT_ABI`]'s nine names.
 ///
 /// This does NOT count every non-enumerated import: a binding legitimately imports the
 /// [`CAPABILITY_SURFACE`] interfaces it implements — that surface is governed by
 /// language-stability rules, not ADR 0310's codegen-freeze concern, and a probe that
 /// flagged it would read non-zero on every binding by construction. See #999 Decision
 /// E for the two-list rationale and its falsifier.
+///
+/// A listed directory that is missing, or holds no `.ts` file, reads as a failure
+/// rather than as zero leaks: a binding moved out of the probe's sight must not pass
+/// it vacuously (#1940 Decision D).
 fn emit_abi_shapes(root: &Path) -> Probe {
-    let dir = root.join("bynk-check/src/firstparty/bindings");
-    let mut leaks: Vec<String> = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Probe {
-            name: "emit_abi_shapes",
-            gated: true,
-            reads: "bindings directory not found".to_string(),
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for rel in EMIT_ABI_BINDING_DIRS {
+        let Ok(entries) = std::fs::read_dir(root.join(rel)) else {
+            return Probe {
+                name: "emit_abi_shapes",
+                gated: true,
+                reads: format!("bindings directory not found: {rel}"),
+            };
         };
-    };
-    let mut files: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-    files.sort();
-    for path in files {
-        if path.extension().is_none_or(|e| e != "ts") {
-            continue;
+        let before = files.len();
+        files.extend(
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|path| path.extension().is_some_and(|e| e == "ts")),
+        );
+        if files.len() == before {
+            return Probe {
+                name: "emit_abi_shapes",
+                gated: true,
+                reads: format!("no bindings found in {rel}"),
+            };
         }
+    }
+    // By file name, so the reading does not depend on which directory a binding sits in.
+    files.sort_by_key(|path| path.file_name().map(|n| n.to_os_string()));
+    let mut leaks: Vec<String> = Vec::new();
+    for path in files {
         let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };

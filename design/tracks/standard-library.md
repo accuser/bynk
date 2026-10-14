@@ -1,7 +1,7 @@
 # The Bynk standard library — layers, placement, and admitting the Workers surface
 
-- **Status:** Settling. All open questions are closed (§8 D1–D9, §11 Q1–Q7).
-  Merging settles direction; it authorises no slice.
+- **Status:** Slicing. Direction settled by #1938 (all of §8 D1–D9 and §11
+  Q1–Q7 closed). S0 done (#1940): the first-party sources live in `bynk-std`.
 - **Realises:** `design/bynk-design-notes.md` "Three-tier output" (the runtime
   library and per-platform bindings, including the unbuilt `Crypto`),
   [ADR 0034](../decisions/0034-collections-hybrid-kernel-stdlib.md)'s promise
@@ -12,8 +12,9 @@
 - **What's already true:** a stdlib in miniature, at v0.330.x, surveyed
   2026-10-14. It has a kernel of built-in types and methods, four Bynk-written
   commons, the `adapter bynk` surface, and a `bynk.cloudflare` adapter offering
-  a single fixed KV namespace. They are all embedded via `include_str!` from
-  `bynk-check/src/firstparty/` and injected by seven hand-coded blocks in
+  a single fixed KV namespace. They are all embedded via `include_str!`, from
+  `bynk-check/src/firstparty/` when this track opened and from the data-only
+  `bynk-std` crate since S0, and injected by seven hand-coded blocks in
   `project_model.rs`. Spine [#1936](https://github.com/accuser/bynk/issues/1936).
 - **Governing records:** ADR 0012 (the `bynk` surface is ambient-only), 0016
   (no portable infrastructure), 0023 (platform work and stdlib work never share
@@ -76,7 +77,7 @@ The Workers surface is not expected to be *complete* at retirement (§14).
 | Layer | What | Where today | Portable? | Grows by |
 |---|---|---|---|---|
 | **L0 Kernel** | Irreducible primitives: base types, built-in type constructors, kernel methods, compiler-backed statics (`Json.decode[T]`) | Hard-coded in `bynk-syntax` (`ast.rs`), `bynk-check/src/kernel_methods.rs`, `resolver.rs`, emitter lowering | Yes | Compiler change + ADR |
-| **L1 Commons** | Everything derivable from L0, written in Bynk | `bynk.list`, `bynk.map`, `bynk.string`, `bynk.locale(.types)` under `bynk-check/src/firstparty/` | Yes | `.bynk` source only (ADR 0034's promise) |
+| **L1 Commons** | Everything derivable from L0, written in Bynk | `bynk.list`, `bynk.map`, `bynk.string`, `bynk.locale(.types)` under `bynk-std/lib/core/` (S0) | Yes | `.bynk` source only (ADR 0034's promise) |
 | **L2 Ambient surface** | Capabilities every platform guarantees: `Clock`, `Random`, `Logger`, `Fetch`, `Secrets`, (`Locale`, `Idempotency`, `Events`) | `adapter bynk` + one TS binding per platform (cloudflare/node/browser) | Yes, and it is the portability marker | `.bynk` + three bindings |
 | **L3 Platform adapter** | Honest, platform-shaped infrastructure capabilities | `adapter bynk.cloudflare` (`Kv` only) + `cloudflare.binding.ts` | No; it locks the deployment unit to Cloudflare (ADR 0017) | `.bynk` + one binding + wrangler derivation + deploy provisioning |
 
@@ -604,7 +605,7 @@ increment** (ADR 0023), and the ordering follows §13.
 
 | Slice | What | Settles / needs |
 |---|---|---|
-| S0 | Extract `bynk-std`: move the data in `firstparty.rs` and the `firstparty/` tree into a leaf crate; `bynk-check` re-exports `Platform`; output byte-identical; 17th crate in `release.yml`'s publish order | D1, D9 hedge (L3 in its own subtree) |
+| S0 ✅ #1940 | Extract `bynk-std`: move the data in `firstparty.rs` and the `firstparty/` tree into a leaf crate; `bynk-check` re-exports `Platform`; output byte-identical; 17th crate in `release.yml`'s publish order | D1, D9 hedge (L3 in its own subtree) |
 | S1 | First-party unit registry: one table (unit, kind, sources, dependencies with computed closure, per-platform bindings, nativity, env-taking providers, wrangler derivation) replaces the seven injection blocks; byte-identical | PR-1, R-6, P-5 |
 | S2 | Standalone binding test scaffold: each TS binding `tsc --strict` on its own, behavioural tests against contract-faithful fakes, Miniflare where semantics matter | PR-3, R-12, R-13 |
 | S3 | Stable/experimental marking (first-party metadata) with the `bynk.toml` `[unstable] allow` opt-in (§11 Q6); the extensible-enum marker and its wildcard-arm diagnostic (§11 Q5); the D2 ADR; and the `bynk-1.0-definition.md` Gate 1 amendment | PR-4, D2 |

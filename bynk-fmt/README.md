@@ -31,13 +31,14 @@ bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
 ├── bynk-ts                the TypeScript tree and its printer
 ├── bynk-render            diagnostic rendering
 ├── bynk-fmt               the formatter
-└── bynk-check             name resolution and type checking   + project
+└── bynk-check             name resolution and type checking   + project, std
     ├── bynk-ir            declaration-level IR
     │   └── bynk-lower     AST → IR helpers
     ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
     │   ├── bynk-strip     TS → JS type-stripping              + ts
     │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
     └── bynk-ide           non-bailing editor analysis         + project, fmt
+bynk-std                   first-party sources and bindings, as data
 ```
 
 Each crate depends on its parent in the tree, plus any crates listed after

@@ -183,6 +183,7 @@ name = "bynk-check"
 version = "0.330.7"
 dependencies = [
  "bynk-project",
+ "bynk-std",
  "bynk-syntax",
  "regress",
 ]
@@ -299,6 +300,10 @@ dependencies = [
  "ariadne",
  "bynk-syntax",
 ]
+
+[[package]]
+name = "bynk-std"
+version = "0.330.7"
 
 [[package]]
 name = "bynk-strip"

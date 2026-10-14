@@ -16,8 +16,9 @@ It holds:
   predicates, and resolves capabilities, services, agents, and actors.
 - `kernel_methods` / `builtin_names` — the registries the checker dispatches and
   the editor reads for `.`-member completion.
-- `firstparty` — the embedded first-party `bynk` surface, stdlib, and adapters
-  (re-exporting `Platform`).
+- `firstparty` — the first-party `bynk` surface, stdlib, and adapters,
+  re-exported unchanged from [`bynk-std`](https://crates.io/crates/bynk-std)
+  (including `Platform`).
 - `actors` — actor-contract analysis (auth schemes, identities).
 - `requirements` — the capability/requirement analysis the checker draws on.
 - `analysis` / `project_model` / `check_pipeline` — whole-project analysis
@@ -35,7 +36,8 @@ It holds:
 `bynk-check` is the layer between the syntax leaf and everything that emits or
 analyses; besides [`bynk-syntax`](https://crates.io/crates/bynk-syntax) it
 depends only on [`bynk-project`](https://crates.io/crates/bynk-project) (the
-project model):
+project model) and [`bynk-std`](https://crates.io/crates/bynk-std) (the
+first-party sources, as data):
 
 ```text
 bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
@@ -43,13 +45,14 @@ bynk-syntax                lexer, parser, AST, CompileError, diagnostic codes
 ├── bynk-ts                the TypeScript tree and its printer
 ├── bynk-render            diagnostic rendering
 ├── bynk-fmt               the formatter
-└── bynk-check             name resolution and type checking   + project
+└── bynk-check             name resolution and type checking   + project, std
     ├── bynk-ir            declaration-level IR
     │   └── bynk-lower     AST → IR helpers
     ├── bynk-emit          build sequencing, TS emission       + ts, ir, lower, project
     │   ├── bynk-strip     TS → JS type-stripping              + ts
     │   └── bynk-driver    shared CLI command bodies           + fmt, render, ts
     └── bynk-ide           non-bailing editor analysis         + project, fmt
+bynk-std                   first-party sources and bindings, as data
 ```
 
 Each crate depends on its parent in the tree, plus any crates listed after
