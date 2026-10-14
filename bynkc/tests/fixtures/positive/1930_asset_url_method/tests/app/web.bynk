@@ -1,0 +1,9 @@
+-- #1930: on the Bundle target, so the unit test module is golden and
+-- type-checked. A case calls methods on its target's assets' URLs directly.
+suite app.web {
+  case "an asset's url, read through a method" {
+    expect sheet.url.startsWith("/_assets/")
+    expect brand.url.endsWith(".css")
+    expect hashed()
+  }
+}

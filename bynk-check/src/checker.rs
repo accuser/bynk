@@ -2315,6 +2315,23 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// #1930: whether an expression's root ident names an asset in scope
+    /// (`sheet` in `sheet.url.startsWith(…)`). An asset is a value, but not a
+    /// local binding, so [`lookup_root_ident`](Self::lookup_root_ident) returns
+    /// `None` for it, and its chain would otherwise read as a dotted context
+    /// prefix (`sheet.url` as a context, `startsWith` as its service). Like
+    /// [`root_ident_is_store_field`](Self::root_ident_is_store_field), it is
+    /// asked only once the root has no local binding.
+    pub fn root_ident_is_asset(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Ident(id) => self.input.assets.contains_key(&id.name),
+            ExprKind::FieldAccess { receiver, .. } | ExprKind::MethodCall { receiver, .. } => {
+                self.root_ident_is_asset(receiver)
+            }
+            _ => false,
+        }
+    }
+
     /// v0.158 (ADR 0184): whether an expression's root ident names an agent
     /// `store` field. A store field is not in the value scope (so
     /// [`lookup_root_ident`](Self::lookup_root_ident) returns `None` for it),
