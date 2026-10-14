@@ -33,6 +33,27 @@ A route/schedule the service does not declare is `bynk.test.service_unknown_rout
 `svc.call(...)` on a service with no `on call` handler is
 `bynk.test.service_no_call_handler`.
 
+The outcome (`let r <- api.GET("/x")`) is not typed by the handler's
+return type: the runner recovers its shape at run time. Match or test it,
+and a payload of fixed type binds that type. `Raw(body, contentType)` binds
+`Bytes` and `String`; a message variant (`BadRequest(m)`) or a redirect binds
+`String`. A value of the handler's result type, such as `v` in `Ok(v)`, has
+no type in the case, so calling a method on it, or on a field of it, is
+`bynk.test.untyped_outcome`. Compare it instead, or call the method in a
+source function the case calls.
+
+```bynk,fragment
+suite app.web {
+  case "the body is the greeting" {
+    let r <- api.GET("/raw") by Visitor
+    match r {
+      Raw(body, ct) => expect body.length() == 2 && ct.startsWith("text/")
+      _ => expect false
+    }
+  }
+}
+```
+
 ### Fetching a static asset — `svc.GET(asset)` {#assets}
 
 A case can name the [static assets](/book/reference/assets/) its target's
