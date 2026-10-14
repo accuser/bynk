@@ -3382,6 +3382,9 @@ mod untyped_outcome_tests {
         case("    expect r.length() == 0").assert_reports("bynk.test.untyped_outcome");
         case("    if r is Ok(v) {\n      expect v.length() == 0\n    } else {\n      expect true\n    }")
             .assert_reports("bynk.test.untyped_outcome");
+        // Bound by the `&&` alone, in its right operand.
+        case("    expect r is Ok(v) && v.length() == 0")
+            .assert_reports("bynk.test.untyped_outcome");
         // Bound by both the `&&` and the `if` (one memoised collection).
         case("    if r is Ok(v) && true {\n      expect v.length() == 0\n    } else {\n      expect true\n    }")
             .assert_reports("bynk.test.untyped_outcome");
@@ -3435,7 +3438,7 @@ mod untyped_outcome_tests {
     /// agree, and is loose when they do not.
     #[test]
     fn a_match_on_the_outcome_has_its_arms_type() {
-        case("    let n = match r {\n      Raw(body, _) => body.length()\n      _ => 0\n    }\n    expect n == 2")
+        case("    let n = match r {\n      Raw(body, _) => body.length()\n      _ => 0\n    }\n    expect n.abs() == 2")
             .assert_clean();
         case("    let n = match r {\n      Raw(body, _) => body.length()\n      _ => \"x\"\n    }\n    expect n.length() == 1")
             .assert_reports("bynk.test.untyped_outcome");
