@@ -304,6 +304,19 @@ pub fn check_file_core(
                 unit_tables,
             );
             cci.flattened_caps = unit_info[name].flattened.clone();
+            // #1932: each consumed context's own types it does not export.
+            for t in &cci.consumed_contexts {
+                if let Some(other) = unit_info.get(t) {
+                    let hidden: std::collections::BTreeSet<String> = other
+                        .table
+                        .types
+                        .keys()
+                        .filter(|n| !other.exports.contains_key(*n))
+                        .cloned()
+                        .collect();
+                    cci.consumed_unexported.insert(t.clone(), hidden);
+                }
+            }
             cci
         } else {
             resolver::CrossContextInfo::default()

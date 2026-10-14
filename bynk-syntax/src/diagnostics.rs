@@ -503,6 +503,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Called a service the consumed context does not declare.",
         &["consumes_decl"],
     ),
+    dg(
+        "bynk.consumes.unexported_type",
+        "A cross-context call's service signature names a type the consumed context declares but does not export.",
+        &["consumes_decl"],
+    ),
     d(
         "bynk.context.consumes_cycle",
         "Contexts form a `consumes` dependency cycle.",

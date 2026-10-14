@@ -3584,6 +3584,7 @@ pub fn close_reachable_types(
 ) -> ReachedTypes {
     let mut conflicted: HashSet<String> = HashSet::new();
     let mut shadowed = ShadowedReaches::default();
+    let consumed_signatures = consumed_service_seeds(name, unit_info);
     let hidden = close_imported(
         unit_info,
         combined_types,
@@ -3591,6 +3592,7 @@ pub fn close_reachable_types(
         combined_methods,
         imported_from,
         imported_from_kind,
+        consumed_signatures,
         |r, owner, bound| {
             let bound = bound.unwrap_or(name);
             // Shadowing a type of a commons this unit `uses` directly is the
@@ -3694,6 +3696,7 @@ pub fn close_view_types(
         methods,
         &mut imported_from,
         &mut HashMap::new(),
+        Vec::new(),
         |r, owner, bound| {
             if bound != Some(owner) && seen.insert(r.name.clone()) {
                 conflicts.push(ViewConflict {
@@ -3781,12 +3784,44 @@ fn push_refs(names: Vec<String>, scope: &str, via: &str, queue: &mut Vec<Reached
     }));
 }
 
+/// #1932: the type names the `on call` handlers of every context `name`
+/// consumes reference, resolved in that context's scope and reached through
+/// its `consumes`, in a stable order. A consumed service's signature crosses
+/// the boundary (§6.5), so a commons type in it is reached like one in an
+/// imported declaration: the consumer resolves it, and emission imports its
+/// codecs from the declaring commons, whether or not the consumer `uses` it.
+fn consumed_service_seeds(name: &str, unit_info: &BTreeMap<String, UnitInfo>) -> Vec<Reached> {
+    let mut out = Vec::new();
+    let Some(info) = unit_info.get(name) else {
+        return out;
+    };
+    for t in &info.consumes {
+        let Some(consumed) = unit_info.get(t) else {
+            continue;
+        };
+        let mut services: Vec<&ServiceDecl> = consumed.table.services.values().collect();
+        services.sort_by(|a, b| a.name.name.cmp(&b.name.name));
+        for s in services {
+            for h in s.handlers.iter().filter(|h| h.kind == HandlerKind::Call) {
+                let mut names = Vec::new();
+                for p in &h.params {
+                    type_ref_names(&p.type_ref, &HashSet::new(), &mut names);
+                }
+                type_ref_names(&h.return_type, &HashSet::new(), &mut names);
+                push_refs(names, t, t, &mut out);
+            }
+        }
+    }
+    out
+}
+
 /// #1807, #1814: the walk [`close_reachable_types`] and [`close_view_types`]
 /// share. Seeds from every entry `imported_from` attributes to another unit,
 /// adds each reached commons type the table lacks (with its methods), and
 /// calls `on_bound(reached, owner, bound)` for a reached commons type whose
 /// name the table already binds, `bound` being that binding's provenance
 /// (`None` for the table's own declaration).
+#[allow(clippy::too_many_arguments)]
 fn close_imported<S: ScopeTables + ?Sized>(
     scopes: &S,
     combined_types: &mut HashMap<String, Arc<TypeDecl>>,
@@ -3794,6 +3829,9 @@ fn close_imported<S: ScopeTables + ?Sized>(
     combined_methods: &mut HashMap<String, ResolverMethodTable>,
     imported_from: &mut HashMap<String, String>,
     imported_from_kind: &mut HashMap<String, UnitKind>,
+    // #1932: further seeds, each resolved in its own scope (a consumed
+    // service's signature).
+    extra_seeds: Vec<Reached>,
     mut on_bound: impl FnMut(&Reached, &str, Option<&str>),
 ) -> BTreeMap<String, String> {
     let mut queue: Vec<Reached> = Vec::new();
@@ -3840,6 +3878,7 @@ fn close_imported<S: ScopeTables + ?Sized>(
             }
         }
     }
+    queue.extend(extra_seeds);
     // The walk pops from the back; reverse so names are visited in the
     // sorted seeding order and diagnostics come out deterministically.
     queue.reverse();
@@ -4026,7 +4065,7 @@ fn fn_sig_ref_names(f: &FnDecl, attached: &[TypeParam]) -> Vec<String> {
 /// #1807: every user type name in `r`, outside `vars`. Exhaustive over
 /// `TypeRef`, so a new compound constructor is a build failure here rather
 /// than a silently skipped name.
-fn type_ref_names(r: &TypeRef, vars: &HashSet<&str>, out: &mut Vec<String>) {
+pub(crate) fn type_ref_names(r: &TypeRef, vars: &HashSet<&str>, out: &mut Vec<String>) {
     match r {
         TypeRef::Named(id) => {
             if !vars.contains(id.name.as_str()) {

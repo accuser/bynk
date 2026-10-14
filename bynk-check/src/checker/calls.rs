@@ -4125,6 +4125,38 @@ fn check_cross_context_call(
     ctx.refs
         .record_in_unit(method.span, SymbolKind::Service, &method.name, consumed);
 
+    // #1932: a type the provider declares but does not export may not cross.
+    // `exports` is its control over what the boundary reveals; an unexported
+    // type named in the signature has no codec on this side. Checked on the
+    // names the signature writes: a field of an exported type crosses inside
+    // that type's codec.
+    if let Some(unexported) = ctx.input.cross_context.consumed_unexported.get(consumed) {
+        let mut named = Vec::new();
+        let no_vars = std::collections::HashSet::new();
+        for (_, t) in &service.params {
+            crate::project_model::type_ref_names(t, &no_vars, &mut named);
+        }
+        crate::project_model::type_ref_names(&service.return_type, &no_vars, &mut named);
+        let mut reported = std::collections::BTreeSet::new();
+        for n in named.iter().filter(|n| unexported.contains(*n)) {
+            if reported.insert(n.clone()) {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.consumes.unexported_type",
+                        method.span,
+                        format!(
+                            "`{consumed}.{}` takes or returns `{n}`, a type `{consumed}` does not export, so it cannot cross into this context",
+                            method.name
+                        ),
+                    )
+                    .with_note(format!(
+                        "export it from `{consumed}`: `exports transparent {{ {n} }}` to share its structure, or `exports opaque {{ {n} }}` to pass it as a handle"
+                    )),
+                );
+            }
+        }
+    }
+
     if service.params.len() != args.len() {
         ctx.errors.push(
             CompileError::new(

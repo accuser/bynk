@@ -231,6 +231,12 @@ pub struct CrossContextInfo {
     /// Used by the checker for structural shape comparisons across the
     /// boundary (v0.6 §4.3).
     pub consumed_types: HashMap<String, HashMap<String, Arc<TypeDecl>>>,
+    /// #1932: for each consumed context, the types it declares itself but
+    /// does not export. A cross-context call whose service signature names one
+    /// is rejected (`bynk.consumes.unexported_type`): `exports` is the
+    /// provider's control over what crosses. Set by the project pipeline from
+    /// each unit's `exports`; empty where that is not known.
+    pub consumed_unexported: HashMap<String, std::collections::BTreeSet<String>>,
     /// v0.15: for each consumed context, the capabilities it `exports
     /// capability { … }` — keyed by capability name. Used to resolve and
     /// type-check `given B.Cap` references and `B.Cap.op(…)` calls, and by
