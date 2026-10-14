@@ -1740,7 +1740,7 @@ fn emit_consumed_context_helpers(
         // and instantiations can't collide with the caller's, and generated
         // here like an owned type, its TS type still the callee's own.
         let (renamed_table, hidden) =
-            rename_unexported_types(c, types_table, &owned, &commons.types, ctx);
+            rename_unexported_types(c, types_table, &owned, &commons.types, &ctx.imported_from_kind);
         let types_table = &renamed_table;
         let hidden_subst = hidden_subst(&hidden);
 
@@ -1846,13 +1846,13 @@ fn rename_unexported_types(
     types_table: &HashMap<String, Arc<TypeDecl>>,
     owned: &dyn Fn(&str) -> bool,
     caller_types: &HashMap<String, Arc<TypeDecl>>,
-    ctx: &EmitProjectCtx,
+    imported_from_kind: &HashMap<String, UnitKind>,
 ) -> (
     HashMap<String, Arc<TypeDecl>>,
     std::collections::BTreeMap<String, String>,
 ) {
     let shared = |n: &str, d: &Arc<TypeDecl>| {
-        matches!(ctx.imported_from_kind.get(n), Some(UnitKind::Commons))
+        matches!(imported_from_kind.get(n), Some(UnitKind::Commons))
             && caller_types
                 .get(n)
                 .is_some_and(|mine| Arc::ptr_eq(mine, d) || mine.span == d.span)
@@ -1875,6 +1875,24 @@ fn rename_unexported_types(
         })
         .collect();
     (renamed, hidden)
+}
+
+/// #1932: the renames `rename_unexported_types` gives consumed context `c`'s
+/// types, as `original → renamed`, for the call site: a cross-context call
+/// names the codecs [`emit_consumed_context_helpers`] generates under the
+/// same names. Computed once per consumed context, where the emitter's
+/// `CrossContextInfo` is assembled, from the inputs the generator uses.
+pub(crate) fn unexported_type_renames(
+    c: &str,
+    types_table: &HashMap<String, Arc<TypeDecl>>,
+    exports: Option<&HashMap<String, bynk_syntax::ast::Visibility>>,
+    caller_types: &HashMap<String, Arc<TypeDecl>>,
+    imported_from_kind: &HashMap<String, UnitKind>,
+) -> HashMap<String, String> {
+    let owned = |n: &str| exports.is_some_and(|e| e.contains_key(n));
+    let (_, hidden) =
+        rename_unexported_types(c, types_table, &owned, caller_types, imported_from_kind);
+    hidden_subst(&hidden)
 }
 
 /// #1846: `original → renamed`, as [`serialisation::rename_type_ref`] takes it.

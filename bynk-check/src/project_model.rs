@@ -4065,7 +4065,7 @@ fn fn_sig_ref_names(f: &FnDecl, attached: &[TypeParam]) -> Vec<String> {
 /// #1807: every user type name in `r`, outside `vars`. Exhaustive over
 /// `TypeRef`, so a new compound constructor is a build failure here rather
 /// than a silently skipped name.
-pub(crate) fn type_ref_names(r: &TypeRef, vars: &HashSet<&str>, out: &mut Vec<String>) {
+fn type_ref_names(r: &TypeRef, vars: &HashSet<&str>, out: &mut Vec<String>) {
     match r {
         TypeRef::Named(id) => {
             if !vars.contains(id.name.as_str()) {

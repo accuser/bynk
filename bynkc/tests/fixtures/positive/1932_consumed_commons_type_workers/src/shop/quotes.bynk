@@ -1,0 +1,25 @@
+context shop.quotes
+
+uses lib.money
+
+-- #1932: these signatures carry `lib.money`'s types. A consumer that does not
+-- `uses lib.money` still receives and sends them: across a boundary a
+-- commons type is shared structurally (spec §6.5).
+
+service quote {
+  on call() -> Effect[Box] {
+    Effect.pure(wrap())
+  }
+}
+
+service price {
+  on call() -> Effect[Amount] {
+    Effect.pure(Amount { cents: 4 })
+  }
+}
+
+service pay {
+  on call(a: Amount) -> Effect[Int] {
+    Effect.pure(a.cents)
+  }
+}
