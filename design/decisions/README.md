@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0461](0461-imported-type-shadowing.md) | **A unit's own value hides a `uses`-imported type of its name; writing the name is the conflict** (v0.330.5) — An imported type follows the imported function and asset rule, through #1807's naming gate; a consumed export conflicts at the `consumes` clause | Accepted (v0.330.5) |
 | [0460](0460-one-value-namespace.md) | **A unit's services, agents and providers share one namespace with its functions, assets, types and events** (v0.330.3) — Every top-level declaration except a capability or an actor is one scope of the emitted module, so none may share a name | Accepted (v0.330.3) |
 | [0459](0459-static-assets-in-suites-scope.md) | **A suite names exactly the assets its target's Worker ships, and fetches them through an HTTP service** (v0.330.1) — Every asset a case can name is one the target's Worker ships; a non-HTTP service cannot fetch one | Accepted (v0.330.1) |
 | [0458](0458-static-assets-in-suites.md) | **A suite fetches an asset through `svc.GET(asset)`, answered by an imitation of the asset tier** (v0.330) — Suites see their target's assets; `svc.GET(asset)` yields `Raw(body, contentType)` from the files the target's Worker ships, at every tier | Accepted (v0.330) |

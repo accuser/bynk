@@ -1,11 +1,6 @@
----
-level: patch
-changelog: 'A local function, asset, service, agent or provider named like a type the unit imports with `uses` hides that type: writing the type''s name, or constructing one of its variants bare, is `bynk.uses.name_conflict`, while its values still flow through; one named like a type a consumed context exports is `bynk.consumes.name_conflict`. The checker accepted both, and the emitted TypeScript failed `tsc` (#1927)'
----
+# 0461 — A unit's own value hides a `uses`-imported type of its name; writing the name is the conflict
 
-## ADR: imported-type-shadowing
-title: A unit's own value hides a `uses`-imported type of its name; writing the name is the conflict
-summary: An imported type follows the imported function and asset rule, through #1807's naming gate; a consumed export conflicts at the `consumes` clause
+- **Status:** Accepted (v0.330.5)
 
 **Context.** A `uses`-imported type holds a value slot in the emitted module: a
 record emits `export const T = …` beside its interface, and the module imports
