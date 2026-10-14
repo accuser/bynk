@@ -3333,3 +3333,147 @@ service api from http {
         .assert_reports("bynk.test.credential_needs_system");
     }
 }
+
+/// #1931: a case over a service call's outcome, which is untyped (ADR 0203).
+#[cfg(test)]
+mod untyped_outcome_tests {
+    const RAW_API: &str = "context app.web\n\nservice api from http {\n  on GET(\"/x\") () -> Effect[HttpResult[()]] by Visitor {\n    Raw(Bytes.fromUtf8(\"hi\"), \"text/plain\")\n  }\n}\n";
+
+    fn case(body: &str) -> crate::testkit::Analysed {
+        crate::testkit::analyse(&[
+            ("app/web.bynk", RAW_API),
+            (
+                "app/tests/web.test.bynk",
+                &format!(
+                    "suite app.web {{\n  case \"c\" {{\n    let r <- api.GET(\"/x\") by Visitor\n{body}\n  }}\n}}\n"
+                ),
+            ),
+        ])
+    }
+
+    /// A fixed payload binds its type, so a wrong method on it is reported
+    /// against `Bytes`, and a right one checks.
+    #[test]
+    fn a_raw_payload_binds_bytes() {
+        case("    match r {\n      Raw(body, _) => expect body.length() == 2\n      _ => expect false\n    }")
+            .assert_clean();
+        case("    match r {\n      Raw(body, _) => expect body.nosuch() == 2\n      _ => expect false\n    }")
+            .assert_reports("bynk.types.method_not_found");
+        case("    if r is Raw(body, _) {\n      expect body.nosuch() == 2\n    } else {\n      expect false\n    }")
+            .assert_reports("bynk.types.method_not_found");
+    }
+
+    /// The arms of a match on the outcome are checked: before #1931 they were
+    /// skipped, so an unknown name in one went unreported.
+    #[test]
+    fn the_arms_of_a_match_on_the_outcome_are_checked() {
+        case("    match r {\n      Raw(_, _) => expect nope == 1\n      _ => expect false\n    }")
+            .assert_reports("bynk.resolve.unknown_name");
+    }
+
+    /// A value of the handler's result type stays untyped, so a method on it,
+    /// or on a field of it, is reported rather than lowered on nothing.
+    #[test]
+    fn a_method_on_an_untyped_payload_is_reported() {
+        case("    match r {\n      Ok(v) => expect v.length() == 0\n      _ => expect true\n    }")
+            .assert_reports("bynk.test.untyped_outcome");
+        case("    match r {\n      Ok(v) => expect v.name.length() == 0\n      _ => expect true\n    }")
+            .assert_reports("bynk.test.untyped_outcome");
+        case("    expect r.length() == 0").assert_reports("bynk.test.untyped_outcome");
+        case("    if r is Ok(v) {\n      expect v.length() == 0\n    } else {\n      expect true\n    }")
+            .assert_reports("bynk.test.untyped_outcome");
+        // Bound in the else branch of a negated test.
+        case("    if !(r is Ok(v)) {\n      expect true\n    } else {\n      expect v.length() == 0\n    }")
+            .assert_reports("bynk.test.untyped_outcome");
+        // Bound by the `&&` alone, in its right operand.
+        case("    expect r is Ok(v) && v.length() == 0")
+            .assert_reports("bynk.test.untyped_outcome");
+        // Bound by both the `&&` and the `if` (one memoised collection).
+        case("    if r is Ok(v) && true {\n      expect v.length() == 0\n    } else {\n      expect true\n    }")
+            .assert_reports("bynk.test.untyped_outcome");
+    }
+
+    /// Review of #1935: a loose binding ends with its frame, so a sibling frame
+    /// at the same depth that binds the name to an absorbed failure is not
+    /// read as loose.
+    #[test]
+    fn a_sibling_frame_does_not_inherit_looseness() {
+        let r = case(
+            "    let a = if r is Ok(v) { 1 } else { 0 }\n    let b = if 1 is Some(v) { v.length() } else { 0 }\n    expect a + b == 1",
+        );
+        assert!(
+            !r.error_categories().contains(&"bynk.test.untyped_outcome"),
+            "{:?}",
+            r.error_categories()
+        );
+    }
+
+    /// Review of #1935: a redirect variant binds `String` and `Streaming` a
+    /// `Stream[String]`; a wrong method on each is reported against its type,
+    /// not as untyped.
+    #[test]
+    fn redirect_and_streaming_payloads_are_typed() {
+        case("    match r {\n      Found(loc) => expect loc.nosuch()\n      _ => expect false\n    }")
+            .assert_reports("bynk.types.method_not_found");
+        case("    match r {\n      Found(loc) => expect loc.startsWith(\"/\")\n      _ => expect false\n    }")
+            .assert_clean();
+        let streaming = case(
+            "    match r {\n      Streaming(st) => expect st.nosuch()\n      _ => expect false\n    }",
+        );
+        assert!(
+            !streaming
+                .error_categories()
+                .contains(&"bynk.test.untyped_outcome"),
+            "a Streaming payload is typed: {:?}",
+            streaming.error_categories()
+        );
+    }
+
+    /// Review of #1935: a value that reads a loose one is loose too, so a
+    /// method on it is reported rather than lowered on nothing.
+    #[test]
+    fn a_loose_value_stays_loose_through_a_let() {
+        case("    let s = r\n    expect s.length() == 2")
+            .assert_reports("bynk.test.untyped_outcome");
+    }
+
+    /// Review of #1935: a match on the outcome has the arms' type when they
+    /// agree, and is loose when they do not.
+    #[test]
+    fn a_match_on_the_outcome_has_its_arms_type() {
+        case("    let n = match r {\n      Raw(body, _) => body.length()\n      _ => 0\n    }\n    expect n.abs() == 2")
+            .assert_clean();
+        case("    let n = match r {\n      Raw(body, _) => body.length()\n      _ => \"x\"\n    }\n    expect n.length() == 1")
+            .assert_reports("bynk.test.untyped_outcome");
+    }
+
+    /// Review of #1935: a loose arm's pattern is checked by the ordinary rules,
+    /// or-pattern bindings included, rather than binding the first
+    /// alternative's names.
+    #[test]
+    fn a_loose_arms_pattern_is_checked() {
+        case("    match r {\n      BadRequest(m) | NotFound => expect m.length() == 9\n      _ => expect false\n    }")
+            .assert_reports("bynk.types.or_pattern_binding_mismatch");
+        let arity = case(
+            "    match r {\n      Raw(body) => expect body.length() == 2\n      _ => expect false\n    }",
+        );
+        assert_eq!(arity.error_categories(), vec!["bynk.types.pattern_arity"]);
+    }
+
+    /// Review of #1935: looseness ends with its scope, so a later failure that
+    /// binds the same name error-typed is reported once, not also as untyped.
+    #[test]
+    fn looseness_ends_with_its_scope() {
+        let r = case(
+            "    let a = match r {\n      Ok(v) => 1\n      _ => 0\n    }\n    let v = nope()\n    expect v.length() == a",
+        );
+        assert_eq!(r.error_categories(), vec!["bynk.resolve.unknown_function"]);
+    }
+
+    /// A real binding that shadows a loose one is typed, so it is not read as
+    /// loose.
+    #[test]
+    fn a_shadowing_binding_is_not_loose() {
+        case("    let r = \"text\"\n    expect r.length() == 4").assert_clean();
+    }
+}

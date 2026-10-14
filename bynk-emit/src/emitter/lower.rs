@@ -2784,7 +2784,13 @@ fn lower_method_call(
             _ => {}
         }
     }
-    // Instance call: UFCS lowering with the receiver as first arg.
+    // Instance call: UFCS lowering with the receiver as first arg. The
+    // namespace comes from the receiver's checked type. Every method call the
+    // checker accepts has one: a call on an untyped value (part of a
+    // test-service call's outcome) is `bynk.test.untyped_outcome` (#1931),
+    // where it used to reach this placeholder and fail only at `tsc`. The
+    // placeholder stays reachable for a program that failed checking, which
+    // is still lowered and whose output is discarded, so it is not a panic.
     let ns = cx
         .receiver_namespace(receiver)
         .unwrap_or_else(|| "/* unknown */".to_string());
