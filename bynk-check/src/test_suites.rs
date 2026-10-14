@@ -3380,6 +3380,23 @@ mod untyped_outcome_tests {
         case("    match r {\n      Ok(v) => expect v.name.length() == 0\n      _ => expect true\n    }")
             .assert_reports("bynk.test.untyped_outcome");
         case("    expect r.length() == 0").assert_reports("bynk.test.untyped_outcome");
+        case("    if r is Ok(v) {\n      expect v.length() == 0\n    } else {\n      expect true\n    }")
+            .assert_reports("bynk.test.untyped_outcome");
+    }
+
+    /// Review of #1935: a loose binding ends with its frame, so a sibling frame
+    /// at the same depth that binds the name to an absorbed failure is not
+    /// read as loose.
+    #[test]
+    fn a_sibling_frame_does_not_inherit_looseness() {
+        let r = case(
+            "    let a = if r is Ok(v) { 1 } else { 0 }\n    let b = if 1 is Some(v) { v.length() } else { 0 }\n    expect a + b == 1",
+        );
+        assert!(
+            !r.error_categories().contains(&"bynk.test.untyped_outcome"),
+            "{:?}",
+            r.error_categories()
+        );
     }
 
     /// Review of #1935: a redirect variant binds `String` and `Streaming` a
