@@ -1262,6 +1262,7 @@ pub fn check_handler_body(
         callees,
         scopes: vec![param_scope],
         loose_bindings: HashSet::new(),
+        loose_pending: HashSet::new(),
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
@@ -1412,6 +1413,7 @@ pub fn check_body(
         callees,
         scopes: vec![scope],
         loose_bindings: HashSet::new(),
+        loose_pending: HashSet::new(),
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
@@ -1561,6 +1563,7 @@ pub fn check_invariants(
             callees,
             scopes: vec![field_scope.clone()],
             loose_bindings: HashSet::new(),
+            loose_pending: HashSet::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -1706,6 +1709,7 @@ pub fn check_contracts(
             callees,
             scopes: vec![scope],
             loose_bindings: HashSet::new(),
+            loose_pending: HashSet::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -1930,6 +1934,7 @@ pub fn check_transitions(
             callees,
             scopes: vec![scope.clone()],
             loose_bindings: HashSet::new(),
+            loose_pending: HashSet::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -2187,9 +2192,15 @@ pub(crate) struct Ctx<'a> {
     pub scopes: Vec<HashMap<String, TyId>>,
     /// #1931: names bound from a test-service call's outcome, which is
     /// untyped (ADR 0203), or from a pattern over one: error-typed with no
-    /// error reported. Read through [`Ctx::is_loose`], which also requires the
-    /// name to be error-typed where it is read.
-    pub loose_bindings: HashSet<String>,
+    /// error reported. Each is keyed by the scope frame it is bound in, so it
+    /// ends with that frame ([`Ctx::pop_scope`]) and is never confused with a
+    /// later error-typed binding of the name (#1663's absorbed failures).
+    /// Read through [`Ctx::is_loose`].
+    pub loose_bindings: HashSet<(String, usize)>,
+    /// #1931: the names an `is` test over a loose value binds loose. The
+    /// collector that finds them does not bind; the branch that binds them
+    /// adopts them ([`Ctx::adopt_loose`]).
+    pub loose_pending: HashSet<String>,
     /// Memoised `is`-pattern bindings, keyed by the condition sub-expression's
     /// span. `collect_is_bindings` runs at every `&&`/`implies` node and, for a
     /// left-nested `&&` chain, would otherwise re-walk each lhs subtree once per
@@ -2323,8 +2334,15 @@ impl<'a> Ctx<'a> {
     pub fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
+    /// Push a frame already holding `scope`'s bindings.
+    pub fn push_scope_with(&mut self, scope: HashMap<String, TyId>) {
+        self.scopes.push(scope);
+    }
     pub fn pop_scope(&mut self) {
         self.scopes.pop();
+        // #1931: a loose binding ends with its frame.
+        let depth = self.scopes.len();
+        self.loose_bindings.retain(|(_, d)| *d < depth);
     }
     pub fn bind(&mut self, name: String, ty: TyId) {
         self.scopes.last_mut().unwrap().insert(name, ty);
@@ -2335,30 +2353,49 @@ impl<'a> Ctx<'a> {
     pub fn bind_loose(&mut self, name: String) {
         let error = self.tys.intern(Ty::Error);
         self.bind(name.clone(), error);
-        self.loose_bindings.insert(name);
+        self.mark_loose_here(&name);
     }
 
-    /// #1931: mark `name` loose; it is bound error-typed, now or by the caller.
-    pub fn mark_loose(&mut self, name: &str) {
-        self.loose_bindings.insert(name.to_string());
+    /// #1931: mark `name`, just bound error-typed in the current frame, loose.
+    pub fn mark_loose_here(&mut self, name: &str) {
+        let depth = self.scopes.len().saturating_sub(1);
+        self.loose_bindings.insert((name.to_string(), depth));
     }
 
-    /// #1931: whether `name` is loose in scope. A real binding that shadows a
-    /// loose one has a type, so it is never read as loose; a set entry left
-    /// from an earlier scope is harmless for the same reason.
+    /// #1931: after binding an `is` test's `bindings` in the current frame,
+    /// mark loose those its collector found loose.
+    pub fn adopt_loose(&mut self, bindings: &[(String, TyId)]) {
+        for (name, ty) in bindings {
+            if matches!(&*self.tys.get(*ty), Ty::Error) && self.loose_pending.contains(name) {
+                self.mark_loose_here(name);
+            }
+        }
+    }
+
+    /// #1931: whether `name` is loose where it is read: the frame that binds
+    /// it bound it loose, and it is still error-typed there.
     pub fn is_loose(&self, name: &str) -> bool {
-        self.loose_bindings.contains(name)
-            && self
-                .lookup(name)
-                .is_some_and(|t| matches!(&*self.tys.get(t), Ty::Error))
+        let Some((depth, ty)) = self
+            .scopes
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, frame)| frame.get(name).map(|t| (i, *t)))
+        else {
+            return false;
+        };
+        matches!(&*self.tys.get(ty), Ty::Error)
+            && self.loose_bindings.contains(&(name.to_string(), depth))
     }
 
-    /// #1931: whether `expr` reads a loose binding: the name itself, or a field
-    /// path rooted in it (`v.name`), which is untyped too.
+    /// #1931: whether `expr` reads a loose binding: the name itself, a field
+    /// path rooted in it (`v.name`), or a match on it whose arms gave no common
+    /// type, all untyped too.
     pub fn reads_loose(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Ident(id) => self.is_loose(&id.name),
             ExprKind::FieldAccess { receiver, .. } => self.reads_loose(receiver),
+            ExprKind::Match { discriminant, .. } => self.reads_loose(discriminant),
             _ => false,
         }
     }
@@ -3102,7 +3139,13 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                     }
                     r
                 });
+                let errors_before = ctx.errors.len();
                 let rhs_ty = type_of(&l.value, annot_ty, ctx);
+                // #1931: a value that reads a loose binding (`let s = r`) is
+                // loose too, not a failed value.
+                let loose_value = rhs_ty.is_none()
+                    && ctx.errors.len() == errors_before
+                    && ctx.reads_loose(&l.value);
                 check_unbound_effects(&l.value, false, ctx);
                 let final_ty = match (annot_ty, rhs_ty) {
                     (Some(annot), Some(rhs)) => {
@@ -3132,7 +3175,11 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                     // absorb instead of echoing as unknown names.
                     (None, None) => {
                         if l.name.name != "_" {
-                            ctx.bind(l.name.name.clone(), tys.intern(Ty::Error));
+                            if loose_value {
+                                ctx.bind_loose(l.name.name.clone());
+                            } else {
+                                ctx.bind(l.name.name.clone(), tys.intern(Ty::Error));
+                            }
                         }
                         continue;
                     }
@@ -3201,10 +3248,10 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                 // are checked as far as they can be.
                 let loose_outcome = rhs_ty.is_none()
                     && ctx.errors.len() == errors_before
-                    && matches!(
+                    && (matches!(
                         ctx.callees.get(&l.value.id),
                         Some(Callee::TestService { .. } | Callee::TestAssetFetch { .. })
-                    );
+                    ) || ctx.reads_loose(&l.value));
                 check_unbound_effects(&l.value, true, ctx);
                 // v0.182 (#664): validate the call-site principal against the
                 // addressed handler — including the *absent* case, where an

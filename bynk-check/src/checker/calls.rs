@@ -149,6 +149,7 @@ pub(crate) fn check_fn(
         callees,
         scopes: vec![param_scope],
         loose_bindings: std::collections::HashSet::new(),
+        loose_pending: std::collections::HashSet::new(),
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
@@ -252,6 +253,7 @@ fn check_static_initialiser(
             callees,
             scopes: vec![HashMap::new()],
             loose_bindings: std::collections::HashSet::new(),
+            loose_pending: std::collections::HashSet::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: field_ty,
@@ -3039,7 +3041,7 @@ fn untyped_outcome_receiver(receiver: &Expr, method: &Ident) -> CompileError {
         ),
     )
     .with_note(
-        "a case types an outcome's payload only where its type is fixed: `Raw(body, contentType)` binds `Bytes` and `String`, a message or redirect variant binds `String`; a value of the handler's result type (`Ok(v)`) is untyped. Call the method in a source function the case calls, or compare the value instead",
+        "a case does not type a service call's outcome. Matching an `HttpResult` variant binds a payload of fixed type (`Raw(body, contentType)` binds `Bytes` and `String`, a message or redirect variant binds `String`), but any other value drawn from the outcome, such as `v` in `Ok(v)`, has no type. Call the method in a source function the case calls, or compare the value instead",
     )
 }
 
