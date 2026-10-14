@@ -1739,8 +1739,13 @@ fn emit_consumed_context_helpers(
         // in this copy of the callee's table (`t_vault__Code`), so its codecs
         // and instantiations can't collide with the caller's, and generated
         // here like an owned type, its TS type still the callee's own.
-        let (renamed_table, hidden) =
-            rename_unexported_types(c, types_table, &owned, &commons.types, &ctx.imported_from_kind);
+        let (renamed_table, hidden) = rename_unexported_types(
+            c,
+            types_table,
+            &owned,
+            &commons.types,
+            &ctx.imported_from_kind,
+        );
         let types_table = &renamed_table;
         let hidden_subst = hidden_subst(&hidden);
 
