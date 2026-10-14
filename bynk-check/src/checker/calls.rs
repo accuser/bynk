@@ -2213,7 +2213,11 @@ pub(crate) fn check_method_call(
     //                                     qualified name (parsed as nested FieldAccess).
     // The full-qualified-name form must be checked before the bare-ident form
     // (the prefix's first segment doesn't resolve as anything local).
-    if ctx.lookup_root_ident(receiver).is_none() && !ctx.root_ident_is_store_field(receiver) {
+    // #1930: nor is a chain rooted in an asset (`sheet.url.startsWith(…)`).
+    if ctx.lookup_root_ident(receiver).is_none()
+        && !ctx.root_ident_is_store_field(receiver)
+        && !ctx.root_ident_is_asset(receiver)
+    {
         // v0.15: cross-context capability call — `B.Cap.op(args)` /
         // `Alias.Cap.op(args)`. Checked before the service-call shape because
         // the receiver carries an extra (capability) segment.

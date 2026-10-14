@@ -840,6 +840,18 @@ mod tests {
 
     /// A unit's own asset wins over a used commons' asset of the same name;
     /// only two *used* commons colliding is an error.
+    /// #1930: a method on an asset's `url`, written on the chain, is a method
+    /// on a `String` in a context too, not a call into a context named
+    /// `style.url`. A commons never read it so (it has no `consumes`).
+    #[test]
+    fn a_method_on_an_assets_url_is_not_a_cross_context_call() {
+        let a = analyse(&[(
+            "app/web.bynk",
+            "context app.web\n\nasset style = \"assets/a.css\"\n\nfn hashed() -> Bool {\n  style.url.startsWith(\"/_assets/\")\n}\n",
+        )]);
+        a.assert_clean();
+    }
+
     #[test]
     fn a_local_asset_wins_over_a_used_one() {
         let a = analyse(&[
