@@ -1,0 +1,2 @@
+bynk.consumes.name_conflict
+context `app` consumes `shop` which exports type `Order`, but this context declares a service of the same name

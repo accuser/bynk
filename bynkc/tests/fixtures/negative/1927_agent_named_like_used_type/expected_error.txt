@@ -1,0 +1,2 @@
+bynk.uses.name_conflict
+`Cart` names this unit's agent, which hides the type `Cart` from `shop.model`

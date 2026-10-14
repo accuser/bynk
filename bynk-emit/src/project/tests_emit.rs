@@ -4108,7 +4108,11 @@ fn emit_test_scope_setup(
     // #1925: a used commons' function or asset is hidden by any value the
     // target declares — its services, agents and bodied providers too — as
     // the checker's view hides it (`bynk_check::project_model::shadowed_imports`).
-    // Types stay filtered by `target_local` alone, matching that view.
+    // #1927: so is a used commons' type's *value* (its constructors), which a
+    // case may not name (`check_shadowed_type_names_in_suite`). Its type
+    // alias (`type X = ns.X`, below) is still bound: it lives in TypeScript's
+    // type space, beside the target value's `const`, and the lowering names
+    // the types of checked expressions (`(__x: X) => …`, #1778).
     let target_values: std::collections::HashSet<&String> = unit_tables
         .get(target_name)
         .map(|t| {
@@ -4138,14 +4142,9 @@ fn emit_test_scope_setup(
                 let mut names: Vec<String> = table
                     .types
                     .keys()
-                    .filter(|n| !target_local.contains(n))
-                    .chain(
-                        table
-                            .fns
-                            .keys()
-                            .chain(assets)
-                            .filter(|n| !target_values.contains(n)),
-                    )
+                    .chain(table.fns.keys())
+                    .chain(assets)
+                    .filter(|n| !target_values.contains(n))
                     .cloned()
                     .collect();
                 names.sort();

@@ -1403,6 +1403,30 @@ fn emit_unit(
     // at the write boundary via `Document::text`) plus the source map
     // `bynk_ts::print` already computed while building it — no more
     // `Verbatim`-wrapping a pre-rendered string.
+    // #1927: a `uses`-imported type this unit hides behind its own value is
+    // spelled as an inline import type while the module is emitted
+    // (`emitter::type_renames`).
+    let hidden_type_spellings: HashMap<String, String> =
+        bynk_check::project_model::shadowed_imports(name, unit_info)
+            .into_iter()
+            .filter(|(_, s)| s.imported == "type")
+            .map(|(type_name, s)| {
+                let path = unit_ctx
+                    .imported_decl_paths_emit
+                    .get(&s.unit)
+                    .and_then(|m| m.get(&type_name))
+                    .cloned()
+                    .unwrap_or_else(|| EmitProjectCtx::commons_path(&s.unit));
+                let spec = emitter::cross_commons_import_specifier_for_path(
+                    &emit_ctx.source_path,
+                    &path,
+                    import_ext,
+                );
+                let spelling = format!("import(\"{spec}\").{type_name}");
+                (type_name, spelling)
+            })
+            .collect();
+    let _spellings = emitter::type_renames::enter(hidden_type_spellings);
     let (program, source_map) =
         emitter::emit_project(program, &emit_ctx, pf.source(), &source_name);
     // Slice 3: the handler-label sidecar for this unit (ADR 0105) — names stack

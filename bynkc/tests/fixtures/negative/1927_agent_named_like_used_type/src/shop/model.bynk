@@ -1,0 +1,3 @@
+commons shop.model
+
+type Cart = { items: Int }

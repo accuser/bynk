@@ -2301,9 +2301,18 @@ fn lower_method_call(
             args_lowered.join(", ")
         ));
     }
-    // Static call: receiver is a bare ident naming a declared type.
+    // Static call: receiver is a bare ident naming a declared type — unless
+    // the checker resolved it as a test-service address, which a target's
+    // service named like a `uses`-imported type it hides is (#1927).
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.commons().types.contains_key(&id.name)
+        && !matches!(
+            cx.commons().callees.get(&e.id),
+            Some(
+                bynk_check::checker::Callee::TestService { .. }
+                    | bynk_check::checker::Callee::TestAssetFetch { .. }
+            )
+        )
     {
         let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
         return pre.finish(format!(

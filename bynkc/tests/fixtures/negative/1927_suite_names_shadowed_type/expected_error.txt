@@ -1,0 +1,2 @@
+bynk.uses.name_conflict
+`Status` names this unit's service, which hides the type `Status` from `t.lib`

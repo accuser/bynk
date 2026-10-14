@@ -444,7 +444,7 @@ impl ResolvedCommons {
 pub struct ShadowedImport {
     /// The commons that declares the import.
     pub unit: String,
-    /// The import's kind: `"function"` or `"asset"`.
+    /// The import's kind: `"function"`, `"asset"`, or `"type"` (#1927).
     pub imported: &'static str,
     /// The local declaration's kind, as `symbols::local_value_kind` names it.
     pub local: &'static str,
@@ -1417,26 +1417,67 @@ fn check_fn_refs(
 /// a type name, reporting each one that names a hidden type. See
 /// [`check_hidden_type_names`] for what is walked.
 struct Gate<'a> {
+    /// Each gated type name, with its owning unit.
     hidden: &'a std::collections::BTreeMap<String, String>,
-    /// #1814: the note for a hidden name, given the name and its owner. A
-    /// unit and a suite name the `uses` that would admit it differently.
-    note: &'a dyn Fn(&str, &str) -> String,
+    /// #1814: the error for a gated name written at `id`, given its owner. A
+    /// unit and a suite name the `uses` that would admit a hidden type
+    /// differently; a shadowed import is a conflict instead (#1927).
+    report: &'a dyn Fn(&Ident, &str) -> CompileError,
+    /// #1927: each bare variant whose construction is gated, with its sum's
+    /// name. Empty for #1807's hidden types, whose bare variants are values
+    /// typed by their position; a shadowed sum's construction emits its type's
+    /// name, which the local declaration has taken.
+    variants: std::collections::BTreeMap<String, String>,
+    /// #1927: for a shadowed type, the local declaration of each name, which
+    /// answers a receiver it can serve (`svc.GET(…)` in a suite, `logo.url`).
+    /// `None` for #1807's hidden types, which nothing local shares a name with.
+    locals: Option<&'a HashMap<String, ShadowedImport>>,
     errors: Vec<CompileError>,
 }
 impl Gate<'_> {
+    /// #1927: whether the receiver `id` of a method call (`method`) or a
+    /// field read (`field`) is the local declaration that hides the type:
+    /// a service addressed in a suite, or an asset's `url`.
+    fn local_receiver(&self, id: &Ident, method: Option<&Ident>, field: Option<&Ident>) -> bool {
+        let Some(s) = self.locals.and_then(|l| l.get(&id.name)) else {
+            return false;
+        };
+        match s.local {
+            "service" => method.is_some(),
+            "asset" => field.is_some_and(|f| f.name == "url"),
+            _ => false,
+        }
+    }
     fn name(&mut self, id: &Ident) {
         if let Some(owner) = self.hidden.get(&id.name) {
-            // Not `unknown_type_error`: its note lists what is in scope,
-            // which a hidden type, reached but unnameable, is not.
-            self.errors.push(
-                CompileError::new(
-                    "bynk.resolve.unknown_type",
-                    id.span,
-                    format!("unknown type `{}`", id.name),
-                )
-                .with_note((self.note)(&id.name, owner)),
-            );
+            self.errors.push((self.report)(id, owner));
         }
+    }
+    /// #1927: a bare variant constructed (`Done`, `Done(x)`) of a gated sum.
+    /// It names the sum in the emitted module (`Status.Done`), so it is the
+    /// conflict; the error says so, since matching the same variant is legal.
+    fn bare_variant(&mut self, id: &Ident) {
+        let Some(sum) = self.variants.get(&id.name) else {
+            return;
+        };
+        let Some(s) = self.locals.and_then(|l| l.get(sum)) else {
+            return;
+        };
+        self.errors.push(
+            CompileError::new(
+                "bynk.uses.name_conflict",
+                id.span,
+                format!(
+                    "`{}` constructs a variant of `{sum}` from `{}`, which this unit's {} `{sum}` hides",
+                    id.name, s.unit, s.local
+                ),
+            )
+            .with_label(s.local_span, format!("{} declared here", s.local))
+            .with_note(format!(
+                "constructing a variant bare still names its type (`{sum}.{}`); match on it instead, or rename one of the two",
+                id.name
+            )),
+        );
     }
     fn type_ref(&mut self, r: &TypeRef) {
         match r {
@@ -1582,28 +1623,37 @@ impl Gate<'_> {
                 type_name: Some(tn),
                 ..
             } => self.name(tn),
-            ExprKind::FieldAccess { receiver, .. } => {
-                if let ExprKind::Ident(id) = &receiver.kind {
+            ExprKind::FieldAccess { receiver, field } => {
+                if let ExprKind::Ident(id) = &receiver.kind
+                    && !self.local_receiver(id, None, Some(field))
+                {
                     self.name(id);
                 }
             }
             ExprKind::MethodCall {
                 receiver,
+                method,
                 type_args,
                 ..
             } => {
-                if let ExprKind::Ident(id) = &receiver.kind {
+                if let ExprKind::Ident(id) = &receiver.kind
+                    && !self.local_receiver(id, Some(method), None)
+                {
                     self.name(id);
                 }
                 for t in type_args {
                     self.type_ref(t);
                 }
             }
-            ExprKind::Call { type_args, .. } => {
+            ExprKind::Call {
+                name, type_args, ..
+            } => {
+                self.bare_variant(name);
                 for t in type_args {
                     self.type_ref(t);
                 }
             }
+            ExprKind::Ident(id) => self.bare_variant(id),
             ExprKind::Val { type_ref, .. } => self.type_ref(type_ref),
             ExprKind::Lambda(l) => {
                 for p in &l.params {
@@ -1642,20 +1692,96 @@ pub fn check_hidden_type_names(
     items: &[CommonsItem],
     hidden: &std::collections::BTreeMap<String, String>,
 ) -> Vec<CompileError> {
-    let note = |name: &str, owner: &str| {
-        format!(
-            "`{name}` reaches this unit only through an imported declaration. It is \
-             declared in `{owner}`, which this unit does not `uses`; add `uses \
-             {owner}` to name it"
+    let report = |id: &Ident, owner: &str| {
+        hidden_type_error(
+            id,
+            format!(
+                "`{}` reaches this unit only through an imported declaration. It is \
+                 declared in `{owner}`, which this unit does not `uses`; add `uses \
+                 {owner}` to name it",
+                id.name
+            ),
         )
     };
     let mut g = Gate {
         hidden,
-        note: &note,
+        report: &report,
+        variants: Default::default(),
+        locals: None,
         errors: Vec::new(),
     };
-    if hidden.is_empty() {
-        return g.errors;
+    gate_items(&mut g, items);
+    g.errors
+}
+
+/// `bynk.resolve.unknown_type` for a hidden type written at `id`. Not
+/// `unknown_type_error`: its note lists what is in scope, which a hidden
+/// type, reached but unnameable, is not.
+fn hidden_type_error(id: &Ident, note: String) -> CompileError {
+    CompileError::new(
+        "bynk.resolve.unknown_type",
+        id.span,
+        format!("unknown type `{}`", id.name),
+    )
+    .with_note(note)
+}
+
+/// #1927: the naming gate for a `uses`-imported type the unit hides behind
+/// its own declaration of another kind (a function, asset, service, agent or
+/// provider: `crate::project_model::shadowed_imports`). The type stays in the
+/// unit's table, so an imported declaration that uses it still checks, and a
+/// value of it still flows through the unit's code. But the emitted module
+/// binds the name to the local declaration, so the unit may not write it: every
+/// position [`check_hidden_type_names`] gates is `bynk.uses.name_conflict`
+/// here, and so is constructing one of the sum's variants bare (`Done`), which
+/// emits the type's name too. Matching a variant does not.
+pub fn check_shadowed_type_names(
+    items: &[CommonsItem],
+    shadowed: &HashMap<String, ShadowedImport>,
+    types: &HashMap<String, Arc<TypeDecl>>,
+) -> Vec<CompileError> {
+    let (gated, variants) = shadowed_type_gate(shadowed, types);
+    let report = |id: &Ident, _owner: &str| {
+        let s = &shadowed[&id.name];
+        shadowed_import_error(&id.name, id.span, s)
+    };
+    let mut g = Gate {
+        hidden: &gated,
+        report: &report,
+        variants,
+        locals: Some(shadowed),
+        errors: Vec::new(),
+    };
+    gate_items(&mut g, items);
+    g.errors
+}
+
+/// #1927: the shadowed imported types, by name with their owning unit, and
+/// each bare variant of a shadowed sum, with the sum's name.
+fn shadowed_type_gate(
+    shadowed: &HashMap<String, ShadowedImport>,
+    types: &HashMap<String, Arc<TypeDecl>>,
+) -> (
+    std::collections::BTreeMap<String, String>,
+    std::collections::BTreeMap<String, String>,
+) {
+    let mut gated = std::collections::BTreeMap::new();
+    let mut variants = std::collections::BTreeMap::new();
+    for (name, s) in shadowed.iter().filter(|(_, s)| s.imported == "type") {
+        gated.insert(name.clone(), s.unit.clone());
+        if let Some(TypeBody::Sum(sum)) = types.get(name).map(|t| &t.body) {
+            for v in &sum.variants {
+                variants.insert(v.name.name.clone(), name.clone());
+            }
+        }
+    }
+    (gated, variants)
+}
+
+/// Walk every item of a unit through `g`.
+fn gate_items(g: &mut Gate<'_>, items: &[CommonsItem]) {
+    if g.hidden.is_empty() {
+        return;
     }
     for item in items {
         match item {
@@ -1725,7 +1851,6 @@ pub fn check_hidden_type_names(
             CommonsItem::Messages(_) | CommonsItem::Asset(_) => {}
         }
     }
-    g.errors
 }
 
 /// #1814: the naming gate for a test suite's view. A suite resolves names in
@@ -1744,25 +1869,60 @@ pub fn check_hidden_type_names_in_suite(
     target: Option<&str>,
     hidden: &std::collections::BTreeMap<String, String>,
 ) -> Vec<CompileError> {
-    let note = |name: &str, owner: &str| match target {
-        Some(target) => format!(
-            "`{name}` reaches this suite only through an imported declaration. It is \
-             declared in `{owner}`, which `{target}` does not `uses`; add `uses {owner}` \
-             to `{target}` to name it"
-        ),
-        None => format!(
-            "`{name}` reaches this suite only through an imported declaration. It is \
-             declared in `{owner}`, which this suite does not `uses`; add `uses {owner}` \
-             to name it"
-        ),
+    let report = |id: &Ident, owner: &str| {
+        let name = &id.name;
+        hidden_type_error(
+            id,
+            match target {
+                Some(target) => format!(
+                    "`{name}` reaches this suite only through an imported declaration. It is \
+                     declared in `{owner}`, which `{target}` does not `uses`; add `uses {owner}` \
+                     to `{target}` to name it"
+                ),
+                None => format!(
+                    "`{name}` reaches this suite only through an imported declaration. It is \
+                     declared in `{owner}`, which this suite does not `uses`; add `uses {owner}` \
+                     to name it"
+                ),
+            },
+        )
     };
     let mut g = Gate {
         hidden,
-        note: &note,
+        report: &report,
+        variants: Default::default(),
+        locals: None,
         errors: Vec::new(),
     };
-    if hidden.is_empty() {
-        return g.errors;
+    gate_suite(&mut g, suite);
+    g.errors
+}
+
+/// #1927: [`check_shadowed_type_names`] for a unit suite: a case may no more
+/// write a type its target hides than the target may.
+pub fn check_shadowed_type_names_in_suite(
+    suite: &SuiteDecl,
+    shadowed: &HashMap<String, ShadowedImport>,
+    types: &HashMap<String, Arc<TypeDecl>>,
+) -> Vec<CompileError> {
+    let (gated, variants) = shadowed_type_gate(shadowed, types);
+    let report =
+        |id: &Ident, _owner: &str| shadowed_import_error(&id.name, id.span, &shadowed[&id.name]);
+    let mut g = Gate {
+        hidden: &gated,
+        report: &report,
+        variants,
+        locals: Some(shadowed),
+        errors: Vec::new(),
+    };
+    gate_suite(&mut g, suite);
+    g.errors
+}
+
+/// Walk every stub, case and property of `suite` through `g`.
+fn gate_suite(g: &mut Gate<'_>, suite: &SuiteDecl) {
+    if g.hidden.is_empty() {
+        return;
     }
     let stub = |g: &mut Gate<'_>, s: &StubClause| {
         for a in &s.args {
@@ -1783,11 +1943,11 @@ pub fn check_hidden_type_names_in_suite(
         }
     };
     for s in &suite.stubs {
-        stub(&mut g, s);
+        stub(g, s);
     }
     for case in &suite.cases {
         for s in &case.stubs {
-            stub(&mut g, s);
+            stub(g, s);
         }
         g.block(&case.body);
     }
@@ -1800,7 +1960,6 @@ pub fn check_hidden_type_names_in_suite(
         }
         g.block(&prop.forall.body);
     }
-    g.errors
 }
 
 fn unknown_type_error(id: &Ident) -> CompileError {
@@ -2410,6 +2569,26 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
                 // expression in resolver — the type checker will assign
                 // the correct sum type. Mark with no error.
                 let _ = sum_owner;
+            } else if cx.fns.contains_key(&id.name)
+                && cx
+                    .shadowed
+                    .get(&id.name)
+                    .is_some_and(|s| s.imported == "type")
+            {
+                // Review of #1933: a local function hiding an imported type of
+                // its name answers a bare reference (a function value), as in
+                // the emitted module; the checker judges the position
+                // (`check_ident`'s function arm, met before types).
+                cx.errors.refs.record(id.span, SymbolKind::Fn, &id.name);
+            } else if cx.assets.contains_key(&id.name)
+                && cx
+                    .shadowed
+                    .get(&id.name)
+                    .is_some_and(|s| s.imported == "type")
+            {
+                // #1927: a local asset hiding an imported type of its name is
+                // the asset here, as in the emitted module; the checker types
+                // it (`check_ident` meets assets before types).
             } else if let Some(s) = cx.shadowed.get(&id.name)
                 && !matches!(s.local, "function" | "asset")
             {
@@ -2679,8 +2858,11 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
                 return;
             }
             // `TypeName.Variant` — qualified nullary variant reference.
+            // #1927: not for a local asset that hides an imported type of its
+            // name: `logo.url` reads the asset, as the emitted module does.
             if let ExprKind::Ident(id) = &receiver.kind
                 && !name_in_scope(&id.name, cx.params, &cx.scopes)
+                && !matches!(cx.shadowed.get(&id.name), Some(s) if s.imported == "type" && s.local == "asset")
                 && let Some(decl) = cx.types.get(&id.name)
             {
                 cx.errors.refs.record(id.span, SymbolKind::Type, &id.name);

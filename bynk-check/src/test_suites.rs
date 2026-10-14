@@ -996,6 +996,12 @@ fn check_test_bodies(
 
     // #1814: the types the target's privileged view reaches but does not
     // name. A case resolves them; no suite may write one.
+    // #1927: the imported types the target hides behind its own values,
+    // with the target's types to find a shadowed sum's variants.
+    let target_shadowed = privileged
+        .as_ref()
+        .map(|(r, _)| (r.shadowed_imports.clone(), r.types.clone()))
+        .unwrap_or_default();
     let reach = privileged.map(|(_, r)| r).unwrap_or_default();
     let hidden = reach.hidden;
 
@@ -1033,6 +1039,12 @@ fn check_test_bodies(
             test_decl,
             Some(target_name),
             &hidden,
+        ));
+        // #1927: nor a type the target hides behind its own value.
+        errors.extend(resolver::check_shadowed_type_names_in_suite(
+            test_decl,
+            &target_shadowed.0,
+            &target_shadowed.1,
         ));
         // v0.25: test-case edges record in the test file, resolving bare
         // names through the *target* unit's namespace.
