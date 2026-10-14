@@ -1,11 +1,6 @@
----
-level: patch
-changelog: The first-party standard-library sources move into a new data-only `bynk-std` crate; emitted output is unchanged
----
+# 0463 — The first-party sources live in a data-only `bynk-std` crate, with the platform layer in its own subtree
 
-## ADR: bynk-std-owns-the-first-party-sources
-title: The first-party sources live in a data-only `bynk-std` crate, with the platform layer in its own subtree
-summary: `bynk-std` holds the stdlib's `.bynk` sources, TS bindings and metadata as data; `bynk-check` reads and re-exports them; `bynk.cloudflare` sits apart so it can be unbundled without renames
+- **Status:** Accepted (v0.330.9)
 
 **Context.** [[0086]] made the first-party sources real files embedded by `include_str!`, under a
 "package-shaped" tree, as "the cheap hedge that keeps a future publish a lift-and-shift". The tree
