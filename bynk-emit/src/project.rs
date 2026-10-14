@@ -1260,7 +1260,22 @@ fn emit_unit(
     let typed = program.program();
     // Build the emitter context.
     let info = &unit_info[name];
-    let cross_context_info = cross_context_for_file.clone();
+    let mut cross_context_info = cross_context_for_file.clone();
+    // #1932: the names the consumer gives a consumed context's unexported
+    // types' codecs, for the call sites, from the same function its codec
+    // generator uses.
+    for c in cross_context_info.consumed_contexts.clone() {
+        if let Some(types) = cross_context_info.consumed_types.get(&c) {
+            let renames = emitter::unexported_type_renames(
+                &c,
+                types,
+                unit_ctx.exports_for_consumed.get(&c),
+                &typed.types,
+                imported_from_kind,
+            );
+            cross_context_info.consumed_type_renames.insert(c, renames);
+        }
+    }
 
     // v0.8: in workers mode, a context's *output* lands under
     // workers/<dashes>/handlers.ts. Use that path as the synthetic

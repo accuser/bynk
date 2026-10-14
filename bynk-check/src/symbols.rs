@@ -1183,6 +1183,8 @@ pub fn build_cross_context_info(
         aliases,
         consumed_services,
         consumed_types,
+        // Set by the emitter (#1932).
+        consumed_type_renames: HashMap::new(),
         consumed_capabilities,
         // Set by the caller from the unit's `consumes U { … }` clauses.
         flattened_caps: unit_tables

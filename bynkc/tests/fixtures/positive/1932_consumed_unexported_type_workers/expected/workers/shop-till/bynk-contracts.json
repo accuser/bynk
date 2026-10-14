@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "provides": {
+    "total": "33d600cce42e97f8"
+  },
+  "expects": {
+    "shop.quotes": {
+      "echo": "6c2d0f0bc04d4f2f",
+      "quote": "f9cdf9e7922d5135"
+    }
+  }
+}

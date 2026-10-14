@@ -3584,6 +3584,7 @@ pub fn close_reachable_types(
 ) -> ReachedTypes {
     let mut conflicted: HashSet<String> = HashSet::new();
     let mut shadowed = ShadowedReaches::default();
+    let consumed_signatures = consumed_service_seeds(name, unit_info);
     let hidden = close_imported(
         unit_info,
         combined_types,
@@ -3591,7 +3592,14 @@ pub fn close_reachable_types(
         combined_methods,
         imported_from,
         imported_from_kind,
+        consumed_signatures,
         |r, owner, bound| {
+            // #1932: a name a consumed signature reaches but this unit already
+            // binds is the unit's own type receiving the value structurally
+            // (§6.5), not a conflict.
+            if r.signature {
+                return;
+            }
             let bound = bound.unwrap_or(name);
             // Shadowing a type of a commons this unit `uses` directly is the
             // existing, visible choice (`1697_derived_names_collide` declares
@@ -3694,6 +3702,7 @@ pub fn close_view_types(
         methods,
         &mut imported_from,
         &mut HashMap::new(),
+        Vec::new(),
         |r, owner, bound| {
             if bound != Some(owner) && seen.insert(r.name.clone()) {
                 conflicts.push(ViewConflict {
@@ -3771,14 +3780,62 @@ struct Reached {
     name: String,
     scope: String,
     via: String,
+    /// #1932: reached from a consumed service's signature (or from a type such
+    /// a reach added). The value crosses structurally (§6.5), so a name the
+    /// consumer already binds is its own type receiving it, not a conflict.
+    signature: bool,
 }
 
 fn push_refs(names: Vec<String>, scope: &str, via: &str, queue: &mut Vec<Reached>) {
+    push_refs_with(names, scope, via, false, queue);
+}
+
+fn push_refs_with(
+    names: Vec<String>,
+    scope: &str,
+    via: &str,
+    signature: bool,
+    queue: &mut Vec<Reached>,
+) {
     queue.extend(names.into_iter().map(|n| Reached {
         name: n,
         scope: scope.to_string(),
         via: via.to_string(),
+        signature,
     }));
+}
+
+/// #1932: the type names the `on call` handlers of every context `name`
+/// consumes reference, resolved in that context's scope and reached through
+/// its `consumes`, in a stable order. A consumed service's signature crosses
+/// the boundary (§6.5), so a commons type in it is reached like one in an
+/// imported declaration: the consumer resolves it, and emission imports its
+/// codecs from the declaring commons, whether or not the consumer `uses` it.
+fn consumed_service_seeds(name: &str, unit_info: &BTreeMap<String, UnitInfo>) -> Vec<Reached> {
+    let mut out = Vec::new();
+    let Some(info) = unit_info.get(name) else {
+        return out;
+    };
+    for t in &info.consumes {
+        let Some(consumed) = unit_info.get(t) else {
+            continue;
+        };
+        let mut services: Vec<&ServiceDecl> = consumed.table.services.values().collect();
+        services.sort_by(|a, b| a.name.name.cmp(&b.name.name));
+        for s in services {
+            // The one `on call` handler a cross-context call reaches
+            // (`resolver::cross_context_service_for`).
+            if let Some(h) = s.handlers.iter().find(|h| h.kind == HandlerKind::Call) {
+                let mut names = Vec::new();
+                for p in &h.params {
+                    type_ref_names(&p.type_ref, &HashSet::new(), &mut names);
+                }
+                type_ref_names(&h.return_type, &HashSet::new(), &mut names);
+                push_refs_with(names, t, t, true, &mut out);
+            }
+        }
+    }
+    out
 }
 
 /// #1807, #1814: the walk [`close_reachable_types`] and [`close_view_types`]
@@ -3787,6 +3844,7 @@ fn push_refs(names: Vec<String>, scope: &str, via: &str, queue: &mut Vec<Reached
 /// calls `on_bound(reached, owner, bound)` for a reached commons type whose
 /// name the table already binds, `bound` being that binding's provenance
 /// (`None` for the table's own declaration).
+#[allow(clippy::too_many_arguments)]
 fn close_imported<S: ScopeTables + ?Sized>(
     scopes: &S,
     combined_types: &mut HashMap<String, Arc<TypeDecl>>,
@@ -3794,6 +3852,9 @@ fn close_imported<S: ScopeTables + ?Sized>(
     combined_methods: &mut HashMap<String, ResolverMethodTable>,
     imported_from: &mut HashMap<String, String>,
     imported_from_kind: &mut HashMap<String, UnitKind>,
+    // #1932: further seeds, each resolved in its own scope (a consumed
+    // service's signature).
+    extra_seeds: Vec<Reached>,
     mut on_bound: impl FnMut(&Reached, &str, Option<&str>),
 ) -> BTreeMap<String, String> {
     let mut queue: Vec<Reached> = Vec::new();
@@ -3840,6 +3901,7 @@ fn close_imported<S: ScopeTables + ?Sized>(
             }
         }
     }
+    queue.extend(extra_seeds);
     // The walk pops from the back; reverse so names are visited in the
     // sorted seeding order and diagnostics come out deterministically.
     queue.reverse();
@@ -3868,7 +3930,13 @@ fn close_imported<S: ScopeTables + ?Sized>(
             continue;
         }
         let decl = owner_table.types[&r.name].clone();
-        push_refs(type_decl_ref_names(&decl), owner, &r.via, &mut queue);
+        push_refs_with(
+            type_decl_ref_names(&decl),
+            owner,
+            &r.via,
+            r.signature,
+            &mut queue,
+        );
         combined_types.insert(r.name.clone(), decl.clone());
         imported_from.insert(r.name.clone(), owner.to_string());
         imported_from_kind.insert(r.name.clone(), UnitKind::Commons);
@@ -3885,10 +3953,11 @@ fn close_imported<S: ScopeTables + ?Sized>(
                 .collect();
             decls.sort_by_key(|(_, d, _)| d.span.start);
             for (m, d, is_instance) in decls {
-                push_refs(
+                push_refs_with(
                     fn_sig_ref_names(d, &decl.type_params),
                     owner,
                     &r.via,
+                    r.signature,
                     &mut queue,
                 );
                 let table = if is_instance {
