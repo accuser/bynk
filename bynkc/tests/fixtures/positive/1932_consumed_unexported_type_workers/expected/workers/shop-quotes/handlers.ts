@@ -23,6 +23,12 @@ export const quote = {
   },
 };
 
+export const echo = {
+  async call(b: Box, deps: {}): globalThis.Promise<number> {
+    return b.a.cents;
+  },
+};
+
 export function __serialise_Amount(value: Amount): __JsonValue {
   return {
     cents: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.cents),

@@ -3594,6 +3594,12 @@ pub fn close_reachable_types(
         imported_from_kind,
         consumed_signatures,
         |r, owner, bound| {
+            // #1932: a name a consumed signature reaches but this unit already
+            // binds is the unit's own type receiving the value structurally
+            // (§6.5), not a conflict.
+            if r.signature {
+                return;
+            }
             let bound = bound.unwrap_or(name);
             // Shadowing a type of a commons this unit `uses` directly is the
             // existing, visible choice (`1697_derived_names_collide` declares
@@ -3774,13 +3780,28 @@ struct Reached {
     name: String,
     scope: String,
     via: String,
+    /// #1932: reached from a consumed service's signature (or from a type such
+    /// a reach added). The value crosses structurally (§6.5), so a name the
+    /// consumer already binds is its own type receiving it, not a conflict.
+    signature: bool,
 }
 
 fn push_refs(names: Vec<String>, scope: &str, via: &str, queue: &mut Vec<Reached>) {
+    push_refs_with(names, scope, via, false, queue);
+}
+
+fn push_refs_with(
+    names: Vec<String>,
+    scope: &str,
+    via: &str,
+    signature: bool,
+    queue: &mut Vec<Reached>,
+) {
     queue.extend(names.into_iter().map(|n| Reached {
         name: n,
         scope: scope.to_string(),
         via: via.to_string(),
+        signature,
     }));
 }
 
@@ -3802,13 +3823,15 @@ fn consumed_service_seeds(name: &str, unit_info: &BTreeMap<String, UnitInfo>) ->
         let mut services: Vec<&ServiceDecl> = consumed.table.services.values().collect();
         services.sort_by(|a, b| a.name.name.cmp(&b.name.name));
         for s in services {
-            for h in s.handlers.iter().filter(|h| h.kind == HandlerKind::Call) {
+            // The one `on call` handler a cross-context call reaches
+            // (`resolver::cross_context_service_for`).
+            if let Some(h) = s.handlers.iter().find(|h| h.kind == HandlerKind::Call) {
                 let mut names = Vec::new();
                 for p in &h.params {
                     type_ref_names(&p.type_ref, &HashSet::new(), &mut names);
                 }
                 type_ref_names(&h.return_type, &HashSet::new(), &mut names);
-                push_refs(names, t, t, &mut out);
+                push_refs_with(names, t, t, true, &mut out);
             }
         }
     }
@@ -3907,7 +3930,13 @@ fn close_imported<S: ScopeTables + ?Sized>(
             continue;
         }
         let decl = owner_table.types[&r.name].clone();
-        push_refs(type_decl_ref_names(&decl), owner, &r.via, &mut queue);
+        push_refs_with(
+            type_decl_ref_names(&decl),
+            owner,
+            &r.via,
+            r.signature,
+            &mut queue,
+        );
         combined_types.insert(r.name.clone(), decl.clone());
         imported_from.insert(r.name.clone(), owner.to_string());
         imported_from_kind.insert(r.name.clone(), UnitKind::Commons);
@@ -3924,10 +3953,11 @@ fn close_imported<S: ScopeTables + ?Sized>(
                 .collect();
             decls.sort_by_key(|(_, d, _)| d.span.start);
             for (m, d, is_instance) in decls {
-                push_refs(
+                push_refs_with(
                     fn_sig_ref_names(d, &decl.type_params),
                     owner,
                     &r.via,
+                    r.signature,
                     &mut queue,
                 );
                 let table = if is_instance {

@@ -1,0 +1,9 @@
+commons lib.money
+
+type Amount = { cents: Int }
+
+type Box = { a: Amount }
+
+fn wrap() -> Box {
+  Box { a: Amount { cents: 1 } }
+}

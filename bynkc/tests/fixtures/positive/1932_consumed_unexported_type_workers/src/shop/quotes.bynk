@@ -13,3 +13,9 @@ service quote {
     Effect.pure(Box { a: Amount { cents: 1 } })
   }
 }
+
+service echo {
+  on call(b: Box) -> Effect[Int] {
+    Effect.pure(b.a.cents)
+  }
+}

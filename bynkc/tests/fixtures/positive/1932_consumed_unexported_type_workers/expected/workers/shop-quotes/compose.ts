@@ -10,6 +10,9 @@ export interface Env {
 export function compose(env: Env) {
   const deps = {  };
   return {
+    async echo(b: handlers.Box) {
+      return handlers.echo.call(b, deps);
+    },
     async quote() {
       return handlers.quote.call(deps);
     },

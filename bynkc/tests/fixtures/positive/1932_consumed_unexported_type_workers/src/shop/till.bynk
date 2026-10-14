@@ -2,9 +2,17 @@ context shop.till
 
 consumes shop.quotes
 
+-- The consumer's own types, structurally identical to `shop.quotes`' `Box`
+-- and `Amount`, cross into `echo` as its parameter (spec §6.5).
+
+type Coins = { cents: Int }
+
+type Parcel = { a: Coins }
+
 service total {
   on call() -> Effect[Int] {
     let b <- shop.quotes.quote()
-    Effect.pure(b.a.cents)
+    let echoed <- shop.quotes.echo(Parcel { a: Coins { cents: 2 } })
+    Effect.pure(b.a.cents + echoed)
   }
 }
