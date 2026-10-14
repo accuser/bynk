@@ -111,8 +111,10 @@ and shipped practice:
 
 - **P-1 Bundled, every binary.** Every stdlib layer is available to all four
   toolchain artefacts that embed the pipeline: `bynkc`, `bynk`, `bynkc-lsp` and
-  `bynk-wasm` (the playground). Today these ship as GitHub Release binaries and
-  crates.io crates; nothing Bynk-owned is on npm except `tree-sitter-bynk`.
+  `bynk-wasm` (the playground). Today `bynkc`, `bynk` and `bynkc-lsp` ship as
+  GitHub Release binaries, and the library crates go to crates.io.
+  `bynk-wasm` is built for the playground and is in neither channel.
+  Nothing Bynk-owned is on npm except `tree-sitter-bynk`.
   "Part of the `bynk` distribution" means these channels, not an npm package.
   The stdlib needs no network fetch and no npm install of Bynk-owned
   packages. Builds stay hermetic, except for any npm `requires` a
@@ -206,8 +208,12 @@ Every stdlib addition, in any layer, must meet these.
   providers and wrangler derivation. It needs no new branch in
   `project_model.rs` (prerequisite PR-1).
 - **R-7 Wrangler derivation.** Every L3 capability declares the
-  `wrangler.toml` table it requires, and the emitter derives it from use,
-  as KV does today.
+  `wrangler.toml` table it requires, and the emitter emits a stanza only for
+  an instance the context actually *references* (in a `given` or an op
+  call). This is narrower than today's KV gate: `needs_kv`
+  (`bynk-emit/src/project.rs`) fires whenever the context's in-process
+  closure reaches `bynk.cloudflare` at all, used or not. S4 narrows it (D3
+  rule 4).
 - **R-8 Deploy provisioning.** `bynk deploy` provisions or links every
   resource an L3 capability needs (create a D1 database, R2 bucket, queue…), or
   the capability's doc states exactly what the user must do by hand. Resource
@@ -419,10 +425,12 @@ ADR.
   happens when the platform itself changes. The settled position:
   - **Stable L0 and L1 items join the Foundations layer.** A breaking change
     to one is a 2.0 event.
-  - **Stable L2 and L3 items are additive-only through 1.x.** New items,
-    operations and enum variants may be added. Where adding a variant would
-    break exhaustive `match`es, that needs its own check before 1.0. An
-    existing stable item may be *deprecated* in a minor release (a warning on
+  - **Stable L2 and L3 items are additive-only through 1.x.** New items and
+    operations may be added. Whether a *variant* may be added to a stable
+    enum is **not** settled here (§11 Q5): exhaustiveness is enforced
+    (`bynk.types.non_exhaustive_match`), so a new variant breaks every user
+    `match` that covers the enum today. An existing stable item may be
+    *deprecated* in a minor release (a warning on
     ADR 0117's channel, with a suggestion where one is mechanical) but
     *removed or reshaped* only in a major release.
   - **Experimental items carry no promise.** They may change or disappear in
@@ -438,7 +446,9 @@ ADR.
     exist by the time 1.0 is cut.
 - **D3 — Resource-instance model** (PR-2).
   - **Ownership: SETTLED 2026-10-14, context-owned.** KV, D1 and R2 instances
-    belong to one context, keyed by (context, name) in the deploy ledger. The
+    belong to one context, keyed by **(environment, Worker, capability)** in
+    the deploy ledger. The Worker is the context's deployment unit, and the
+    environment is part of the key because ids differ per environment. The
     ledger's `kv` map, keyed by Worker today, gains the instance name, and the
     bare `Kv` maps to the existing entry. Other contexts reach the data only
     through that context's services. Queues stay account-named delivery
@@ -495,8 +505,15 @@ ADR.
       3. `X` shares the unit's capability namespace and its conflict rules
          (`bynk.consumes.capability_name_clash`).
       4. A bare consumed `K` (`Kv`) remains the implicit default instance
-         (binding `KV`), so existing programs emit byte-identically. It may
-         be used alongside derived instances.
+         (binding `KV`), and it may be used alongside derived instances. Its
+         stanza, like every instance's, is emitted and provisioned **only
+         when the bare `K` is referenced** (R-7). Otherwise a context that
+         consumes `Kv` only to derive `Sessions` would carry a permanent,
+         unreachable `KV` namespace: a P-5 departure and an extra standing
+         orphan/prune entry (§12). So every context that *uses* bare `Kv`
+         emits byte-identically. A context that consumes `bynk.cloudflare`
+         but never references `Kv` stops emitting `[[kv_namespaces]]`. That
+         is a deliberate pre-1.0 output change, listed in S4's migration note.
       5. Adapters may declare derived capabilities. Each consuming context
          gets its own instance (A6). Consumer-supplied instances are not
          offered for now; they could be added later without breaking
@@ -586,7 +603,7 @@ increment** (ADR 0023), and the ordering follows §13.
 
 | Slice | What | Needs |
 |---|---|---|
-| S4 | Derived capabilities for KV: `capability X = Kv` grammar, checker rules 1–6 (D3), kind-prefixed binding emission, implied provision, ledger keyed by (environment, Worker, capability), deploy plan shows creates and orphans; bare `Kv` byte-identical | S1, D3 |
+| S4 | Derived capabilities for KV: `capability X = Kv` grammar, checker rules 1–6 (D3), kind-prefixed binding emission, implied provision, ledger keyed by (environment, Worker, capability), deploy plan shows creates and orphans; bare `Kv` byte-identical where it is referenced, and its stanza gated on reference (rule 4) | S1, D3 |
 
 **Core (L0–L2):**
 
@@ -607,7 +624,7 @@ increment** (ADR 0023), and the ordering follows §13.
 | P2 | Queue producer: `capability X = Queue @queue("…")`, `send` with `Json.encode` | S4, D4 |
 | P3 | Rate Limiting, Analytics Engine | S4 |
 | P4 | D1: `SqlValue` parameters, two-step rows, the 0/1-Bool and blob codec gaps, the `migrations_dir` question | S4, K1, D4 |
-| P5 | R2: byte streams, metadata, conditional ops, physical-name uniqueness (§11 Q3) | S4, K1 |
+| P5 | R2: byte streams, metadata, conditional ops, physical-name scope confirmed (§11 Q3) | S4, K1 |
 | later | Cache API, Vectorize, Workers AI, Hyperdrive, TCP sockets, HTMLRewriter | case by case |
 
 Outside this track: `[vars]` emission and deploy support (D6). It is deploy
@@ -639,14 +656,27 @@ slice that first depends on it. Numbers are assigned at merge.
 2. **Binding-name scheme.** Kind-prefixed names (`KV_SESSIONS`) against
    existing service-binding (`OTHER_CONTEXT`) and Durable Object
    (`ORDER_ENTITY`) names. Is a collision possible, e.g. a context named `kv`?
-3. **Physical-name derivation.** R2 bucket names are unique across all of
-   Cloudflare. How do derived names avoid collisions (an account-scoped prefix,
-   a hash suffix)?
+3. **Physical-name derivation. Resolved in review.** The question's
+   premise was wrong. R2 bucket names are scoped to the **account** (R2
+   addresses buckets under the account, `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`),
+   not to all of Cloudflare. The derivation in A12 (Worker name plus
+   declaration, `env_qualify`-ed) is therefore unique within the account
+   whenever Worker names are, and Worker names already have to be unique per
+   account. No prefix or hash is needed. P5 confirms the scope against R2's
+   documentation before shipping.
 4. **Provisioning.** Should `bynk deploy` keep minting ids through its ledger,
    or delegate to wrangler's automatic provisioning (KV, D1, R2, Queues)? ADR
    0194: the ledger "records nothing where another tool owns the state".
-5. **Adding a variant to a stable enum** under D2. Additive, or breaking, given
-   exhaustive `match`?
+5. **Adding a variant to a stable enum** under D2. Exhaustiveness is enforced
+   (`bynk.types.non_exhaustive_match`), and the L2 surface already exports
+   enums transparently (`FetchError`). Adding a variant is therefore
+   *breaking* as the language stands. The cost of leaving it so falls on R-1:
+   every stable error enum (`FetchError`, a future `KvError` or `SqlError`)
+   would be frozen for all of 1.x, so a new failure condition could surface
+   only at a major. Options: (a) accept that; (b) an *extensible* marker on
+   an exported enum that requires a wildcard arm in user `match`es, so
+   variants can be added; (c) keep stable error enums experimental until
+   they stop growing. This must close before the doc is marked ready.
 6. **Experimental-item UX.** A warning on the ADR 0117 channel, or an explicit
    opt-in?
 7. **Rate Limiting configuration** is not on wrangler's configuration page.
@@ -1161,12 +1191,12 @@ Per kind, from Cloudflare's configuration reference (2026-10-14):
 |---|---|---|---|---|---|
 | KV | `[[kv_namespaces]]` | title (not in the stanza) | `id` | yes | Shipped as one fixed `KV` binding |
 | D1 | `[[d1_databases]]` | `database_name` | `database_id` | yes | `migrations_dir` is a D1-slice question: SQL schema migrations versus Gate 3 |
-| R2 | `[[r2_buckets]]` | `bucket_name` (is the identity) | none | yes | Bucket names are account-global, so derivation must avoid collisions; optional `jurisdiction` |
+| R2 | `[[r2_buckets]]` | `bucket_name` (is the identity) | none | yes | Bucket names are unique per account, as Worker names are, so the derived name inherits Worker-name uniqueness (§11 Q3); optional `jurisdiction` |
 | Queue producer | `[[queues.producers]]` | `queue` (is the identity, chosen in source) | none | yes | The only kind whose physical name the *source* picks |
 | Vectorize | `[[vectorize]]` | `index_name` | none | yes | Index creation needs dimensions and metric, i.e. declaration options |
 | Analytics Engine | `[[analytics_engine_datasets]]` | `dataset` (defaults to binding) | none | yes | Datasets appear on first write; no provisioning |
 | Hyperdrive | `[[hyperdrive]]` | config name | `id` | yes | Creation needs a database connection string, which is a *secret* input to deploy |
-| Workers AI | `[ai]` | none | none | **no**: one per Worker | Stays a plain capability (`consumes bynk.cloudflare { Ai }`), with no `resource` |
+| Workers AI | `[ai]` | none | none | **no**: one per Worker | Stays a plain capability (`consumes bynk.cloudflare { Ai }`), with no derived capability |
 | Rate limiting | not on the configuration page | | | | Verify before admitting |
 
 **Consequences for the design:**
@@ -1178,8 +1208,8 @@ Per kind, from Cloudflare's configuration reference (2026-10-14):
   mapping `shop.cart.Orders` to an existing id, not in source.
 - **Physical-name derivation is a public contract.** Renaming a context or a
   resource changes the physical name. That is A9's orphan hazard, now with a
-  concrete mechanism: the ledger key becomes (environment, Worker,
-  resource).
+  concrete mechanism: the ledger key is (environment, Worker, capability)
+  (D3).
 - **Options on the declaration are creation parameters, not identity.**
   `@queue("…")` (account-shared name), Vectorize's dimensions and metric,
   R2's jurisdiction. Each is fixed for the resource's life, so changing one
