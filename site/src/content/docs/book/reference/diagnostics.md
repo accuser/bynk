@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **493** codes in total.
+There are **494** codes in total.
 
 ## Agents
 
@@ -56,6 +56,7 @@ There are **493** codes in total.
 | Code | Summary | Construct | Severity |
 |---|---|---|---|
 | `bynk.context.consumes_cycle` | Contexts form a `consumes` dependency cycle. |  | — |
+| `bynk.context.duplicate_binding` | A Worker would declare two bindings with the same name, such as an agent `Kv` and the `bynk.cloudflare` KV namespace (both `KV`). |  | — |
 | `bynk.context.external_construction` | A context-owned type was constructed from outside that context. |  | — |
 | `bynk.context.external_provider` | A bodiless (external) provider was declared outside an `adapter`. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) | — |
 | `bynk.context.opaque_inspection` | An opaquely-exported type was inspected from outside its context. |  | — |

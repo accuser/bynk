@@ -508,6 +508,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Contexts form a `consumes` dependency cycle.",
     ),
     d(
+        "bynk.context.duplicate_binding",
+        "A Worker would declare two bindings with the same name, such as an agent `Kv` and the `bynk.cloudflare` KV namespace (both `KV`).",
+    ),
+    d(
         "bynk.context.external_construction",
         "A context-owned type was constructed from outside that context.",
     ),

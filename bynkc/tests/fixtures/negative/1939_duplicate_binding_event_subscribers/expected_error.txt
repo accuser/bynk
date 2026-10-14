@@ -1,0 +1,2 @@
+bynk.context.duplicate_binding the Worker for `ops.hub` would declare two bindings named `A_B`: the Service Binding to context `a.b` and the Service Binding to context `a_b`
+# exact
