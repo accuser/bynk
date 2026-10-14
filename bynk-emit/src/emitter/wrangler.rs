@@ -184,56 +184,43 @@ pub(crate) fn emit_wrangler_toml(
         ],
     );
 
-    let mut sorted_consumes: Vec<&String> = consumes.iter().collect();
-    sorted_consumes.sort();
-    for target in &sorted_consumes {
-        let binding = consumed_binding_name(target);
-        let service = worker_dir_name(target);
-        doc.push_block(TomlBlock::array_table(
-            "services",
-            vec![
-                TomlEntry::kv("binding", TomlValue::str(binding)),
-                TomlEntry::kv("service", TomlValue::str(service)),
-            ],
-        ));
-    }
-
-    if needs_kv {
-        doc.push_block(TomlBlock::array_table(
-            "kv_namespaces",
-            vec![
-                TomlEntry::kv(
-                    "binding",
-                    TomlValue::str(bynk_check::firstparty::KV_BINDING_NAME),
-                ),
-                TomlEntry::with_comment(
-                    "id",
-                    TomlValue::str(KV_NAMESPACE_ID_PLACEHOLDER),
-                    "set at deploy time",
-                ),
-            ],
-        ));
-    }
-
-    // Agents → Durable Object bindings + exports. Events track, slice 0
-    // (spine #936, ADR 0284): a context whose handlers emit gets its own
-    // fan-out DO folded into the same bindings/exports blocks — Cloudflare
-    // only cares that `index.ts` (this Worker's `main`) exports a class with
-    // this name, not which generated file it came from.
-    let mut class_names: Vec<String> = table.agents.keys().cloned().collect();
-    if uses_emit {
-        class_names.push(EVENTS_FANOUT_CLASS_NAME.to_string());
-    }
-    class_names.sort();
-    for class_name in &class_names {
-        let binding = agent_binding_name(class_name);
-        doc.push_block(TomlBlock::array_table(
-            "durable_objects.bindings",
-            vec![
-                TomlEntry::kv("name", TomlValue::str(binding)),
-                TomlEntry::kv("class_name", TomlValue::str(class_name.clone())),
-            ],
-        ));
+    // Every binding this Worker declares, from the one list the duplicate
+    // check (`bynk.context.duplicate_binding`) also reads.
+    let bindings = worker_bindings(table, consumes, needs_kv, uses_emit);
+    let mut class_names: Vec<&str> = Vec::new();
+    for binding in &bindings {
+        let name = TomlValue::str(binding.name.clone());
+        let block = match &binding.source {
+            BindingSource::Service { context } => TomlBlock::array_table(
+                "services",
+                vec![
+                    TomlEntry::kv("binding", name),
+                    TomlEntry::kv("service", TomlValue::str(worker_dir_name(context))),
+                ],
+            ),
+            BindingSource::Kv => TomlBlock::array_table(
+                "kv_namespaces",
+                vec![
+                    TomlEntry::kv("binding", name),
+                    TomlEntry::with_comment(
+                        "id",
+                        TomlValue::str(KV_NAMESPACE_ID_PLACEHOLDER),
+                        "set at deploy time",
+                    ),
+                ],
+            ),
+            BindingSource::Agent { class_name } | BindingSource::EventsFanout { class_name } => {
+                class_names.push(class_name);
+                TomlBlock::array_table(
+                    "durable_objects.bindings",
+                    vec![
+                        TomlEntry::kv("name", name),
+                        TomlEntry::kv("class_name", TomlValue::str(class_name.clone())),
+                    ],
+                )
+            }
+        };
+        doc.push_block(block);
     }
     // #1796: each class is declared in Cloudflare's declarative `exports`
     // map, not a `[[migrations]]` list. Migrations are picked by tag: Wrangler
@@ -261,10 +248,10 @@ pub(crate) fn emit_wrangler_toml(
     // agent then fails the deploy (`orphaned_provisioned_namespace`), which
     // is the loud outcome wanted; that is not yet confirmed against a live
     // account (#1796).
-    for class_name in &class_names {
+    for class_name in class_names {
         doc.push_block(TomlBlock::keyed_table(
             "exports",
-            class_name.clone(),
+            class_name.to_string(),
             vec![
                 TomlEntry::kv("type", TomlValue::str("durable-object")),
                 TomlEntry::kv("storage", TomlValue::str("sqlite")),
@@ -297,6 +284,126 @@ pub(crate) fn emit_wrangler_toml(
     }
 
     doc
+}
+
+/// What put a binding into a Worker's `wrangler.toml`: the source a
+/// `bynk.context.duplicate_binding` diagnostic names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BindingSource {
+    /// A `[[services]]` Service Binding to another context's Worker: one the
+    /// context consumes, or one subscribing to an event it publishes.
+    Service { context: String },
+    /// The `[[kv_namespaces]]` binding the cloudflare adapter's `Kv` reads.
+    Kv,
+    /// A `[[durable_objects.bindings]]` entry for one of the context's agents.
+    Agent { class_name: String },
+    /// The `[[durable_objects.bindings]]` entry for the events fan-out class
+    /// ([`EVENTS_FANOUT_CLASS_NAME`]) of a context whose handlers emit.
+    EventsFanout { class_name: String },
+}
+
+impl BindingSource {
+    /// The source in a diagnostic's words.
+    pub(crate) fn describe(&self) -> String {
+        match self {
+            Self::Service { context } => format!("the Service Binding to context `{context}`"),
+            Self::Kv => format!(
+                "the KV namespace binding of `{}`'s `Kv`",
+                bynk_check::firstparty::CLOUDFLARE_UNIT
+            ),
+            Self::Agent { class_name } => {
+                format!("the Durable Object binding of agent `{class_name}`")
+            }
+            Self::EventsFanout { .. } => {
+                "the Durable Object binding of the events fan-out".to_string()
+            }
+        }
+    }
+}
+
+/// One binding a Worker declares: the name its `env` field and its
+/// `wrangler.toml` entry share, and where that name came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorkerBinding {
+    pub name: String,
+    pub source: BindingSource,
+}
+
+/// Every binding a Worker's `wrangler.toml` declares, in emission order:
+/// Service Bindings by target, then the KV namespace, then the Durable
+/// Objects by class name. [`emit_wrangler_toml`] writes exactly this list and
+/// the duplicate check reads it, so a new kind of binding is checked as soon
+/// as it is emitted. Each kind derives its names independently, so two can
+/// meet (an agent `Kv` and the KV namespace are both `KV`); names are never
+/// adjusted to avoid that, because deployed Workers depend on them.
+pub(crate) fn worker_bindings(
+    table: &UnitTable,
+    consumes: &[String],
+    needs_kv: bool,
+    uses_emit: bool,
+) -> Vec<WorkerBinding> {
+    let mut bindings = Vec::new();
+    let mut sorted_consumes: Vec<&String> = consumes.iter().collect();
+    sorted_consumes.sort();
+    for target in sorted_consumes {
+        bindings.push(WorkerBinding {
+            name: consumed_binding_name(target),
+            source: BindingSource::Service {
+                context: target.clone(),
+            },
+        });
+    }
+    if needs_kv {
+        bindings.push(WorkerBinding {
+            name: bynk_check::firstparty::KV_BINDING_NAME.to_string(),
+            source: BindingSource::Kv,
+        });
+    }
+    // Events track, slice 0 (spine #936, ADR 0284): a context whose handlers
+    // emit gets its own fan-out DO among the agents' — Cloudflare only cares
+    // that `index.ts` (this Worker's `main`) exports a class with this name,
+    // not which generated file it came from.
+    let mut class_names: Vec<&String> = table.agents.keys().collect();
+    let fanout = EVENTS_FANOUT_CLASS_NAME.to_string();
+    if uses_emit {
+        class_names.push(&fanout);
+    }
+    class_names.sort();
+    for class_name in class_names {
+        let source = if *class_name == fanout {
+            BindingSource::EventsFanout {
+                class_name: class_name.clone(),
+            }
+        } else {
+            BindingSource::Agent {
+                class_name: class_name.clone(),
+            }
+        };
+        bindings.push(WorkerBinding {
+            name: agent_binding_name(class_name),
+            source,
+        });
+    }
+    bindings
+}
+
+/// The bindings in `bindings` whose name an earlier one already took, each
+/// paired with that earlier one, in list order.
+pub(crate) fn duplicate_bindings(
+    bindings: &[WorkerBinding],
+) -> Vec<(&WorkerBinding, &WorkerBinding)> {
+    let mut first: std::collections::HashMap<&str, &WorkerBinding> =
+        std::collections::HashMap::new();
+    let mut duplicates = Vec::new();
+    for binding in bindings {
+        match first.get(binding.name.as_str()) {
+            Some(earlier) => duplicates.push((*earlier, binding)),
+            None => {
+                first.insert(&binding.name, binding);
+            }
+        }
+    }
+    duplicates
 }
 
 /// Service Binding identifier for a consumed context: uppercase with
@@ -567,6 +674,74 @@ mod compatibility_flags_tests {
                 "nodejs_compat",
                 "nodejs_compat"
             ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+
+    fn names(bindings: &[WorkerBinding]) -> Vec<&str> {
+        bindings.iter().map(|b| b.name.as_str()).collect()
+    }
+
+    /// Emission order: Service Bindings by target, the KV namespace, then
+    /// the Durable Objects by class name, the fan-out among them.
+    #[test]
+    fn worker_bindings_lists_every_kind_in_emission_order() {
+        let table = UnitTable::default();
+        let bindings = worker_bindings(
+            &table,
+            &["shop.payment".to_string(), "audit".to_string()],
+            true,
+            true,
+        );
+        assert_eq!(
+            names(&bindings),
+            ["AUDIT", "SHOP_PAYMENT", "KV", "___EVENTS_FANOUT"]
+        );
+        assert!(duplicate_bindings(&bindings).is_empty());
+    }
+
+    /// A consumed context `kv` and the KV namespace are both `KV`: the
+    /// later one is paired with the earlier.
+    #[test]
+    fn a_shared_name_pairs_the_later_binding_with_the_earlier() {
+        let table = UnitTable::default();
+        let bindings = worker_bindings(&table, &["kv".to_string()], true, false);
+        let duplicates = duplicate_bindings(&bindings);
+        assert_eq!(duplicates.len(), 1);
+        let (earlier, later) = duplicates[0];
+        assert_eq!(
+            earlier.source,
+            BindingSource::Service {
+                context: "kv".to_string()
+            }
+        );
+        assert_eq!(later.source, BindingSource::Kv);
+    }
+
+    /// Three bindings on one name are two clashes, each against the first.
+    #[test]
+    fn every_repeat_is_reported_against_the_first() {
+        let binding = |name: &str, context: &str| WorkerBinding {
+            name: name.to_string(),
+            source: BindingSource::Service {
+                context: context.to_string(),
+            },
+        };
+        let bindings = [
+            binding("A_B", "a.b"),
+            binding("A_B", "a_b"),
+            binding("A_B", "x"),
+        ];
+        let duplicates = duplicate_bindings(&bindings);
+        assert_eq!(duplicates.len(), 2);
+        assert!(
+            duplicates
+                .iter()
+                .all(|(earlier, _)| *earlier == &bindings[0])
         );
     }
 }
