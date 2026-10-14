@@ -2213,11 +2213,7 @@ pub(crate) fn check_method_call(
     //                                     qualified name (parsed as nested FieldAccess).
     // The full-qualified-name form must be checked before the bare-ident form
     // (the prefix's first segment doesn't resolve as anything local).
-    // #1930: nor is a chain rooted in an asset (`sheet.url.startsWith(…)`).
-    if ctx.lookup_root_ident(receiver).is_none()
-        && !ctx.root_ident_is_store_field(receiver)
-        && !ctx.root_ident_is_asset(receiver)
-    {
+    if ctx.lookup_root_ident(receiver).is_none() && !ctx.root_ident_is_store_field(receiver) {
         // v0.15: cross-context capability call — `B.Cap.op(args)` /
         // `Alias.Cap.op(args)`. Checked before the service-call shape because
         // the receiver carries an extra (capability) segment.
@@ -2242,7 +2238,14 @@ pub(crate) fn check_method_call(
         // isn't actually consumed, surface an explicit diagnostic so the user
         // can fix the missing `consumes` clause rather than seeing a silent
         // "no methods" error later.
+        //
+        // #1930: not for a chain rooted in an asset (`sheet.url.startsWith(…)`),
+        // which is a method on the asset's `url`. Only here, after both
+        // resolutions above failed: an asset named like a consumed context's
+        // root segment (`shop` beside `consumes shop.payment`) still lets a
+        // real cross-context call resolve (review of #1937).
         if let ExprKind::FieldAccess { .. } = &receiver.kind
+            && !ctx.root_ident_is_asset(receiver)
             && let Some(chain) = flatten_ident_chain(receiver)
             && chain.contains('.')
         {

@@ -2319,12 +2319,12 @@ impl<'a> Ctx<'a> {
     /// (`sheet` in `sheet.url.startsWith(…)`). An asset is a value, but not a
     /// local binding, so [`lookup_root_ident`](Self::lookup_root_ident) returns
     /// `None` for it, and its chain would otherwise read as a dotted context
-    /// prefix (`sheet.url` as a context, `startsWith` as its service).
+    /// prefix (`sheet.url` as a context, `startsWith` as its service). Like
+    /// [`root_ident_is_store_field`](Self::root_ident_is_store_field), it is
+    /// asked only once the root has no local binding.
     pub fn root_ident_is_asset(&self, expr: &Expr) -> bool {
         match &expr.kind {
-            ExprKind::Ident(id) => {
-                self.lookup(&id.name).is_none() && self.input.assets.contains_key(&id.name)
-            }
+            ExprKind::Ident(id) => self.input.assets.contains_key(&id.name),
             ExprKind::FieldAccess { receiver, .. } | ExprKind::MethodCall { receiver, .. } => {
                 self.root_ident_is_asset(receiver)
             }

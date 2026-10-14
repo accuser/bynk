@@ -840,18 +840,6 @@ mod tests {
 
     /// A unit's own asset wins over a used commons' asset of the same name;
     /// only two *used* commons colliding is an error.
-    /// #1930: a method on an asset's `url`, written on the chain, is a method
-    /// on a `String` in a context too, not a call into a context named
-    /// `style.url`. A commons never read it so (it has no `consumes`).
-    #[test]
-    fn a_method_on_an_assets_url_is_not_a_cross_context_call() {
-        let a = analyse(&[(
-            "app/web.bynk",
-            "context app.web\n\nasset style = \"assets/a.css\"\n\nfn hashed() -> Bool {\n  style.url.startsWith(\"/_assets/\")\n}\n",
-        )]);
-        a.assert_clean();
-    }
-
     #[test]
     fn a_local_asset_wins_over_a_used_one() {
         let a = analyse(&[
@@ -862,6 +850,37 @@ mod tests {
             (
                 "app/web.bynk",
                 "context app.web\n\nuses lib.a\n\nasset style = \"assets/b.css\"\n\nfn f() -> String {\n  style.url\n}\n",
+            ),
+        ]);
+        a.assert_clean();
+    }
+
+    /// #1930: a method on an asset's `url`, written on the chain, is a method
+    /// on a `String` in a context too, not a call into a context named
+    /// `style.url`. A commons never reaches the cross-context check, since it
+    /// has no `consumes`.
+    #[test]
+    fn a_method_on_an_assets_url_is_not_a_cross_context_call() {
+        let a = analyse(&[(
+            "app/web.bynk",
+            "context app.web\n\nasset style = \"assets/a.css\"\n\nfn hashed() -> Bool {\n  style.url.startsWith(\"/_assets/\")\n}\n",
+        )]);
+        a.assert_clean();
+    }
+
+    /// Review of #1937: an asset named like a consumed context's root segment
+    /// does not hide that context, so a real cross-context call through it
+    /// still resolves.
+    #[test]
+    fn an_asset_named_like_a_consumed_prefix_keeps_the_call() {
+        let a = analyse(&[
+            (
+                "shop/payment.bynk",
+                "context shop.payment\n\nservice charge {\n  on call(n: Int) -> Effect[Int] {\n    Effect.pure(n)\n  }\n}\n",
+            ),
+            (
+                "shop/orders.bynk",
+                "context shop.orders\n\nconsumes shop.payment\n\nasset shop = \"assets/a.css\"\n\nservice place {\n  on call() -> Effect[Int] {\n    let n <- shop.payment.charge(1)\n    Effect.pure(n)\n  }\n}\n",
             ),
         ]);
         a.assert_clean();
