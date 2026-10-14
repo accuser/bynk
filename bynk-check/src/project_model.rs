@@ -1616,6 +1616,12 @@ pub fn phase_uses_name_conflicts(
         for t in targets {
             let used = unit_tables.get(t).expect("used unit table present");
             for type_name in used.types.keys() {
+                // Unlike the fn and asset loops below, a local service, agent,
+                // provider or asset does not skip this (#1927, review of
+                // #1933). It hides an imported type from naming, but the type
+                // stays composed so its values resolve, and with two used
+                // commons declaring it, which one the unit's values carry is
+                // still ambiguous.
                 if local.types.contains_key(type_name) || local.fns.contains_key(type_name) {
                     continue;
                 }
