@@ -259,7 +259,11 @@ the same `commons`-derived type, or an identical record or sum shape. A value's
 type is then **projected** into the receiving context's namespace: its structural
 shape is preserved and its brand is changed to the receiver's. A mismatch is
 `bynk.boundary.structural_mismatch`. This projection is what lets a `commons`
-type be shared across contexts without a shared nominal identity.
+type be shared across contexts without a shared nominal identity. A type
+need not be exported to cross: a `commons` type the consumer does not `uses`,
+and a type the providing context declares but does not export, cross the same
+way (#1932). `exports` decides what a consumer may *name* and how it may build
+or inspect a value, not whether the value may cross.
 
 Two **refinements** match when their predicate *sets* are equal (v0.177). A
 refinement is a conjunction of side-effect-free predicates, so their order
