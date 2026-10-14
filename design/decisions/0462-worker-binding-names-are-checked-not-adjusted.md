@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A Workers build reports two bindings with one name in a Worker's `wrangler.toml`, such as an agent `Kv` and the `bynk.cloudflare` KV namespace (both `KV`), as `bynk.context.duplicate_binding`
----
+# 0462 — A Worker's binding names are checked for clashes, never adjusted
 
-## ADR: worker-binding-names-are-checked-not-adjusted
-title: A Worker's binding names are checked for clashes, never adjusted
-summary: Two bindings with one name in a Worker are a compile error; no binding name is renamed or suffixed to avoid it
+- **Status:** Accepted (v0.330.8)
 
 **Context.** A Worker's `wrangler.toml` binding names come from separate
 derivations that know nothing of each other: the KV namespace's fixed `KV`, a
