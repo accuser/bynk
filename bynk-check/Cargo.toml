@@ -15,6 +15,9 @@ path = "src/lib.rs"
 [dependencies]
 # The syntax foundation this layer analyses.
 bynk-syntax.workspace = true
+# The first-party sources, bindings and metadata, as data (standard-library
+# track, #1940): re-exported unchanged as `firstparty`.
+bynk-std.workspace = true
 # Discovery, the unit graph, and manifest/schema-registry document shapes —
 # P4.1 (#1115): the new project-level analysis entry point discovers via this
 # crate and resolves/checks via this crate's own already-local modules.

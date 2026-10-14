@@ -1,0 +1,18 @@
+[package]
+name = "bynk-std"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The Bynk standard library's first-party sources as data: the `bynk` surface, the Bynk-written commons, the `bynk.cloudflare` platform adapter, and their per-platform TypeScript bindings."
+keywords = ["compiler", "dsl", "stdlib", "language"]
+categories = ["compilers"]
+
+[lib]
+path = "src/lib.rs"
+
+# A data-only leaf: no dependencies, in-workspace or otherwise (standard-library
+# track, #1940 Decision A). `bynk-check` reads these sources; it does not
+# contain them.
+[dependencies]
