@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.330.15** | Every place the compiler reads a Worker binding by name now gets the name from the binding's constructor, and a test pins `bynk.cloudflare`'s `env.KV` read to `KV_BINDING_NAME` |
 | **v0.330.14** | A handler's Workers `deps.env` type is built from the Worker's binding list and names only consumed contexts with services, so a bare `consumes bynk` beside a cross-context call no longer fails `tsc --strict` |
 | **v0.330.13** | 'A value of a type a consumed context does not export can now be passed back to that context: `let b <- shop.quote()` then `shop.take(b)` was rejected as a `bynk.boundary.structural_mismatch` against its own declaration. A service or capability return that the caller''s own type of the same name cannot hold, because the shapes differ, is now rejected at the call with `bynk.boundary.structural_mismatch`, where before the caller''s type silently typed the value and its fields (#1941)' |
 | **v0.330.12** | First-party units are injected from a registry in `bynk-std`, following each unit's own `uses`/`consumes`; emitted output is unchanged |
