@@ -26,17 +26,26 @@ use crate::project_model::ErrorSink;
 
 /// What put a binding into a Worker's `wrangler.toml`: the source a
 /// `bynk.context.duplicate_binding` diagnostic names.
+///
+/// Each variant's doc also says whether a handler's `deps.env` type exposes
+/// it on Workers (#1950, `bynk_emit::emitter::wrangler::handler_bindings`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingSource {
     /// A `[[services]]` Service Binding to another context's Worker: one the
     /// context consumes, or one subscribing to an event it publishes.
+    /// Handlers see a consumed context's binding when that context has
+    /// services; never a subscriber's, which only the events fan-out calls.
     Service { context: String },
     /// The `[[kv_namespaces]]` binding the cloudflare adapter's `Kv` reads.
+    /// Never seen by handlers: they reach KV through the `WorkersKv` provider,
+    /// which takes the Worker's `env` at compose time.
     Kv,
     /// A `[[durable_objects.bindings]]` entry for one of the context's agents.
+    /// A handler that constructs an agent sees every local agent's binding.
     Agent { class_name: String },
     /// The `[[durable_objects.bindings]]` entry for the events fan-out class
-    /// of a context whose handlers emit.
+    /// of a context whose handlers emit. Never seen by handlers: they reach it
+    /// through `deps.__eventsDispatch`.
     EventsFanout { class_name: String },
 }
 
