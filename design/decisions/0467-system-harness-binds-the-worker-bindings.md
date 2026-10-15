@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A `system`-tier suite stands up every subscriber to a participant's events and gives each participant its own in-memory `Kv` namespace per case, so an emitted event is delivered and a `Kv` call works instead of faulting
----
+# 0467 — A system suite's harness binds each participant's own Worker bindings
 
-## ADR: system-harness-binds-the-worker-bindings
-title: A system suite's harness binds each participant's own Worker bindings
-summary: Each participant's env is built from its binding list, with its own in-memory KV namespace; subscribers are stood up as participants
+- **Status:** Accepted (v0.330.16)
 
 **Context.** A `system`-tier suite stands its participants up as in-process
 Workers, each with a hand-built `env`. That `env` held Service Bindings to
