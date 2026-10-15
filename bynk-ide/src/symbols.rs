@@ -1852,8 +1852,11 @@ mod tests {
                 .unwrap()
                 .contains("**Extensible**")
         );
-        let uuid = describe_firstparty_symbol("Uuid").expect("Uuid hovers");
-        assert!(!uuid.contains("**Extensible**"), "{uuid}");
+        let closed = describe_firstparty_symbol("Request").expect("Request hovers");
+        assert!(
+            !closed.contains("**Extensible**"),
+            "a closed first-party type is not marked extensible"
+        );
         assert_eq!(
             firstparty_notes("app.user", "FetchError"),
             "",
