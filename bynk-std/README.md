@@ -17,7 +17,11 @@ It holds:
 - the Bynk-written commons: `bynk.list`, `bynk.map`, `bynk.string`,
   `bynk.locale` and `bynk.locale.types`;
 - the `bynk.cloudflare` platform adapter (`Kv`) and its binding;
-- `Platform`, and the metadata functions `platform_of` and `provider_takes_env`.
+- `UNITS`, the registry of first-party units: each one's name, kind, source,
+  binding, permanent id block, platform nativity and `env`-taking providers.
+  `bynk-check` injects from it, so adding a unit is an entry plus its files;
+- `Platform`, and the views over the registry: `FIRSTPARTY_SOURCES`,
+  `platform_of` and `provider_takes_env`.
 
 The sources are in `lib/`: the portable layers in `lib/core/` and the platform
 adapter in `lib/cloudflare/`. Nothing in `lib/core/` depends on

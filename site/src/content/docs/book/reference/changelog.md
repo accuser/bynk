@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.330.12** | First-party units are injected from a registry in `bynk-std`, following each unit's own `uses`/`consumes`; emitted output is unchanged |
 | **v0.330.11** | A Worker's `Env` interface now declares exactly the bindings in its `wrangler.toml`, including the Service Bindings to its event subscribers |
 | **v0.330.10** | 'On the `workers` target, a context calling a service whose signature carries a `commons` type the caller does not `uses`, or a type the providing context does not export, now compiles: the caller imports the commons'' codecs or generates its own under the names the call uses. Both failed `tsc` before, though the checker and the `bundle` target accepted them (#1932)' |
 | **v0.330.9** | The first-party standard-library sources move into a new data-only `bynk-std` crate; emitted output is unchanged |
