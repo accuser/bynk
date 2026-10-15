@@ -6,7 +6,8 @@ import * as handlers from "./handlers.js";
 
 export interface Env {
   SHOP_AUDIT: __ServiceBinding;
-  SHOP_STORE: __ServiceBinding;
+  SHOP_LEDGER: __ServiceBinding;
+  TALLY: __DurableObjectNamespace;
   ___EVENTS_FANOUT: __DurableObjectNamespace;
 }
 

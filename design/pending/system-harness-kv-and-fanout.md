@@ -1,11 +1,11 @@
 ---
 level: patch
-changelog: A `system`-tier suite stands up every subscriber to a participant's events and backs `bynk.cloudflare`'s `Kv` with one in-memory namespace per case, so an emitted event is delivered and a `Kv` call works instead of faulting
+changelog: A `system`-tier suite stands up every subscriber to a participant's events and gives each participant its own in-memory `Kv` namespace per case, so an emitted event is delivered and a `Kv` call works instead of faulting
 ---
 
 ## ADR: system-harness-binds-the-worker-bindings
 title: A system suite's harness binds each participant's own Worker bindings
-summary: Each participant's env is built from its binding list; subscribers are stood up as participants; one in-memory KV namespace per case is shared by all
+summary: Each participant's env is built from its binding list, with its own in-memory KV namespace; subscribers are stood up as participants
 
 **Context.** A `system`-tier suite stands its participants up as in-process
 Workers, each with a hand-built `env`. That `env` held Service Bindings to
@@ -24,10 +24,11 @@ declares (`all_context_bindings`, the list its `wrangler.toml`, `Env` and the
 duplicate check use), by the same names:
 
 - A Service Binding forwards to that participant's Worker.
-- The KV namespace is **one in-memory namespace per case, shared by every
-  participant that binds it**, as a project's Workers share one namespace when
-  deployed. It is made fresh with the harness, so a case starts empty, like
-  agent state.
+- The KV namespace is **a fresh in-memory namespace of the participant's
+  own**, as `bynk deploy` provisions one namespace per Worker (the ledger's KV
+  entries are keyed by Worker). It is made with the harness, so a case starts
+  empty, like agent state. Sharing one across participants would let a case
+  pass that deploy fails (review of #1964).
 - Each agent and the events fan-out is an in-memory Durable Object namespace,
   constructed with the participant's `env` as workerd constructs it
   (`makeIntegrationDoNamespace(class, env)`).
@@ -40,11 +41,12 @@ the harness widens: a case still reaches the target's `consumes` closure alone
 
 **Consequences.**
 
-- A case can observe an event's effect: fixture 1959 has a subscriber write to
-  KV on delivery, and the case reads the value back through another
-  participant.
+- A case can observe an event's effect wherever the subscriber records it in a
+  context the case reaches. In fixture 1959, `shop.audit` subscribes to events
+  from a handler and from an agent of `shop.order` and records each in
+  `shop.ledger`. The case reads the records back.
 - A suite over a publisher stands up more Workers than before.
-- `expirationTtl` is accepted and ignored by the in-memory namespace, and
-  `list` returns one page.
+- The in-memory namespace accepts and ignores `expirationTtl`, and `list`
+  returns one page, keys in JavaScript string order.
 - Existing integration fixtures change only in how agents are constructed:
   the class and `env` are passed instead of a `state`-only closure.

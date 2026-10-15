@@ -34,6 +34,13 @@ export default {
             await surface.OnPlaced(__r_payload.value, __r_envelope.value);
             return new globalThis.Response(null, { status: 204 });
           }
+          case "OnTallied": {
+            __route = "event OnTallied";
+            const __r_payload = handlers.__deserialise_Tallied(payload, "$.payload");
+            if (__r_payload.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_payload.error), { status: 400, headers: { "content-type": "application/json" } });
+            await surface.OnTallied(__r_payload.value, __r_envelope.value);
+            return new globalThis.Response(null, { status: 204 });
+          }
           default:
             return new globalThis.Response("Not found", { status: 404 });
         }

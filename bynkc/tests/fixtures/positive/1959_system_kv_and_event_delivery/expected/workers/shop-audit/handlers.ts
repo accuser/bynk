@@ -3,14 +3,20 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
-import { type Placed } from "../shop-order/handlers.js";
+import { type Placed, type Tallied } from "../shop-order/handlers.js";
 
-import * as bynk_cloudflare from "../../bynk/cloudflare.js";
+import type * as shop_ledger from "../shop-ledger/handlers.js";
 import type * as shop_order from "../shop-order/handlers.js";
 
 export const OnPlaced = {
-  async event(e: Placed, deps: { Kv: bynk_cloudflare.Kv }): globalThis.Promise<void> {
-    return deps.Kv.put(e.id, "seen");
+  async event(e: Placed, deps: { env: { SHOP_LEDGER: __ServiceBinding; SHOP_ORDER: __ServiceBinding } }): globalThis.Promise<void> {
+    return __callService(deps.env.SHOP_LEDGER, "note", `placed:${String(e.id)}` as __JsonValue, (__j: __JsonValue) => Ok(undefined) as Result<void, __BoundaryError>, "shop.audit", "30a07120d171ca72");
+  },
+};
+
+export const OnTallied = {
+  async event(e: Tallied, deps: { env: { SHOP_LEDGER: __ServiceBinding; SHOP_ORDER: __ServiceBinding } }): globalThis.Promise<void> {
+    return __callService(deps.env.SHOP_LEDGER, "note", `tallied:${String(e.id)}` as __JsonValue, (__j: __JsonValue) => Ok(undefined) as Result<void, __BoundaryError>, "shop.audit", "30a07120d171ca72");
   },
 };
 
@@ -30,5 +36,23 @@ export function __deserialise_Placed(json: __JsonValue, path: string = "$"): Res
   }
   const __id = obj["id"];
   return Ok({ id: __id } as shop_order.Placed);
+}
+
+export function __serialise_Tallied(value: shop_order.Tallied): __JsonValue {
+  return {
+    id: value.id as __JsonValue,
+  };
+}
+
+export function __deserialise_Tallied(json: __JsonValue, path: string = "$"): Result<shop_order.Tallied, __BoundaryError> {
+  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: __JsonValue };
+  if (typeof obj["id"] !== "string") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.id`, expected: "string", actual: typeof obj["id"] });
+  }
+  const __id = obj["id"];
+  return Ok({ id: __id } as shop_order.Tallied);
 }
 

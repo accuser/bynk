@@ -1,14 +1,30 @@
 context shop.order
 
 consumes bynk { Events }
-consumes shop.store
-exports transparent { Placed }
+consumes shop.ledger
+exports transparent { Placed, Tallied }
 
 event Placed = { id: String }
 
+event Tallied = { id: String }
+
+-- #1959 review: an agent that emits reads the fan-out from its own `env`,
+-- which the harness now constructs it with.
+agent Tally {
+  key id: String
+  store count: Cell[Int]
+
+  on call bump(id: String) -> Effect[Int] given Events {
+    let next = count + 1
+    count := next
+    let _ <- Events.emit[Tallied](Tallied { id: id })
+    next
+  }
+}
+
 service place {
-  on call(id: String) -> Effect[Option[String]] given Events {
+  on call(id: String) -> Effect[Int] given Events {
     let _ <- Events.emit[Placed](Placed { id: id })
-    shop.store.read(id)
+    Tally(id).bump(id)
   }
 }

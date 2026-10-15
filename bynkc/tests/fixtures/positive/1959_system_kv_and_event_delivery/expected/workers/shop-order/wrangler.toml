@@ -9,12 +9,20 @@ binding = "SHOP_AUDIT"
 service = "shop-audit"
 
 [[services]]
-binding = "SHOP_STORE"
-service = "shop-store"
+binding = "SHOP_LEDGER"
+service = "shop-ledger"
+
+[[durable_objects.bindings]]
+name = "TALLY"
+class_name = "Tally"
 
 [[durable_objects.bindings]]
 name = "___EVENTS_FANOUT"
 class_name = "__EventsFanout"
+
+[exports.Tally]
+type = "durable-object"
+storage = "sqlite"
 
 [exports.__EventsFanout]
 type = "durable-object"

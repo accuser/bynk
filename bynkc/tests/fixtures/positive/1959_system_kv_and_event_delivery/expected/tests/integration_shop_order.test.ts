@@ -5,9 +5,8 @@ import { Ok, Err, Some, None, __callService, type Result, type Option, type Vali
 import * as __ns_shop_order from "../workers/shop-order/handlers.js";
 import worker___ns_shop_order from "../workers/shop-order/index.js";
 import * as fanout___ns_shop_order from "../workers/shop-order/events_fanout.js";
-import * as __ns_shop_store from "../workers/shop-store/handlers.js";
-import worker___ns_shop_store from "../workers/shop-store/index.js";
-import * as __ns_shop_audit from "../workers/shop-audit/handlers.js";
+import * as __ns_shop_ledger from "../workers/shop-ledger/handlers.js";
+import worker___ns_shop_ledger from "../workers/shop-ledger/index.js";
 import worker___ns_shop_audit from "../workers/shop-audit/index.js";
 
 class ExpectationError extends Error {
@@ -32,31 +31,34 @@ function __bynkShow(v: unknown): string {
 }
 
 function __makeHarness() {
-  const __kv = __makeIntegrationKv();
   const env___ns_shop_order: any = {};
-  const env___ns_shop_store: any = {};
+  const env___ns_shop_ledger: any = {};
   const env___ns_shop_audit: any = {};
   env___ns_shop_order.SHOP_AUDIT = { fetch: (req: globalThis.Request) => worker___ns_shop_audit.fetch(req, env___ns_shop_audit) } as __ServiceBinding;
-  env___ns_shop_order.SHOP_STORE = { fetch: (req: globalThis.Request) => worker___ns_shop_store.fetch(req, env___ns_shop_store) } as __ServiceBinding;
+  env___ns_shop_order.SHOP_LEDGER = { fetch: (req: globalThis.Request) => worker___ns_shop_ledger.fetch(req, env___ns_shop_ledger) } as __ServiceBinding;
+  env___ns_shop_order.TALLY = __makeIntegrationDoNamespace(__ns_shop_order.Tally, env___ns_shop_order);
   env___ns_shop_order.___EVENTS_FANOUT = __makeIntegrationDoNamespace(fanout___ns_shop_order.__EventsFanout, env___ns_shop_order);
-  env___ns_shop_store.KV = __kv;
+  env___ns_shop_ledger.KV = __makeIntegrationKv();
+  env___ns_shop_audit.SHOP_LEDGER = { fetch: (req: globalThis.Request) => worker___ns_shop_ledger.fetch(req, env___ns_shop_ledger) } as __ServiceBinding;
   env___ns_shop_audit.SHOP_ORDER = { fetch: (req: globalThis.Request) => worker___ns_shop_order.fetch(req, env___ns_shop_order) } as __ServiceBinding;
-  env___ns_shop_audit.KV = __kv;
   const rootEnv: any = {};
   rootEnv.SHOP_ORDER = { fetch: (req: globalThis.Request) => worker___ns_shop_order.fetch(req, env___ns_shop_order) } as __ServiceBinding;
-  rootEnv.SHOP_STORE = { fetch: (req: globalThis.Request) => worker___ns_shop_store.fetch(req, env___ns_shop_store) } as __ServiceBinding;
+  rootEnv.SHOP_LEDGER = { fetch: (req: globalThis.Request) => worker___ns_shop_ledger.fetch(req, env___ns_shop_ledger) } as __ServiceBinding;
   rootEnv.SHOP_AUDIT = { fetch: (req: globalThis.Request) => worker___ns_shop_audit.fetch(req, env___ns_shop_audit) } as __ServiceBinding;
   return { env: rootEnv };
 }
 
-async function test_an_emitted_event_is_delivered_and_its_write_is_visible() {
+async function test_events_from_a_handler_and_an_agent_are_delivered() {
   try {
     const deps = __makeHarness();
-    const before = await __callService(deps.env.SHOP_STORE, "read", "o1" as __JsonValue, __ns_shop_store.__deserialise_Option_String, "integration", "46115351d8436217");
-    if (!(__bynkEq(before, None))) { throw __bynkExpectFailure("tests/order.bynk:8:12", 437, 451, "expect before == None\n  expected: before == None\n  actual:   " + __bynkShow((before)) + " == " + __bynkShow((None))); }
-    const __r0 = await __callService(deps.env.SHOP_ORDER, "place", "o1" as __JsonValue, __ns_shop_order.__deserialise_Option_String, "integration", "3d87c05ab87af45e");
-    const after = await __callService(deps.env.SHOP_STORE, "read", "o1" as __JsonValue, __ns_shop_store.__deserialise_Option_String, "integration", "46115351d8436217");
-    if (!(__bynkEq(after, Some("seen")))) { throw __bynkExpectFailure("tests/order.bynk:11:12", 538, 559, "expect after == Some(\"seen\")\n  expected: after == Some(\"seen\")\n  actual:   " + __bynkShow((after)) + " == " + __bynkShow((Some("seen")))); }
+    const before = await __callService(deps.env.SHOP_LEDGER, "read", "placed:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217");
+    if (!(__bynkEq(before, None))) { throw __bynkExpectFailure("tests/order.bynk:10:12", 550, 564, "expect before == None\n  expected: before == None\n  actual:   " + __bynkShow((before)) + " == " + __bynkShow((None))); }
+    const n = await __callService(deps.env.SHOP_ORDER, "place", "o1" as __JsonValue, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "8e985779c0dd78f1");
+    if (!(n === 1)) { throw __bynkExpectFailure("tests/order.bynk:12:12", 612, 618, "expect n == 1\n  expected: n == 1\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((1))); }
+    const placed = await __callService(deps.env.SHOP_LEDGER, "read", "placed:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217");
+    if (!(__bynkEq(placed, Some("seen")))) { throw __bynkExpectFailure("tests/order.bynk:14:12", 678, 700, "expect placed == Some(\"seen\")\n  expected: placed == Some(\"seen\")\n  actual:   " + __bynkShow((placed)) + " == " + __bynkShow((Some("seen")))); }
+    const tallied = await __callService(deps.env.SHOP_LEDGER, "read", "tallied:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217");
+    if (!(__bynkEq(tallied, Some("seen")))) { throw __bynkExpectFailure("tests/order.bynk:16:12", 762, 785, "expect tallied == Some(\"seen\")\n  expected: tallied == Some(\"seen\")\n  actual:   " + __bynkShow((tallied)) + " == " + __bynkShow((Some("seen")))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -69,8 +71,8 @@ async function test_an_emitted_event_is_delivered_and_its_write_is_visible() {
 async function test_each_case_starts_with_an_empty_namespace() {
   try {
     const deps = __makeHarness();
-    const v = await __callService(deps.env.SHOP_STORE, "read", "o1" as __JsonValue, __ns_shop_store.__deserialise_Option_String, "integration", "46115351d8436217");
-    if (!(__bynkEq(v, None))) { throw __bynkExpectFailure("tests/order.bynk:16:12", 663, 672, "expect v == None\n  expected: v == None\n  actual:   " + __bynkShow((v)) + " == " + __bynkShow((None))); }
+    const v = await __callService(deps.env.SHOP_LEDGER, "read", "placed:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217");
+    if (!(__bynkEq(v, None))) { throw __bynkExpectFailure("tests/order.bynk:21:12", 897, 906, "expect v == None\n  expected: v == None\n  actual:   " + __bynkShow((v)) + " == " + __bynkShow((None))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -83,7 +85,7 @@ async function test_each_case_starts_with_an_empty_namespace() {
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
-  if (want("an emitted event is delivered and its write is visible")) results.push({ name: "an emitted event is delivered and its write is visible", ...(await test_an_emitted_event_is_delivered_and_its_write_is_visible()) });
+  if (want("events from a handler and an agent are delivered")) results.push({ name: "events from a handler and an agent are delivered", ...(await test_events_from_a_handler_and_an_agent_are_delivered()) });
   if (want("each case starts with an empty namespace")) results.push({ name: "each case starts with an empty namespace", ...(await test_each_case_starts_with_an_empty_namespace()) });
   return results;
 }

@@ -317,9 +317,9 @@ export interface KVNamespace {
 
 /**
  * #1959: an in-memory KV namespace for multi-Worker integration tests. The
- * harness makes one per test case and binds it as `env.KV` on every
- * participant that needs it, as a deployed project's Workers share one
- * namespace. Keys list in order, on one page; `expirationTtl` is accepted and
+ * harness makes a fresh one per participant per test case and binds it as
+ * that participant's `env.KV`, as `bynk deploy` provisions one namespace per
+ * Worker. Keys list in order, on one page; `expirationTtl` is accepted and
  * ignored, since a test case does not outlive it.
  */
 export function makeIntegrationKv(): KVNamespace {

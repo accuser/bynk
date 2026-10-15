@@ -5,6 +5,8 @@ import { Ok, Err, type Result, type __JsonValue, type __BoundaryError, __boundar
 import { compose, type Env } from "./compose.js";
 import * as handlers from "./handlers.js";
 
+export { Tally } from "./handlers.js";
+
 export { __EventsFanout } from "./events_fanout.js";
 
 export default {
@@ -21,16 +23,16 @@ export default {
           case "place": {
             __route = "call place";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "3d87c05ab87af45e") {
-              globalThis.console.error("ContractMismatch shop.order call place", { service: "place", expected: "3d87c05ab87af45e", actual: globalThis.String(__contract).slice(0, 16) });
-              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "place", expected: "3d87c05ab87af45e", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "8e985779c0dd78f1") {
+              globalThis.console.error("ContractMismatch shop.order call place", { service: "place", expected: "8e985779c0dd78f1", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "place", expected: "8e985779c0dd78f1", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
             const args = await request.json() as __JsonValue;
             const __r_id = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(args);
             if (__r_id.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_id.error), { status: 400, headers: { "content-type": "application/json" } });
             const id = __r_id.value;
             const result = await surface.place(id);
-            const body = handlers.__serialise_Option_String(result);
+            const body = ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(result);
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           default:

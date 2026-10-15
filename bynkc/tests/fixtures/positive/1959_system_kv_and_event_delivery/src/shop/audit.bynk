@@ -1,10 +1,16 @@
 context shop.audit
 
 consumes shop.order
-consumes bynk.cloudflare { Kv }
+consumes shop.ledger
 
 service OnPlaced from Events(Placed) {
-  on event(e: Placed) -> Effect[()] given Kv {
-    Kv.put(e.id, "seen")
+  on event(e: Placed) -> Effect[()] {
+    shop.ledger.note("placed:\(e.id)")
+  }
+}
+
+service OnTallied from Events(Tallied) {
+  on event(e: Tallied) -> Effect[()] {
+    shop.ledger.note("tallied:\(e.id)")
   }
 }

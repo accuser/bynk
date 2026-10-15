@@ -232,19 +232,24 @@ test("#1678 a pass-through position is carried as is", () => {
   assert.deepEqual(encodeAgentResult(wire, "m", { id: "c1" }), { id: "c1" });
 });
 
-test("integration KV: one namespace shared by its holders, listed by prefix", async () => {
+test("integration KV: get, put, delete, and list by prefix", async () => {
   const kv = makeIntegrationKv();
-  const a = { KV: kv };
-  const b = { KV: kv };
-  await a.KV.put("user:2", "bo");
-  await a.KV.put("user:1", "al", { expirationTtl: 60 });
-  await a.KV.put("order:1", "x");
-  assert.equal(await b.KV.get("user:1"), "al");
-  assert.equal(await b.KV.get("missing"), null);
-  const page = await b.KV.list({ prefix: "user:" });
+  await kv.put("user:2", "bo");
+  await kv.put("user:1", "al", { expirationTtl: 60 });
+  await kv.put("order:1", "x");
+  assert.equal(await kv.get("user:1"), "al");
+  assert.equal(await kv.get("missing"), null);
+  const page = await kv.list({ prefix: "user:" });
   assert.deepEqual(page, { keys: [{ name: "user:1" }, { name: "user:2" }], list_complete: true });
-  await b.KV.delete("user:1");
-  assert.equal(await a.KV.get("user:1"), null);
+  await kv.delete("user:1");
+  assert.equal(await kv.get("user:1"), null);
+});
+
+test("integration KV: each namespace is its own, as each deployed Worker's is", async () => {
+  const a = makeIntegrationKv();
+  const b = makeIntegrationKv();
+  await a.put("k", "v");
+  assert.equal(await b.get("k"), null);
 });
 
 test("integration namespace: constructs the class with the env it was given", async () => {

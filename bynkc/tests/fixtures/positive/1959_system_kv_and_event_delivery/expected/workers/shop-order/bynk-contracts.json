@@ -1,11 +1,7 @@
 {
   "version": 1,
   "provides": {
-    "place": "3d87c05ab87af45e"
+    "place": "8e985779c0dd78f1"
   },
-  "expects": {
-    "shop.store": {
-      "read": "46115351d8436217"
-    }
-  }
+  "expects": {}
 }

@@ -126,6 +126,8 @@ pub(super) fn all_context_bindings(
     unit_flattened: &HashMap<String, HashMap<String, String>>,
     unit_callees: &HashMap<String, HashMap<ExprId, Callee>>,
     adapter_bindings: &HashMap<String, AdapterBinding>,
+    // `bynk_check::symbols::discover_event_subscribers`' table.
+    event_subscribers: &BTreeMap<(String, String), Vec<(String, String)>>,
 ) -> BTreeMap<String, Vec<WorkerBinding>> {
     let context_native = contexts_native(
         kinds,
@@ -134,8 +136,6 @@ pub(super) fn all_context_bindings(
         unit_consumes_aliases,
         unit_flattened,
     );
-    let event_subscribers =
-        bynk_check::symbols::discover_event_subscribers(unit_tables, unit_consumes);
     let mut bindings = BTreeMap::new();
     for (ctx, kind) in kinds {
         if *kind != UnitKind::Context {
@@ -153,7 +153,7 @@ pub(super) fn all_context_bindings(
                     .map(Vec::as_slice)
                     .unwrap_or_default(),
                 adapter_bindings,
-                &own_event_routes(ctx, &event_subscribers),
+                &own_event_routes(ctx, event_subscribers),
                 needs_kv(&context_native, ctx),
                 unit_table_uses_emit(table, unit_callees.get(ctx)),
             ),

@@ -12,6 +12,7 @@ interface FanoutEvent {
 
 const __eventRoutes: globalThis.Record<string, globalThis.Array<{ binding: string; service: string }>> = {
   "Placed": [{ binding: "SHOP_AUDIT", service: "OnPlaced" }],
+  "Tallied": [{ binding: "SHOP_AUDIT", service: "OnTallied" }],
 };
 
 export class __EventsFanout {

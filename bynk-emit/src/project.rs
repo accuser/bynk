@@ -2396,6 +2396,8 @@ fn run_checks(
     // #1959: each context's bindings, once: the integration harness binds them
     // on each participant's `env`, and the duplicate check below reads them.
     // Gated like that check: the KV input walks the provider graph.
+    let event_subscribers =
+        bynk_check::symbols::discover_event_subscribers(&unit_tables, &unit_consumes);
     let context_bindings = errors.is_empty().then(|| {
         worker_bindings::all_context_bindings(
             &kinds,
@@ -2405,6 +2407,7 @@ fn run_checks(
             &unit_flattened,
             &unit_callees,
             &adapter_bindings,
+            &event_subscribers,
         )
     });
     let mut integration_errors: Vec<CompileError> = Vec::new();
@@ -2420,6 +2423,7 @@ fn run_checks(
         &mut emitted_barrels,
         &test_asset_files,
         context_bindings.as_ref(),
+        &event_subscribers,
         &mut integration_errors,
         &mut refs,
         tys,

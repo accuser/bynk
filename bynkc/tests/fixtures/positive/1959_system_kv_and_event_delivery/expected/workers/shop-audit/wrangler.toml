@@ -5,10 +5,10 @@ compatibility_date = "2026-07-01"
 compatibility_flags = ["global_fetch_strictly_public"]
 
 [[services]]
+binding = "SHOP_LEDGER"
+service = "shop-ledger"
+
+[[services]]
 binding = "SHOP_ORDER"
 service = "shop-order"
-
-[[kv_namespaces]]
-binding = "KV"
-id = "<KV_NAMESPACE_ID>" # set at deploy time
 
