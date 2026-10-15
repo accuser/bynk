@@ -412,6 +412,23 @@ pub fn unit(name: &str) -> Option<&'static Unit> {
 mod tests {
     use super::*;
 
+    /// #1958: `WorkersKv` reads the namespace at the name every generated
+    /// Worker declares it under (`[[kv_namespaces]] binding`, its `Env`), the
+    /// one TypeScript literal no Rust constructor can supply.
+    #[test]
+    fn the_cloudflare_binding_reads_kv_binding_name() {
+        for needle in [
+            format!("{{ {KV_BINDING_NAME}?: KVNamespace }}"),
+            format!("?.{KV_BINDING_NAME};"),
+            format!("(env.{KV_BINDING_NAME})"),
+        ] {
+            assert!(
+                CLOUDFLARE_BINDING.contains(&needle),
+                "cloudflare.binding.ts no longer contains `{needle}`"
+            );
+        }
+    }
+
     /// Each unit's `ExprId` block is permanent: emitted output and the
     /// process-wide parse cache depend on it. These are the blocks the
     /// hand-written injection used before the registry (S1, #1945); a new

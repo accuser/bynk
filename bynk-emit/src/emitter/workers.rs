@@ -15,7 +15,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use crate::emitter::http_handler_method_name_ir;
 use crate::emitter::ts_ident;
 use crate::emitter::wrangler::{
-    BindingSource, EVENTS_FANOUT_CLASS_NAME, WorkerBinding, agent_binding_name, binding_ts_type,
+    BindingSource, WorkerBinding, agent_binding, binding_ts_type, events_fanout_binding,
 };
 use crate::emitter::{
     BOUNDARY_CODEC_RUNTIME_IMPORTS, BYTES_RUNTIME_IMPORTS, JSON_CODEC_RUNTIME_IMPORTS, RuntimeUse,
@@ -560,7 +560,7 @@ pub(crate) fn emit_worker_compose(
     // DO — `env.<bind>` is typed by the `Env` interface built above, one
     // instance per publishing context.
     if uses_emit {
-        let bind = agent_binding_name(EVENTS_FANOUT_CLASS_NAME);
+        let bind = events_fanout_binding().name;
         let arrow = TsExpr::Arrow {
             params: vec![TsParam {
                 name: "events".to_string(),
@@ -1352,7 +1352,7 @@ fn emit_websocket_upgrade(
             };
         }
     };
-    let binding = agent_binding_name(target.agent);
+    let binding = agent_binding(target.agent).name;
     let key_js = match &target.key.kind {
         ExprKind::Ident(id) => id.name.clone(),
         // v1 keys are request-derivable param idents (DECISION B); a non-ident key

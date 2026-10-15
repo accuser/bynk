@@ -351,8 +351,13 @@ pub(crate) fn binding_ts_type(source: &BindingSource) -> &'static str {
     }
 }
 
+// #1958: the constructors below are the only callers of the two name
+// functions, so every place that declares, types or reads a binding (the
+// emitted `env.X`, the fan-out's routing table, the integration harness)
+// gets its name from the one constructor for its kind.
+
 /// The Service Binding to context `target`'s Worker.
-fn service_binding(target: &str) -> WorkerBinding {
+pub(crate) fn service_binding(target: &str) -> WorkerBinding {
     WorkerBinding {
         name: consumed_binding_name(target),
         source: BindingSource::Service {
@@ -362,7 +367,7 @@ fn service_binding(target: &str) -> WorkerBinding {
 }
 
 /// The KV namespace binding the cloudflare adapter's `Kv` reads.
-fn kv_binding() -> WorkerBinding {
+pub(crate) fn kv_binding() -> WorkerBinding {
     WorkerBinding {
         name: bynk_check::firstparty::KV_BINDING_NAME.to_string(),
         source: BindingSource::Kv,
@@ -370,7 +375,7 @@ fn kv_binding() -> WorkerBinding {
 }
 
 /// The Durable Object binding of agent `class_name`.
-fn agent_binding(class_name: &str) -> WorkerBinding {
+pub(crate) fn agent_binding(class_name: &str) -> WorkerBinding {
     WorkerBinding {
         name: agent_binding_name(class_name),
         source: BindingSource::Agent {
@@ -380,7 +385,7 @@ fn agent_binding(class_name: &str) -> WorkerBinding {
 }
 
 /// The Durable Object binding of the events fan-out class.
-fn events_fanout_binding() -> WorkerBinding {
+pub(crate) fn events_fanout_binding() -> WorkerBinding {
     WorkerBinding {
         name: agent_binding_name(EVENTS_FANOUT_CLASS_NAME),
         source: BindingSource::EventsFanout {
@@ -391,14 +396,14 @@ fn events_fanout_binding() -> WorkerBinding {
 
 /// Service Binding identifier for a consumed context: uppercase with
 /// underscores. `commerce.payment` → `COMMERCE_PAYMENT`.
-pub(crate) fn consumed_binding_name(target: &str) -> String {
+fn consumed_binding_name(target: &str) -> String {
     target.replace('.', "_").to_uppercase()
 }
 
 /// Durable Object binding identifier for an agent class. We use the
 /// class name in screaming snake case so handlers can grab it by a
 /// predictable name (`OrderEntity` → `ORDER_ENTITY`).
-pub(crate) fn agent_binding_name(class_name: &str) -> String {
+fn agent_binding_name(class_name: &str) -> String {
     let mut out = String::new();
     for (i, ch) in class_name.chars().enumerate() {
         if i > 0 && ch.is_uppercase() {
