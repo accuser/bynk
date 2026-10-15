@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "ping": "8d037aa9800640ce"
+  },
+  "expects": {
+    "demo.payment": {
+      "authorise": "594ea73b40bdd341"
+    }
+  }
+}

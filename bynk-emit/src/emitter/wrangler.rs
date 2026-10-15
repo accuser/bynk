@@ -5,7 +5,7 @@
 //! Object bindings + `exports` entries are declared for every agent.
 
 use crate::emitter::toml_doc::{TomlBlock, TomlDocument, TomlEntry, TomlValue};
-use crate::project::{UnitTable, worker_dir_name};
+use crate::project::worker_dir_name;
 pub(crate) use bynk_check::worker_bindings::{BindingSource, WorkerBinding};
 
 /// Compile-time pinned compatibility date. Cloudflare uses this to lock
@@ -284,7 +284,8 @@ pub(crate) fn emit_wrangler_toml(
 /// deployed Workers depend on them. Two members with one name would also be
 /// invalid TypeScript in `Env`, so the duplicate check must run first.
 pub(crate) fn worker_bindings(
-    table: &UnitTable,
+    // The context's agents (`UnitTable::agents`' keys), in any order.
+    agents: &[String],
     consumes: &[String],
     needs_kv: bool,
     uses_emit: bool,
@@ -292,51 +293,100 @@ pub(crate) fn worker_bindings(
     let mut bindings = Vec::new();
     let mut sorted_consumes: Vec<&String> = consumes.iter().collect();
     sorted_consumes.sort();
-    for target in sorted_consumes {
-        bindings.push(WorkerBinding {
-            name: consumed_binding_name(target),
-            source: BindingSource::Service {
-                context: target.clone(),
-            },
-        });
-    }
+    bindings.extend(sorted_consumes.into_iter().map(|t| service_binding(t)));
     if needs_kv {
-        bindings.push(WorkerBinding {
-            name: bynk_check::firstparty::KV_BINDING_NAME.to_string(),
-            source: BindingSource::Kv,
-        });
+        bindings.push(kv_binding());
     }
     // Events track, slice 0 (spine #936, ADR 0284): a context whose handlers
     // emit gets its own fan-out DO among the agents' — Cloudflare only cares
     // that `index.ts` (this Worker's `main`) exports a class with this name,
-    // not which generated file it came from.
-    // Sources by provenance, not by name: an agent that happened to share
-    // the fan-out's class name is still an agent.
-    let mut objects: Vec<(String, BindingSource)> = table
-        .agents
-        .keys()
-        .map(|class_name| {
-            let source = BindingSource::Agent {
-                class_name: class_name.clone(),
-            };
-            (class_name.clone(), source)
-        })
+    // not which generated file it came from. Sources by provenance, not by
+    // name: an agent that happened to share the fan-out's class name is
+    // still an agent.
+    let mut objects: Vec<(&str, WorkerBinding)> = agents
+        .iter()
+        .map(|class_name| (class_name.as_str(), agent_binding(class_name)))
         .collect();
     if uses_emit {
-        let class_name = EVENTS_FANOUT_CLASS_NAME.to_string();
-        let source = BindingSource::EventsFanout {
-            class_name: class_name.clone(),
-        };
-        objects.push((class_name, source));
+        objects.push((EVENTS_FANOUT_CLASS_NAME, events_fanout_binding()));
     }
-    objects.sort_by(|a, b| a.0.cmp(&b.0));
-    for (class_name, source) in objects {
-        bindings.push(WorkerBinding {
-            name: agent_binding_name(&class_name),
-            source,
-        });
-    }
+    objects.sort_by(|a, b| a.0.cmp(b.0));
+    bindings.extend(objects.into_iter().map(|(_, binding)| binding));
     bindings
+}
+
+/// #1950: the bindings a handler's `deps.env` type exposes on Workers — the
+/// projection of [`worker_bindings`] handlers reach directly, which
+/// `BindingSource`'s variant docs state per kind. `consumed` is the consumed
+/// contexts with services, `agents` every local agent when the handler
+/// constructs one (else empty); order as in [`worker_bindings`].
+///
+/// Built by the same constructors, so each name and source is the Worker's
+/// own: a consumed context with services is never an adapter (an adapter may
+/// not declare a `service`, `bynk.adapter.disallowed_item`), so it has a
+/// Service Binding, and every local agent has a Durable Object binding. The
+/// KV namespace, the events fan-out and subscribers' Service Bindings never
+/// reach handlers.
+pub(crate) fn handler_bindings(consumed: &[String], agents: &[String]) -> Vec<WorkerBinding> {
+    let mut consumed: Vec<&String> = consumed.iter().collect();
+    consumed.sort();
+    let mut agents: Vec<&String> = agents.iter().collect();
+    agents.sort();
+    consumed
+        .into_iter()
+        .map(|t| service_binding(t))
+        .chain(agents.into_iter().map(|a| agent_binding(a)))
+        .collect()
+}
+
+/// The TypeScript type a binding has on the Worker's `env`, for both its
+/// `Env` interface and a handler's `deps.env`.
+pub(crate) fn binding_ts_type(source: &BindingSource) -> &'static str {
+    match source {
+        BindingSource::Service { .. } => "__ServiceBinding",
+        BindingSource::Kv => "__KVNamespace",
+        BindingSource::Agent { .. } | BindingSource::EventsFanout { .. } => {
+            "__DurableObjectNamespace"
+        }
+    }
+}
+
+/// The Service Binding to context `target`'s Worker.
+fn service_binding(target: &str) -> WorkerBinding {
+    WorkerBinding {
+        name: consumed_binding_name(target),
+        source: BindingSource::Service {
+            context: target.to_string(),
+        },
+    }
+}
+
+/// The KV namespace binding the cloudflare adapter's `Kv` reads.
+fn kv_binding() -> WorkerBinding {
+    WorkerBinding {
+        name: bynk_check::firstparty::KV_BINDING_NAME.to_string(),
+        source: BindingSource::Kv,
+    }
+}
+
+/// The Durable Object binding of agent `class_name`.
+fn agent_binding(class_name: &str) -> WorkerBinding {
+    WorkerBinding {
+        name: agent_binding_name(class_name),
+        source: BindingSource::Agent {
+            class_name: class_name.to_string(),
+        },
+    }
+}
+
+/// The Durable Object binding of the events fan-out class.
+fn events_fanout_binding() -> WorkerBinding {
+    WorkerBinding {
+        name: agent_binding_name(EVENTS_FANOUT_CLASS_NAME),
+        source: BindingSource::EventsFanout {
+            class_name: EVENTS_FANOUT_CLASS_NAME.to_string(),
+        },
+    }
 }
 
 /// Service Binding identifier for a consumed context: uppercase with
@@ -624,9 +674,8 @@ mod binding_tests {
     /// the Durable Objects by class name, the fan-out among them.
     #[test]
     fn worker_bindings_lists_every_kind_in_emission_order() {
-        let table = UnitTable::default();
         let bindings = worker_bindings(
-            &table,
+            &[],
             &["shop.payment".to_string(), "audit".to_string()],
             true,
             true,
@@ -638,12 +687,29 @@ mod binding_tests {
         assert!(duplicate_bindings(&bindings).is_empty());
     }
 
+    /// #1950: the handler projection is drawn from the Worker's own list —
+    /// each binding identical, name and source, a Service Binding and an
+    /// agent's alike — and leaves out the KV namespace and the events fan-out.
+    #[test]
+    fn handler_bindings_are_a_subset_of_the_worker_bindings() {
+        let worker = worker_bindings(
+            &["OrderEntity".to_string()],
+            &["shop.payment".to_string(), "audit".to_string()],
+            true,
+            true,
+        );
+        let handler = handler_bindings(&["shop.payment".to_string()], &["OrderEntity".to_string()]);
+        assert_eq!(names(&handler), ["SHOP_PAYMENT", "ORDER_ENTITY"]);
+        for binding in &handler {
+            assert!(worker.contains(binding), "{binding:?} not in {worker:?}");
+        }
+    }
+
     /// A consumed context `kv` and the KV namespace are both `KV`: the
     /// later one is paired with the earlier.
     #[test]
     fn a_shared_name_pairs_the_later_binding_with_the_earlier() {
-        let table = UnitTable::default();
-        let bindings = worker_bindings(&table, &["kv".to_string()], true, false);
+        let bindings = worker_bindings(&[], &["kv".to_string()], true, false);
         let duplicates = duplicate_bindings(&bindings);
         assert_eq!(duplicates.len(), 1);
         let (earlier, later) = duplicates[0];

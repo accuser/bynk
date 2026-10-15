@@ -13,7 +13,7 @@ import { __serialise_Note, __deserialise_Note } from "../../../shop/values.js";
 export type Note = __CommonsNote & { readonly __ctxBrand?: "shop.orders" };
 
 export const hits = {
-  async call(deps: { env: { SHOP_FEES: __ServiceBinding; SHOP_PAYMENT: __ServiceBinding; BOOK: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<number> {
+  async call(deps: { env: { SHOP_PAYMENT: __ServiceBinding; BOOK: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<number> {
     return __makeTally("all", deps.env).hit(deps);
   },
 };

@@ -15,7 +15,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use crate::emitter::http_handler_method_name_ir;
 use crate::emitter::ts_ident;
 use crate::emitter::wrangler::{
-    BindingSource, EVENTS_FANOUT_CLASS_NAME, WorkerBinding, agent_binding_name,
+    BindingSource, EVENTS_FANOUT_CLASS_NAME, WorkerBinding, agent_binding_name, binding_ts_type,
 };
 use crate::emitter::{
     BOUNDARY_CODEC_RUNTIME_IMPORTS, BYTES_RUNTIME_IMPORTS, JSON_CODEC_RUNTIME_IMPORTS, RuntimeUse,
@@ -844,16 +844,7 @@ pub(crate) fn emit_worker_compose(
     // declares, from the same list (#1944), so the two cannot drift.
     let env_members: Vec<TsTypeMember> = bindings
         .iter()
-        .map(|b| {
-            let ty = match b.source {
-                BindingSource::Service { .. } => "__ServiceBinding",
-                BindingSource::Kv => "__KVNamespace",
-                BindingSource::Agent { .. } | BindingSource::EventsFanout { .. } => {
-                    "__DurableObjectNamespace"
-                }
-            };
-            TsTypeMember::prop(b.name.clone(), TsType::named(ty))
-        })
+        .map(|b| TsTypeMember::prop(b.name.clone(), TsType::named(binding_ts_type(&b.source))))
         .collect();
     program.push(TsStmt::decl(
         TsDecl::Export(Box::new(TsDecl::Interface {
@@ -2369,6 +2360,67 @@ service ping {
             .filter_map(|l| l.trim().split_once(':').map(|(name, _)| name))
             .collect();
         assert_eq!(members, declared, "{toml}");
+    }
+
+    /// #1950: a handler's `deps.env` type names a subset of the Worker's
+    /// `Env` members, by the same names and types: the consumed context and
+    /// the agent it constructs, never the KV namespace or the events fan-out.
+    #[test]
+    fn a_handlers_deps_env_is_a_projection_of_env() {
+        let hub = "context ops.hub
+
+consumes bynk { Events }
+consumes bynk.cloudflare { Kv }
+consumes demo.payment
+
+event Pinged = { id: String }
+
+agent Ledger {
+  key id: String
+
+  store seen: Cell[Int]
+
+  on call total() -> Effect[Int] {
+    Effect.pure(seen)
+  }
+}
+
+service ping {
+  on call(id: String) -> Effect[Int] given Events, Kv {
+    let _ <- Kv.put(id, id)
+    let _ <- demo.payment.authorise(id)
+    let n <- Ledger(id).total()
+    let _ <- Events.emit[Pinged](Pinged { id: id })
+    Effect.pure(n)
+  }
+}
+";
+        let out = emit_workers(&[("demo/payment.bynk", PAYMENT), ("ops/hub.bynk", hub)]);
+        let compose = out.text("workers/ops-hub/compose.ts");
+        let env: Vec<&str> = compose
+            .split_once("export interface Env {\n")
+            .and_then(|(_, rest)| rest.split_once("}"))
+            .map(|(members, _)| members.lines().map(|l| l.trim().trim_end_matches(';')))
+            .unwrap_or_else(|| panic!("no Env interface:\n{compose}"))
+            .collect();
+        let handlers = out.text("workers/ops-hub/handlers.ts");
+        let deps_env: Vec<&str> = handlers
+            .split_once("env: { ")
+            .and_then(|(_, rest)| rest.split_once(" }"))
+            .map(|(members, _)| members.split("; "))
+            .unwrap_or_else(|| panic!("no deps.env type:\n{handlers}"))
+            .collect();
+        assert_eq!(
+            deps_env,
+            [
+                "DEMO_PAYMENT: __ServiceBinding",
+                "LEDGER: __DurableObjectNamespace"
+            ],
+            "{handlers}"
+        );
+        for member in &deps_env {
+            assert!(env.contains(member), "`{member}` is not in Env: {env:?}");
+        }
     }
 
     #[test]
