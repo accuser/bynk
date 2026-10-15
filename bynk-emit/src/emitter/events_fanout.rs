@@ -22,7 +22,7 @@ use bynk_ts::{
     TsParam, TsProgram, TsStmt, TsType, TsTypeMember, TsUnaryOp,
 };
 
-use crate::emitter::wrangler::{EVENTS_FANOUT_CLASS_NAME, consumed_binding_name};
+use crate::emitter::wrangler::{EVENTS_FANOUT_CLASS_NAME, service_binding};
 
 /// The Worker-relative specifier `events_fanout.ts` imports the runtime
 /// from — same depth as `compose.ts` (`workers/<worker>/events_fanout.ts`).
@@ -151,7 +151,7 @@ fn event_routes_table(routes: &BTreeMap<String, Vec<(String, String)>>) -> TsExp
                         TsExpr::object(vec![
                             (
                                 "binding".to_string(),
-                                TsExpr::Lit(TsLit::Str(consumed_binding_name(sub_ctx))),
+                                TsExpr::Lit(TsLit::Str(service_binding(sub_ctx).name)),
                             ),
                             (
                                 "service".to_string(),

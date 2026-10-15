@@ -412,6 +412,40 @@ pub fn unit(name: &str) -> Option<&'static Unit> {
 mod tests {
     use super::*;
 
+    /// #1958: `WorkersKv` reads the namespace at the name every generated
+    /// Worker declares it under (`[[kv_namespaces]] binding`, its `Env`), the
+    /// one TypeScript literal no Rust constructor can supply.
+    ///
+    /// Matched as a whole identifier, then by its neighbours, so the test
+    /// ignores formatting (a wrapped cast, a `?? undefined` after the read)
+    /// but not a rename: `KVX` is not `KV` (review of #1962).
+    #[test]
+    fn the_cloudflare_binding_reads_kv_binding_name() {
+        let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+        let src = CLOUDFLARE_BINDING;
+        let uses: Vec<(&str, &str)> = src
+            .match_indices(KV_BINDING_NAME)
+            .map(|(at, name)| (&src[..at], &src[at + name.len()..]))
+            .filter(|(before, after)| !before.ends_with(ident) && !after.starts_with(ident))
+            .collect();
+        let read = |before: &str, after: &str| {
+            uses.iter()
+                .any(|(b, a)| b.trim_end().ends_with(before) && a.trim_start().starts_with(after))
+        };
+        assert!(
+            read("", "?:"),
+            "the `env` cast no longer has `{KV_BINDING_NAME}?:`"
+        );
+        assert!(
+            read("?.", ""),
+            "the read is no longer `?.{KV_BINDING_NAME}`"
+        );
+        assert!(
+            read("env.", ""),
+            "the error no longer names `env.{KV_BINDING_NAME}`"
+        );
+    }
+
     /// Each unit's `ExprId` block is permanent: emitted output and the
     /// process-wide parse cache depend on it. These are the blocks the
     /// hand-written injection used before the registry (S1, #1945); a new

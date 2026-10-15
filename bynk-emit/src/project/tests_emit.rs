@@ -793,7 +793,7 @@ fn emit_system_http_support(
         };
     };
     let ns = test_ns(target);
-    let binding = crate::emitter::wrangler::consumed_binding_name(target);
+    let binding = crate::emitter::wrangler::service_binding(target).name;
     let type_ns = format!("{ns}.");
 
     let mut routes: Vec<TsStmt> = Vec::new();
@@ -1339,7 +1339,12 @@ fn emit_integration_harness(
         ));
     }
     // Wire each participant's consumed Service Bindings to its sibling Workers,
-    // and back its own agents with in-memory Durable Object namespaces.
+    // and back its own agents with in-memory Durable Object namespaces. Names
+    // come from the same constructors as the Worker's own bindings (#1958).
+    // This is fewer bindings than the Worker declares: no KV namespace, no
+    // events fan-out, no Service Bindings to event subscribers. So a system
+    // case over a context that uses `Kv` faults, and one that emits drops its
+    // events (#1959).
     for p in participants {
         let ns = test_ns(p);
         if let Some(deps) = unit_consumes.get(p) {
@@ -1349,7 +1354,7 @@ fn emit_integration_harness(
             // no Service Binding to wire.
             for d in deps_sorted.iter().filter(|d| participants.contains(d)) {
                 let dns = test_ns(d);
-                let binding = crate::emitter::wrangler::consumed_binding_name(d);
+                let binding = crate::emitter::wrangler::service_binding(d).name;
                 body.push(TsStmt::assign(
                     member(ident(format!("env_{ns}")), binding),
                     service_binding_forward(&format!("worker_{dns}"), &format!("env_{dns}")),
@@ -1361,7 +1366,7 @@ fn emit_integration_harness(
             let mut agents: Vec<&String> = table.agents.keys().collect();
             agents.sort();
             for agent in agents {
-                let binding = crate::emitter::wrangler::agent_binding_name(agent);
+                let binding = crate::emitter::wrangler::agent_binding(agent).name;
                 body.push(TsStmt::assign(
                     member(ident(format!("env_{ns}")), binding),
                     call(
@@ -1396,7 +1401,7 @@ fn emit_integration_harness(
     ));
     for p in participants {
         let ns = test_ns(p);
-        let binding = crate::emitter::wrangler::consumed_binding_name(p);
+        let binding = crate::emitter::wrangler::service_binding(p).name;
         body.push(TsStmt::assign(
             member(ident("rootEnv"), binding),
             service_binding_forward(&format!("worker_{ns}"), &format!("env_{ns}")),

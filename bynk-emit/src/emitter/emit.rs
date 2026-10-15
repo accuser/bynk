@@ -3827,7 +3827,7 @@ pub(crate) fn lower_workers_cross_context_call(
     let mut pre = Pre::new();
 
     let info = cx.cross_context();
-    let binding = crate::emitter::wrangler::consumed_binding_name(consumed);
+    let binding = crate::emitter::wrangler::service_binding(consumed).name;
 
     // Look up the service signature on the consumed context.
     //
@@ -6323,9 +6323,7 @@ pub(crate) fn emit_agent(
                 )));
             }
             if agent_uses_emit {
-                let bind = crate::emitter::wrangler::agent_binding_name(
-                    crate::emitter::wrangler::EVENTS_FANOUT_CLASS_NAME,
-                );
+                let bind = crate::emitter::wrangler::events_fanout_binding().name;
                 // P7.2: `env` is now `Record<string, unknown>` (above), so this
                 // specific binding needs its own cast to what
                 // `dispatchToEventsFanout` actually declares.
@@ -6526,7 +6524,7 @@ pub(crate) fn emit_agent(
         }
     }
     let key_ts = ts_type_ref_to_ts_type(&a.key_type, None);
-    let bind = crate::emitter::wrangler::agent_binding_name(&a.name.name);
+    let bind = crate::emitter::wrangler::agent_binding(&a.name.name).name;
     let mut make_agent_args = vec![
         bynk_ts::TsExpr::Ident(registry.clone()),
         bynk_ts::TsExpr::OptionalMember {
