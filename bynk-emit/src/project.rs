@@ -2708,6 +2708,19 @@ fn build_output(
                 // #1187's slice 6 plumbing: computed once, reused by every
                 // Workers-target emitter below that needs it.
                 let ctx_uses_emit = unit_table_uses_emit(table, unit_callees.get(ctx_name));
+                // #1944: every binding this Worker declares, once — its
+                // `Env` interface and its `wrangler.toml` are both built from
+                // it, and the duplicate check read the same list.
+                let own_event_routes =
+                    worker_bindings::own_event_routes(ctx_name, &event_subscribers);
+                let bindings = worker_bindings::context_bindings(
+                    table,
+                    &consumes_targets,
+                    &adapter_bindings,
+                    &own_event_routes,
+                    needs_kv,
+                    ctx_uses_emit,
+                );
                 let (compose_ts, needs_locale_request) = emitter::emit_worker_compose(
                     ctx_name,
                     table,
@@ -2719,10 +2732,10 @@ fn build_output(
                     &unit_consumes,
                     &unit_consumes_aliases,
                     &unit_flattened,
-                    needs_kv,
                     locale_bundle_info,
                     import_ext,
                     ctx_uses_emit,
+                    &bindings,
                 );
                 let entry_ts = emitter::emit_worker_entry(
                     ctx_name,
@@ -2730,16 +2743,6 @@ fn build_output(
                     &own_contracts,
                     needs_locale_request,
                     ctx_uses_emit,
-                );
-                // Adapters are not Workers, so get no Service Binding; each
-                // subscriber to this context's events does (Events track,
-                // slice 0, spine #936, ADR 0284).
-                let own_event_routes =
-                    worker_bindings::own_event_routes(ctx_name, &event_subscribers);
-                let service_consumes = worker_bindings::service_consumes(
-                    &consumes_targets,
-                    &adapter_bindings,
-                    &own_event_routes,
                 );
                 // P6.x cutover slice 2 (#1191): collected here, not inside
                 // `emit_wrangler_toml` itself, so that function's own file
@@ -2751,12 +2754,9 @@ fn build_output(
                 let (crons, queues) = bynk_check::symbols::cron_and_queue_triggers(table);
                 let mut wrangler_doc = emitter::emit_wrangler_toml(
                     ctx_name,
-                    table,
-                    &service_consumes,
-                    needs_kv,
+                    &bindings,
                     &crons,
                     &queues,
-                    ctx_uses_emit,
                     compatibility_flags,
                 );
                 // #1883, slice 1b: the static files this Worker serves — its
