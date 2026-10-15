@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Standard-library items are stable or experimental, with an `[unstable] allow` opt-in in `bynk.toml`; a `match` on the extensible `FetchError` or `Method` needs a wildcard
----
+# 0468 — The standard library's 1.0 stability tiers, the `[unstable]` opt-in, and extensible enums
 
-## ADR: stdlib-stability-tiers
-title: The standard library's 1.0 stability tiers, the `[unstable]` opt-in, and extensible enums
-summary: Stable kernel and commons are Foundations-level, stable capabilities only grow, experimental items need `[unstable] allow`, and an extensible enum gains variants only because its `match`es carry a wildcard
+- **Status:** Accepted (v0.331)
 
 **Context.** The 1.0 definition's Gate 1 froze the Foundations layer and said capabilities "evolve
 additively", but it said nothing about the kernel and commons every Foundations program calls, nothing
