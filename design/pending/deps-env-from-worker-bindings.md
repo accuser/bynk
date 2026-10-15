@@ -1,6 +1,6 @@
 ---
 level: patch
-changelog: A handler's Workers `deps.env` type is built from the Worker's binding list, so its names always match the Worker's `Env`
+changelog: A handler's Workers `deps.env` type is built from the Worker's binding list and names only consumed contexts with services, so a bare `consumes bynk` beside a cross-context call no longer fails `tsc --strict`
 ---
 
 ## ADR: handler-env-projects-the-binding-list
@@ -37,7 +37,19 @@ kind of binding is added as a constructor and in `worker_bindings`. If handlers
 reach it directly, it is added to `handler_bindings` too, and its variant doc
 says so.
 
-**Consequences.** No emitted output moves. Places that read a binding at
+`deps.env` keeps a consumed unit exactly when it has services: those are what
+a handler calls through `env`. The old filter dropped a unit only when it was
+consumed in the selecting form (`consumes bynk { Clock }`) *and* had no
+services. So a bare `consumes bynk` beside a cross-context call put
+`BYNK: __ServiceBinding` in `deps.env`, a binding the Worker never has, and the
+compose module failed `tsc --strict` (review of #1951).
+
+**Consequences.** A handler's `deps.env` no longer names a consumed context
+with no services (fixture 1820's `SHOP_FEES`, consumed only for a
+capability) or an adapter consumed bare. Handlers never read either: a
+consumed capability is provided in-process by compose. The Worker's `Env` and
+`wrangler.toml` are unchanged. Fixture 1951 pins the bare-adapter case through
+`tsc --strict`. Places that read a binding at
 runtime (`env.X` in handler and compose bodies, the fan-out's routing table)
 still call the name functions directly. They are values, not the `deps.env`
 type, and use the same functions the constructors call.

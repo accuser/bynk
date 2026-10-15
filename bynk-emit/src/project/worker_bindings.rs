@@ -108,7 +108,8 @@ pub(super) fn context_bindings(
     uses_emit: bool,
 ) -> Vec<WorkerBinding> {
     let consumes = service_consumes(consumes_targets, adapter_bindings, own_event_routes);
-    worker_bindings(table, &consumes, needs_kv, uses_emit)
+    let agents: Vec<String> = table.agents.keys().cloned().collect();
+    worker_bindings(&agents, &consumes, needs_kv, uses_emit)
 }
 
 /// `bynk.context.duplicate_binding`: on a Workers build, each context's

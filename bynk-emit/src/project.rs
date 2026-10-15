@@ -1904,7 +1904,7 @@ fn run_checks(
     }
 
     // -- 2. Parse every file. --
-    let (mut parsed, consumes_bynk, consumes_cloudflare, broken) = match project_model::phase_parse(
+    let (mut parsed, injected, broken) = match project_model::phase_parse(
         trees,
         &file_lists,
         overlay,
@@ -1948,15 +1948,7 @@ fn run_checks(
     //       positions directly, at the point its old optional hook used to
     //       fire — see that function's own doc comment. --
     let (groups, kinds, test_groups, integration_groups, adapter_bindings, npm_deps) =
-        project_model::phase_group(
-            &parsed,
-            trees,
-            platform,
-            consumes_bynk,
-            consumes_cloudflare,
-            overlay,
-            &mut errors,
-        );
+        project_model::phase_group(&parsed, trees, platform, &injected, overlay, &mut errors);
     // -- 4. Build per-unit combined symbol tables. --
     let unit_tables = project_model::phase_symbol_tables(&groups, &kinds, &parsed, &mut errors);
 

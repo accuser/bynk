@@ -2,6 +2,7 @@
 
 - **Status:** Slicing. Direction settled by #1938 (all of §8 D1–D9 and §11
   Q1–Q7 closed). S0 done (#1940): the first-party sources live in `bynk-std`.
+  S1 done (#1945): a `bynk-std` registry drives their injection (R-6 met).
 - **Realises:** `design/bynk-design-notes.md` "Three-tier output" (the runtime
   library and per-platform bindings, including the unbuilt `Crypto`),
   [ADR 0034](../decisions/0034-collections-hybrid-kernel-stdlib.md)'s promise
@@ -15,7 +16,7 @@
   a single fixed KV namespace. They are all embedded via `include_str!`, from
   `bynk-check/src/firstparty/` when this track opened and from the data-only
   `bynk-std` crate since S0, and injected by seven hand-coded blocks in
-  `project_model.rs`. Spine [#1936](https://github.com/accuser/bynk/issues/1936).
+  `project_model.rs` until S1 replaced them with a registry. Spine [#1936](https://github.com/accuser/bynk/issues/1936).
 - **Governing records:** ADR 0012 (the `bynk` surface is ambient-only), 0016
   (no portable infrastructure), 0023 (platform work and stdlib work never share
   an increment), 0024 (platform nativity is metadata), 0026 (platform adapters
@@ -606,7 +607,7 @@ increment** (ADR 0023), and the ordering follows §13.
 | Slice | What | Settles / needs |
 |---|---|---|
 | S0 ✅ #1940 | Extract `bynk-std`: move the data in `firstparty.rs` and the `firstparty/` tree into a leaf crate; `bynk-check` re-exports `Platform`; output byte-identical; 17th crate in `release.yml`'s publish order | D1, D9 hedge (L3 in its own subtree) |
-| S1 | First-party unit registry: one table (unit, kind, sources, dependencies with computed closure, per-platform bindings, nativity, env-taking providers, wrangler derivation) replaces the seven injection blocks; byte-identical | PR-1, R-6, P-5 |
+| S1 ✅ #1945 | First-party unit registry: one table (unit, kind, sources, dependencies with computed closure, per-platform bindings, nativity, env-taking providers, wrangler derivation) replaces the seven injection blocks; byte-identical. Done without wrangler derivation, which S4 reshapes (#1945 Decision E) | PR-1, R-6, P-5 |
 | S2 | Standalone binding test scaffold: each TS binding `tsc --strict` on its own, behavioural tests against contract-faithful fakes, Miniflare where semantics matter | PR-3, R-12, R-13 |
 | S3 | Stable/experimental marking (first-party metadata) with the `bynk.toml` `[unstable] allow` opt-in (§11 Q6); the extensible-enum marker and its wildcard-arm diagnostic (§11 Q5); the D2 ADR; and the `bynk-1.0-definition.md` Gate 1 amendment | PR-4, D2 |
 

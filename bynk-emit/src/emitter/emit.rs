@@ -3416,23 +3416,22 @@ fn workers_env_ty(
     cross_context: &bynk_check::resolver::CrossContextInfo,
     agents: &[String],
 ) -> bynk_ts::TsType {
+    // #1950 (review of #1951): only a consumed context with services, the one
+    // thing a handler reaches through `env` (`lower_workers_cross_context_call`).
+    // That is never an adapter (`bynk.adapter.disallowed_item`), so the
+    // Worker's `wrangler.toml` and `Env` always declare its Service Binding.
+    // A unit consumed for capabilities or types only has nothing to call: an
+    // adapter has no Service Binding at all, whether consumed bare
+    // (`consumes bynk`) or selecting (`consumes bynk { Clock }`), and naming
+    // one here made the compose module fail `tsc --strict`.
     let consumed: Vec<String> = cross_context
         .consumed_contexts
         .iter()
-        // A unit consumed only in the flattened-capability form
-        // (`consumes bynk { Clock }` — adapters and the first-party surface)
-        // is provided *in-process* by the compose root, and its wrangler.toml
-        // declares no Service Binding for it. Including it here made the
-        // handlers' `deps.env` type demand a binding (`BYNK: ServiceBinding`)
-        // the deployment never has — the emitted Worker failed `tsc --strict`
-        // against its own compose module (caught by the examples tsc gate).
         .filter(|q| {
-            let flattened_only = cross_context.flattened_caps.values().any(|u| u == *q)
-                && cross_context
-                    .consumed_services
-                    .get(*q)
-                    .is_none_or(|svcs| svcs.is_empty());
-            !flattened_only
+            cross_context
+                .consumed_services
+                .get(*q)
+                .is_some_and(|svcs| !svcs.is_empty())
         })
         .cloned()
         .collect();

@@ -5,7 +5,7 @@
 //! Object bindings + `exports` entries are declared for every agent.
 
 use crate::emitter::toml_doc::{TomlBlock, TomlDocument, TomlEntry, TomlValue};
-use crate::project::{UnitTable, worker_dir_name};
+use crate::project::worker_dir_name;
 pub(crate) use bynk_check::worker_bindings::{BindingSource, WorkerBinding};
 
 /// Compile-time pinned compatibility date. Cloudflare uses this to lock
@@ -284,7 +284,8 @@ pub(crate) fn emit_wrangler_toml(
 /// deployed Workers depend on them. Two members with one name would also be
 /// invalid TypeScript in `Env`, so the duplicate check must run first.
 pub(crate) fn worker_bindings(
-    table: &UnitTable,
+    // The context's agents (`UnitTable::agents`' keys), in any order.
+    agents: &[String],
     consumes: &[String],
     needs_kv: bool,
     uses_emit: bool,
@@ -302,9 +303,8 @@ pub(crate) fn worker_bindings(
     // not which generated file it came from. Sources by provenance, not by
     // name: an agent that happened to share the fan-out's class name is
     // still an agent.
-    let mut objects: Vec<(&str, WorkerBinding)> = table
-        .agents
-        .keys()
+    let mut objects: Vec<(&str, WorkerBinding)> = agents
+        .iter()
         .map(|class_name| (class_name.as_str(), agent_binding(class_name)))
         .collect();
     if uses_emit {
@@ -674,9 +674,8 @@ mod binding_tests {
     /// the Durable Objects by class name, the fan-out among them.
     #[test]
     fn worker_bindings_lists_every_kind_in_emission_order() {
-        let table = UnitTable::default();
         let bindings = worker_bindings(
-            &table,
+            &[],
             &["shop.payment".to_string(), "audit".to_string()],
             true,
             true,
@@ -689,39 +688,28 @@ mod binding_tests {
     }
 
     /// #1950: the handler projection is drawn from the Worker's own list —
-    /// each binding identical, name and source — and leaves out the KV
-    /// namespace and the events fan-out.
+    /// each binding identical, name and source, a Service Binding and an
+    /// agent's alike — and leaves out the KV namespace and the events fan-out.
     #[test]
     fn handler_bindings_are_a_subset_of_the_worker_bindings() {
-        let table = UnitTable::default();
         let worker = worker_bindings(
-            &table,
+            &["OrderEntity".to_string()],
             &["shop.payment".to_string(), "audit".to_string()],
             true,
             true,
         );
-        let handler = handler_bindings(&["shop.payment".to_string()], &[]);
-        assert_eq!(names(&handler), ["SHOP_PAYMENT"]);
+        let handler = handler_bindings(&["shop.payment".to_string()], &["OrderEntity".to_string()]);
+        assert_eq!(names(&handler), ["SHOP_PAYMENT", "ORDER_ENTITY"]);
         for binding in &handler {
             assert!(worker.contains(binding), "{binding:?} not in {worker:?}");
         }
-        assert_eq!(
-            handler_bindings(&[], &["OrderEntity".to_string()]),
-            [WorkerBinding {
-                name: "ORDER_ENTITY".to_string(),
-                source: BindingSource::Agent {
-                    class_name: "OrderEntity".to_string()
-                },
-            }]
-        );
     }
 
     /// A consumed context `kv` and the KV namespace are both `KV`: the
     /// later one is paired with the earlier.
     #[test]
     fn a_shared_name_pairs_the_later_binding_with_the_earlier() {
-        let table = UnitTable::default();
-        let bindings = worker_bindings(&table, &["kv".to_string()], true, false);
+        let bindings = worker_bindings(&[], &["kv".to_string()], true, false);
         let duplicates = duplicate_bindings(&bindings);
         assert_eq!(duplicates.len(), 1);
         let (earlier, later) = duplicates[0];
