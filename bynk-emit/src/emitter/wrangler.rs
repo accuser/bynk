@@ -130,10 +130,10 @@ pub(crate) fn asset_headers() -> String {
 /// `table.services`. Both used to match a handler's cron-schedule kind and a
 /// service's queue-binding protocol directly, straight off the syntax tree —
 /// this file's entire raw-syntax footprint, per #1191's own grounding.
-/// Relocating just these two matches removed `wrangler.rs` from the `ast_importers` probe outright — no
-/// `bynk_ir` equivalent exists to route through instead: nothing builds a
-/// project-wide service IR at the call site (#1191's Framing), and after
-/// #1542's Slice D2 nothing builds one anywhere.
+/// Relocating just these two matches removed `wrangler.rs` from the
+/// `ast_importers` probe outright — no `bynk_ir` equivalent exists to route
+/// through instead: nothing builds a project-wide service IR at the call site
+/// (#1191's Framing), and after #1542's Slice D2 nothing builds one anywhere.
 ///
 /// P7.3 (#1303): builds a [`TomlDocument`] rather than writing text directly
 /// — the caller (`project.rs`) prints it via `emitter::toml_doc::
@@ -275,13 +275,14 @@ pub(crate) fn emit_wrangler_toml(
 
 /// Every binding a Worker's `wrangler.toml` declares, in emission order:
 /// Service Bindings by target, then the KV namespace, then the Durable
-/// Objects by class name. [`emit_wrangler_toml`] writes exactly this list, the
-/// Worker's `Env` interface (`emitter::workers`) types it, and the duplicate
-/// check (`bynk_check::worker_bindings`) reads it, so a new kind of binding
-/// is declared, typed and checked from one place (#1944). Each kind derives its names
-/// independently, so two can meet (an agent `Kv` and the KV namespace are both
-/// `KV`); names are never adjusted to avoid that, because deployed Workers
-/// depend on them.
+/// Objects by class name. [`emit_wrangler_toml`] writes exactly this list,
+/// the Worker's `Env` interface (`emitter::workers`) types it, and the
+/// duplicate check (`bynk_check::worker_bindings`) reads it, so a new kind of
+/// binding is declared, typed and checked from one place (#1944). Each kind
+/// derives its names independently, so two can meet (an agent `Kv` and the KV
+/// namespace are both `KV`); names are never adjusted to avoid that, because
+/// deployed Workers depend on them. Two members with one name would also be
+/// invalid TypeScript in `Env`, so the duplicate check must run first.
 pub(crate) fn worker_bindings(
     table: &UnitTable,
     consumes: &[String],

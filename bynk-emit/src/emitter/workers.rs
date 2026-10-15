@@ -278,10 +278,6 @@ pub(crate) fn emit_worker_compose(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
-    // v0.19 (C1): this Worker's closure reaches bynk.cloudflare — type the
-    // `KV` namespace into Env (the matching `[[kv_namespaces]]` stanza is
-    // emitted into wrangler.toml).
-    needs_kv: bool,
     // Locale capability track, slice 2 (#882): this context's uniquely-
     // detected message bundle, if any (`None` when zero or 2+ were found —
     // the caller already resolved the cardinality, this function only acts).
@@ -414,7 +410,11 @@ pub(crate) fn emit_worker_compose(
     // — the same shape `emit_project` and `emit_worker_entry` already use.
     let runtime_use = RuntimeUse::default();
     let mut runtime_imports: Vec<String> = Vec::new();
-    if needs_kv {
+    // #1944: each type an `Env` member names is declared from the same
+    // binding list the members come from, so a binding can never be typed
+    // by a name this file does not import or define.
+    let binds = |kind: fn(&BindingSource) -> bool| bindings.iter().any(|b| kind(&b.source));
+    if binds(|s| matches!(s, BindingSource::Kv)) {
         runtime_imports.push("type __KVNamespace".to_string());
     }
     runtime_imports.push("type __ServiceBinding".to_string());
@@ -488,9 +488,6 @@ pub(crate) fn emit_worker_compose(
         .filter(|t| !binding_modules.contains_key(*t))
         .collect();
     sorted_consumes.sort();
-
-    let mut agent_names: Vec<&String> = table.agents.keys().collect();
-    agent_names.sort();
 
     // v0.79: if any handler in this context uses `~>`, `compose` also takes the
     // request's execution context and threads its `waitUntil` into `deps.__exec`.
@@ -867,7 +864,12 @@ pub(crate) fn emit_worker_compose(
         None,
     ));
 
-    if !agent_names.is_empty() || uses_emit {
+    if binds(|s| {
+        matches!(
+            s,
+            BindingSource::Agent { .. } | BindingSource::EventsFanout { .. }
+        )
+    }) {
         // P7.2: deferred, not narrowed — this settling attempt broke real
         // `tsc --strict` fixtures. A real, differently-shaped imported
         // `DurableObjectNamespace` (from `./runtime`, `fetch(input: string,
@@ -2304,6 +2306,69 @@ service pay {
         );
         assert!(ts.contains("  DEMO_PAYMENT: __ServiceBinding;"), "{ts}");
         assert!(ts.contains("const deps = { env };"), "{ts}");
+    }
+
+    /// #1944: `Env` declares exactly the bindings `wrangler.toml` does, in
+    /// the same order: services, the KV namespace, then the Durable Objects
+    /// by class name, the events fan-out (`__EventsFanout`) after an agent.
+    #[test]
+    fn env_declares_the_wrangler_bindings_in_order() {
+        let hub = "context ops.hub
+
+consumes bynk { Events }
+consumes bynk.cloudflare { Kv }
+consumes demo.payment
+
+event Pinged = { id: String }
+
+agent Ledger {
+  key id: String
+
+  store seen: Cell[Int]
+
+  on call total() -> Effect[Int] {
+    Effect.pure(seen)
+  }
+}
+
+service ping {
+  on call(id: String) -> Effect[()] given Events, Kv {
+    let _ <- Kv.put(id, id)
+    Events.emit[Pinged](Pinged { id: id })
+  }
+}
+";
+        let out = emit_workers(&[("demo/payment.bynk", PAYMENT), ("ops/hub.bynk", hub)]);
+        let ts = out.text("workers/ops-hub/compose.ts");
+        let env = ts
+            .split_once("export interface Env {\n")
+            .and_then(|(_, rest)| rest.split_once("}"))
+            .map(|(members, _)| members)
+            .unwrap_or_else(|| panic!("no Env interface:\n{ts}"));
+        assert_eq!(
+            env,
+            "  DEMO_PAYMENT: __ServiceBinding;
+  KV: __KVNamespace;
+  LEDGER: __DurableObjectNamespace;
+  ___EVENTS_FANOUT: __DurableObjectNamespace;
+",
+            "{ts}"
+        );
+        let toml = out.text("workers/ops-hub/wrangler.toml");
+        let declared: Vec<&str> = toml
+            .lines()
+            .filter_map(|l| {
+                l.strip_prefix("binding = \"")
+                    .or_else(|| l.strip_prefix("name = \""))
+            })
+            .filter_map(|rest| rest.strip_suffix('"'))
+            .filter(|name| *name != "ops-hub")
+            .collect();
+        let members: Vec<&str> = env
+            .lines()
+            .filter_map(|l| l.trim().split_once(':').map(|(name, _)| name))
+            .collect();
+        assert_eq!(members, declared, "{toml}");
     }
 
     #[test]

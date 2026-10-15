@@ -2732,7 +2732,6 @@ fn build_output(
                     &unit_consumes,
                     &unit_consumes_aliases,
                     &unit_flattened,
-                    needs_kv,
                     locale_bundle_info,
                     import_ext,
                     ctx_uses_emit,

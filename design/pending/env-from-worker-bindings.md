@@ -23,13 +23,25 @@ member per binding, in the list's order, typed by the binding's source: a
 Service Binding is `__ServiceBinding`, the KV namespace is `__KVNamespace`,
 and an agent or the events fan-out is `__DurableObjectNamespace`. The
 duplicate check builds its list with the same helper. A new kind of binding is
-added to `worker_bindings` alone. This replaces ADR 0462's note that it must
-also be added to `Env`.
+added to `worker_bindings` alone, for `wrangler.toml`, `Env` and the check.
+This replaces ADR 0462's note that it must also be added to `Env`. The types
+`Env` names (`__KVNamespace`, the local `__DurableObjectNamespace` alias) are
+declared when the list holds such a binding, so they come from the list too.
+
+The handler-facing `deps.env` type (`workers_env_ty` in `emitter::emit`) is
+separate and still built from consumed contexts and local agents. A new kind of
+binding that handlers must reach needs adding there as well.
 
 **Consequences.** A publishing context's `Env` gains a member for each
 subscriber's Service Binding. The other members keep their names. The events
 fan-out's member now sorts among the agents by class name, as in
 `wrangler.toml`, rather than always last; it still comes last unless an agent's
-name begins with a lowercase letter, and no fixture moves. Whether `env` is passed into a handler's deps is
-still decided by consumed contexts and agents, not by this list, so the change
-does not alter what handlers see.
+name begins with a lowercase letter. A unit test pins the order and that `Env`
+lists the `wrangler.toml` bindings. Whether `env` is passed into a handler's
+deps is still decided by consumed contexts and agents, not by this list, so the
+change does not alter what handlers see.
+
+`bynk.context.duplicate_binding` is now needed for valid TypeScript as well
+as a valid `wrangler.toml`: `worker_bindings` can return two bindings with one
+name, which would be two `Env` members with one name. The check runs before
+emission and stops the build, so it cannot be relaxed without handling that.
