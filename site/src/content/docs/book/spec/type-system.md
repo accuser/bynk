@@ -269,8 +269,9 @@ A returned value is projected **by name**: where the receiving context declares
 a type of the same name, the value takes that type, so the two MUST be
 structurally compatible (`bynk.boundary.structural_mismatch` at the call
 otherwise). Where it declares none, the value keeps the providing context's
-type, which the receiver can hold and pass back across the boundary though it
-cannot name it (#1941). A value's type records its name, not the context it
+type, which the receiver can hold though it cannot name it, and pass on across
+the boundary like any other value: back to the context it came from, or to
+another consumed context whose parameter is structurally compatible (#1941). A value's type records its name, not the context it
 came from, so when two consumed contexts declare differently shaped types of
 one name, neither of which the receiver declares, a value of that name cannot
 cross back: it is rejected, with a note saying why.

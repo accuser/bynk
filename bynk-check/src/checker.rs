@@ -4397,15 +4397,18 @@ fn rebrand_return_type(
 /// the provider's `Box` lacks. Names the caller does not bind keep the
 /// provider's declaration and need no check.
 ///
-/// `caller_types` is the caller's [`projected_types`]: the caller's own
-/// declaration may name a type only a consumed context declares (an
-/// export's unexported field type), which resolves as the value's own does.
+/// `caller_types` is the table the rebrand uses, so this check and the
+/// rebrand agree on which names are swapped. `receiving` is the caller's
+/// [`projected_types`], which resolves the names the caller's declaration
+/// reaches but does not bind (an export's unexported field type).
 fn rebrand_conflict(
     t: TyId,
     provider_types: &HashMap<String, Arc<TypeDecl>>,
     caller_types: &HashMap<String, Arc<TypeDecl>>,
+    receiving: &HashMap<String, Arc<TypeDecl>>,
     tys: &Types,
 ) -> Option<String> {
+    let walk = |inner: TyId| rebrand_conflict(inner, provider_types, caller_types, receiving, tys);
     let node = tys.get(t);
     match &*node {
         Ty::Named { name, .. } => {
@@ -4418,18 +4421,13 @@ fn rebrand_conflict(
                 return None;
             }
             let rebranded = rebrand_return_type(t, caller_types, tys);
-            (!structurally_compatible(t, rebranded, provider_types, caller_types, tys))
+            (!structurally_compatible(t, rebranded, provider_types, receiving, tys))
                 .then(|| name.clone())
         }
-        Ty::Result(a, b) | Ty::Map(a, b) => rebrand_conflict(*a, provider_types, caller_types, tys)
-            .or_else(|| rebrand_conflict(*b, provider_types, caller_types, tys)),
-        Ty::Option(a)
-        | Ty::Effect(a)
-        | Ty::HttpResult(a)
-        | Ty::List(a)
-        | Ty::Query(a)
-        | Ty::Stream(a)
-        | Ty::Connection(a) => rebrand_conflict(*a, provider_types, caller_types, tys),
+        Ty::Result(a, b) | Ty::Map(a, b) => walk(*a).or_else(|| walk(*b)),
+        Ty::Option(a) | Ty::Effect(a) | Ty::HttpResult(a) | Ty::List(a) => walk(*a),
+        // `Query`, `Stream` and `Connection` are non-boundary, so a
+        // cross-context return never carries one.
         _ => None,
     }
 }
@@ -4469,7 +4467,11 @@ pub(crate) fn projected_types(
 ) -> (HashMap<String, Arc<TypeDecl>>, BTreeSet<String>) {
     type Table = HashMap<String, Arc<TypeDecl>>;
     let mut candidates: HashMap<&String, Vec<(&Arc<TypeDecl>, &Table)>> = HashMap::new();
-    for table in consumed_types.values() {
+    // Consumed contexts in name order, so when several agree on a name the
+    // same declaration is projected on every run.
+    let mut tables: Vec<(&String, &Table)> = consumed_types.iter().collect();
+    tables.sort_by_key(|(context, _)| *context);
+    for (_, table) in tables {
         for (name, decl) in table {
             if !caller_types.contains_key(name) {
                 candidates.entry(name).or_default().push((decl, table));

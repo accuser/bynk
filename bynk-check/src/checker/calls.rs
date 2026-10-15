@@ -4057,7 +4057,13 @@ fn check_cross_context_capability_call(
     let raw_ret = resolve_type_ref_in(&op.return_type, &consumed_types, &vars, tys)
         .unwrap_or(tys.intern(Ty::Unit));
     let raw_ret = substitute(raw_ret, &subst, tys);
-    if let Some(name) = rebrand_conflict(raw_ret, &consumed_types, &caller_types, tys) {
+    if let Some(name) = rebrand_conflict(
+        raw_ret,
+        &consumed_types,
+        &ctx.input.types,
+        &caller_types,
+        tys,
+    ) {
         ctx.errors.push(rebranded_return_mismatch(
             &format!("{consumed}.{cap}.{}", method.name),
             &name,
@@ -4259,7 +4265,13 @@ fn check_cross_context_call(
     // name appears in the caller's type table (v0.6 §4.5).
     let raw_ret = resolve_type_ref(&service.return_type, &consumed_types, tys)
         .unwrap_or(tys.intern(Ty::Unit));
-    if let Some(name) = rebrand_conflict(raw_ret, &consumed_types, &caller_types, tys) {
+    if let Some(name) = rebrand_conflict(
+        raw_ret,
+        &consumed_types,
+        &ctx.input.types,
+        &caller_types,
+        tys,
+    ) {
         ctx.errors.push(rebranded_return_mismatch(
             &format!("{consumed}.{}", method.name),
             &name,
@@ -4548,5 +4560,116 @@ mod tests {
             "{:?}",
             err.error.notes
         );
+    }
+
+    #[test]
+    fn a_return_the_caller_does_not_rebrand_is_not_checked_against_a_projection() {
+        // Review of #1949: `shop` and `depot` declare the same-shaped `Box`, so
+        // the projection holds one of them (`depot`'s, in name order). `till`
+        // declares no `Box`, so `quote`'s `Box` is not rebranded and needs
+        // no check, however `depot`'s `Box.a` would resolve against `till`'s
+        // own, unrelated `Amount`.
+        let pair = |name: &str, svc: &str| {
+            format!(
+                "context {name}\n\ntype Amount = {{ cents: Int }}\n\ntype Box = {{ a: Amount }}\n\n{svc}"
+            )
+        };
+        let shop = pair(
+            "shop",
+            "service quote {\n  on call() -> Effect[Box] {\n    Effect.pure(Box { a: Amount { cents: 1 } })\n  }\n}\n",
+        );
+        let depot = pair(
+            "depot",
+            "service store {\n  on call(b: Box) -> Effect[Int] {\n    Effect.pure(b.a.cents)\n  }\n}\n",
+        );
+        let a = analyse(&[
+            ("shop.bynk", &shop),
+            ("depot.bynk", &depot),
+            (
+                "till.bynk",
+                "context till\n\nconsumes shop\n\nconsumes depot\n\n\
+                 type Amount = { dollars: Int }\n\n\
+                 fn mine() -> Amount {\n  Amount { dollars: 1 }\n}\n\n\
+                 service total {\n  on call() -> Effect[Int] {\n    \
+                 let b <- shop.quote()\n    Effect.pure(1)\n  }\n}\n",
+            ),
+        ]);
+        a.assert_clean();
+    }
+
+    /// Review of #1949: a provider whose `Box` is returned inside each
+    /// container a cross-context return can carry, for a caller whose own
+    /// `Box` has another shape.
+    fn caller_box_differs_inside(ret: &str, value: &str) {
+        let shop = format!(
+            "context shop\n\ntype Box = {{ a: Int }}\n\n\
+             service quote {{\n  on call() -> Effect[{ret}] {{\n    Effect.pure({value})\n  }}\n}}\n"
+        );
+        let a = analyse(&[
+            ("shop.bynk", &shop),
+            (
+                "till.bynk",
+                "context till\n\nconsumes shop\n\ntype Box = { label: String }\n\n\
+                 service total {\n  on call() -> Effect[Int] {\n    \
+                 let b <- shop.quote()\n    Effect.pure(1)\n  }\n}\n",
+            ),
+        ]);
+        a.assert_reports("bynk.boundary.structural_mismatch");
+    }
+
+    #[test]
+    fn a_differing_caller_type_is_found_in_a_result() {
+        caller_box_differs_inside("Result[Box, String]", "Ok(Box { a: 1 })");
+    }
+
+    #[test]
+    fn a_differing_caller_type_is_found_in_a_map_value() {
+        caller_box_differs_inside("Map[String, Box]", "Map.empty()");
+    }
+
+    #[test]
+    fn a_differing_caller_type_is_found_in_an_option() {
+        caller_box_differs_inside("Option[Box]", "None");
+    }
+
+    #[test]
+    fn a_differing_caller_type_is_found_in_a_list() {
+        caller_box_differs_inside("List[Box]", "[]");
+    }
+
+    #[test]
+    fn a_differing_caller_type_is_found_in_an_http_result() {
+        caller_box_differs_inside("HttpResult[Box]", "Ok(Box { a: 1 })");
+    }
+
+    #[test]
+    fn agreeing_declarations_project_in_context_name_order() {
+        // Review of #1949: `depot`'s `Box` names `Coins` and `shop`'s names
+        // `Amount`, of the same shape, so the two agree and either may be
+        // projected. `till`'s own `Amount` differs: `shop`'s `Box` would
+        // read its field as `till`'s, and `depot`'s would not. The projection
+        // takes contexts in name order, so `depot`'s is the one, on every run.
+        let a = analyse(&[
+            (
+                "shop.bynk",
+                "context shop\n\ntype Amount = { cents: Int }\n\ntype Box = { a: Amount }\n\n\
+                 service quote {\n  on call() -> Effect[Box] {\n    \
+                 Effect.pure(Box { a: Amount { cents: 1 } })\n  }\n}\n",
+            ),
+            (
+                "depot.bynk",
+                "context depot\n\ntype Coins = { cents: Int }\n\ntype Box = { a: Coins }\n\n\
+                 service store {\n  on call(b: Box) -> Effect[Int] {\n    Effect.pure(b.a.cents)\n  }\n}\n",
+            ),
+            (
+                "till.bynk",
+                "context till\n\nconsumes shop\n\nconsumes depot\n\n\
+                 type Amount = { dollars: Int }\n\n\
+                 fn mine() -> Amount {\n  Amount { dollars: 1 }\n}\n\n\
+                 service total {\n  on call() -> Effect[Int] {\n    \
+                 let b <- shop.quote()\n    depot.store(b)\n  }\n}\n",
+            ),
+        ]);
+        a.assert_clean();
     }
 }
