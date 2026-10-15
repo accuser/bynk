@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A handler's Workers `deps.env` type is built from the Worker's binding list and names only consumed contexts with services, so a bare `consumes bynk` beside a cross-context call no longer fails `tsc --strict`
----
+# 0466 — A handler's deps.env is a projection of the Worker's binding list
 
-## ADR: handler-env-projects-the-binding-list
-title: A handler's deps.env is a projection of the Worker's binding list
-summary: deps.env takes its bindings from the constructors worker_bindings uses, filtered by kind; amends ADR 0464's separate-deps.env note
+- **Status:** Accepted (v0.330.14)
 
 **Context.** ADR 0464 made one list per Worker (`worker_bindings`) the source
 of its `wrangler.toml`, its `Env` interface and the duplicate-binding check. It
