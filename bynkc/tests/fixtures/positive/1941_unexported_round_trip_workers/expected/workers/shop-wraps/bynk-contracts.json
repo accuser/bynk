@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "provides": {
+    "open": "00cd8069c39336f2",
+    "wrap": "962281e38d3779b5"
+  },
+  "expects": {}
+}
