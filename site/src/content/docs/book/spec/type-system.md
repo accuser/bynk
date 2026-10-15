@@ -265,6 +265,16 @@ and a type the providing context declares but does not export, cross the same
 way (#1932). `exports` decides what a consumer may *name* and how it may build
 or inspect a value, not whether the value may cross.
 
+A returned value is projected **by name**: where the receiving context declares
+a type of the same name, the value takes that type, so the two MUST be
+structurally compatible (`bynk.boundary.structural_mismatch` at the call
+otherwise). Where it declares none, the value keeps the providing context's
+type, which the receiver can hold and pass back across the boundary though it
+cannot name it (#1941). A value's type records its name, not the context it
+came from, so when two consumed contexts declare differently shaped types of
+one name, neither of which the receiver declares, a value of that name cannot
+cross back: it is rejected, with a note saying why.
+
 Two **refinements** match when their predicate *sets* are equal (v0.177). A
 refinement is a conjunction of side-effect-free predicates, so their order
 carries no meaning: `String where NonEmpty && MaxLength(10)` and

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "provides": {
+    "total": "33d600cce42e97f8"
+  },
+  "expects": {
+    "shop.depot": {
+      "store": "5918824e6664b681"
+    },
+    "shop.quotes": {
+      "quote": "f9cdf9e7922d5135",
+      "take": "b4c9b060df9edbb9"
+    },
+    "shop.wraps": {
+      "open": "00cd8069c39336f2",
+      "wrap": "962281e38d3779b5"
+    }
+  }
+}

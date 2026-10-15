@@ -12,7 +12,7 @@
 //! - The `is` operator with binding flow into truthy contexts.
 //! - The built-in generic `Option[T]`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -4390,6 +4390,50 @@ fn rebrand_return_type(
     }
 }
 
+/// #1941: the first type name [`rebrand_return_type`] would swap for the
+/// caller's declaration of a different shape. A returned value takes the
+/// caller's type of the same name (§6.5), so that swap would type the
+/// provider's value as an unrelated type: the caller's `Box` reading fields
+/// the provider's `Box` lacks. Names the caller does not bind keep the
+/// provider's declaration and need no check.
+///
+/// `caller_types` is the caller's [`projected_types`]: the caller's own
+/// declaration may name a type only a consumed context declares (an
+/// export's unexported field type), which resolves as the value's own does.
+fn rebrand_conflict(
+    t: TyId,
+    provider_types: &HashMap<String, Arc<TypeDecl>>,
+    caller_types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
+) -> Option<String> {
+    let node = tys.get(t);
+    match &*node {
+        Ty::Named { name, .. } => {
+            let (Some(caller_decl), Some(provider_decl)) =
+                (caller_types.get(name), provider_types.get(name))
+            else {
+                return None;
+            };
+            if Arc::ptr_eq(caller_decl, provider_decl) {
+                return None;
+            }
+            let rebranded = rebrand_return_type(t, caller_types, tys);
+            (!structurally_compatible(t, rebranded, provider_types, caller_types, tys))
+                .then(|| name.clone())
+        }
+        Ty::Result(a, b) | Ty::Map(a, b) => rebrand_conflict(*a, provider_types, caller_types, tys)
+            .or_else(|| rebrand_conflict(*b, provider_types, caller_types, tys)),
+        Ty::Option(a)
+        | Ty::Effect(a)
+        | Ty::HttpResult(a)
+        | Ty::List(a)
+        | Ty::Query(a)
+        | Ty::Stream(a)
+        | Ty::Connection(a) => rebrand_conflict(*a, provider_types, caller_types, tys),
+        _ => None,
+    }
+}
+
 /// Structural compatibility check for values crossing a context boundary
 /// (v0.6 §4.3). The two types may be expressed in different namespaces
 /// (caller-side / callee-side type tables), so we walk them in parallel
@@ -4402,6 +4446,96 @@ fn structurally_compatible(
     tys: &Types,
 ) -> bool {
     structurally_compatible_inner(arg, param, arg_types, param_types, tys, &mut HashSet::new())
+}
+
+/// #1941: the caller's type table, extended with the types a value from a
+/// consumed context can carry here without the caller naming them. A
+/// consumed service may return a type its context does not export (§6.5:
+/// a value crosses whether or not its type is exported), and the caller's
+/// table lacks it, so comparing that value on its way back used to find
+/// nothing and reject it against its own declaration.
+///
+/// A `Ty::Named` keeps only the bare name, not the context it came from. A
+/// name the caller does not bind is therefore resolved only when every
+/// consumed context that declares it declares a structurally compatible
+/// type, so whichever one the value came from compares the same. Otherwise
+/// the name is left out, and a value of it is rejected rather than compared
+/// against the wrong declaration. The names left out are returned too, for
+/// the rejection to explain.
+pub(crate) fn projected_types(
+    caller_types: &HashMap<String, Arc<TypeDecl>>,
+    consumed_types: &HashMap<String, HashMap<String, Arc<TypeDecl>>>,
+    tys: &Types,
+) -> (HashMap<String, Arc<TypeDecl>>, BTreeSet<String>) {
+    type Table = HashMap<String, Arc<TypeDecl>>;
+    let mut candidates: HashMap<&String, Vec<(&Arc<TypeDecl>, &Table)>> = HashMap::new();
+    for table in consumed_types.values() {
+        for (name, decl) in table {
+            if !caller_types.contains_key(name) {
+                candidates.entry(name).or_default().push((decl, table));
+            }
+        }
+    }
+    let mut projected = caller_types.clone();
+    let mut ambiguous = BTreeSet::new();
+    for (name, decls) in candidates {
+        let (first, first_table) = decls[0];
+        let agree = decls[1..].iter().all(|&(decl, table)| {
+            Arc::ptr_eq(first, decl)
+                || (first.type_params.is_empty()
+                    && decl.type_params.is_empty()
+                    && structural_compare_named(
+                        (name, &[]),
+                        (name, &[]),
+                        first_table,
+                        table,
+                        tys,
+                        &mut HashSet::new(),
+                    )
+                    && structural_compare_named(
+                        (name, &[]),
+                        (name, &[]),
+                        table,
+                        first_table,
+                        tys,
+                        &mut HashSet::new(),
+                    ))
+        });
+        if agree {
+            projected.insert(name.clone(), first.clone());
+        } else {
+            ambiguous.insert(name.clone());
+        }
+    }
+    (projected, ambiguous)
+}
+
+/// #1941: a note for a cross-context argument whose type names one of
+/// [`projected_types`]' ambiguous names, which no declaration resolves.
+pub(crate) fn ambiguous_projection_note(
+    t: TyId,
+    ambiguous: &BTreeSet<String>,
+    tys: &Types,
+) -> Option<String> {
+    let node = tys.get(t);
+    match &*node {
+        Ty::Named { name, args, .. } => {
+            if ambiguous.contains(name) {
+                return Some(format!(
+                    "more than one consumed context declares a type `{name}`, with different \
+                     shapes, so a value of it cannot be traced to one of them; rename one"
+                ));
+            }
+            args.iter()
+                .find_map(|a| ambiguous_projection_note(*a, ambiguous, tys))
+        }
+        Ty::Result(a, b) | Ty::Map(a, b) => ambiguous_projection_note(*a, ambiguous, tys)
+            .or_else(|| ambiguous_projection_note(*b, ambiguous, tys)),
+        Ty::Option(a) | Ty::Effect(a) | Ty::HttpResult(a) | Ty::List(a) => {
+            ambiguous_projection_note(*a, ambiguous, tys)
+        }
+        _ => None,
+    }
 }
 
 fn structurally_compatible_inner(

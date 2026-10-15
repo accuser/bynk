@@ -1,0 +1,2 @@
+bynk.boundary.structural_mismatch
+has type `Box` in `shop.till`, but parameter `b` expects `Box` in `shop.one`

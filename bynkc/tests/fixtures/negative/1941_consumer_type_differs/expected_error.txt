@@ -1,0 +1,2 @@
+bynk.boundary.structural_mismatch
+cross-context call `shop.quotes.quote` returns `shop.quotes`'s type `Box`, but `Box` in `shop.till` is a different type
