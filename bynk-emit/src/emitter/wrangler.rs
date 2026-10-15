@@ -354,7 +354,8 @@ pub(crate) fn binding_ts_type(source: &BindingSource) -> &'static str {
 // #1958: the constructors below are the only callers of the two name
 // functions, so every place that declares, types or reads a binding (the
 // emitted `env.X`, the fan-out's routing table, the integration harness)
-// gets its name from the one constructor for its kind.
+// gets its name from the one constructor for its kind. A constructor is
+// `pub(crate)` exactly when something outside this file reads its name.
 
 /// The Service Binding to context `target`'s Worker.
 pub(crate) fn service_binding(target: &str) -> WorkerBinding {
@@ -366,8 +367,10 @@ pub(crate) fn service_binding(target: &str) -> WorkerBinding {
     }
 }
 
-/// The KV namespace binding the cloudflare adapter's `Kv` reads.
-pub(crate) fn kv_binding() -> WorkerBinding {
+/// The KV namespace binding the cloudflare adapter's `Kv` reads. Private:
+/// nothing outside this file reads it by name. Its one read is the literal in
+/// `bynk-std`'s `cloudflare.binding.ts`, pinned to `KV_BINDING_NAME` by a test.
+fn kv_binding() -> WorkerBinding {
     WorkerBinding {
         name: bynk_check::firstparty::KV_BINDING_NAME.to_string(),
         source: BindingSource::Kv,
