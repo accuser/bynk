@@ -32,10 +32,10 @@ function __makeHarness() {
   const env___ns_shop_front: any = {};
   const env___ns_shop_one: any = {};
   env___ns_shop_front.SHOP_ONE = { fetch: (req: globalThis.Request) => worker___ns_shop_one.fetch(req, env___ns_shop_one) } as __ServiceBinding;
-  env___ns_shop_one.GRID = __makeIntegrationDoNamespace((state) => new __ns_shop_one.Grid(state));
-  env___ns_shop_one.LABEL = __makeIntegrationDoNamespace((state) => new __ns_shop_one.Label(state));
-  env___ns_shop_one.ORDER = __makeIntegrationDoNamespace((state) => new __ns_shop_one.Order(state));
-  env___ns_shop_one.TALLY = __makeIntegrationDoNamespace((state) => new __ns_shop_one.Tally(state));
+  env___ns_shop_one.GRID = __makeIntegrationDoNamespace(__ns_shop_one.Grid, env___ns_shop_one);
+  env___ns_shop_one.LABEL = __makeIntegrationDoNamespace(__ns_shop_one.Label, env___ns_shop_one);
+  env___ns_shop_one.ORDER = __makeIntegrationDoNamespace(__ns_shop_one.Order, env___ns_shop_one);
+  env___ns_shop_one.TALLY = __makeIntegrationDoNamespace(__ns_shop_one.Tally, env___ns_shop_one);
   const rootEnv: any = {};
   rootEnv.SHOP_FRONT = { fetch: (req: globalThis.Request) => worker___ns_shop_front.fetch(req, env___ns_shop_front) } as __ServiceBinding;
   rootEnv.SHOP_ONE = { fetch: (req: globalThis.Request) => worker___ns_shop_one.fetch(req, env___ns_shop_one) } as __ServiceBinding;

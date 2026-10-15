@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "provides": {},
+  "expects": {
+    "shop.ledger": {
+      "note": "30a07120d171ca72"
+    }
+  }
+}

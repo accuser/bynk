@@ -36,8 +36,8 @@ function __makeHarness() {
   const env___ns_shop_payment: any = {};
   env___ns_shop_orders.SHOP_FEES = { fetch: (req: globalThis.Request) => worker___ns_shop_fees.fetch(req, env___ns_shop_fees) } as __ServiceBinding;
   env___ns_shop_orders.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker___ns_shop_payment.fetch(req, env___ns_shop_payment) } as __ServiceBinding;
-  env___ns_shop_orders.BOOK = __makeIntegrationDoNamespace((state) => new __ns_shop_orders.Book(state));
-  env___ns_shop_orders.TALLY = __makeIntegrationDoNamespace((state) => new __ns_shop_orders.Tally(state));
+  env___ns_shop_orders.BOOK = __makeIntegrationDoNamespace(__ns_shop_orders.Book, env___ns_shop_orders);
+  env___ns_shop_orders.TALLY = __makeIntegrationDoNamespace(__ns_shop_orders.Tally, env___ns_shop_orders);
   const rootEnv: any = {};
   rootEnv.SHOP_ORDERS = { fetch: (req: globalThis.Request) => worker___ns_shop_orders.fetch(req, env___ns_shop_orders) } as __ServiceBinding;
   rootEnv.SHOP_FEES = { fetch: (req: globalThis.Request) => worker___ns_shop_fees.fetch(req, env___ns_shop_fees) } as __ServiceBinding;

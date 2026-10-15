@@ -2393,6 +2393,23 @@ fn run_checks(
     // cross-context call from a synthetic harness root that consumes every
     // participant, and emits a TypeScript module that stands the participants
     // up as in-process Workers and exercises the flow across the real wire.
+    // #1959: each context's bindings, once: the integration harness binds them
+    // on each participant's `env`, and the duplicate check below reads them.
+    // Gated like that check: the KV input walks the provider graph.
+    let event_subscribers =
+        bynk_check::symbols::discover_event_subscribers(&unit_tables, &unit_consumes);
+    let context_bindings = errors.is_empty().then(|| {
+        worker_bindings::all_context_bindings(
+            &kinds,
+            &unit_tables,
+            &unit_consumes,
+            &unit_consumes_aliases,
+            &unit_flattened,
+            &unit_callees,
+            &adapter_bindings,
+            &event_subscribers,
+        )
+    });
     let mut integration_errors: Vec<CompileError> = Vec::new();
     let (integration_outputs, integration_runnables) = process_integration_tests(
         &integration_groups,
@@ -2405,6 +2422,8 @@ fn run_checks(
         &groups,
         &mut emitted_barrels,
         &test_asset_files,
+        context_bindings.as_ref(),
+        &event_subscribers,
         &mut integration_errors,
         &mut refs,
         tys,
@@ -2435,20 +2454,10 @@ fn run_checks(
     }
     // On Workers, each Worker's binding names are unique. Gated the same way:
     // the KV input walks the same provider graph.
-    if errors.is_empty() {
-        worker_bindings::phase_duplicate_bindings(
-            target,
-            &parsed,
-            &groups,
-            &kinds,
-            &unit_tables,
-            &unit_consumes,
-            &unit_consumes_aliases,
-            &unit_flattened,
-            &unit_callees,
-            &adapter_bindings,
-            &mut errors,
-        );
+    if errors.is_empty()
+        && let Some(bindings) = &context_bindings
+    {
+        worker_bindings::phase_duplicate_bindings(target, &parsed, &groups, bindings, &mut errors);
     }
 
     // v0.176 (#642): the `Bytes`-at-a-workers-boundary guard (ADR 0142 D8) is
