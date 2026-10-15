@@ -3520,6 +3520,10 @@ mod untyped_outcome_tests {
 mod participant_tests {
     use super::*;
 
+    /// `(publisher, event)` → its subscribers, as
+    /// `symbols::discover_event_subscribers` builds it.
+    type Subscribers = BTreeMap<(String, String), Vec<(String, String)>>;
+
     /// `ops.hub` consumes `ops.store` and the `bynk` adapter, and publishes
     /// `Ping`. `ops.audit` subscribes to it and consumes `ops.archive`, a
     /// context outside `ops.hub`'s closure. `ops.store` publishes `Saved`, to
@@ -3528,7 +3532,7 @@ mod participant_tests {
     fn project() -> (
         HashMap<String, Vec<String>>,
         BTreeMap<String, UnitKind>,
-        BTreeMap<(String, String), Vec<(String, String)>>,
+        Subscribers,
     ) {
         let edges = [
             ("ops.hub", &["ops.store", "bynk"][..]),
