@@ -231,6 +231,12 @@ pub struct CrossContextInfo {
     /// Used by the checker for structural shape comparisons across the
     /// boundary (v0.6 §4.3).
     pub consumed_types: HashMap<String, HashMap<String, Arc<TypeDecl>>>,
+    /// #1932: for each consumed context, the renames (`Box` → `shop__Box`)
+    /// under which the consumer generates codecs for the consumed context's
+    /// types it neither imports nor names (#1846). Set by the emitter, which
+    /// computes them once (`emitter::unexported_type_renames`) so a call site
+    /// names the same codecs the consumer generates. Empty in the checker.
+    pub consumed_type_renames: HashMap<String, HashMap<String, String>>,
     /// v0.15: for each consumed context, the capabilities it `exports
     /// capability { … }` — keyed by capability name. Used to resolve and
     /// type-check `given B.Cap` references and `B.Cap.op(…)` calls, and by

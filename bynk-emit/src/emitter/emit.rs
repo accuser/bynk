@@ -3887,12 +3887,24 @@ pub(crate) fn lower_workers_cross_context_call(
         args.len(),
     );
 
+    // #1932: a type of the callee's this consumer neither imports nor names
+    // has its codecs generated here under a renamed name (#1846); the call
+    // names them the same way. Not in a test scaffold, which reaches the
+    // callee's own codecs through its namespace.
+    let renames = info
+        .consumed_type_renames
+        .get(consumed)
+        .filter(|_| ns.is_empty());
+    let renamed = |t: &TypeRef| match renames {
+        Some(r) => crate::emitter::serialisation::rename_type_ref(t, r),
+        None => t.clone(),
+    };
     let mut args_serialised: Vec<bynk_ts::TsExpr> = Vec::new();
     for (i, a) in args.iter().enumerate() {
         let lowered = pre.lower(a, cx);
         let (_, param_ty) = &svc.params[i];
         args_serialised.push(serialise_expr_via(
-            param_ty,
+            &renamed(param_ty),
             &lowered,
             &ns,
             cx.runtime_use(),
@@ -3937,7 +3949,7 @@ pub(crate) fn lower_workers_cross_context_call(
         bynk_ts::TsExpr::object_entries(entries)
     };
 
-    let deser_ref = deserialise_ref_via(&svc.return_type, &ns, cx.runtime_use());
+    let deser_ref = deserialise_ref_via(&renamed(&svc.return_type), &ns, cx.runtime_use());
 
     // v0.177 (#643): stamp this context's compiled view of the callee's
     // contract, so the callee can fail closed when the deployed pair disagree.
