@@ -1,0 +1,23 @@
+context shop.wraps
+
+-- #1941: `Parcel` is exported opaque, but its field's type `Coins` is not.
+-- A `Parcel` passed back compares its field against `Coins`, which the
+-- consumer's table lacks.
+
+exports opaque { Parcel }
+
+type Coins = { cents: Int }
+
+type Parcel = { c: Coins }
+
+service wrap {
+  on call() -> Effect[Parcel] {
+    Effect.pure(Parcel { c: Coins { cents: 2 } })
+  }
+}
+
+service open {
+  on call(p: Parcel) -> Effect[Int] {
+    Effect.pure(p.c.cents)
+  }
+}

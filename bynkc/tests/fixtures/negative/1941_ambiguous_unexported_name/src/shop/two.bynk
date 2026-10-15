@@ -1,0 +1,9 @@
+context shop.two
+
+type Box = { y: Int }
+
+service quote {
+  on call() -> Effect[Box] {
+    Effect.pure(Box { y: 1 })
+  }
+}

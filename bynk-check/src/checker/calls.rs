@@ -3860,7 +3860,7 @@ fn check_cross_context_capability_call(
     // operation, qualified form (`B.Cap.op[T](…)` / `Alias.Cap.op[T](…)`).
     type_args: &[TypeRef],
     args: &[Expr],
-    _span: Span,
+    span: Span,
     // P6.0 (#1139): the outer `MethodCall` expression's own identity.
     expr_id: ExprId,
     ctx: &mut Ctx,
@@ -4019,6 +4019,9 @@ fn check_cross_context_capability_call(
             subst.insert(tp.clone(), ty);
         }
     }
+    // #1941: a value this caller holds may be of a consumed context's
+    // unexported type, which only the projection resolves.
+    let (caller_types, ambiguous) = projected_types(&ctx.input.types, &info.consumed_types, tys);
     let mut all_ok = true;
     for (i, ((pname, ptype_ref), arg)) in op.params.iter().zip(args.iter()).enumerate() {
         record_param_hint(ctx.hints, pname, arg);
@@ -4029,8 +4032,8 @@ fn check_cross_context_capability_call(
             all_ok = false;
             continue;
         };
-        if !structurally_compatible(arg_ty, param_ty, &ctx.input.types, &consumed_types, tys) {
-            ctx.errors.push(CompileError::new(
+        if !structurally_compatible(arg_ty, param_ty, &caller_types, &consumed_types, tys) {
+            let mut err = CompileError::new(
                 "bynk.boundary.structural_mismatch",
                 arg.span,
                 format!(
@@ -4040,7 +4043,11 @@ fn check_cross_context_capability_call(
                     arg_ty.display(tys),
                     param_ty.display(tys),
                 ),
-            ));
+            );
+            if let Some(note) = ambiguous_projection_note(arg_ty, &ambiguous, tys) {
+                err = err.with_note(note);
+            }
+            ctx.errors.push(err);
             all_ok = false;
         }
     }
@@ -4050,7 +4057,53 @@ fn check_cross_context_capability_call(
     let raw_ret = resolve_type_ref_in(&op.return_type, &consumed_types, &vars, tys)
         .unwrap_or(tys.intern(Ty::Unit));
     let raw_ret = substitute(raw_ret, &subst, tys);
+    if let Some(name) = rebrand_conflict(
+        raw_ret,
+        &consumed_types,
+        &ctx.input.types,
+        &caller_types,
+        tys,
+    ) {
+        ctx.errors.push(rebranded_return_mismatch(
+            &format!("{consumed}.{cap}.{}", method.name),
+            &name,
+            consumed,
+            span,
+            ctx,
+        ));
+        return None;
+    }
     Some(rebrand_return_type(raw_ret, &ctx.input.types, tys))
+}
+
+/// #1941: a returned value takes the caller's type of the same name (§6.5).
+/// When that type has a different shape, the value is not one of it: the
+/// caller's own `Box` would otherwise type a field read of the provider's.
+fn rebranded_return_mismatch(
+    callee: &str,
+    name: &str,
+    consumed: &str,
+    span: Span,
+    ctx: &Ctx,
+) -> CompileError {
+    let caller = ctx
+        .input
+        .cross_context
+        .self_context
+        .as_deref()
+        .unwrap_or("?");
+    CompileError::new(
+        "bynk.boundary.structural_mismatch",
+        span,
+        format!(
+            "cross-context call `{callee}` returns `{consumed}`'s type `{name}`, but `{name}` in \
+             `{caller}` is a different type"
+        ),
+    )
+    .with_note(
+        "a returned value takes the receiving context's type of the same name, so the two \
+         must be structurally compatible; rename one of them",
+    )
 }
 
 fn check_cross_context_call(
@@ -4058,7 +4111,7 @@ fn check_cross_context_call(
     consumed: &str,
     method: &Ident,
     args: &[Expr],
-    _span: Span,
+    span: Span,
     // P6.0 (#1139): the outer `MethodCall` expression's own identity.
     expr_id: ExprId,
     ctx: &mut Ctx,
@@ -4157,6 +4210,10 @@ fn check_cross_context_call(
         .cloned()
         .unwrap_or_default();
 
+    // #1941: as for a capability operation, the caller's table plus the
+    // consumed contexts' types it holds values of without naming.
+    let (caller_types, ambiguous) = projected_types(&ctx.input.types, &info.consumed_types, tys);
+
     // Walk each argument, checking structural compatibility (Phase 4).
     let mut all_ok = true;
     for (i, ((pname, ptype_ref), arg)) in service.params.iter().zip(args.iter()).enumerate() {
@@ -4169,9 +4226,8 @@ fn check_cross_context_call(
             all_ok = false;
             continue;
         };
-        if !structurally_compatible(arg_ty, param_ty, &ctx.input.types, &consumed_types, tys) {
-            ctx.errors.push(
-                CompileError::new(
+        if !structurally_compatible(arg_ty, param_ty, &caller_types, &consumed_types, tys) {
+            let mut err = CompileError::new(
                     "bynk.boundary.structural_mismatch",
                     arg.span,
                     format!(
@@ -4192,8 +4248,11 @@ fn check_cross_context_call(
                 .with_note("service declared here")
                 .with_note(
                     "values crossing a context boundary must have structurally compatible types (same commons-derived type, or identical record/sum shape)",
-                ),
-            );
+                );
+            if let Some(note) = ambiguous_projection_note(arg_ty, &ambiguous, tys) {
+                err = err.with_note(note);
+            }
+            ctx.errors.push(err);
             all_ok = false;
         }
     }
@@ -4206,8 +4265,23 @@ fn check_cross_context_call(
     // name appears in the caller's type table (v0.6 §4.5).
     let raw_ret = resolve_type_ref(&service.return_type, &consumed_types, tys)
         .unwrap_or(tys.intern(Ty::Unit));
-    let rebranded = rebrand_return_type(raw_ret, &ctx.input.types, tys);
-    Some(rebranded)
+    if let Some(name) = rebrand_conflict(
+        raw_ret,
+        &consumed_types,
+        &ctx.input.types,
+        &caller_types,
+        tys,
+    ) {
+        ctx.errors.push(rebranded_return_mismatch(
+            &format!("{consumed}.{}", method.name),
+            &name,
+            consumed,
+            span,
+            ctx,
+        ));
+        return None;
+    }
+    Some(rebrand_return_type(raw_ret, &ctx.input.types, tys))
 }
 
 #[cfg(test)]
@@ -4361,5 +4435,241 @@ mod tests {
              on call bad() -> Effect[()] {\n    n.update()\n  }\n}\n",
         );
         a.assert_reports("bynk.types.call_arity");
+    }
+
+    /// #1941: a provider context with an unexported `Box` (and its field's
+    /// `Amount`), a service returning one and a service taking one back, and
+    /// a capability operation doing the same.
+    const SHOP: &str = "context shop\n\nexports capability { Store }\n\n\
+                        type Amount = { cents: Int }\n\ntype Box = { a: Amount }\n\n\
+                        capability Store {\n  fn get() -> Effect[Box]\n  fn put(b: Box) -> Effect[Int]\n}\n\n\
+                        provides Store = Shelf {\n  fn get() -> Effect[Box] {\n    Effect.pure(Box { a: Amount { cents: 1 } })\n  }\n\n  \
+                        fn put(b: Box) -> Effect[Int] {\n    Effect.pure(b.a.cents)\n  }\n}\n\n\
+                        service quote {\n  on call() -> Effect[Box] {\n    Effect.pure(Box { a: Amount { cents: 1 } })\n  }\n}\n\n\
+                        service take {\n  on call(b: Box) -> Effect[Int] {\n    Effect.pure(b.a.cents)\n  }\n}\n";
+
+    /// A `till` context consuming `shop`, declaring `decls`, with `body` as
+    /// a service handler's body (given `shop.Store` when it calls it).
+    fn till(decls: &str, body: &str) -> String {
+        let given = if body.contains("Store") {
+            " given shop.Store"
+        } else {
+            ""
+        };
+        format!(
+            "context till\n\nconsumes shop\n\n{decls}service total {{\n  \
+             on call() -> Effect[Int]{given} {{\n{body}\n  }}\n}}\n"
+        )
+    }
+
+    #[test]
+    fn an_unexported_value_passes_back_to_its_service() {
+        let a = analyse(&[
+            ("shop.bynk", SHOP),
+            (
+                "till.bynk",
+                &till("", "    let b <- shop.quote()\n    shop.take(b)"),
+            ),
+        ]);
+        a.assert_clean();
+    }
+
+    #[test]
+    fn an_unexported_value_passes_back_to_its_capability() {
+        let a = analyse(&[
+            ("shop.bynk", SHOP),
+            (
+                "till.bynk",
+                &till("", "    let b <- shop.Store.get()\n    shop.Store.put(b)"),
+            ),
+        ]);
+        a.assert_clean();
+    }
+
+    #[test]
+    fn a_caller_type_of_another_shape_cannot_receive_a_service_return() {
+        let a = analyse(&[
+            ("shop.bynk", SHOP),
+            (
+                "till.bynk",
+                &till(
+                    "type Box = { label: String }\n\n",
+                    "    let b <- shop.quote()\n    Effect.pure(1)",
+                ),
+            ),
+        ]);
+        a.assert_reports("bynk.boundary.structural_mismatch");
+    }
+
+    #[test]
+    fn a_caller_type_of_another_shape_cannot_receive_a_capability_return() {
+        let a = analyse(&[
+            ("shop.bynk", SHOP),
+            (
+                "till.bynk",
+                &till(
+                    "type Box = { label: String }\n\n",
+                    "    let b <- shop.Store.get()\n    Effect.pure(1)",
+                ),
+            ),
+        ]);
+        a.assert_reports("bynk.boundary.structural_mismatch");
+    }
+
+    #[test]
+    fn a_caller_type_of_the_same_shape_receives_a_return() {
+        let a = analyse(&[
+            ("shop.bynk", SHOP),
+            (
+                "till.bynk",
+                &till(
+                    "type Coins = { cents: Int }\n\ntype Box = { a: Coins }\n\n",
+                    "    let b <- shop.quote()\n    let c <- shop.Store.get()\n    \
+                     Effect.pure(b.a.cents + c.a.cents)",
+                ),
+            ),
+        ]);
+        a.assert_clean();
+    }
+
+    #[test]
+    fn an_ambiguous_unexported_name_explains_its_rejection() {
+        let other = "context depot\n\ntype Box = { label: String }\n\n\
+                     service quote {\n  on call() -> Effect[Box] {\n    Effect.pure(Box { label: \"x\" })\n  }\n}\n";
+        let a = analyse(&[
+            ("shop.bynk", SHOP),
+            ("depot.bynk", other),
+            (
+                "till.bynk",
+                "context till\n\nconsumes shop\n\nconsumes depot\n\n\
+                 service total {\n  on call() -> Effect[Int] {\n    \
+                 let b <- shop.quote()\n    shop.take(b)\n  }\n}\n",
+            ),
+        ]);
+        let err = a
+            .analysis
+            .errors
+            .iter()
+            .find(|e| e.error.category == "bynk.boundary.structural_mismatch")
+            .expect("the argument is rejected");
+        assert!(
+            err.error
+                .notes
+                .iter()
+                .any(|n| n.contains("more than one consumed context declares a type `Box`")),
+            "{:?}",
+            err.error.notes
+        );
+    }
+
+    #[test]
+    fn a_return_the_caller_does_not_rebrand_is_not_checked_against_a_projection() {
+        // Review of #1949: `shop` and `depot` declare the same-shaped `Box`, so
+        // the projection holds one of them (`depot`'s, in name order). `till`
+        // declares no `Box`, so `quote`'s `Box` is not rebranded and needs
+        // no check, however `depot`'s `Box.a` would resolve against `till`'s
+        // own, unrelated `Amount`.
+        let pair = |name: &str, svc: &str| {
+            format!(
+                "context {name}\n\ntype Amount = {{ cents: Int }}\n\ntype Box = {{ a: Amount }}\n\n{svc}"
+            )
+        };
+        let shop = pair(
+            "shop",
+            "service quote {\n  on call() -> Effect[Box] {\n    Effect.pure(Box { a: Amount { cents: 1 } })\n  }\n}\n",
+        );
+        let depot = pair(
+            "depot",
+            "service store {\n  on call(b: Box) -> Effect[Int] {\n    Effect.pure(b.a.cents)\n  }\n}\n",
+        );
+        let a = analyse(&[
+            ("shop.bynk", &shop),
+            ("depot.bynk", &depot),
+            (
+                "till.bynk",
+                "context till\n\nconsumes shop\n\nconsumes depot\n\n\
+                 type Amount = { dollars: Int }\n\n\
+                 fn mine() -> Amount {\n  Amount { dollars: 1 }\n}\n\n\
+                 service total {\n  on call() -> Effect[Int] {\n    \
+                 let b <- shop.quote()\n    Effect.pure(1)\n  }\n}\n",
+            ),
+        ]);
+        a.assert_clean();
+    }
+
+    /// Review of #1949: a provider whose `Box` is returned inside each
+    /// container a cross-context return can carry, for a caller whose own
+    /// `Box` has another shape.
+    fn caller_box_differs_inside(ret: &str, value: &str) {
+        let shop = format!(
+            "context shop\n\ntype Box = {{ a: Int }}\n\n\
+             service quote {{\n  on call() -> Effect[{ret}] {{\n    Effect.pure({value})\n  }}\n}}\n"
+        );
+        let a = analyse(&[
+            ("shop.bynk", &shop),
+            (
+                "till.bynk",
+                "context till\n\nconsumes shop\n\ntype Box = { label: String }\n\n\
+                 service total {\n  on call() -> Effect[Int] {\n    \
+                 let b <- shop.quote()\n    Effect.pure(1)\n  }\n}\n",
+            ),
+        ]);
+        a.assert_reports("bynk.boundary.structural_mismatch");
+    }
+
+    #[test]
+    fn a_differing_caller_type_is_found_in_a_result() {
+        caller_box_differs_inside("Result[Box, String]", "Ok(Box { a: 1 })");
+    }
+
+    #[test]
+    fn a_differing_caller_type_is_found_in_a_map_value() {
+        caller_box_differs_inside("Map[String, Box]", "Map.empty()");
+    }
+
+    #[test]
+    fn a_differing_caller_type_is_found_in_an_option() {
+        caller_box_differs_inside("Option[Box]", "None");
+    }
+
+    #[test]
+    fn a_differing_caller_type_is_found_in_a_list() {
+        caller_box_differs_inside("List[Box]", "[]");
+    }
+
+    #[test]
+    fn a_differing_caller_type_is_found_in_an_http_result() {
+        caller_box_differs_inside("HttpResult[Box]", "Ok(Box { a: 1 })");
+    }
+
+    #[test]
+    fn agreeing_declarations_project_in_context_name_order() {
+        // Review of #1949: `depot`'s `Box` names `Coins` and `shop`'s names
+        // `Amount`, of the same shape, so the two agree and either may be
+        // projected. `till`'s own `Amount` differs: `shop`'s `Box` would
+        // read its field as `till`'s, and `depot`'s would not. The projection
+        // takes contexts in name order, so `depot`'s is the one, on every run.
+        let a = analyse(&[
+            (
+                "shop.bynk",
+                "context shop\n\ntype Amount = { cents: Int }\n\ntype Box = { a: Amount }\n\n\
+                 service quote {\n  on call() -> Effect[Box] {\n    \
+                 Effect.pure(Box { a: Amount { cents: 1 } })\n  }\n}\n",
+            ),
+            (
+                "depot.bynk",
+                "context depot\n\ntype Coins = { cents: Int }\n\ntype Box = { a: Coins }\n\n\
+                 service store {\n  on call(b: Box) -> Effect[Int] {\n    Effect.pure(b.a.cents)\n  }\n}\n",
+            ),
+            (
+                "till.bynk",
+                "context till\n\nconsumes shop\n\nconsumes depot\n\n\
+                 type Amount = { dollars: Int }\n\n\
+                 fn mine() -> Amount {\n  Amount { dollars: 1 }\n}\n\n\
+                 service total {\n  on call() -> Effect[Int] {\n    \
+                 let b <- shop.quote()\n    depot.store(b)\n  }\n}\n",
+            ),
+        ]);
+        a.assert_clean();
     }
 }

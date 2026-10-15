@@ -1,0 +1,18 @@
+context shop.till
+
+consumes shop.quotes
+
+consumes shop.wraps
+
+consumes shop.depot
+
+service total {
+  on call() -> Effect[Int] {
+    let b <- shop.quotes.quote()
+    let taken <- shop.quotes.take(b)
+    let p <- shop.wraps.wrap()
+    let opened <- shop.wraps.open(p)
+    let stored <- shop.depot.store(b)
+    Effect.pure(taken + opened + stored)
+  }
+}
