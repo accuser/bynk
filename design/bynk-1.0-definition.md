@@ -79,6 +79,30 @@ The point of naming the layer is that 1.0 does **not** wait for the whole langua
 to stop moving. It freezes the part real services stand on, and lets the rest keep
 growing.
 
+**The standard library** (amended by the standard-library track, #1936, D2;
+recorded in the stability-tiers ADR that slice S3, #1963, lands). Every
+first-party stdlib item is marked *stable* or *experimental* in the `bynk-std`
+registry, and the promise depends on its layer:
+
+- **Stable kernel and commons items** (L0 built-in types and kernel methods, L1
+  `bynk.*` commons) are **Foundations-level**: a breaking change to one is a 2.0
+  event. Nearly every Foundations program calls them, so leaving them out of the
+  frozen layer would make the promise hollow.
+- **Stable capabilities** (L2 the `bynk` surface, L3 platform adapters such as
+  `bynk.cloudflare`) are **additive-only** through 1.x, which is what "evolve
+  additively" above means for them. They may gain items and operations. An enum
+  may gain a variant only if it is marked *extensible*, because a `match` covering
+  an extensible enum must already carry a wildcard. An existing stable item may be
+  deprecated in a minor release (a non-failing warning, ADR 0117) but removed or
+  reshaped only in a major one.
+- **Experimental items** carry **no promise**. They may change or disappear in any
+  release, and a project uses one only by listing it under `[unstable] allow` in
+  `bynk.toml`, so the edge of the promise is visible in the manifest.
+- **The platform carve-out.** A stable L3 item may break in a *minor* release only
+  when the platform withdraws or incompatibly changes the feature underneath it,
+  and that release's cumulative migration note names it. A Bynk-side redesign is
+  never covered by the carve-out.
+
 ### Gate 2 — `deploy` (satisfied)
 
 `bynk deploy` — provisioning + remote deploy — must exist. This is the first

@@ -1,0 +1,17 @@
+-- #1963: `FetchError` is extensible, so listing every variant it has today,
+-- nested inside `Result` in a handler, still needs a wildcard.
+context app.probe
+
+consumes bynk { Fetch }
+
+service probe {
+	on call(url: String) -> Effect[String] given Fetch {
+		let res <- Fetch.send(Request { method: Get, url: url, contentType: None, authorization: None, headers: Map.empty(), body: None })
+		match res {
+			Ok(r) => Effect.pure("ok")
+			Err(Network) => Effect.pure("network")
+			Err(Timeout) => Effect.pure("timeout")
+			Err(InvalidHeader) => Effect.pure("header")
+		}
+	}
+}

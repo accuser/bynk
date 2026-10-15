@@ -38,6 +38,9 @@ diagnostics_debounce_ms = 300
 
 [workers]
 compatibility_flags = []    # extra Cloudflare flags, after the default
+
+[unstable]
+allow = []                  # experimental standard-library items to use
 ```
 
 Delete any line you are happy to leave at its default — the file above is
@@ -188,6 +191,39 @@ listed twice, or one that is already on by default, is dropped with a
 `bynk.project.duplicate_compatibility_flag` warning, which `check`, `compile`,
 `dev` and `deploy` all report, once per build. Anything but a list of strings
 is an error.
+
+## `[unstable]`
+
+Opts in to **experimental** standard-library items. Every first-party item is
+stable or experimental. A stable one is under the 1.0 compatibility promise; an
+experimental one carries no promise, may change or disappear in any release,
+and can't be used until it is listed here.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `allow` | array of strings | `[]` | Item paths to allow: a unit (`bynk.cloudflare`), an item it exports (`bynk.cloudflare.Kv`), or a capability operation (`bynk.cloudflare.Kv.list`). An entry covers its path and everything under it. |
+
+```toml
+[unstable]
+allow = ["bynk.cloudflare.D1"]
+```
+
+Using an experimental item that no entry covers is a
+`bynk.stability.experimental` error at the use: a `consumes` selection, a
+`uses`, a call to an imported function, or a call to a capability operation.
+Its note names the entry to add.
+
+An entry that names no standard-library item is a
+`bynk.project.unstable_unknown_item` error. An entry that reaches nothing
+experimental is a `bynk.project.unstable_not_experimental` **warning**: the item
+has become stable, so the entry can go. Stabilising an item never breaks a
+build. `check`, `compile`, `dev`, `deploy` and the language server all read this
+table the same way and report the same diagnostics. Anything but a list of
+strings is an error.
+
+No shipped item is experimental yet. The
+[first-party capabilities](/book/reference/bynk-capabilities/#stability) page
+lists what is.
 
 ## Legacy mode
 

@@ -103,10 +103,13 @@ pub struct UnitCheckCtx {
     /// #1824: the reached types this unit's own declarations shadow, which
     /// `shadow_uses` checks the unit's bodies against.
     pub shadowed: crate::project_model::ShadowedReaches,
+    /// S3 (#1963): the project's `[unstable]` policy, one per project.
+    pub policy: Arc<crate::stability::StabilityPolicy>,
 }
 
 /// Build the per-unit prelude [`check_file_core`] shares across every file
 /// in the unit — see [`UnitCheckCtx`]'s own doc comment.
+#[allow(clippy::too_many_arguments)]
 pub fn prepare_unit_check_ctx(
     name: &str,
     kind: UnitKind,
@@ -115,6 +118,7 @@ pub fn prepare_unit_check_ctx(
     combined_types: &HashMap<String, Arc<TypeDecl>>,
     imported_from_kind: &HashMap<String, UnitKind>,
     reached_types: &crate::project_model::ReachedTypes,
+    policy: &Arc<crate::stability::StabilityPolicy>,
 ) -> UnitCheckCtx {
     let cross_context_views = if kind == UnitKind::Context || kind == UnitKind::Adapter {
         let unit_tables: HashMap<String, UnitTable> = unit_info
@@ -161,6 +165,7 @@ pub fn prepare_unit_check_ctx(
         visible_broken_names,
         hidden_types: reached_types.hidden.clone(),
         shadowed: reached_types.shadowed.clone(),
+        policy: policy.clone(),
     }
 }
 
@@ -354,7 +359,30 @@ pub fn check_file_core(
     // #1883, slice 1a: this unit's assets plus its `uses`d commons' ([DECISION G]).
     .with_assets(crate::assets::compose_unit_assets(name, unit_info))
     // #1925: imports hidden behind a local declaration of another kind.
-    .with_shadowed_imports(crate::project_model::shadowed_imports(name, unit_info));
+    .with_shadowed_imports(crate::project_model::shadowed_imports(name, unit_info))
+    // S3 (#1963): which names in scope are a first-party extensible enum,
+    // decided here, where the unit's full provenance is known.
+    .with_extensible_enums(
+        imported_from
+            .iter()
+            .filter(|(n, unit)| crate::firstparty::is_extensible(unit, n))
+            .map(|(n, _)| n.clone())
+            .collect(),
+    )
+    // S3 (#1963): the project's policy, and this unit's blocked imports. A
+    // first-party unit's own bodies are the library's business, never the
+    // project's opt-in, so they check under a policy that blocks nothing.
+    .with_stability(if pf.is_synthetic() {
+        crate::stability::UnitStability {
+            policy: Arc::new(crate::stability::StabilityPolicy::permissive()),
+            blocked_imports: HashMap::new(),
+        }
+    } else {
+        crate::stability::UnitStability {
+            policy: ctx.policy.clone(),
+            blocked_imports: ctx.policy.blocked_imports(imported_from),
+        }
+    });
     refs.enter_file(&pf.identity_path(), name, pf.is_synthetic());
     // v0.27: synthetic and test/integration files record no hints — neither
     // surfaces in an editor (the `assemble_index` rule).

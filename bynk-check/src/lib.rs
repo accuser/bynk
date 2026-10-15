@@ -50,6 +50,7 @@ pub mod schema_registry;
 mod scope_tests;
 pub mod secrets;
 pub mod shadow_uses;
+pub mod stability;
 pub mod store_ops;
 pub mod symbols;
 pub mod test_suites;

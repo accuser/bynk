@@ -1122,6 +1122,8 @@ pub fn phase_resolve_uses(
     kinds: &BTreeMap<String, UnitKind>,
     parsed: &[ParsedFile],
     unit_tables: &HashMap<String, UnitTable>,
+    // S3 (#1963): `uses` of an experimental commons needs an `[unstable]` opt-in.
+    policy: &crate::stability::StabilityPolicy,
     errors: &mut ErrorSink,
 ) -> HashMap<String, Vec<String>> {
     let mut unit_uses: HashMap<String, Vec<String>> = HashMap::new();
@@ -1143,6 +1145,13 @@ pub fn phase_resolve_uses(
                         ),
                     );
                     continue;
+                }
+                // A first-party unit's own dependencies are the library's
+                // business, never the project's opt-in.
+                if !parsed[i].is_synthetic()
+                    && let Some(err) = policy.check(&target, u.target.span)
+                {
+                    errors.push_for(Some(&parsed[i].identity_path()), err);
                 }
                 let target_kind = *kinds.get(&target).unwrap();
                 if target_kind != UnitKind::Commons {
@@ -1192,6 +1201,9 @@ pub fn phase_resolve_consumes(
     kinds: &BTreeMap<String, UnitKind>,
     parsed: &[ParsedFile],
     unit_tables: &HashMap<String, UnitTable>,
+    // S3 (#1963): consuming an experimental adapter, or selecting an
+    // experimental capability, needs an `[unstable]` opt-in.
+    policy: &crate::stability::StabilityPolicy,
     errors: &mut ErrorSink,
     refs: &mut RefSink,
 ) -> (
@@ -1301,6 +1313,11 @@ pub fn phase_resolve_consumes(
                     );
                     continue;
                 }
+                if !parsed[i].is_synthetic()
+                    && let Some(err) = policy.check(&target, c.target.span)
+                {
+                    errors.push_for(Some(&parsed[i].identity_path()), err);
+                }
                 // v0.17: `consumes U { Cap, … }` — validate each selected name is
                 // a capability `U` exports, detect clashes, and record the
                 // flattening so bare `given Cap` resolves through the local path.
@@ -1311,6 +1328,12 @@ pub fn phase_resolve_consumes(
                         .cloned()
                         .unwrap_or_default();
                     for cap in names {
+                        if !parsed[i].is_synthetic()
+                            && let Some(err) =
+                                policy.check(&format!("{target}.{}", cap.name), cap.span)
+                        {
+                            errors.push_for(Some(&parsed[i].identity_path()), err);
+                        }
                         if !exported.contains(&cap.name) {
                             errors.push_for(
                                 Some(&parsed[i].identity_path()),

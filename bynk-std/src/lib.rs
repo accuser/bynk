@@ -306,6 +306,29 @@ pub struct Unit {
     /// The provider classes whose constructor takes the Worker `env` (decisions
     /// 0021/0025).
     pub env_providers: &'static [&'static str],
+    /// The unit's stability (track D2, S3 #1963): a stable item is under the
+    /// 1.0 promise, an experimental one carries none and needs an explicit
+    /// `[unstable] allow` to use. Required, so no entry is added without a
+    /// choice.
+    pub stability: Stability,
+    /// Items inside a stable unit that are experimental, as paths relative to
+    /// the unit: an exported item (`"Kv"`) or a capability operation
+    /// (`"Kv.list"`). An experimental item makes its operations experimental.
+    pub experimental: &'static [&'static str],
+    /// The exported enums that may gain variants in a minor release, so a
+    /// `match` covering one needs a wildcard (track §11 Q5).
+    pub extensible: &'static [&'static str],
+}
+
+/// Whether a first-party item is under the 1.0 promise (track D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stability {
+    /// Under the promise: a stable L0/L1 item changes only at a major release; a
+    /// stable L2/L3 item may gain operations and, if extensible, variants.
+    Stable,
+    /// No promise: it may change or disappear in any release, and using it needs
+    /// an `[unstable] allow` entry in `bynk.toml`.
+    Experimental,
 }
 
 impl Unit {
@@ -337,6 +360,9 @@ pub const UNITS: &[Unit] = &[
         id_block: 0,
         platform: None,
         env_providers: &["SecretsProvider"],
+        stability: Stability::Stable,
+        experimental: &[],
+        extensible: &["FetchError", "Method"],
     },
     Unit {
         name: CLOUDFLARE_UNIT,
@@ -350,6 +376,9 @@ pub const UNITS: &[Unit] = &[
         id_block: 1,
         platform: Some(Platform::Cloudflare),
         env_providers: &["WorkersKv"],
+        stability: Stability::Stable,
+        experimental: &[],
+        extensible: &[],
     },
     Unit {
         name: LIST_UNIT,
@@ -360,6 +389,9 @@ pub const UNITS: &[Unit] = &[
         id_block: 3,
         platform: None,
         env_providers: &[],
+        stability: Stability::Stable,
+        experimental: &[],
+        extensible: &[],
     },
     Unit {
         name: MAP_UNIT,
@@ -370,6 +402,9 @@ pub const UNITS: &[Unit] = &[
         id_block: 2,
         platform: None,
         env_providers: &[],
+        stability: Stability::Stable,
+        experimental: &[],
+        extensible: &[],
     },
     Unit {
         name: STRING_UNIT,
@@ -380,6 +415,9 @@ pub const UNITS: &[Unit] = &[
         id_block: 4,
         platform: None,
         env_providers: &[],
+        stability: Stability::Stable,
+        experimental: &[],
+        extensible: &[],
     },
     Unit {
         name: LOCALE_UNIT,
@@ -390,6 +428,9 @@ pub const UNITS: &[Unit] = &[
         id_block: 6,
         platform: None,
         env_providers: &[],
+        stability: Stability::Stable,
+        experimental: &[],
+        extensible: &[],
     },
     Unit {
         name: LOCALE_TYPES_UNIT,
@@ -400,6 +441,9 @@ pub const UNITS: &[Unit] = &[
         id_block: 5,
         platform: None,
         env_providers: &[],
+        stability: Stability::Stable,
+        experimental: &[],
+        extensible: &[],
     },
 ];
 
@@ -408,9 +452,367 @@ pub fn unit(name: &str) -> Option<&'static Unit> {
     UNITS.iter().find(|u| u.name == name)
 }
 
+/// The unit a dotted item path lies in, and the rest of the path relative to it
+/// (empty for the unit itself). Unit names contain dots, so the longest unit
+/// name that is a whole-segment prefix wins: `bynk.cloudflare.Kv` is in
+/// `bynk.cloudflare`, not in `bynk`.
+pub fn split_item_path(path: &str) -> Option<(&'static Unit, &str)> {
+    split_item_path_in(UNITS, path)
+}
+
+/// [`split_item_path`] over a given table (tests pass a synthetic one).
+pub fn split_item_path_in<'u, 'p>(units: &'u [Unit], path: &'p str) -> Option<(&'u Unit, &'p str)> {
+    units
+        .iter()
+        .filter_map(|u| {
+            if path == u.name {
+                Some((u, ""))
+            } else {
+                path.strip_prefix(u.name)?
+                    .strip_prefix('.')
+                    .map(|rest| (u, rest))
+            }
+        })
+        .max_by_key(|(u, _)| u.name.len())
+}
+
+/// Whether `path` is `prefix` or lies under it, by whole dotted segments.
+pub fn covers(prefix: &str, path: &str) -> bool {
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with('.'))
+}
+
+/// The stability of a first-party item: a unit (`bynk.cloudflare`), an
+/// exported item (`bynk.cloudflare.Kv`) or a capability operation
+/// (`bynk.cloudflare.Kv.list`). An item in an experimental unit, or under an
+/// experimental item, is experimental. `None` when no first-party unit holds
+/// the path.
+pub fn stability_of(path: &str) -> Option<Stability> {
+    stability_of_in(UNITS, path)
+}
+
+/// [`stability_of`] over a given table.
+pub fn stability_of_in(units: &[Unit], path: &str) -> Option<Stability> {
+    let (unit, rest) = split_item_path_in(units, path)?;
+    if unit.stability == Stability::Experimental
+        || unit.experimental.iter().any(|item| covers(item, rest))
+    {
+        Some(Stability::Experimental)
+    } else {
+        Some(Stability::Stable)
+    }
+}
+
+/// Every experimental item, as a full path: each experimental unit, and each
+/// listed item of a stable one.
+pub fn experimental_items() -> Vec<String> {
+    experimental_items_in(UNITS)
+}
+
+/// [`experimental_items`] over a given table.
+pub fn experimental_items_in(units: &[Unit]) -> Vec<String> {
+    let mut out = Vec::new();
+    for u in units {
+        if u.stability == Stability::Experimental {
+            out.push(u.name.to_string());
+        }
+        out.extend(
+            u.experimental
+                .iter()
+                .map(|item| format!("{}.{item}", u.name)),
+        );
+    }
+    out
+}
+
+/// Whether an `[unstable] allow` list covers `path`: an entry covers itself and
+/// everything under it.
+pub fn allows(allow: &[String], path: &str) -> bool {
+    allow.iter().any(|entry| covers(entry, path))
+}
+
+/// Whether `entry`, an `[unstable] allow` entry, reaches anything experimental:
+/// it names an experimental item, lies under one, or contains one.
+pub fn allow_entry_is_live(entry: &str) -> bool {
+    allow_entry_is_live_in(UNITS, entry)
+}
+
+/// [`allow_entry_is_live`] over a given table.
+pub fn allow_entry_is_live_in(units: &[Unit], entry: &str) -> bool {
+    stability_of_in(units, entry) == Some(Stability::Experimental)
+        || experimental_items_in(units)
+            .iter()
+            .any(|item| covers(entry, item))
+}
+
+/// Whether `name`, an enum exported by `unit`, is extensible.
+pub fn is_extensible(unit: &str, name: &str) -> bool {
+    is_extensible_in(UNITS, unit, name)
+}
+
+/// [`is_extensible`] over a given table.
+pub fn is_extensible_in(units: &[Unit], unit: &str, name: &str) -> bool {
+    units
+        .iter()
+        .any(|u| u.name == unit && u.extensible.contains(&name))
+}
+
+/// The names a first-party unit exports: those on its `exports … { … }` lines
+/// (an adapter) and its own `fn`s and `type`s (a commons). Read from the
+/// source, so the list cannot fall behind it.
+pub fn exported_names(unit: &Unit) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    for line in unit.source.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("exports ")
+            && let Some((_, list)) = rest.split_once('{')
+            && let Some((names, _)) = list.split_once('}')
+        {
+            out.extend(names.split(',').map(str::trim).filter(|n| !n.is_empty()));
+        } else if unit.kind == UnitKind::Commons
+            // A commons' own declarations: at column 0 in the flat form, one tab
+            // in the braced `commons bynk.list { … }` form the first-party
+            // sources use. Nothing deeper is a declaration.
+            && (line == trimmed || line.strip_prefix('\t') == Some(trimmed))
+        {
+            for keyword in ["fn ", "type "] {
+                if let Some(rest) = trimmed.strip_prefix(keyword) {
+                    let end = rest
+                        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .unwrap_or(rest.len());
+                    if end > 0 {
+                        out.push(&rest[..end]);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether `path` names a first-party unit or an item it exports. Operation
+/// paths (`bynk.cloudflare.Kv.list`) are accepted when their item exists.
+pub fn names_first_party_item(path: &str) -> bool {
+    names_first_party_item_in(UNITS, path)
+}
+
+/// [`names_first_party_item`] over a given table.
+pub fn names_first_party_item_in(units: &[Unit], path: &str) -> bool {
+    match split_item_path_in(units, path) {
+        None => false,
+        Some((_, "")) => true,
+        Some((unit, rest)) => {
+            let item = rest.split('.').next().unwrap_or(rest);
+            exported_names(unit).contains(&item)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A synthetic registry with an experimental unit, an experimental item
+    /// and an experimental operation inside stable units.
+    const SYNTH: &[Unit] = &[
+        Unit {
+            name: "bynk",
+            kind: UnitKind::Adapter,
+            identity_path: "bynk.bynk",
+            source: "adapter bynk {\n\texports capability { Clock, Fetch }\n\texports transparent { FetchError }\n}\n",
+            binding: Binding::PerPlatform,
+            id_block: 0,
+            platform: None,
+            env_providers: &[],
+            stability: Stability::Stable,
+            experimental: &["Fetch.stream"],
+            extensible: &["FetchError"],
+        },
+        Unit {
+            name: "bynk.cloudflare",
+            kind: UnitKind::Adapter,
+            identity_path: "bynk/cloudflare.bynk",
+            source: "adapter bynk.cloudflare {\n\texports capability { Kv, Ai }\n}\n",
+            binding: Binding::None,
+            id_block: 1,
+            platform: Some(Platform::Cloudflare),
+            env_providers: &[],
+            stability: Stability::Stable,
+            experimental: &["Ai"],
+            extensible: &[],
+        },
+        Unit {
+            name: "bynk.cloudflare.d1",
+            kind: UnitKind::Adapter,
+            identity_path: "bynk/cloudflare/d1.bynk",
+            source: "adapter bynk.cloudflare.d1 {\n\texports capability { D1 }\n}\n",
+            binding: Binding::None,
+            id_block: 2,
+            platform: Some(Platform::Cloudflare),
+            env_providers: &[],
+            stability: Stability::Experimental,
+            experimental: &[],
+            extensible: &[],
+        },
+        Unit {
+            name: "bynk.text",
+            kind: UnitKind::Commons,
+            identity_path: "bynk/text.bynk",
+            source: "commons bynk.text\n\ntype Slug = String\n\nfn shout(s: String) -> String {\n\ts\n}\n",
+            binding: Binding::None,
+            id_block: 3,
+            platform: None,
+            env_providers: &[],
+            stability: Stability::Stable,
+            experimental: &[],
+            extensible: &[],
+        },
+    ];
+
+    #[test]
+    fn item_paths_resolve_to_the_longest_unit() {
+        let unit_of = |p| split_item_path_in(SYNTH, p).map(|(u, rest)| (u.name, rest));
+        assert_eq!(unit_of("bynk"), Some(("bynk", "")));
+        assert_eq!(unit_of("bynk.Fetch.send"), Some(("bynk", "Fetch.send")));
+        assert_eq!(
+            unit_of("bynk.cloudflare.Kv"),
+            Some(("bynk.cloudflare", "Kv"))
+        );
+        assert_eq!(
+            unit_of("bynk.cloudflare.d1.D1"),
+            Some(("bynk.cloudflare.d1", "D1"))
+        );
+        assert_eq!(unit_of("bynkx"), None, "a whole-segment prefix only");
+        assert_eq!(unit_of("user.unit"), None);
+    }
+
+    #[test]
+    fn stability_follows_unit_item_and_operation() {
+        let st = |p| stability_of_in(SYNTH, p);
+        use Stability::*;
+        assert_eq!(st("bynk.Clock"), Some(Stable));
+        assert_eq!(st("bynk.Fetch.send"), Some(Stable));
+        assert_eq!(
+            st("bynk.Fetch.stream"),
+            Some(Experimental),
+            "an experimental operation"
+        );
+        assert_eq!(
+            st("bynk.Fetch"),
+            Some(Stable),
+            "its capability stays stable"
+        );
+        assert_eq!(
+            st("bynk.cloudflare.Ai"),
+            Some(Experimental),
+            "an experimental item"
+        );
+        assert_eq!(
+            st("bynk.cloudflare.Ai.run"),
+            Some(Experimental),
+            "its operations too"
+        );
+        assert_eq!(st("bynk.cloudflare.Kv"), Some(Stable));
+        assert_eq!(
+            st("bynk.cloudflare.d1"),
+            Some(Experimental),
+            "an experimental unit"
+        );
+        assert_eq!(st("bynk.cloudflare.d1.D1.query"), Some(Experimental));
+        assert_eq!(st("user.unit"), None);
+    }
+
+    #[test]
+    fn allow_entries_cover_by_whole_segment_prefix() {
+        let allow = vec![
+            "bynk.cloudflare.Ai".to_string(),
+            "bynk.cloudflare.d1".to_string(),
+        ];
+        assert!(allows(&allow, "bynk.cloudflare.Ai"));
+        assert!(allows(&allow, "bynk.cloudflare.Ai.run"));
+        assert!(allows(&allow, "bynk.cloudflare.d1.D1.query"));
+        assert!(
+            !allows(&allow, "bynk.cloudflare.AiX"),
+            "not a segment prefix"
+        );
+        assert!(!allows(&allow, "bynk.Fetch.stream"));
+        assert!(!allows(&[], "bynk.cloudflare.Ai"));
+    }
+
+    #[test]
+    fn an_allow_entry_is_live_while_it_reaches_something_experimental() {
+        let live = |e| allow_entry_is_live_in(SYNTH, e);
+        assert!(live("bynk.cloudflare.Ai"));
+        assert!(live("bynk.cloudflare.Ai.run"), "under an experimental item");
+        assert!(live("bynk.cloudflare"), "contains an experimental item");
+        assert!(live("bynk.Fetch.stream"));
+        assert!(live("bynk"), "contains an experimental operation");
+        assert!(!live("bynk.cloudflare.Kv"), "stable: a stale entry");
+        assert!(!live("bynk.text"));
+        assert_eq!(
+            experimental_items_in(SYNTH),
+            [
+                "bynk.Fetch.stream",
+                "bynk.cloudflare.Ai",
+                "bynk.cloudflare.d1"
+            ]
+        );
+    }
+
+    #[test]
+    fn exported_names_and_item_existence_come_from_the_sources() {
+        assert_eq!(exported_names(&SYNTH[0]), ["Clock", "Fetch", "FetchError"]);
+        assert_eq!(exported_names(&SYNTH[3]), ["Slug", "shout"]);
+        let names = |p| names_first_party_item_in(SYNTH, p);
+        assert!(names("bynk.cloudflare"));
+        assert!(names("bynk.cloudflare.Ai"));
+        assert!(
+            names("bynk.cloudflare.Ai.run"),
+            "an operation of an existing item"
+        );
+        assert!(names("bynk.text.shout"));
+        assert!(!names("bynk.cloudflare.Aii"), "a typo");
+        assert!(!names("user.unit"));
+    }
+
+    #[test]
+    fn extensibility_is_by_unit_and_name() {
+        assert!(is_extensible_in(SYNTH, "bynk", "FetchError"));
+        assert!(
+            !is_extensible_in(SYNTH, "user.app", "FetchError"),
+            "a user's own FetchError"
+        );
+        assert!(!is_extensible_in(SYNTH, "bynk", "Method"));
+    }
+
+    /// The shipped registry: every unit is stable with nothing experimental (S3
+    /// ships the mechanism, #1963 Decision C), and the `bynk` surface's two
+    /// growing enums are extensible. A slice that marks an item experimental
+    /// updates this test, so the change is visible in review.
+    #[test]
+    fn the_shipped_stability_is_pinned() {
+        for u in UNITS {
+            assert_eq!(u.stability, Stability::Stable, "{}", u.name);
+            assert!(u.experimental.is_empty(), "{}", u.name);
+        }
+        assert!(experimental_items().is_empty());
+        let extensible: Vec<(&str, &str)> = UNITS
+            .iter()
+            .flat_map(|u| u.extensible.iter().map(move |e| (u.name, *e)))
+            .collect();
+        assert_eq!(extensible, [("bynk", "FetchError"), ("bynk", "Method")]);
+        for (unit, name) in extensible {
+            assert!(
+                exported_names(self::unit(unit).unwrap()).contains(&name),
+                "{unit} lists {name} as extensible but does not export it"
+            );
+        }
+        assert!(names_first_party_item("bynk.cloudflare.Kv.list"));
+        assert!(names_first_party_item("bynk.list.reverse"));
+        assert!(!names_first_party_item("bynk.cloudflare.Kvv"));
+    }
 
     /// #1958: `WorkersKv` reads the namespace at the name every generated
     /// Worker declares it under (`[[kv_namespaces]] binding`, its `Env`), the

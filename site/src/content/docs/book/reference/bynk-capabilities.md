@@ -240,6 +240,71 @@ first-party capability (an API key for `Fetch`, say), read it from `Secrets`
 rather than passing it as an argument; [Wrap a library as an adapter](/book/guides/effects-and-capabilities/wrap-a-library/)
 shows the pattern.
 
+## Stability
+
+Every first-party item, whether a unit, an item it exports or a capability
+operation, is **stable** or **experimental**.
+
+- A **stable** item is under the compatibility promise. The kernel and the
+  `bynk.*` commons change only at a major release. A capability (in `bynk` or
+  `bynk.cloudflare`) only grows within a major version: it may gain items and
+  operations, but an existing one is removed or reshaped only at a major
+  release, after a deprecation warning. The one exception: a `bynk.cloudflare`
+  item may change in a minor release when Cloudflare withdraws or changes the
+  feature under it, and that release's notes say so.
+- An **experimental** item carries no promise. To use one, list it under
+  [`[unstable] allow`](/docs/manifest/#unstable) in `bynk.toml`.
+
+No shipped item is experimental today. New platform capabilities may arrive
+experimental first.
+
+### Extensible enums
+
+`FetchError` and `Method` are **extensible**: they may gain variants in a minor
+release. Listing every variant they have today is not enough, so a `match` that
+covers one, at any depth, needs a wildcard:
+
+```bynk,fail=bynk.types.extensible_match_needs_wildcard
+context app.probe
+
+consumes bynk { Fetch }
+
+service probe {
+	on call(url: String) -> Effect[String] given Fetch {
+		let res <- Fetch.send(Request { method: Get, url: url, contentType: None, authorization: None, headers: Map.empty(), body: None })
+		match res {
+			Ok(r) => Effect.pure("ok")
+			Err(Network) => Effect.pure("network")
+			Err(Timeout) => Effect.pure("timeout")
+			Err(InvalidHeader) => Effect.pure("header")
+		}
+	}
+}
+```
+
+Add the wildcard, `Err(_)` here, and the `match` keeps compiling when a new
+variant arrives:
+
+```bynk
+context app.probe
+
+consumes bynk { Fetch }
+
+service probe {
+	on call(url: String) -> Effect[String] given Fetch {
+		let res <- Fetch.send(Request { method: Get, url: url, contentType: None, authorization: None, headers: Map.empty(), body: None })
+		match res {
+			Ok(r) => Effect.pure("ok")
+			Err(Timeout) => Effect.pure("retry later")
+			Err(_) => Effect.pure("failed")
+		}
+	}
+}
+```
+
+An enum of your own with the same name is not extensible; the rule follows the
+first-party enum, not the name.
+
 ## Related first-party modules
 
 Beyond capabilities, the `bynk` namespace also ships pure **commons** you bring

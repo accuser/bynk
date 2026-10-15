@@ -127,11 +127,11 @@ pub fn complete(
         return capabilities_of_unit(&unit, doc_text, files)
             .into_iter()
             .map(|c| {
-                Completion::item(
-                    c,
-                    CompletionKind::Capability,
-                    Some(format!("capability exported by `{unit}`")),
-                )
+                let detail = format!(
+                    "capability exported by `{unit}`{}",
+                    stability_suffix(experimental(&format!("{unit}.{c}")))
+                );
+                Completion::item(c, CompletionKind::Capability, Some(detail))
             })
             .collect();
     }
@@ -1352,6 +1352,22 @@ fn current_unit_name(doc_text: &str) -> Option<String> {
     Some(unit?.name().joined())
 }
 
+/// Standard-library S3 (#1963): whether a first-party item path is experimental.
+fn experimental(path: &str) -> bool {
+    bynk_check::firstparty::stability_of(path)
+        == Some(bynk_check::firstparty::Stability::Experimental)
+}
+
+/// The completion-detail suffix that marks an experimental item, so it is
+/// visible before it is used.
+fn stability_suffix(experimental: bool) -> &'static str {
+    if experimental {
+        " — experimental"
+    } else {
+        ""
+    }
+}
+
 /// Render a free function's signature for the completion detail, the same way
 /// hover and signature help do (`symbols::type_ref_str`) — one format, never
 /// divergent. Mirrors signature help: no generic-parameter list.
@@ -1443,10 +1459,11 @@ fn free_function_candidates(
         let origin = if own { "this unit" } else { u.name.as_str() };
         for (name, sig) in &u.fns {
             if seen.insert(name.clone()) {
+                let marked = !own && experimental(&format!("{}.{name}", u.name));
                 out.push(Completion::item(
                     name.clone(),
                     CompletionKind::Function,
-                    Some(format!("{sig} — `{origin}`")),
+                    Some(format!("{sig} — `{origin}`{}", stability_suffix(marked))),
                 ));
             }
         }
@@ -1898,6 +1915,24 @@ static EMPTY_CONSUMES: Vec<bynk_syntax::ast::ConsumesDecl> = Vec::new();
 mod tests {
     use super::*;
     use bynk_check::firstparty::BYNK_LIST_SRC;
+
+    /// S3 (#1963): an experimental first-party item is marked in its completion
+    /// detail; nothing ships experimental, so a stable one is unmarked.
+    #[test]
+    fn completion_marks_experimental_items() {
+        assert_eq!(stability_suffix(true), " — experimental");
+        assert_eq!(stability_suffix(false), "");
+        assert!(!experimental("bynk.cloudflare.Kv"));
+        let caps = complete("consumes bynk.cloudflare { ", "context app.probe\n", None);
+        let kv = caps
+            .iter()
+            .find(|c| c.label == "Kv")
+            .expect("Kv is offered");
+        assert_eq!(
+            kv.detail.as_deref(),
+            Some("capability exported by `bynk.cloudflare`")
+        );
+    }
 
     fn labels(line: &str, doc: &str) -> Vec<String> {
         complete(line, doc, None)

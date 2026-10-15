@@ -551,7 +551,31 @@ pub fn describe_firstparty_symbol(name: &str) -> Option<String> {
     // first-party commons is hoverable without a second edit here (#901).
     bynk_check::firstparty::FIRSTPARTY_SOURCES
         .iter()
-        .find_map(|(_, src)| describe_symbol(src, name))
+        .find_map(|(unit, src)| {
+            describe_symbol(src, name).map(|d| d + &firstparty_notes(unit, name))
+        })
+}
+
+/// Standard-library S3 (#1963): what hover adds about a first-party item's
+/// stability: that it is experimental (no compatibility promise, and an
+/// `[unstable] allow` to use), and that an enum is extensible (a `match` on it
+/// needs a wildcard). Empty for a stable, closed item.
+pub fn firstparty_notes(unit: &str, name: &str) -> String {
+    let mut out = String::new();
+    let path = format!("{unit}.{name}");
+    if bynk_check::firstparty::stability_of(&path)
+        == Some(bynk_check::firstparty::Stability::Experimental)
+    {
+        out.push_str(&format!(
+            "\n\n**Experimental**: it may change or disappear in any release. To use it, add `\"{path}\"` to `[unstable] allow` in `bynk.toml`."
+        ));
+    }
+    if bynk_check::firstparty::is_extensible(unit, name) {
+        out.push_str(
+            "\n\n**Extensible**: it may gain variants in a minor release, so a `match` on it needs a wildcard arm.",
+        );
+    }
+    out
 }
 
 /// Slice 6b: the `(unit name, name span)` of every `uses`/`consumes` target in
@@ -1812,6 +1836,30 @@ pub fn type_ref_str(t: &TypeRef) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// S3 (#1963): hover on a first-party extensible enum says a `match` on it
+    /// needs a wildcard; a closed one, and a stable one, say nothing extra.
+    #[test]
+    fn hover_marks_an_extensible_first_party_enum() {
+        let fetch_error = describe_firstparty_symbol("FetchError").expect("FetchError hovers");
+        assert!(fetch_error.contains("**Extensible**"), "{fetch_error}");
+        assert!(
+            !fetch_error.contains("**Experimental**"),
+            "nothing ships experimental"
+        );
+        assert!(
+            describe_firstparty_symbol("Method")
+                .unwrap()
+                .contains("**Extensible**")
+        );
+        let uuid = describe_firstparty_symbol("Uuid").expect("Uuid hovers");
+        assert!(!uuid.contains("**Extensible**"), "{uuid}");
+        assert_eq!(
+            firstparty_notes("app.user", "FetchError"),
+            "",
+            "a user's own enum"
+        );
+    }
 
     /// Content-ownership track (#1086) slice 1: `find_declaration_cross_file`/
     /// `describe_symbol_cross_file` take a pre-read `(path, content)` map

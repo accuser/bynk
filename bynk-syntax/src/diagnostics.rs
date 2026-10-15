@@ -1397,6 +1397,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.project.schema_registry_corrupt",
         "`bynk.schema.lock` (the events schema registry) is missing its version field, empty, truncated, or otherwise unparseable — restore it from version control rather than deleting it, since deleting it would silently re-baseline every event's history.",
     ),
+    warn(d(
+        "bynk.project.unstable_not_experimental",
+        "`bynk.toml`'s `[unstable] allow` lists an item that nothing experimental lies in or under: it is stable now, so the entry can go (warning).",
+    )),
+    d(
+        "bynk.project.unstable_unknown_item",
+        "`bynk.toml`'s `[unstable] allow` lists a path that names no standard-library unit, exported item or operation.",
+    ),
     dg(
         "bynk.property.restates_refinement",
         "A `property` merely re-checks a refinement its type already guarantees.",
@@ -1743,6 +1751,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `from websocket` service's `on open` parameter has a type not constructible from `String`; it arrives as a query-string value (#1657).",
     ),
     d(
+        "bynk.stability.experimental",
+        "An experimental standard-library item is used without an `[unstable] allow` entry in `bynk.toml` covering it.",
+    ),
+    d(
         "bynk.store.annotation_kind_mismatch",
         "A storage annotation is used on a kind it does not apply to (e.g. `@ttl` on a `Map`).",
     ),
@@ -2025,6 +2037,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.types.err_value_mismatch",
         "An `Err` payload has the wrong type.",
         &["err_expr"],
+    ),
+    d(
+        "bynk.types.extensible_match_needs_wildcard",
+        "A `match` covers an extensible standard-library enum (`FetchError`, `Method`) without a wildcard; it may gain variants in a minor release.",
     ),
     dg(
         "bynk.types.field_access_on_non_record",
@@ -2492,6 +2508,7 @@ fn category_title(cat: &str) -> &'static str {
         "refine" => "Refinement",
         "resolve" => "Resolution",
         "service" => "Services",
+        "stability" => "Stability",
         "suite" => "Suites and cases",
         "transition" => "Transitions (step invariants)",
         "types" => "Type checking",

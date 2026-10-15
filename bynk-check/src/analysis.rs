@@ -120,7 +120,7 @@
 //!   point's hardcoded `BuildTarget::Bundle`.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::check_pipeline::{check_file_core, prepare_unit_check_ctx, record_analyse_types};
@@ -267,11 +267,29 @@ fn bailed(
 /// Identity is project-relative (ADR 0198): a file's `source_path` here is
 /// unique across `include` roots, same as `analyse_project_with` used to be.
 pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> ProjectAnalysis {
+    // S3 (#1963): the project's `[unstable]` opt-in, read the way the build
+    // reads it, so the editor and `bynkc` agree about every file.
+    let policy =
+        crate::stability::StabilityPolicy::for_project(Some(roots.project_root()), overlay);
+    analyse_project_with_policy(roots, overlay, policy)
+}
+
+/// [`analyse_project`] under a given [`crate::stability::StabilityPolicy`] —
+/// how a test treats a shipped item as experimental, since none is yet.
+pub fn analyse_project_with_policy(
+    roots: &Roots,
+    overlay: &HashMap<PathBuf, String>,
+    policy: crate::stability::StabilityPolicy,
+) -> ProjectAnalysis {
     let tys = &Arc::new(Types::new());
     let trees = roots.trees();
     let excludes = roots.excludes();
+    let policy = Arc::new(policy);
 
     let mut errors = ErrorSink::new();
+    for err in policy.manifest_diagnostics() {
+        errors.push_for(Some(Path::new(crate::stability::MANIFEST)), err);
+    }
     let mut refs = RefSink::new();
     let mut hints = HintSink::new();
     let mut locals = LocalsSink::new();
@@ -318,8 +336,14 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     let unit_tables = project_model::phase_symbol_tables(&groups, &kinds, &parsed, &mut errors);
 
     // -- 5. `uses` resolution. --
-    let unit_uses =
-        project_model::phase_resolve_uses(&groups, &kinds, &parsed, &unit_tables, &mut errors);
+    let unit_uses = project_model::phase_resolve_uses(
+        &groups,
+        &kinds,
+        &parsed,
+        &unit_tables,
+        &policy,
+        &mut errors,
+    );
 
     // -- 5b. `consumes` resolution. --
     let (unit_consumes, unit_flattened) = project_model::phase_resolve_consumes(
@@ -327,6 +351,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
         &kinds,
         &parsed,
         &unit_tables,
+        &policy,
         &mut errors,
         &mut refs,
     );
@@ -561,6 +586,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
             &combined_types,
             &imported_from_kind,
             &reached_types,
+            &policy,
         );
 
         for &i in indices {

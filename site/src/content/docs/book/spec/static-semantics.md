@@ -790,6 +790,19 @@ variant (`bynk.types.duplicate_variant_arm`), and MUST NOT be unreachable
 unguarded arm matches. A guarded arm or a refined pattern (`n where P`) never
 covers a later arm, since its guard or predicate may fail.
 
+**Extensible enums** (standard-library S3, #1963). A standard-library enum
+marked extensible in the first-party registry (`FetchError`, `Method`) may gain
+variants in a minor release, so its coverage counts one more shape than its
+declared variants: a future variant that only an irrefutable pattern (`_` or a
+binding) covers. A `match` that covers an extensible enum at any depth
+(`Err(Network)` … inside `Result`, or at top level) without such a pattern is
+`bynk.types.extensible_match_needs_wildcard`. Once the wildcard is present it
+covers the future variant, so it is not `bynk.types.unreachable_arm`. The enum
+is identified by the unit that provides it, not by its name, so a user's own
+enum of the same name is unaffected. Suite bodies are not checked under this
+rule: a test is not under the compatibility promise, and its views lack the
+unit's provenance.
+
 A pattern MUST name a real variant (`bynk.types.unknown_variant_in_pattern`) and
 real payload fields (`bynk.types.unknown_pattern_field`), bind the right number
 of fields (`bynk.types.pattern_arity`), and MUST NOT mix named and positional

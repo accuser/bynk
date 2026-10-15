@@ -1504,6 +1504,7 @@ fn check_unit_files(
     history_target_agents: &HashSet<String>,
     asset_served: &BTreeMap<String, String>,
     mode: Mode,
+    policy: &Arc<bynk_check::stability::StabilityPolicy>,
     errors: &mut ErrorSink,
     refs: &mut RefSink,
     hints: &mut HintSink,
@@ -1550,6 +1551,7 @@ fn check_unit_files(
         combined_types,
         imported_from_kind,
         reached_types,
+        policy,
     );
 
     for &i in indices {
@@ -1851,6 +1853,15 @@ fn run_checks(
     tys: &Arc<Types>,
 ) -> RunChecks {
     let mut errors = ErrorSink::new();
+    // S3 (#1963): the project's `[unstable]` opt-in, read as the editor reads it
+    // (`bynk_check::analysis::analyse_project`), so the two never disagree.
+    let policy = Arc::new(bynk_check::stability::StabilityPolicy::for_project(
+        Some(project_root),
+        overlay,
+    ));
+    for err in policy.manifest_diagnostics() {
+        errors.push_for(Some(Path::new(bynk_check::stability::MANIFEST)), err);
+    }
     // v0.25 (ADR 0053): binding edges, recorded at the resolution sites — by
     // `check_file_core` and several `project_model::phase_*` resolution
     // calls below, all of which require this sink unconditionally.
@@ -1953,8 +1964,14 @@ fn run_checks(
     let unit_tables = project_model::phase_symbol_tables(&groups, &kinds, &parsed, &mut errors);
 
     // -- 5. Resolve `uses` clauses (target must exist + be a commons). --
-    let unit_uses =
-        project_model::phase_resolve_uses(&groups, &kinds, &parsed, &unit_tables, &mut errors);
+    let unit_uses = project_model::phase_resolve_uses(
+        &groups,
+        &kinds,
+        &parsed,
+        &unit_tables,
+        &policy,
+        &mut errors,
+    );
 
     // -- 5b. Resolve `consumes` clauses (target must exist + be a context). --
     let (unit_consumes, unit_flattened) = project_model::phase_resolve_consumes(
@@ -1962,6 +1979,7 @@ fn run_checks(
         &kinds,
         &parsed,
         &unit_tables,
+        &policy,
         &mut errors,
         &mut refs,
     );
@@ -2305,6 +2323,7 @@ fn run_checks(
             &history_target_agents,
             &asset_served,
             mode,
+            &policy,
             &mut errors,
             &mut refs,
             &mut hints,

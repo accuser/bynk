@@ -723,6 +723,12 @@ pub struct TypedCommons {
     /// #1925: the imports this unit's own declarations shadow, carried from
     /// [`ResolvedCommons::shadowed_imports`] for the same per-handler checks.
     pub shadowed_imports: HashMap<String, crate::resolver::ShadowedImport>,
+    /// S3 (#1963): the extensible first-party enums in scope, carried from
+    /// [`ResolvedCommons::extensible_enums`] for the same per-handler checks.
+    pub extensible_enums: HashSet<String>,
+    /// S3 (#1963): carried from [`ResolvedCommons::stability`] for the same
+    /// per-handler checks.
+    pub stability: crate::stability::UnitStability,
 }
 
 impl TypedCommons {
@@ -757,6 +763,8 @@ impl TypedCommons {
             actor_bindings: HashMap::new(),
             assets: HashMap::new(),
             shadowed_imports: HashMap::new(),
+            extensible_enums: HashSet::new(),
+            stability: Default::default(),
         }
     }
 
@@ -1006,6 +1014,8 @@ pub fn check_record_in(
                 actor_bindings: HashMap::new(),
                 assets: input.assets,
                 shadowed_imports: input.shadowed_imports,
+                extensible_enums: input.extensible_enums,
+                stability: input.stability,
             }),
             ty_intern,
             typed_despite_errors: None,
@@ -1029,6 +1039,8 @@ pub fn check_record_in(
                 actor_bindings: HashMap::new(),
                 assets: input.assets,
                 shadowed_imports: input.shadowed_imports,
+                extensible_enums: input.extensible_enums,
+                stability: input.stability,
             }),
             ty_intern,
         }

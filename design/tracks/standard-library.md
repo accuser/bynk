@@ -5,6 +5,9 @@
   S1 done (#1945): a `bynk-std` registry drives their injection (R-6 met).
   S2 done (#1952): every binding is type-checked and behaviour-tested per
   platform and per operation (R-12, R-13 met for the shipped bindings).
+  S3 done (#1963): stable/experimental marking with the `[unstable] allow`
+  opt-in, extensible enums (`FetchError`, `Method`), the D2 tiers ADR and the
+  Gate 1 amendment (R-17 met; §11 Q5, Q6 built).
 - **Realises:** `design/bynk-design-notes.md` "Three-tier output" (the runtime
   library and per-platform bindings, including the unbuilt `Crypto`),
   [ADR 0034](../decisions/0034-collections-hybrid-kernel-stdlib.md)'s promise
@@ -611,7 +614,7 @@ increment** (ADR 0023), and the ordering follows §13.
 | S0 ✅ #1940 | Extract `bynk-std`: move the data in `firstparty.rs` and the `firstparty/` tree into a leaf crate; `bynk-check` re-exports `Platform`; output byte-identical; 17th crate in `release.yml`'s publish order | D1, D9 hedge (L3 in its own subtree) |
 | S1 ✅ #1945 | First-party unit registry: one table (unit, kind, sources, dependencies with computed closure, per-platform bindings, nativity, env-taking providers, wrangler derivation) replaces the seven injection blocks; byte-identical. Done without wrangler derivation, which S4 reshapes (#1945 Decision E) | PR-1, R-6, P-5 |
 | S2 ✅ #1952 | Standalone binding test scaffold: each TS binding `tsc --strict` on its own, behavioural tests against contract-faithful fakes, Miniflare where semantics matter | PR-3, R-12, R-13 |
-| S3 | Stable/experimental marking (first-party metadata) with the `bynk.toml` `[unstable] allow` opt-in (§11 Q6); the extensible-enum marker and its wildcard-arm diagnostic (§11 Q5); the D2 ADR; and the `bynk-1.0-definition.md` Gate 1 amendment | PR-4, D2 |
+| S3 ✅ #1963 | Stable/experimental marking (first-party metadata) with the `bynk.toml` `[unstable] allow` opt-in (§11 Q6); the extensible-enum marker and its wildcard-arm diagnostic (§11 Q5); the D2 ADR; and the `bynk-1.0-definition.md` Gate 1 amendment | PR-4, D2 |
 
 **Instances:**
 
