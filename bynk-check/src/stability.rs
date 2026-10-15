@@ -45,11 +45,14 @@ pub struct StabilityPolicy {
 }
 
 impl Default for StabilityPolicy {
+    /// Blocks nothing. A check input built without
+    /// [`crate::resolver::ResolvedCommons::with_stability`] (a suite case body,
+    /// `resolve_recovering`) is under neither rule, so the default must fail
+    /// open: a default that knew the experimental items but no `allow` would
+    /// refuse them while ignoring the project's opt-in. The real policy is
+    /// built only by [`StabilityPolicy::for_project`].
     fn default() -> Self {
-        Self {
-            allow: Vec::new(),
-            experimental: firstparty::experimental_items(),
-        }
+        Self::permissive()
     }
 }
 
@@ -63,7 +66,7 @@ impl StabilityPolicy {
             .unwrap_or_default();
         Self {
             allow,
-            ..Self::default()
+            experimental: firstparty::experimental_items(),
         }
     }
 
@@ -123,11 +126,7 @@ impl StabilityPolicy {
                     .with_note(
                         "an entry is a unit (`bynk.cloudflare`), an item it exports (`bynk.cloudflare.Kv`) or an operation (`bynk.cloudflare.Kv.list`)",
                     ));
-            } else if !self
-                .experimental
-                .iter()
-                .any(|item| firstparty::covers(item, entry) || firstparty::covers(entry, item))
-            {
+            } else if !firstparty::allow_entry_is_live(&self.experimental, entry) {
                 out.push(CompileError::new(
                         NOT_EXPERIMENTAL,
                         Span::default(),
@@ -247,12 +246,16 @@ mod tests {
     /// must have been carried there).
     const PROJECT: &[(&str, &str)] = &[
         (
+            "app/probe.test.bynk",
+            "suite app.probe\n\ncase \"a case calls an operation\" {\n\tlet _ <- Kv.putTtl(\"k\", \"v\", 120)\n\texpect Kv.putTtl called once\n}\n",
+        ),
+        (
             "app/qual.bynk",
             "context app.qual\n\nconsumes bynk\n\nservice ping {\n\ton call() -> Effect[Int] given bynk.Clock {\n\t\tlet _ <- bynk.Clock.now()\n\t\tEffect.pure(1)\n\t}\n}\n",
         ),
         (
             "app/probe.bynk",
-            "context app.probe\n\nuses bynk.string\nuses bynk.locale.types\nconsumes bynk { Random }\nconsumes bynk.cloudflare { Kv }\n\nservice probe {\n\ton call(xs: List[String]) -> Effect[String] given Kv {\n\t\tlet _ <- Kv.putTtl(\"k\", \"v\", 120)\n\t\tEffect.pure(join(xs, \",\"))\n\t}\n}\n",
+            "context app.probe\n\nuses bynk.string\nuses bynk.locale.types\nconsumes bynk { Random }\nconsumes bynk.cloudflare { Kv }\n\nservice probe {\n\ton call(xs: List[String]) -> Effect[String] given Kv {\n\t\tlet _ <- Kv.putTtl(\"k\", \"v\", 120)\n\t\tlet joiner: (List[String], String) -> String = join\n\t\tEffect.pure(join(xs, \",\"))\n\t}\n}\n",
         ),
     ];
 
@@ -306,8 +309,9 @@ mod tests {
                     "bynk.locale.types".to_string()
                 ),
                 ("bynk.string.join".to_string(), "join".to_string()),
+                ("bynk.string.join".to_string(), "join".to_string()),
             ],
-            "a consumes selection, a uses, a capability operation (flattened and qualified) and a call in a handler"
+            "a consumes selection, a uses, a capability operation (flattened and qualified), and a function called and passed as a value in a handler; never in a suite case"
         );
         assert!(
             experimental_uses(policy(
@@ -323,7 +327,10 @@ mod tests {
             .is_empty(),
             "allow entries cover their path and everything under it"
         );
-        assert!(experimental_uses(StabilityPolicy::default()).is_empty());
+        assert!(
+            experimental_uses(StabilityPolicy::default()).is_empty(),
+            "the default fails open"
+        );
     }
 
     /// The codes a one-file project's analysis reports.
@@ -371,9 +378,21 @@ mod tests {
         );
     }
 
+    /// An input built without `with_stability` (a suite case body,
+    /// `resolve_recovering`) must fail open: the default is the permissive
+    /// policy, not the shipped experimental list with an empty `allow`.
+    #[test]
+    fn the_default_policy_fails_open() {
+        assert_eq!(StabilityPolicy::default(), StabilityPolicy::permissive());
+        assert_eq!(
+            UnitStability::default().policy.experimental,
+            Vec::<String>::new()
+        );
+    }
+
     #[test]
     fn the_shipped_policy_blocks_nothing() {
-        let p = StabilityPolicy::default();
+        let p = StabilityPolicy::for_project(None, &HashMap::new());
         assert!(p.experimental.is_empty());
         assert!(!p.blocks("bynk.cloudflare.Kv.list"));
         assert!(p.manifest_diagnostics().is_empty());

@@ -417,9 +417,9 @@ fn refuse_experimental(path: &str, span: Span, ctx: &mut Ctx) {
 }
 
 /// S3 (#1963): a reference to an imported first-party name the project's policy
-/// blocks. The unit's blocked imports were decided where its provenance is
+/// blocks, called or passed as a value. The unit's blocked imports were decided where its provenance is
 /// known, so this holds in handler bodies too.
-fn refuse_experimental_import(name: &Ident, ctx: &mut Ctx) {
+pub(crate) fn refuse_experimental_import(name: &Ident, ctx: &mut Ctx) {
     if let Some(path) = ctx.input.stability.blocked_imports.get(&name.name).cloned() {
         refuse_experimental(&path, name.span, ctx);
     }

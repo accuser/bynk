@@ -37,7 +37,7 @@ Slice S3 (#1963) builds both.
 - **D3 — The opt-in.** `bynk.toml` gains `[unstable] allow = [...]`, and an entry covers its path and
   everything under it. Using an experimental item no entry covers is `bynk.stability.experimental`
   (an error, whose note names the entry to add). The uses checked are a `consumes` of the unit or a
-  selected capability, a `uses`, a call to an imported function, and a call to a capability
+  selected capability, a `uses`, an imported function called or passed as a value, and a call to a capability
   operation, flattened or qualified. An entry naming no first-party item is
   `bynk.project.unstable_unknown_item`, an error. An entry reaching nothing experimental is
   `bynk.project.unstable_not_experimental`, a **warning**, so stabilising an item breaks no build.
@@ -52,9 +52,11 @@ Slice S3 (#1963) builds both.
   decided once per unit from its provenance and carried to every check built from it. That reaches
   handler and agent bodies, whose own inputs never carried `imported_from`. A user's own enum of the
   same name is unaffected.
-- **D6 — First-party code checks under its own terms.** A first-party unit's own `uses`,
-  `consumes` and bodies are never refused under a project's policy; its dependencies are the
-  library's business.
+- **D6 — First-party code checks under its own terms, and the default fails open.** A first-party
+  unit's own `uses`, `consumes` and bodies are never refused under a project's policy; its
+  dependencies are the library's business. A check input built without the project's policy (a
+  suite case, the editor's recovering resolve) gets the permissive default, never the experimental
+  list with an empty `allow`, which would refuse items while ignoring the opt-in.
 
 **Consequences.**
 - **Deliberate gaps:**

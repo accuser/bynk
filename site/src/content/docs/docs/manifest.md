@@ -210,7 +210,8 @@ allow = ["bynk.cloudflare.D1"]
 
 Using an experimental item that no entry covers is a
 `bynk.stability.experimental` error at the use: a `consumes` selection, a
-`uses`, a call to an imported function, or a call to a capability operation.
+`uses`, an imported function called or passed as a value, or a call to a capability
+operation.
 Its note names the entry to add.
 
 An entry that names no standard-library item is a

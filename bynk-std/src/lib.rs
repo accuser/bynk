@@ -533,18 +533,14 @@ pub fn allows(allow: &[String], path: &str) -> bool {
     allow.iter().any(|entry| covers(entry, path))
 }
 
-/// Whether `entry`, an `[unstable] allow` entry, reaches anything experimental:
-/// it names an experimental item, lies under one, or contains one.
-pub fn allow_entry_is_live(entry: &str) -> bool {
-    allow_entry_is_live_in(UNITS, entry)
-}
-
-/// [`allow_entry_is_live`] over a given table.
-pub fn allow_entry_is_live_in(units: &[Unit], entry: &str) -> bool {
-    stability_of_in(units, entry) == Some(Stability::Experimental)
-        || experimental_items_in(units)
-            .iter()
-            .any(|item| covers(entry, item))
+/// Whether `entry`, an `[unstable] allow` entry, reaches anything in
+/// `experimental` (a list of experimental item paths, such as
+/// [`experimental_items`]): it names an experimental item, lies under one, or
+/// contains one. An entry that reaches nothing is stale.
+pub fn allow_entry_is_live(experimental: &[String], entry: &str) -> bool {
+    experimental
+        .iter()
+        .any(|item| covers(item, entry) || covers(entry, item))
 }
 
 /// Whether `name`, an enum exported by `unit`, is extensible.
@@ -743,7 +739,8 @@ mod tests {
 
     #[test]
     fn an_allow_entry_is_live_while_it_reaches_something_experimental() {
-        let live = |e| allow_entry_is_live_in(SYNTH, e);
+        let synth = experimental_items_in(SYNTH);
+        let live = |e| allow_entry_is_live(&synth, e);
         assert!(live("bynk.cloudflare.Ai"));
         assert!(live("bynk.cloudflare.Ai.run"), "under an experimental item");
         assert!(live("bynk.cloudflare"), "contains an experimental item");

@@ -73,6 +73,8 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<TyId>, ctx: &mut Ctx) -> 
         let fn_expected = expected.is_some_and(|e| matches!(&*tys.get(e), Ty::Fn { .. }));
         if fn_expected {
             ctx.refs.record(id.span, SymbolKind::Fn, &id.name);
+            // S3 (#1963): a function passed as a value is a use too.
+            super::calls::refuse_experimental_import(id, ctx);
             if !fn_decl.type_params.is_empty() {
                 ctx.errors.push(
                     CompileError::new(
