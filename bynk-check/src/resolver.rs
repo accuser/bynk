@@ -207,6 +207,16 @@ pub struct ResolvedCommons {
     /// [`ResolvedCommons::with_shadowed_imports`]; read through
     /// [`ResolvedCommons::shadowed_import_error`].
     pub shadowed_imports: HashMap<String, ShadowedImport>,
+    /// Standard-library S3 (#1963): the names in scope that are a first-party
+    /// unit's extensible enums (`FetchError`, `Method`), whose `match` needs a
+    /// wildcard. Types carry no owning unit, so this is decided once per unit
+    /// from its provenance (`check_pipeline`) and carried to every check built
+    /// from it. Empty unless set with [`ResolvedCommons::with_extensible_enums`].
+    pub extensible_enums: HashSet<String>,
+    /// Standard-library S3 (#1963): the unit's stability facts — the project's
+    /// `[unstable]` policy and the imports it blocks. Set with
+    /// [`ResolvedCommons::with_stability`]; the default blocks nothing.
+    pub stability: crate::stability::UnitStability,
 }
 
 /// Static information about the consuming context: the set of contexts it
@@ -412,6 +422,8 @@ impl ResolvedCommons {
             uses_commons_type_names,
             assets: HashMap::new(),
             shadowed_imports: HashMap::new(),
+            extensible_enums: HashSet::new(),
+            stability: Default::default(),
         }
     }
 
@@ -428,6 +440,18 @@ impl ResolvedCommons {
     /// another kind shadow ([`crate::project_model::shadowed_imports`]).
     pub fn with_shadowed_imports(mut self, shadowed: HashMap<String, ShadowedImport>) -> Self {
         self.shadowed_imports = shadowed;
+        self
+    }
+
+    /// S3 (#1963): set [`ResolvedCommons::extensible_enums`].
+    pub fn with_extensible_enums(mut self, names: HashSet<String>) -> Self {
+        self.extensible_enums = names;
+        self
+    }
+
+    /// S3 (#1963): set [`ResolvedCommons::stability`].
+    pub fn with_stability(mut self, stability: crate::stability::UnitStability) -> Self {
+        self.stability = stability;
         self
     }
 
@@ -765,6 +789,8 @@ pub fn resolve_recovering(commons: Commons) -> (ResolvedCommons, Vec<CompileErro
             event_type_names,
             assets: local_assets,
             shadowed_imports: HashMap::new(),
+            extensible_enums: HashSet::new(),
+            stability: Default::default(),
         };
         (resolved, errors)
     }

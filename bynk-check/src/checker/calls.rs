@@ -408,6 +408,23 @@ pub fn check_event_field_default(
     }
 }
 
+/// Standard-library S3 (#1963): refuse a use of the experimental first-party
+/// item `path` at `span` unless the project's `[unstable] allow` covers it.
+fn refuse_experimental(path: &str, span: Span, ctx: &mut Ctx) {
+    if let Some(err) = ctx.input.stability.policy.check(path, span) {
+        ctx.errors.push(err);
+    }
+}
+
+/// S3 (#1963): a reference to an imported first-party name the project's policy
+/// blocks, called or passed as a value. The unit's blocked imports were decided where its provenance is
+/// known, so this holds in handler bodies too.
+pub(crate) fn refuse_experimental_import(name: &Ident, ctx: &mut Ctx) {
+    if let Some(path) = ctx.input.stability.blocked_imports.get(&name.name).cloned() {
+        refuse_experimental(&path, name.span, ctx);
+    }
+}
+
 /// v0.91 (ADR 0116 D6): the `bynk.list` free functions whose method forms
 /// shipped with slice 1 are **deprecated** in favour of the method-chain
 /// vocabulary. `reverse`/`traverse` stay (no method form yet). Emits a
@@ -493,6 +510,7 @@ pub(crate) fn check_call(
         ctx.refs.record(name.span, SymbolKind::Fn, &name.name);
         ctx.callees.insert(expr_id, Callee::Fn(Arc::clone(fn_decl)));
         warn_bynk_list_deprecation(name, args, span, ctx);
+        refuse_experimental_import(name, ctx);
         return check_call_against_fn(name, fn_decl, type_args, args, ctx);
     }
     // v0.20a: explicit type arguments only apply to (generic) functions.
@@ -1167,6 +1185,20 @@ pub(crate) fn check_static_call(
     }
     if let Some(cap) = ctx.caps.capabilities.get(&type_name.name).cloned() {
         record_capability_ref(type_name.span, &type_name.name, ctx);
+        // S3 (#1963): a flattened capability's operation, by its owning unit.
+        if let Some(unit) = ctx
+            .input
+            .cross_context
+            .flattened_caps
+            .get(&type_name.name)
+            .cloned()
+        {
+            refuse_experimental(
+                &format!("{unit}.{}.{}", type_name.name, method.name),
+                method.span,
+                ctx,
+            );
+        }
         ctx.callees.insert(
             expr_id,
             Callee::Capability {
@@ -3866,6 +3898,12 @@ fn check_cross_context_capability_call(
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     let tys = ctx.tys;
+    // S3 (#1963): a qualified capability's operation, `U.Cap.op`.
+    refuse_experimental(
+        &format!("{consumed}.{cap}.{}", method.name),
+        method.span,
+        ctx,
+    );
     ctx.callees.insert(
         expr_id,
         Callee::CrossCap {

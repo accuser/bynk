@@ -43,6 +43,16 @@ static NEXT_ROOT: AtomicUsize = AtomicUsize::new(0);
 
 /// Analyse the project made of `files` (`(relative path, source)` pairs).
 pub(crate) fn analyse(files: &[(&str, &str)]) -> Analysed {
+    analyse_with(files, None)
+}
+
+/// [`analyse`] under a given stability policy (S3, #1963): how a test treats a
+/// shipped item as experimental, since none is yet. `None` reads the project's
+/// own, as [`analyse_project`] does.
+pub(crate) fn analyse_with(
+    files: &[(&str, &str)],
+    policy: Option<crate::stability::StabilityPolicy>,
+) -> Analysed {
     let root = std::env::temp_dir().join(format!(
         "bynk-check-testkit-{}-{}",
         std::process::id(),
@@ -57,7 +67,11 @@ pub(crate) fn analyse(files: &[(&str, &str)]) -> Analysed {
         std::fs::write(&path, src).expect("write the fixture file");
         overlay.insert(path, (*src).to_string());
     }
-    let analysis = analyse_project(&Roots::Single(root.clone()), &overlay);
+    let roots = Roots::Single(root.clone());
+    let analysis = match policy {
+        Some(policy) => crate::analysis::analyse_project_with_policy(&roots, &overlay, policy),
+        None => analyse_project(&roots, &overlay),
+    };
     Analysed {
         root,
         sources: files

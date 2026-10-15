@@ -73,6 +73,8 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<TyId>, ctx: &mut Ctx) -> 
         let fn_expected = expected.is_some_and(|e| matches!(&*tys.get(e), Ty::Fn { .. }));
         if fn_expected {
             ctx.refs.record(id.span, SymbolKind::Fn, &id.name);
+            // S3 (#1963): a function passed as a value is a use too.
+            super::calls::refuse_experimental_import(id, ctx);
             if !fn_decl.type_params.is_empty() {
                 ctx.errors.push(
                     CompileError::new(
@@ -3386,6 +3388,22 @@ pub(crate) fn check_match(
         match &kind {
             MatchKind::Variant => {
                 for witness in missing_patterns(disc_ty, &unguarded, ctx) {
+                    if let Some((name, shown)) = future_variant_witness(&witness) {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.types.extensible_match_needs_wildcard",
+                                span,
+                                format!(
+                                    "`{name}` may gain variants in a minor release, so this \
+                                     `match` must cover them — `{shown}` is not covered"
+                                ),
+                            )
+                            .with_note(format!(
+                                "add a wildcard arm for `{shown}`: listing every variant `{name}` has today is not enough"
+                            )),
+                        );
+                        continue;
+                    }
                     ctx.errors.push(
                         CompileError::new(
                             "bynk.types.non_exhaustive_match",
@@ -3943,8 +3961,51 @@ fn payload_patterns<'p>(pat: &'p Pattern, info: &VariantInfo) -> Option<Vec<Opti
     Some(fields)
 }
 
+/// Opens and closes the witness [`missing_patterns`] gives for an extensible
+/// enum's future variant (standard-library S3, #1963): `\u{1}FetchError\u{2}`.
+/// Control characters, so no real variant or pattern text can collide with it.
+const FUTURE_VARIANT_OPEN: char = '\u{1}';
+const FUTURE_VARIANT_CLOSE: char = '\u{2}';
+
+/// The extensible enum a first-party unit exports that `ty` is, if any. Types
+/// carry no owning unit, so whether a name is one comes from
+/// [`crate::resolver::ResolvedCommons::extensible_enums`], decided once per unit
+/// from its provenance. A user's own enum of the same name is never imported
+/// from a first-party unit (the two would conflict, `bynk.consumes.name_conflict`).
+fn extensible_enum(ty: TyId, ctx: &Ctx) -> Option<String> {
+    match &*ctx.tys.get(ty) {
+        Ty::Named {
+            kind: NamedKind::Sum,
+            name,
+            ..
+        } => ctx
+            .input
+            .extensible_enums
+            .contains(name)
+            .then(|| name.clone()),
+        _ => None,
+    }
+}
+
+/// If `witness` stands for an extensible enum's future variant, at any depth
+/// (`Err(<future>)`), the enum's name and the witness as the user writes it,
+/// with the future variant shown as `_`.
+fn future_variant_witness(witness: &str) -> Option<(String, String)> {
+    let start = witness.find(FUTURE_VARIANT_OPEN)?;
+    let len = witness[start..].find(FUTURE_VARIANT_CLOSE)?;
+    let name = witness[start + 1..start + len].to_string();
+    let shown = format!(
+        "{}_{}",
+        &witness[..start],
+        &witness[start + len + FUTURE_VARIANT_CLOSE.len_utf8()..]
+    );
+    Some((name, shown))
+}
+
 /// Value shapes of `ty` NOT covered by the sibling patterns `pats` (empty ⇒
-/// exhaustive). Bounded by declared sum arity (ADR 0169 DECISION D): a
+/// exhaustive). An extensible enum (S3, #1963) has one more shape than its
+/// declared variants, a future variant, which only an irrefutable pattern
+/// covers. Bounded by declared sum arity (ADR 0169 DECISION D): a
 /// single-field payload recurses; a multi-field refutable payload is
 /// conservatively reported uncovered unless a full (all-irrefutable) arm exists.
 fn missing_patterns(ty: TyId, pats: &[&Pattern], ctx: &Ctx) -> Vec<String> {
@@ -4008,6 +4069,9 @@ fn missing_patterns(ty: TyId, pats: &[&Pattern], ctx: &Ctx) -> Vec<String> {
             }
             // Multi-field refutable nesting: needs a full arm (conservative).
             missing.push(format!("{}(…)", v.name));
+        }
+        if let Some(name) = extensible_enum(ty, ctx) {
+            missing.push(format!("{FUTURE_VARIANT_OPEN}{name}{FUTURE_VARIANT_CLOSE}"));
         }
         return missing;
     }

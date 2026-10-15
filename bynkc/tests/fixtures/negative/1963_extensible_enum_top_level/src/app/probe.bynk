@@ -1,0 +1,19 @@
+-- #1963: `Method` is extensible, so a top-level match on it needs a wildcard.
+context app.probe
+
+consumes bynk { Fetch }
+
+fn verb(m: Method) -> String {
+	match m {
+		Get => "get"
+		Post => "post"
+		Put => "put"
+		Delete => "delete"
+	}
+}
+
+service probe {
+	on call() -> Effect[String] {
+		Effect.pure(verb(Get))
+	}
+}

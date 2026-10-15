@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **494** codes in total.
+There are **498** codes in total.
 
 ## Agents
 
@@ -414,6 +414,8 @@ There are **494** codes in total.
 | `bynk.project.no_sources` | The project contains no source files. |  | — |
 | `bynk.project.read_failed` | A source file could not be read. |  | — |
 | `bynk.project.schema_registry_corrupt` | `bynk.schema.lock` (the events schema registry) is missing its version field, empty, truncated, or otherwise unparseable — restore it from version control rather than deleting it, since deleting it would silently re-baseline every event's history. |  | — |
+| `bynk.project.unstable_not_experimental` | `bynk.toml`'s `[unstable] allow` lists an item that nothing experimental lies in or under: it is stable now, so the entry can go (warning). |  | Warning |
+| `bynk.project.unstable_unknown_item` | `bynk.toml`'s `[unstable] allow` lists a path that names no standard-library unit, exported item or operation. |  | — |
 
 ## Properties (generative tests)
 
@@ -516,6 +518,12 @@ There are **494** codes in total.
 | `bynk.service.websocket_open_arity` | A `from websocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii). |  | — |
 | `bynk.service.websocket_param_not_stringy` | A `from websocket` service's `on open` parameter has a type not constructible from `String`; it arrives as a query-string value (#1657). |  | — |
 
+## Stability
+
+| Code | Summary | Construct | Severity |
+|---|---|---|---|
+| `bynk.stability.experimental` | An experimental standard-library item is used without an `[unstable] allow` entry in `bynk.toml` covering it. |  | — |
+
 ## Static assets
 
 | Code | Summary | Construct | Severity |
@@ -570,6 +578,7 @@ There are **494** codes in total.
 | `bynk.types.embeds_variant_shape` | An `embeds E as V` target variant must have exactly one payload field, of type `E`. |  | — |
 | `bynk.types.empty_refinement` | A refinement admits no values (contradictory predicates). | [`refinement`](/book/reference/grammar/#rule-refinement) | — |
 | `bynk.types.err_value_mismatch` | An `Err` payload has the wrong type. | [`err_expr`](/book/reference/grammar/#rule-err_expr) | — |
+| `bynk.types.extensible_match_needs_wildcard` | A `match` covers an extensible standard-library enum (`FetchError`, `Method`) without a wildcard; it may gain variants in a minor release. |  | — |
 | `bynk.types.field_access_on_non_record` | Field access on a value that is not a record. | [`field_access`](/book/reference/grammar/#rule-field_access) | — |
 | `bynk.types.field_refinement_not_base` | An inline field refinement requires a base or refined type. | [`record_field`](/book/reference/grammar/#rule-record_field) | — |
 | `bynk.types.field_value_mismatch` | A record field was given a value of the wrong type. | [`record_construction`](/book/reference/grammar/#rule-record_construction) | — |

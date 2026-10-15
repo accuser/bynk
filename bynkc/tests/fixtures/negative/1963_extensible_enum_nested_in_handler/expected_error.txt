@@ -1,0 +1,2 @@
+bynk.types.extensible_match_needs_wildcard `FetchError` may gain variants in a minor release, so this `match` must cover them — `Err(_)` is not covered
+# exact

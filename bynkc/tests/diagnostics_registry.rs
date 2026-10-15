@@ -45,6 +45,11 @@ const NON_DIAGNOSTIC_LOOKALIKES: &[&str] = &[
     "bynk.test.example",
     "bynk.not.a_real_code",
     "bynk.check.something",
+    // Standard-library item paths (S3, #1963): `[unstable] allow` entries and
+    // stability lookups in the `bynk-std`/`bynk-check` tests, not codes.
+    "bynk.list.reverse",
+    "bynk.string.join",
+    "bynk.text.shout",
 ];
 
 /// Collect every `"bynk.x.y"` string literal across the compiler source,

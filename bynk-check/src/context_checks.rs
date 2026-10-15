@@ -343,7 +343,9 @@ pub fn check_context_declarations(
     )
     // #1883, slice 1a: a handler body sees the unit's assets too.
     .with_assets(typed.assets.clone())
-    .with_shadowed_imports(typed.shadowed_imports.clone());
+    .with_shadowed_imports(typed.shadowed_imports.clone())
+    .with_extensible_enums(typed.extensible_enums.clone())
+    .with_stability(typed.stability.clone());
 
     // v0.25: capability operation signatures reference types.
     check_capability_decls(table, &typed.types, &no_vars, refs);
@@ -3002,7 +3004,9 @@ fn check_agent_decls(
         )
         // #1883, slice 1a: a handler body sees the unit's assets too.
         .with_assets(typed.assets.clone())
-        .with_shadowed_imports(typed.shadowed_imports.clone());
+        .with_shadowed_imports(typed.shadowed_imports.clone())
+        .with_extensible_enums(typed.extensible_enums.clone())
+        .with_stability(typed.stability.clone());
         // v0.81: the fresh-key rule for `store Cell[T]` fields — an
         // initialiser is checked against the element type `T` (which also types
         // the init expression so the emitter can qualify variant constructors),
@@ -3101,7 +3105,9 @@ fn check_agent_decls(
         )
         // #1883, slice 1a: a handler body sees the unit's assets too.
         .with_assets(typed.assets.clone())
-        .with_shadowed_imports(typed.shadowed_imports.clone());
+        .with_shadowed_imports(typed.shadowed_imports.clone())
+        .with_extensible_enums(typed.extensible_enums.clone())
+        .with_stability(typed.stability.clone());
         self_scope.insert(
             "self".to_string(),
             tys.intern(Ty::Named {

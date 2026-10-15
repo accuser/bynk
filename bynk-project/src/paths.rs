@@ -141,6 +141,7 @@ pub const MANIFEST_TABLES: &[(&str, &[&str])] = &[
     ("fmt", &[]),
     ("lsp", &["diagnostics_mode", "diagnostics_debounce_ms"]),
     ("workers", &["compatibility_flags"]),
+    ("unstable", &["allow"]),
 ];
 
 /// Tables a user might write for a feature that is designed but not built,
@@ -303,6 +304,9 @@ pub fn check_manifest_str(content: &str) -> Result<(), ProjectPathsError> {
         }
         if *table == "workers" {
             workers_config_from(entries)?;
+        }
+        if *table == "unstable" {
+            unstable_config_from(entries)?;
         }
         for key in entries.keys() {
             if !keys.contains(&key.as_str()) {
@@ -471,6 +475,84 @@ fn workers_config_from(table: &toml::Table) -> Result<WorkersConfig, ProjectPath
     Ok(WorkersConfig {
         compatibility_flags,
     })
+}
+
+/// The project's `[unstable]` table (standard-library S3, #1963): the
+/// experimental first-party items it opts into using.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UnstableConfig {
+    /// Item paths (`bynk.cloudflare.D1`, `bynk.cloudflare.Kv.list`), in
+    /// manifest order. An entry covers itself and everything under it. Whether
+    /// each one names something experimental is the checker's to say, since it
+    /// holds the standard library's registry.
+    pub allow: Vec<String>,
+}
+
+/// Read `bynk.toml`'s `[unstable]` table, honouring `overlay` the way
+/// [`try_read_workers_config_with`] does. No manifest, or no `[unstable]`
+/// table, is the empty [`UnstableConfig`]; an `allow` that isn't a list of
+/// strings is [`ProjectPathsError::NotAStringList`].
+pub fn try_read_unstable_config_with(
+    project_root: &Path,
+    overlay: &HashMap<PathBuf, String>,
+) -> Result<UnstableConfig, ProjectPathsError> {
+    let toml_path = project_root.join("bynk.toml");
+    let Ok(content) = read_source(&toml_path, overlay) else {
+        return Ok(UnstableConfig::default());
+    };
+    let doc = content
+        .parse::<toml::Table>()
+        .map_err(|_| ProjectPathsError::Malformed)?;
+    match doc.get("unstable").and_then(|v| v.as_table()) {
+        Some(t) => unstable_config_from(t),
+        None => Ok(UnstableConfig::default()),
+    }
+}
+
+/// [`try_read_unstable_config_with`], reading `bynk.toml` from disk.
+pub fn try_read_unstable_config(project_root: &Path) -> Result<UnstableConfig, ProjectPathsError> {
+    let toml_path = project_root.join("bynk.toml");
+    let overlay = match fs::read_to_string(&toml_path) {
+        Ok(text) => HashMap::from([(toml_path, text)]),
+        Err(_) => HashMap::new(),
+    };
+    try_read_unstable_config_with(project_root, &overlay)
+}
+
+/// The project's `[unstable]` table as both the build and the editor see it
+/// (#1963 Decision E): the overlay's `bynk.toml` when it holds one (the LSP puts
+/// the open buffer there), otherwise the one on disk (a CLI build's overlay holds
+/// only `.bynk` sources). A missing or malformed manifest reads as empty; its
+/// shape errors are `check_manifest`'s to report.
+pub fn read_unstable_config(
+    project_root: &Path,
+    overlay: &HashMap<PathBuf, String>,
+) -> UnstableConfig {
+    let manifest = project_root.join("bynk.toml");
+    let read = if overlay.contains_key(&manifest) {
+        try_read_unstable_config_with(project_root, overlay)
+    } else {
+        try_read_unstable_config(project_root)
+    };
+    read.unwrap_or_default()
+}
+
+/// The `[unstable]` table's typed content. Only the value shape is checked
+/// here; an unknown key is [`check_manifest_str`]'s to refuse.
+fn unstable_config_from(table: &toml::Table) -> Result<UnstableConfig, ProjectPathsError> {
+    let not_a_list = || ProjectPathsError::NotAStringList {
+        table: "unstable",
+        key: "allow",
+    };
+    let allow = match table.get("allow") {
+        None => Vec::new(),
+        Some(toml::Value::Array(items)) => items
+            .iter()
+            .map(|v| v.as_str().map(str::to_owned).ok_or_else(not_a_list))
+            .collect::<Result<_, _>>()?,
+        Some(_) => return Err(not_a_list()),
+    };
+    Ok(UnstableConfig { allow })
 }
 
 pub fn commons_dir_for(name: &str) -> PathBuf {
@@ -1032,6 +1114,45 @@ mod manifest_tests {
         check_manifest_str("[workers]\ncompatibility_flags = [\"no_such_flag_yet\"]\n")
             .expect("flag names are not validated");
         check_manifest_str("[workers]\n").expect("an empty `[workers]` is accepted");
+    }
+
+    /// #1963: `[unstable] allow` must be a list of strings; whether each names
+    /// something experimental is the checker's to say.
+    #[test]
+    fn unstable_allow_must_be_a_list_of_strings() {
+        let msg = "`[unstable]` `allow` must be a list of strings";
+        assert!(err("[unstable]\nallow = \"bynk.cloudflare.D1\"\n").contains(msg));
+        assert!(err("[unstable]\nallow = [\"a\", 1]\n").contains(msg));
+        assert!(err("[unstable]\nallows = []\n").contains("did you mean `allow`?"));
+        check_manifest_str("[unstable]\nallow = [\"bynk.anything\"]\n")
+            .expect("item paths are the checker's to validate");
+        check_manifest_str("[unstable]\n").expect("an empty `[unstable]` is accepted");
+    }
+
+    #[test]
+    fn unstable_config_reads_the_entries_in_order() {
+        let root = PathBuf::from("/nonexistent-bynk-test-root-1963");
+        let read = |manifest: &str| {
+            let overlay = HashMap::from([(root.join("bynk.toml"), manifest.to_string())]);
+            try_read_unstable_config_with(&root, &overlay)
+        };
+        assert_eq!(
+            read("[unstable]\nallow = [\"b.x\", \"a.y\"]\n")
+                .unwrap()
+                .allow,
+            vec!["b.x", "a.y"]
+        );
+        assert_eq!(
+            read("[project]\nname = \"p\"\n").unwrap(),
+            UnstableConfig::default()
+        );
+        assert!(matches!(
+            read("[unstable]\nallow = 3\n"),
+            Err(ProjectPathsError::NotAStringList {
+                table: "unstable",
+                key: "allow"
+            })
+        ));
     }
 
     #[test]

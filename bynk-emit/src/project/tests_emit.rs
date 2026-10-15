@@ -1532,6 +1532,8 @@ fn integration_typed_commons(
         actor_bindings: HashMap::new(),
         assets: HashMap::new(),
         shadowed_imports: HashMap::new(),
+        extensible_enums: Default::default(),
+        stability: Default::default(),
     }
 }
 
@@ -3381,6 +3383,8 @@ fn synthetic_typed_commons_for_target(
         actor_bindings: HashMap::new(),
         assets: HashMap::new(),
         shadowed_imports: HashMap::new(),
+        extensible_enums: Default::default(),
+        stability: Default::default(),
     }
 }
 
