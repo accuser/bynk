@@ -1,0 +1,14 @@
+// `bynk-browser`: the `bynk` surface binding's behavioural tests (standard-library S2,
+// #1952). The shared suite is `surface.mjs`; this file says which platform
+// differences apply.
+
+import * as binding from "./bynk-browser.js";
+import * as runtime from "./runtime.js";
+import * as bynk from "./bynk.js";
+import { surfaceSuite } from "./surface.mjs";
+
+surfaceSuite("bynk-browser", binding, runtime, bynk, {
+  fetch: "withheld",
+  secrets: "unavailable",
+  locale: "fixed",
+});

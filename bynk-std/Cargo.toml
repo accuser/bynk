@@ -9,6 +9,10 @@ description = "The Bynk standard library's first-party sources as data: the `byn
 keywords = ["compiler", "dsl", "stdlib", "language"]
 categories = ["compilers"]
 
+# The bindings' behavioural tests run against a compiled project
+# (`bynkc/tests/binding_behaviour.rs`), not as part of this crate.
+exclude = ["test/"]
+
 [lib]
 path = "src/lib.rs"
 
