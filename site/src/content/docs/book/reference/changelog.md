@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.330.13** | 'A value of a type a consumed context does not export can now be passed back to that context: `let b <- shop.quote()` then `shop.take(b)` was rejected as a `bynk.boundary.structural_mismatch` against its own declaration. A service or capability return that the caller''s own type of the same name cannot hold, because the shapes differ, is now rejected at the call with `bynk.boundary.structural_mismatch`, where before the caller''s type silently typed the value and its fields (#1941)' |
 | **v0.330.12** | First-party units are injected from a registry in `bynk-std`, following each unit's own `uses`/`consumes`; emitted output is unchanged |
 | **v0.330.11** | A Worker's `Env` interface now declares exactly the bindings in its `wrangler.toml`, including the Service Bindings to its event subscribers |
 | **v0.330.10** | 'On the `workers` target, a context calling a service whose signature carries a `commons` type the caller does not `uses`, or a type the providing context does not export, now compiles: the caller imports the commons'' codecs or generates its own under the names the call uses. Both failed `tsc` before, though the checker and the `bundle` target accepted them (#1932)' |

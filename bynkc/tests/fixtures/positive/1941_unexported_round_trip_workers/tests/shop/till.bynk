@@ -1,0 +1,9 @@
+---
+#1941: values of unexported types pass back to the contexts that returned them.
+---
+suite shop.till as system {
+  case "each value crosses back and is read by its own context" {
+    let n <- shop.till.total()
+    expect n == 4
+  }
+}
