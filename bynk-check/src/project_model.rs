@@ -360,7 +360,7 @@ pub fn check_discovered_files(
 }
 
 /// A memoized parse of one first-party synthetic source, keyed by the
-/// caller's `cache` — [`inject_firstparty`] passes one per registry entry.
+/// caller's `cache` — `inject_firstparty` passes one per registry entry.
 /// Finding #55/#65: the source text is a fixed `include_str!` constant, so its
 /// parse is a pure function of that constant and only needs computing once per
 /// process, not once per compile/analyse round. Which units a project injects
@@ -425,7 +425,7 @@ fn all_syntax_errors(source: &str, strict: Vec<CompileError>) -> Vec<CompileErro
 /// Phase 2: parse every discovered file into a `ParsedFile`, recording each
 /// file's source text into `snapshots` and any parse errors into `errors`.
 /// Then inject the first-party units the project consumes or uses
-/// ([`inject_firstparty`]). Returns the parsed units, the registry entries
+/// (`inject_firstparty`). Returns the parsed units, the registry entries
 /// injected, and (#1710) each unit's [`BrokenDeclNames`]; signals a pipeline
 /// bail via `Err(())` when parsing produced errors and yielded no units at all.
 #[allow(clippy::too_many_arguments)]
@@ -536,7 +536,10 @@ pub fn phase_parse(
 
 /// The first-party units a project injected, as registry entries in ascending
 /// [`firstparty::Unit::id_block`] order. A unit whose source failed to parse is
-/// still listed (its binding is still supplied), as before the registry.
+/// still listed, so its binding is still supplied. Its own `uses`/`consumes`
+/// cannot be read, though, so the units only it reaches are not injected: a
+/// malformed first-party source (which `every_first_party_source_parses` rejects
+/// in CI) reports its parse error and may add unresolved-name errors for those.
 pub type InjectedUnits = Vec<&'static firstparty::Unit>;
 
 /// Inject the first-party units the project reaches (standard-library S1,
@@ -549,7 +552,7 @@ pub type InjectedUnits = Vec<&'static firstparty::Unit>;
 /// through the normal pipeline (tables, exports, emission, compose), and an
 /// adapter's binding is supplied by the toolchain (§4.2). Units are pushed in
 /// [`firstparty::Unit::id_block`] order, whatever order they were reached in.
-pub fn inject_firstparty(parsed: &mut Vec<ParsedFile>, errors: &mut ErrorSink) -> InjectedUnits {
+fn inject_firstparty(parsed: &mut Vec<ParsedFile>, errors: &mut ErrorSink) -> InjectedUnits {
     const N: usize = firstparty::UNITS.len();
     static CACHES: [OnceLock<Result<ParsedFile, Vec<CompileError>>>; N] =
         [const { OnceLock::new() }; N];

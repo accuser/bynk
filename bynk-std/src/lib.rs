@@ -481,8 +481,8 @@ mod tests {
         assert!(!provider_takes_env("user.unit", "SecretsProvider"));
     }
 
-    /// An adapter carries a binding and a commons does not, and every name is
-    /// unique and inside the reserved prefix.
+    /// An adapter carries a binding and a commons does not, and every name and
+    /// identity path is unique, every name inside the reserved prefix.
     #[test]
     fn entries_are_well_formed() {
         for u in UNITS {
@@ -496,6 +496,17 @@ mod tests {
                 1,
                 "{}",
                 u.name
+            );
+            // Two entries under one identity path would be two parsed units
+            // that diagnostics and emission cannot tell apart.
+            assert_eq!(
+                UNITS
+                    .iter()
+                    .filter(|o| o.identity_path == u.identity_path)
+                    .count(),
+                1,
+                "{}",
+                u.identity_path
             );
             match u.kind {
                 UnitKind::Adapter => assert_ne!(u.binding, Binding::None, "{}", u.name),
