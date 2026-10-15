@@ -54,6 +54,15 @@ its files**: `bynk-check` injects whatever a project `consumes` or `uses` by
 reading the table, and follows each injected unit's own `uses`/`consumes` lines,
 so dependencies between first-party units are never listed by hand.
 
+The TypeScript bindings are tested beside a project built for them, one per
+platform, that consumes the whole standard library (`bynkc/tests/stdlib_scaffold`):
+`binding_scaffold.rs` type-checks each with `tsc --strict`, and
+`binding_behaviour.rs` runs the `node --test` files in `bynk-std/test/` against
+the compiled bindings. **Every provider method needs a test** named
+`<binding> <Provider>.<method>: …`; a method without one fails the build.
+`binding_workerd.rs` checks the KV fake those tests use against Miniflare's real
+KV under `wrangler dev`.
+
 ## Entry points
 
 The library (`lib.rs`) exposes the flows the CLI and LSP build on:

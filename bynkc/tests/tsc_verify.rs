@@ -518,9 +518,9 @@ fn emitted_typescript_has_no_verbatim_violations() {
 /// carries the Bearer JWT verifier — must pass `tsc --strict` standalone, not
 /// only transitively inside a fixture. It is self-contained (no imports), so a
 /// temp dir with just `runtime.ts` + the emitted `tsconfig.json` type-checks it
-/// in isolation. (The `.ts` *bindings* import the emitted adapter surface and
-/// stay covered transitively by fixtures 177/201–211; their standalone scaffold
-/// is a follow-up.)
+/// in isolation. (The `.ts` *bindings* import the emitted adapter surface, so
+/// they are checked beside a project built for them: `binding_scaffold.rs`,
+/// standard-library S2, #1952.)
 /// #1704: a context's rebrand of a `uses`-commons type carries an *optional*
 /// brand (`Point = __CommonsPoint & { readonly __ctxBrand?: "left" }`), so a
 /// plain literal or commons value fits it. The brand's job is still to keep two
