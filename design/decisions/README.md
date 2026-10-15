@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0464](0464-worker-env-types-the-binding-list.md) | **A Worker's Env interface is built from its binding list** (v0.330.11) — Env, wrangler.toml and the duplicate-binding check share one list per Worker; amends ADR 0462's two-places note | Accepted (v0.330.11) |
 | [0463](0463-bynk-std-owns-the-first-party-sources.md) | **The first-party sources live in a data-only `bynk-std` crate, with the platform layer in its own subtree** (v0.330.9) — `bynk-std` holds the stdlib's `.bynk` sources, TS bindings and metadata as data; `bynk-check` reads and re-exports them; `bynk.cloudflare` sits apart so it can be unbundled without renames | Accepted (v0.330.9) |
 | [0462](0462-worker-binding-names-are-checked-not-adjusted.md) | **A Worker's binding names are checked for clashes, never adjusted** (v0.330.8) — Two bindings with one name in a Worker are a compile error; no binding name is renamed or suffixed to avoid it | Accepted (v0.330.8) |
 | [0461](0461-imported-type-shadowing.md) | **A unit's own value hides a `uses`-imported type of its name; writing the name is the conflict** (v0.330.5) — An imported type follows the imported function and asset rule, through #1807's naming gate; a consumed export conflicts at the `consumes` clause | Accepted (v0.330.5) |

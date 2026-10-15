@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A Worker's `Env` interface now declares exactly the bindings in its `wrangler.toml`, including the Service Bindings to its event subscribers
----
+# 0464 — A Worker's Env interface is built from its binding list
 
-## ADR: worker-env-types-the-binding-list
-title: A Worker's Env interface is built from its binding list
-summary: Env, wrangler.toml and the duplicate-binding check share one list per Worker; amends ADR 0462's two-places note
+- **Status:** Accepted (v0.330.11)
 
 **Context.** ADR 0462 made `emitter::wrangler::worker_bindings` the one list a
 Worker's `wrangler.toml` is written from and `bynk.context.duplicate_binding`
