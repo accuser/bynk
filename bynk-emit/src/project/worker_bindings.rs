@@ -16,7 +16,7 @@ use super::{
     AdapterBinding, BuildTarget, ErrorSink, ParsedFile, UnitKind, UnitTable,
     native_platforms_of_context, unit_table_uses_emit,
 };
-use crate::emitter::wrangler::worker_bindings;
+use crate::emitter::wrangler::{WorkerBinding, worker_bindings};
 
 /// v0.19 (decision 0025): each context whose in-process closure reaches a
 /// platform-native unit, with those platforms. Drives env threading (bundle)
@@ -63,7 +63,7 @@ pub(super) fn needs_kv(
 /// subscriber `consumes` the publisher for the event *type*; nothing upstream
 /// gives the publisher a binding back to the subscriber, so its Worker needs
 /// one added here: the reverse direction of an ordinary `consumes` edge.
-pub(super) fn service_consumes(
+fn service_consumes(
     consumes_targets: &[String],
     adapter_bindings: &HashMap<String, AdapterBinding>,
     own_event_routes: &BTreeMap<String, Vec<(String, String)>>,
@@ -93,6 +93,22 @@ pub(super) fn own_event_routes(
         .filter(|((owner, _), _)| owner == ctx)
         .map(|((_, name), subs)| (name.clone(), subs.clone()))
         .collect()
+}
+
+/// Every binding the context's Worker declares
+/// ([`worker_bindings`]), from the inputs the build and the duplicate check
+/// both use: the consumes less adapters plus event subscribers, whether the
+/// closure reaches the KV namespace, and whether its handlers emit.
+pub(super) fn context_bindings(
+    table: &UnitTable,
+    consumes_targets: &[String],
+    adapter_bindings: &HashMap<String, AdapterBinding>,
+    own_event_routes: &BTreeMap<String, Vec<(String, String)>>,
+    needs_kv: bool,
+    uses_emit: bool,
+) -> Vec<WorkerBinding> {
+    let consumes = service_consumes(consumes_targets, adapter_bindings, own_event_routes);
+    worker_bindings(table, &consumes, needs_kv, uses_emit)
 }
 
 /// `bynk.context.duplicate_binding`: on a Workers build, each context's
@@ -134,19 +150,16 @@ pub(super) fn phase_duplicate_bindings(
         let Some(table) = unit_tables.get(ctx) else {
             continue;
         };
-        let consumes = service_consumes(
-            unit_consumes
-                .get(ctx)
-                .map(Vec::as_slice)
-                .unwrap_or_default(),
-            adapter_bindings,
-            &own_event_routes(ctx, &event_subscribers),
-        );
         bindings.insert(
             ctx.clone(),
-            worker_bindings(
+            context_bindings(
                 table,
-                &consumes,
+                unit_consumes
+                    .get(ctx)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+                adapter_bindings,
+                &own_event_routes(ctx, &event_subscribers),
                 needs_kv(&context_native, ctx),
                 unit_table_uses_emit(table, unit_callees.get(ctx)),
             ),
