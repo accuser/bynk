@@ -1,11 +1,6 @@
----
-level: patch
-changelog: First-party units are injected from a registry in `bynk-std`, following each unit's own `uses`/`consumes`; emitted output is unchanged
----
+# 0465 — The standard library has four layers, each with an admission rule, and a unit joins it through the bynk-std registry
 
-## ADR: stdlib-layers-and-admission
-title: The standard library has four layers, each with an admission rule, and a unit joins it through the bynk-std registry
-summary: L0 kernel, L1 commons, L2 the portable `bynk` surface, L3 platform adapters; pure only if synchronous everywhere without third-party code; new capabilities are flat `bynk.*` units; a unit is admitted by a `UNITS` entry plus its files, with dependencies read from its own source
+- **Status:** Accepted (v0.330.12)
 
 **Context.** The standard library existed only in miniature, and nothing said what may join it or
 where. ADR 0034 promised that "the stdlib can grow without compiler changes", but each first-party

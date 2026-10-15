@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0465](0465-stdlib-layers-and-admission.md) | **The standard library has four layers, each with an admission rule, and a unit joins it through the bynk-std registry** (v0.330.12) — L0 kernel, L1 commons, L2 the portable `bynk` surface, L3 platform adapters; pure only if synchronous everywhere without third-party code; new capabilities are flat `bynk.*` units; a unit is admitted by a `UNITS` entry plus its files, with dependencies read from its own source | Accepted (v0.330.12) |
 | [0464](0464-worker-env-types-the-binding-list.md) | **A Worker's Env interface is built from its binding list** (v0.330.11) — Env, wrangler.toml and the duplicate-binding check share one list per Worker; amends ADR 0462's two-places note | Accepted (v0.330.11) |
 | [0463](0463-bynk-std-owns-the-first-party-sources.md) | **The first-party sources live in a data-only `bynk-std` crate, with the platform layer in its own subtree** (v0.330.9) — `bynk-std` holds the stdlib's `.bynk` sources, TS bindings and metadata as data; `bynk-check` reads and re-exports them; `bynk.cloudflare` sits apart so it can be unbundled without renames | Accepted (v0.330.9) |
 | [0462](0462-worker-binding-names-are-checked-not-adjusted.md) | **A Worker's binding names are checked for clashes, never adjusted** (v0.330.8) — Two bindings with one name in a Worker are a compile error; no binding name is renamed or suffixed to avoid it | Accepted (v0.330.8) |
