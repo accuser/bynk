@@ -199,6 +199,7 @@ fn read_secrets_manifest(worker_dir: &Path) -> Result<SecretsManifest, String> {
 fn read_resources(config: &Path) -> Result<Resources, String> {
     let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
     let parsed: WranglerConfig = toml::from_str(&text).map_err(|e| e.to_string())?;
+    bynk_emit::emitter::wrangler::refuse_kv_instances(&text)?;
     // Beside the config, not in it: secrets are a runtime store rather than
     // configuration, so `wrangler.toml` has no stanza to carry them.
     let secrets = read_secrets_manifest(
@@ -900,6 +901,25 @@ type = "worker"
                     storage: "sqlite".to_string(),
                 },
             ],
+        );
+    }
+
+    #[test]
+    fn a_derived_kv_instance_is_refused_until_deploy_provisions_it() {
+        // S4a (#1966): fixture `1966_derived_kv_workers`'s config. Pushing it
+        // would send Cloudflare the `<KV_SESSIONS_ID>` placeholder; #1967
+        // provisions each instance and lifts this.
+        let path = temp_config("kv-instance");
+        std::fs::write(
+            &path,
+            "name = \"shop-cart\"\n\n[[kv_namespaces]]\nbinding = \"KV_SESSIONS\"\nid = \"<KV_SESSIONS_ID>\" # set at deploy time\n",
+        )
+        .unwrap();
+        let err = read_resources(&path).expect_err("an instance is refused");
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            err.contains("`KV_SESSIONS`") && err.contains("#1967"),
+            "{err}"
         );
     }
 

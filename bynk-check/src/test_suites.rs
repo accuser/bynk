@@ -1826,6 +1826,7 @@ fn add_consumed_adapter_capabilities(
             checker::CapabilityInfo {
                 name: name.clone(),
                 ops,
+                derived_from: None,
             },
         );
     }
@@ -1889,6 +1890,7 @@ pub fn typecheck_case_body(
                 checker::CapabilityInfo {
                     name: name.clone(),
                     ops,
+                    derived_from: None,
                 },
             );
         }
@@ -2864,6 +2866,7 @@ fn check_property_body(
                 checker::CapabilityInfo {
                     name: name.clone(),
                     ops,
+                    derived_from: None,
                 },
             );
         }

@@ -1985,6 +1985,13 @@ fn run_checks(
     );
     let mut unit_tables = unit_tables;
     bynk_check::symbols::record_flattened_caps(&mut unit_tables, &unit_flattened);
+    bynk_check::project_model::phase_resolve_derived(
+        &groups,
+        &kinds,
+        &parsed,
+        &mut unit_tables,
+        &mut errors,
+    );
     let unit_tables = unit_tables;
 
     // -- 5b'. Collect `consumes` aliases (v0.6 §3.1). Each consuming context
@@ -2623,6 +2630,17 @@ fn build_output(
         &unit_consumes,
         &unit_consumes_aliases,
         &unit_flattened,
+        true,
+    );
+    // S4a (#1966): the same, counting only the bare resources, so a named
+    // instance never brings in an unreachable bare `KV` namespace.
+    let context_bare_native = worker_bindings::contexts_native(
+        &kinds,
+        &unit_tables,
+        &unit_consumes,
+        &unit_consumes_aliases,
+        &unit_flattened,
+        false,
     );
 
     // Events track, slice 0 (spine #936): project-wide "who subscribes to
@@ -2699,7 +2717,7 @@ fn build_output(
                 let flattened = unit_flattened.get(ctx_name).cloned().unwrap_or_default();
                 // v0.19 (C1): this Worker needs the KV namespace binding when
                 // its in-process closure reaches the cloudflare adapter.
-                let needs_kv = worker_bindings::needs_kv(&context_native, ctx_name);
+                let needs_kv = worker_bindings::needs_kv(&context_bare_native, ctx_name);
                 // Locale capability track, slice 2 (#882, Decision A): real
                 // negotiation is Cloudflare-only — `BuildTarget::Workers`
                 // isn't itself restricted to `Platform::Cloudflare`, so a
@@ -3053,11 +3071,20 @@ fn native_platforms_of_context(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
+    // S4a (#1966): count derived capabilities' base units. `true` for what
+    // threads `env`; `false` for whether the *bare* platform resource (the
+    // `KV` namespace) is used, which a named instance alone must not imply.
+    with_derived: bool,
 ) -> std::collections::BTreeMap<Platform, String> {
     // Arc F slice 2 (#1452): repointed at the tree-native twin — only the
     // `referenced` side effect matters here, the returned `TsExpr` (vs. the
     // old `String`) is discarded either way.
     let mut referenced: BTreeSet<String> = BTreeSet::new();
+    let namespaces = if with_derived {
+        ProviderNamespaces::Bundle
+    } else {
+        ProviderNamespaces::BareResources
+    };
     for cap in table.providers.keys() {
         let _ = instantiate_provider_ts_expr(
             ctx,
@@ -3066,7 +3093,7 @@ fn native_platforms_of_context(
             unit_consumes,
             unit_consumes_aliases,
             unit_flattened,
-            ProviderNamespaces::Bundle,
+            namespaces,
             None,
             None,
             &mut referenced,
@@ -3083,11 +3110,14 @@ fn native_platforms_of_context(
             unit_consumes,
             unit_consumes_aliases,
             unit_flattened,
-            ProviderNamespaces::Bundle,
+            namespaces,
             None,
             None,
             &mut referenced,
         );
+    }
+    if with_derived {
+        referenced.extend(table.derived.values().map(|d| d.base_unit.clone()));
     }
     let mut out = std::collections::BTreeMap::new();
     for unit in referenced {
@@ -3286,6 +3316,12 @@ pub(crate) struct LocaleNegotiationArgs {
 pub(crate) enum ProviderNamespaces<'a> {
     /// The bundle's `compose.ts`: `{ns}`.
     Bundle,
+    /// No module: [`native_platforms_of_context`]'s walk for the *bare*
+    /// platform resources a context reaches (whether its Worker declares the
+    /// `KV` namespace). As `Bundle`, except that a derived capability's
+    /// instance (S4a, #1966) is not followed to its base: a named instance has
+    /// its own binding and does not imply the bare one.
+    BareResources,
     /// A Worker's `compose.ts` or `handlers.ts`: `handlers_{ns}`.
     Workers,
     /// A test module (#1863): `__ns_{ns}`, the test scaffold's own.
@@ -3356,9 +3392,41 @@ pub(crate) fn instantiate_provider_ts_expr(
     locale_negotiation: Option<&LocaleNegotiationArgs>,
     referenced_units: &mut BTreeSet<String>,
 ) -> bynk_ts::TsExpr {
+    // S4a (#1966): a derived capability (`capability Sessions = Kv`) is its
+    // base's provider bound to the instance's own Worker binding: the base's
+    // expression (`new bynk_cloudflare__binding.WorkersKv(env)`) with the
+    // binding name as one more argument. Every composer (a Worker's compose,
+    // the bundle's `composeApp`, an agent's deps, a provider's `given`) builds
+    // an instance through here.
+    if let Some(inst) = unit_tables
+        .get(provider_ctx)
+        .and_then(|t| t.derived.get(cap))
+    {
+        if matches!(namespaces, ProviderNamespaces::BareResources) {
+            return bynk_ts::TsExpr::Ident("undefined".to_string());
+        }
+        let mut expr = instantiate_provider_ts_expr(
+            &inst.base_unit,
+            &inst.base_cap,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+            namespaces,
+            env_ident,
+            locale_negotiation,
+            referenced_units,
+        );
+        if let bynk_ts::TsExpr::New { args, .. } = &mut expr {
+            args.push(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                inst.binding.clone(),
+            )));
+        }
+        return expr;
+    }
     let ns = provider_ctx.replace('.', "_");
     let bodied_ns = match namespaces {
-        ProviderNamespaces::Bundle => ns.clone(),
+        ProviderNamespaces::Bundle | ProviderNamespaces::BareResources => ns.clone(),
         ProviderNamespaces::Workers => format!("handlers_{ns}"),
         ProviderNamespaces::Test { .. } => crate::emitter::emit::test_scaffold_ns(provider_ctx),
     };
@@ -3649,6 +3717,9 @@ fn emit_composition_root(
                 // publish-only context would never get a compose entry and
                 // its service would simply never be called.
                 || unit_table_uses_emit(table, unit_callees.get(name))
+                // S4a (#1966): a derived capability's instance is its base's
+                // platform provider, built by compose like a flattened one.
+                || !table.derived.is_empty()
             {
                 needs_compose = true;
                 break;
@@ -3773,6 +3844,24 @@ fn emit_composition_root(
                 );
                 deps_entries.push((key, expr));
             }
+        }
+        // S4a (#1966): each derived capability's instance.
+        let mut derived: Vec<&String> = table.derived.keys().collect();
+        derived.sort();
+        for cap in derived {
+            let expr = instantiate_provider_ts_expr(
+                ctx_name,
+                cap,
+                unit_tables,
+                unit_consumes,
+                unit_consumes_aliases,
+                unit_flattened,
+                ProviderNamespaces::Bundle,
+                env_ident,
+                None,
+                &mut referenced_units,
+            );
+            deps_entries.push((cap.clone(), expr));
         }
         // Events track, slice 0 (spine #936): a context whose handlers emit
         // gets an `__eventsDispatch` closure built here — Bundle/node mode

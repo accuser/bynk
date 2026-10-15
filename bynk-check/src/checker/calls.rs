@@ -1246,12 +1246,26 @@ pub(crate) fn check_static_call(
             return None;
         };
         // v0.36 (ADR 0069, slice 2): the op is an index symbol keyed by the
-        // compound `"Cap.op"` name; this local call is a reference.
-        ctx.refs.record(
-            method.span,
-            SymbolKind::CapabilityOp,
-            &format!("{}.{}", type_name.name, method.name),
-        );
+        // compound `"Cap.op"` name; this local call is a reference. S4a
+        // (#1966): a derived capability declares no operations, so its call
+        // references the base's, in the base's unit, and is refused as the
+        // base's would be.
+        match &cap.derived_from {
+            Some((unit, base)) => {
+                refuse_experimental(&format!("{unit}.{base}.{}", method.name), method.span, ctx);
+                ctx.refs.record_in_unit(
+                    method.span,
+                    SymbolKind::CapabilityOp,
+                    &format!("{base}.{}", method.name),
+                    unit,
+                );
+            }
+            None => ctx.refs.record(
+                method.span,
+                SymbolKind::CapabilityOp,
+                &format!("{}.{}", type_name.name, method.name),
+            ),
+        }
         if op.params.len() != args.len() {
             ctx.errors.push(CompileError::new(
                 "bynk.capability.op_arity",

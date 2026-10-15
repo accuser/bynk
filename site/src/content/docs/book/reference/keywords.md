@@ -35,7 +35,7 @@ Reserved everywhere — these **60** words can never be used as an identifier.
 | `as` | Alias a consumed context (`consumes X as Y`). |
 | `binding` | Name an adapter's TypeScript binding module (`binding "<module>"`). |
 | `by` | Name the actor a handler consumes, after the return type — or a service-level default on the header (`… -> T by <name>: <Actor>`). |
-| `capability` | Declare a capability (a dependency interface) in a context. |
+| `capability` | Declare a capability (a dependency interface) in a context, or a distinct instance of a platform resource (`capability Sessions = Kv`). |
 | `commons` | Declare a pure, stateless module of types and functions. |
 | `consumes` | Declare a dependency on another context's services. |
 | `context` | Declare a deployable context (services, agents, capabilities). |

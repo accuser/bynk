@@ -1,0 +1,34 @@
+================================================================================
+S4a (#1966): a derived capability, with and without an option
+================================================================================
+
+context shop.cart
+
+consumes bynk.cloudflare { Kv }
+
+capability Sessions = Kv
+
+capability PriceCache = Kv @ttl(60)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (consumes_decl
+      target: (qualified_name
+        (identifier)
+        (identifier))
+      capability: (identifier))
+    (capability_decl
+      name: (identifier)
+      base: (identifier))
+    (capability_decl
+      name: (identifier)
+      base: (identifier)
+      annotation: (store_annotation
+        name: (identifier)
+        (annotation_arg
+          value: (number_literal))))))

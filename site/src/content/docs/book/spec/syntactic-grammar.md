@@ -438,8 +438,10 @@ One parameter: an identifier, `:`, and a type. Well-formedness: §5.
 
 {{#grammar capability_decl}}
 
-`capability`, a name, and a brace-delimited list of operation signatures.
-Well-formedness: §5.
+`capability`, a name, then either a brace-delimited list of operation
+signatures, or `=`, a base capability and zero or more `@annotation` options: a
+**derived** capability (`capability Sessions = Kv`, standard-library S4a), a
+distinct instance of the base. Well-formedness: §5.5.
 
 ### §4.3.7 capability_op
 

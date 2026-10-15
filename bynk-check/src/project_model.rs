@@ -607,6 +607,148 @@ fn inject_firstparty(parsed: &mut Vec<ParsedFile>, errors: &mut ErrorSink) -> In
     order.into_iter().map(|i| &firstparty::UNITS[i]).collect()
 }
 
+/// S4a (#1966): resolve each derived capability (`capability Sessions = Kv`)
+/// against the capabilities its context flattens in with `consumes U { Kv }`,
+/// and record it. A valid one enters the unit's capability table with its
+/// base's operations, so every later check treats it as an ordinary
+/// capability; its provision is implied (the base's platform provider, bound to
+/// the instance's own Worker binding). Runs after
+/// [`crate::symbols::record_flattened_caps`].
+pub fn phase_resolve_derived(
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
+    parsed: &[ParsedFile],
+    unit_tables: &mut HashMap<String, UnitTable>,
+    errors: &mut ErrorSink,
+) {
+    for (name, indices) in groups {
+        for &i in indices {
+            if parsed[i].is_synthetic() {
+                continue;
+            }
+            let path = parsed[i].identity_path();
+            for item in parsed[i].items() {
+                let CommonsItem::Capability(c) = item else {
+                    continue;
+                };
+                let Some(d) = &c.derived else { continue };
+                if kinds.get(name) != Some(&UnitKind::Context) {
+                    errors.push_for(
+                        Some(&path),
+                        CompileError::new(
+                            "bynk.capability.derived_outside_context",
+                            c.span,
+                            format!(
+                                "derived capability `{}` is declared outside a context",
+                                c.name.name
+                            ),
+                        )
+                        .with_note("a named instance of a platform resource belongs to the context that owns its data"),
+                    );
+                    continue;
+                }
+                let Some(table) = unit_tables.get(name) else {
+                    continue;
+                };
+                let Some(owner) = table.flattened_caps.get(&d.base.name).cloned() else {
+                    errors.push_for(
+                        Some(&path),
+                        CompileError::new(
+                            "bynk.capability.unknown_base",
+                            d.base.span,
+                            format!(
+                                "`{}` is not a capability this context selects with `consumes U {{ … }}`",
+                                d.base.name
+                            ),
+                        )
+                        .with_note(format!(
+                            "a derived capability's base is a platform capability, selected by name: `consumes bynk.cloudflare {{ {} }}`",
+                            d.base.name
+                        )),
+                    );
+                    continue;
+                };
+                let Some(kind) = crate::firstparty::instantiable(&owner, &d.base.name) else {
+                    errors.push_for(
+                        Some(&path),
+                        CompileError::new(
+                            "bynk.capability.base_not_instantiable",
+                            d.base.span,
+                            format!(
+                                "`{owner}.{}` has no named instances: a derived capability's base must be a platform resource kind",
+                                d.base.name
+                            ),
+                        ),
+                    );
+                    continue;
+                };
+                for ann in &d.annotations {
+                    if !kind.options.contains(&ann.name.name.as_str()) {
+                        let allowed = if kind.options.is_empty() {
+                            format!("`{}` instances take no options", d.base.name)
+                        } else {
+                            format!(
+                                "`{}` instances take {}",
+                                d.base.name,
+                                kind.options
+                                    .iter()
+                                    .map(|o| format!("`@{o}`"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        };
+                        errors.push_for(
+                            Some(&path),
+                            CompileError::new(
+                                "bynk.capability.unknown_option",
+                                ann.span,
+                                format!(
+                                    "`@{}` is not an option of a `{}` instance",
+                                    ann.name.name, d.base.name
+                                ),
+                            )
+                            .with_note(allowed),
+                        );
+                    }
+                }
+                if table.exported_capabilities.contains(&c.name.name) {
+                    errors.push_for(
+                        Some(&path),
+                        CompileError::new(
+                            "bynk.exports.derived_capability",
+                            c.span,
+                            format!("derived capability `{}` cannot be exported", c.name.name),
+                        )
+                        .with_note("an instance's data belongs to this context; another context reaches it through this context's services"),
+                    );
+                }
+                let ops = unit_tables
+                    .get(&owner)
+                    .and_then(|t| t.capabilities.get(&d.base.name))
+                    .map(|base| base.ops.clone())
+                    .unwrap_or_default();
+                let binding = crate::worker_bindings::instance_binding_name(
+                    kind.binding_prefix,
+                    &c.name.name,
+                );
+                let table = unit_tables.get_mut(name).expect("checked above");
+                if let Some(decl) = table.capabilities.get_mut(&c.name.name) {
+                    decl.ops = ops;
+                }
+                table.derived.insert(
+                    c.name.name.clone(),
+                    crate::symbols::DerivedInstance {
+                        base_unit: owner,
+                        base_cap: d.base.name.clone(),
+                        binding,
+                        span: c.span,
+                    },
+                );
+            }
+        }
+    }
+}
+
 /// #1710: for each unit with a file the strict parse rejected, the names of
 /// the declarations recovery skipped there. References to them, from any file
 /// that can see the unit, are known names, not unknown ones (#1663's Decision
@@ -2559,7 +2701,14 @@ pub fn phase_validate_capability_exports(
                         );
                         continue;
                     }
-                    if !local.providers.contains_key(&n.name) {
+                    // S4a (#1966): a derived capability is refused as an export
+                    // in its own right (`bynk.exports.derived_capability`); its
+                    // provision is implied, so "no provider" would mislead.
+                    let derived = local
+                        .capabilities
+                        .get(&n.name)
+                        .is_some_and(|c| c.derived.is_some());
+                    if !derived && !local.providers.contains_key(&n.name) {
                         errors.push_for(Some(&parsed[i].identity_path()),
                             CompileError::new(
                                 "bynk.exports.capability_not_provided",
@@ -2996,6 +3145,9 @@ fn native_platforms_of_context(
             &mut referenced,
         );
     }
+    // S4a (#1966): a derived capability reaches its base's platform unit, so
+    // a context whose only Cloudflare use is a named instance is still locked.
+    referenced.extend(table.derived.values().map(|d| d.base_unit.clone()));
     let mut out = BTreeMap::new();
     for unit in referenced {
         if let Some(p) = firstparty::platform_of(&unit) {
@@ -3253,6 +3405,8 @@ pub fn phase_workers_unprovided_capabilities(
                 if cap.context.is_some()
                     || !table.capabilities.contains_key(&cap.name.name)
                     || table.providers.contains_key(&cap.name.name)
+                    // S4a (#1966): a derived capability's provision is implied.
+                    || table.derived.contains_key(&cap.name.name)
                     || table.exported_capabilities.contains(&cap.name.name)
                     || !reported.insert(cap.name.name.clone())
                 {
@@ -4391,6 +4545,7 @@ mod native_platform_closure_tests {
             events: StdHashMap::new(),
             flattened_caps: StdHashMap::new(),
             assets: StdHashMap::new(),
+            derived: StdHashMap::new(),
         }
     }
 

@@ -349,6 +349,16 @@ pub fn check_context_declarations(
 
     // v0.25: capability operation signatures reference types.
     check_capability_decls(table, &typed.types, &no_vars, refs);
+    // S4a (#1966): a derived capability's base (`capability Sessions = Kv`)
+    // is a reference to the base, in the unit that declares it, recorded as a
+    // bare `given Kv` is.
+    for item in &typed.commons.items {
+        if let CommonsItem::Capability(c) = item
+            && let Some(d) = &c.derived
+        {
+            crate::symbols::record_capability_clause_ref(&d.base, cross_context, refs);
+        }
+    }
 
     // Capability info from the table.
     let mut capability_info_map: HashMap<String, CapabilityInfo> = table
@@ -365,6 +375,12 @@ pub fn check_context_declarations(
                 CapabilityInfo {
                     name: name.clone(),
                     ops,
+                    derived_from: decl.derived.as_ref().and_then(|d| {
+                        cross_context
+                            .flattened_caps
+                            .get(&d.base.name)
+                            .map(|unit| (unit.clone(), d.base.name.clone()))
+                    }),
                 },
             )
         })
@@ -412,6 +428,7 @@ pub fn check_context_declarations(
             CapabilityInfo {
                 name: cap.clone(),
                 ops,
+                derived_from: None,
             },
         );
     }

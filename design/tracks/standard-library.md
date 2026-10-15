@@ -216,10 +216,10 @@ Every stdlib addition, in any layer, must meet these.
 - **R-7 Wrangler derivation.** Every L3 capability declares the
   `wrangler.toml` table it requires, and the emitter emits a stanza only for
   an instance the context actually *references* (in a `given` or an op
-  call). This is narrower than today's KV gate: `needs_kv`
-  (`bynk-emit/src/project.rs`) fires whenever the context's in-process
-  closure reaches `bynk.cloudflare` at all, used or not. S4 narrows it (D3
-  rule 4).
+  call). For KV this already held: `needs_kv` (`bynk-emit/src/project.rs`)
+  walks only what handlers and providers are `given`, so a context that
+  consumes `Kv` without using it gets no stanza. S4a keeps derived instances
+  out of that walk (D3 rule 4).
 - **R-8 Deploy provisioning.** `bynk deploy` provisions or links every
   resource an L3 capability needs (create a D1 database, R2 bucket, queue…), or
   the capability's doc states exactly what the user must do by hand. Resource
@@ -529,8 +529,8 @@ ADR.
          unreachable `KV` namespace: a P-5 departure and an extra standing
          orphan/prune entry (§12). So every context that *uses* bare `Kv`
          emits byte-identically. A context that consumes `bynk.cloudflare`
-         but never references `Kv` stops emitting `[[kv_namespaces]]`. That
-         is a deliberate pre-1.0 output change, listed in S4's migration note.
+         but never references `Kv` already emitted no `[[kv_namespaces]]`
+         (the gate was use-based before S4a), so no output changed.
       5. Adapters may declare derived capabilities. Each consuming context
          gets its own instance (A6). Consumer-supplied instances are not
          offered for now; they could be added later without breaking
@@ -620,7 +620,8 @@ increment** (ADR 0023), and the ordering follows §13.
 
 | Slice | What | Needs |
 |---|---|---|
-| S4 | Derived capabilities for KV: `capability X = Kv` grammar, checker rules 1–6 (D3), kind-prefixed binding emission, implied provision, ledger keyed by (environment, Worker, capability), the per-Worker binding-name uniqueness check extended to derived capabilities (§11 Q2), deploy plan shows creates and orphans; bare `Kv` byte-identical where it is referenced, and its stanza gated on reference (rule 4) | S1, D3 |
+| S4a ✅ #1966 | Derived capabilities for KV, the language and build half: `capability X = Kv` grammar, checker rules 1–4 and 6 (D3; rule 5, adapter-declared instances, comes with the first adapter that needs one), kind-prefixed binding emission (`KV_SESSIONS`) under the per-Worker uniqueness check (§11 Q2), implied provision, per-instance test doubles; bare `Kv` byte-identical where it is referenced, and its stanza gated on reference (rule 4); `bynk deploy` and `dev --remote` refuse instances until S4b | S1, D3 |
+| S4b #1967 | Derived capabilities for KV, the deploy half: ledger keyed by (environment, Worker, capability), one namespace provisioned per instance, the deploy plan shows creates and orphans; S4a's deploy guard lifted | S4a |
 
 **Core (L0–L2):**
 
@@ -662,7 +663,7 @@ slice that first depends on it. Numbers are assigned at merge.
    Lands with S3.
 4. **Derived capabilities name context-owned platform resources.** D3:
    meaning, implied provision, `@annotation` options, the `wrangler.toml`
-   three-name mapping, ownership and the six rules. Lands with S4.
+   three-name mapping, ownership and the six rules. Lands with S4a.
 5. **Structured platform payloads decode in two steps.** D4. Lands with the
    first slice that returns a structured payload (P2 or P4).
 
@@ -743,13 +744,13 @@ Each question was raised in the settling review. All were closed on
   crypto, D5); constant-time `verify`; imported keys non-extractable by
   default; a security review for each crypto increment (R-16); and, in the
   browser, the secure-context requirement stated rather than polyfilled.
-- **Provisioning and pruning (S4, P1–P5).** Asset: production data in KV, D1
+- **Provisioning and pruning (S4b, P1–P5).** Asset: production data in KV, D1
   and R2. Hazard: a renamed declaration or context changes the derived
   physical name, orphaning the old resource, and a prune deletes it. Mitigations:
   the deploy plan names every create and orphan; pruning stays behind
   `confirm_prune`; ids never live in source; adopting an existing resource is
   an explicit per-environment setting.
-- **Context isolation (S4).** Asset: a context's data. Instances are
+- **Context isolation (S4a).** Asset: a context's data. Instances are
   context-owned, a reference from another context is a static error, and
   access goes through that context's services. Adapter-declared instances are
   per consuming context, so a library never shares a consumer's data by

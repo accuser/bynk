@@ -1,0 +1,12 @@
+context demo
+
+consumes bynk.cloudflare { Kv }
+
+-- #1966: `Kv` instances take no options.
+capability Sessions = Kv @ttl
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

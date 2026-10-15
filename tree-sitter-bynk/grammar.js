@@ -622,9 +622,16 @@ module.exports = grammar({
       seq(
         "capability",
         field("name", $.identifier),
-        "{",
-        repeat($.capability_op),
-        "}",
+        choice(
+          seq("{", repeat($.capability_op), "}"),
+          // S4a (#1966): `capability Sessions = Kv @option(…)`, a derived
+          // capability: a distinct instance of a platform capability.
+          seq(
+            "=",
+            field("base", $.identifier),
+            repeat(field("annotation", $.store_annotation)),
+          ),
+        ),
       ),
     capability_op: ($) =>
       seq(

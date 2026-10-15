@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "provides": {
+    "peek": "d04643a3654747fc",
+    "price": "242d1fc1c3d4f12c",
+    "remember": "611a7e83835ed4e7",
+    "touch": "068e2c1f9d3449fa"
+  },
+  "expects": {}
+}

@@ -1,0 +1,52 @@
+context shop.cart
+
+-- #1966: two named KV instances of `bynk.cloudflare`'s `Kv`, each its own
+-- Worker binding (`KV_SESSIONS`, `KV_PRICE_CACHE`) and no bare `KV`; one read
+-- by a handler, one by an agent, one through a local provider's `given`.
+
+consumes bynk.cloudflare { Kv }
+
+---
+Live carts, keyed by shopper.
+---
+capability Sessions = Kv
+
+capability PriceCache = Kv
+
+capability Prices {
+	fn price(sku: String) -> Effect[Option[String]]
+}
+
+provides Prices = CachedPrices given PriceCache {
+	fn price(sku: String) -> Effect[Option[String]] { PriceCache.get(sku) }
+}
+
+agent Cart {
+	key id: String
+
+	store lines: Map[String, Int]
+
+	on call touch() -> Effect[Option[String]] given Sessions {
+		let _ <- Sessions.put("cart", "1")
+		Sessions.get("cart")
+	}
+}
+
+service remember {
+	on call(k: String, v: String) -> Effect[Option[String]] given Sessions {
+		let _ <- Sessions.put(k, v)
+		Sessions.get(k)
+	}
+}
+
+service peek {
+	on call(k: String) -> Effect[Option[String]] given PriceCache { PriceCache.get(k) }
+}
+
+service price {
+	on call(sku: String) -> Effect[Option[String]] given Prices { Prices.price(sku) }
+}
+
+service touch {
+	on call(id: String) -> Effect[Option[String]] { Cart(id).touch() }
+}

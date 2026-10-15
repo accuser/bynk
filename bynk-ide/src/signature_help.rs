@@ -209,6 +209,9 @@ fn resolve_qualified(
     files: Option<&HashMap<PathBuf, String>>,
 ) -> Option<String> {
     let mut out = None;
+    // S4a (#1966): a derived capability's (`capability Sessions = Kv`) base,
+    // whose operations it has.
+    let mut derived_base: Option<String> = None;
     for_each_unit(doc_text, files, |unit| {
         if out.is_some() {
             return;
@@ -237,6 +240,9 @@ fn resolve_qualified(
                         format!("unsafe(value: {base}) -> {recv}")
                     });
                     return;
+                }
+                CommonsItem::Capability(c) if c.name.name == recv && c.derived.is_some() => {
+                    derived_base = c.derived.as_ref().map(|d| d.base.name.clone());
                 }
                 // `Cap.op` — a capability operation.
                 CommonsItem::Capability(c) if c.name.name == recv => {
@@ -269,7 +275,10 @@ fn resolve_qualified(
             }
         }
     });
-    out
+    match (out, derived_base) {
+        (None, Some(base)) if base != recv => resolve_qualified(&base, member, doc_text, files),
+        (out, _) => out,
+    }
 }
 
 fn base_name(b: BaseType) -> &'static str {
@@ -375,6 +384,17 @@ mod tests {
         // The whole path: a call context whose prefix opens a string literal.
         let t = "  \"€greet(";
         let _ = call_context(t, t.len());
+    }
+
+    /// S4a (#1966): a derived capability's operation has its base's signature.
+    #[test]
+    fn a_derived_capability_op_has_its_bases_signature() {
+        const DERIVED_DOC: &str =
+            "context a\n\nconsumes bynk.cloudflare { Kv }\n\ncapability Sessions = Kv\n";
+        assert_eq!(
+            resolve_label("Sessions.put", DERIVED_DOC, None).as_deref(),
+            Some("put(key: String, value: String) -> Effect[()]")
+        );
     }
 
     #[test]

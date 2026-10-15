@@ -128,6 +128,14 @@
   ],
   "capability_decl": [
     {
+      "code": "bynk.capability.base_not_instantiable",
+      "summary": "A derived capability's base is not a platform resource that can be instantiated."
+    },
+    {
+      "code": "bynk.capability.derived_outside_context",
+      "summary": "A derived capability was declared outside a context."
+    },
+    {
       "code": "bynk.capability.op_arity",
       "summary": "A capability operation was called with the wrong number of arguments."
     },
@@ -136,8 +144,16 @@
       "summary": "A `capability` was declared outside a context."
     },
     {
+      "code": "bynk.capability.unknown_base",
+      "summary": "A derived capability's base is not a capability the context consumes."
+    },
+    {
       "code": "bynk.capability.unknown_operation",
       "summary": "Referenced an operation the capability does not declare."
+    },
+    {
+      "code": "bynk.capability.unknown_option",
+      "summary": "A derived capability carries an option its base does not take."
     },
     {
       "code": "bynk.parse.empty_capability",
@@ -396,6 +412,10 @@
     {
       "code": "bynk.exports.conflicting_visibility",
       "summary": "A type is exported with conflicting visibilities."
+    },
+    {
+      "code": "bynk.exports.derived_capability",
+      "summary": "`exports capability` names a derived capability, whose instance stays with its context."
     },
     {
       "code": "bynk.exports.duplicate_export",

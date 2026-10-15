@@ -1103,6 +1103,9 @@ fn member_candidates(
     let mut seen: BTreeSet<String> = BTreeSet::new();
     // Built-in sum types (`HttpResult`/`QueueResult`) — variants from the AST
     // registry, on the same name-receiver path as project sums (ADR 0093 G3).
+    // S4a (#1966): a derived capability's (`capability Sessions = Kv`) base,
+    // whose operations it has.
+    let mut derived_base: Option<String> = None;
     for (label, detail) in builtin_sum_variants(receiver) {
         if seen.insert(label.clone()) {
             out.push(Completion::item(
@@ -1159,6 +1162,9 @@ fn member_candidates(
                     // (slice 3).
                     _ => {}
                 },
+                CommonsItem::Capability(c) if c.name.name == receiver && c.derived.is_some() => {
+                    derived_base = c.derived.as_ref().map(|d| d.base.name.clone());
+                }
                 CommonsItem::Capability(c) if c.name.name == receiver => {
                     for op in &c.ops {
                         if seen.insert(op.name.name.clone()) {
@@ -1198,6 +1204,13 @@ fn member_candidates(
             }
         }
     });
+    if let Some(base) = derived_base.filter(|b| b != receiver) {
+        for c in member_candidates(&base, doc_text, files) {
+            if seen.insert(c.label.clone()) {
+                out.push(c);
+            }
+        }
+    }
     out
 }
 
@@ -1575,6 +1588,27 @@ static EMBEDDED_UNITS: LazyLock<Vec<Arc<SourceUnit>>> = LazyLock::new(|| {
         .filter_map(|(_, src)| parse_source_unit(src).map(Arc::new))
         .collect()
 });
+
+/// S4a (#1966): the first-party unit `unit` (`bynk.cloudflare`), from the
+/// embedded surface, when it declares capability `cap`: what a derived
+/// capability's hover renders its base's operations from.
+pub(crate) fn embedded_capability(
+    unit: &str,
+    cap: &str,
+) -> Option<bynk_syntax::ast::CapabilityDecl> {
+    EMBEDDED_UNITS.iter().find_map(|u| {
+        if u.name().joined() != unit {
+            return None;
+        }
+        let SourceUnit::Adapter(a) = u.as_ref() else {
+            return None;
+        };
+        a.items.iter().find_map(|item| match item {
+            CommonsItem::Capability(c) if c.name.name == cap => Some(c.clone()),
+            _ => None,
+        })
+    })
+}
 
 /// The parsed unit for a project file's already-read `content`. P8.4
 /// (#1515): served from `bynk_project::parse_cache`'s own shared, durable
@@ -2784,6 +2818,20 @@ mod tests {
 
     /// #1888: a field's and a variant's doc ride on their completion items;
     /// an undocumented one has none.
+    /// S4a (#1966): a derived capability completes its base's operations.
+    #[test]
+    fn a_derived_capability_completes_its_bases_operations() {
+        const DERIVED_DOC: &str =
+            "context a\n\nconsumes bynk.cloudflare { Kv }\n\ncapability Sessions = Kv\n";
+        let labels: Vec<String> = member_candidates("Sessions", DERIVED_DOC, None)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        for op in ["get", "put", "putTtl", "delete", "list"] {
+            assert!(labels.iter().any(|l| l == op), "{op} missing: {labels:?}");
+        }
+    }
+
     #[test]
     fn member_completions_carry_their_docs() {
         let doc = "commons m\n\ntype Rec = {\n  --| The id.\n  id: Int,\n  n: Int,\n}\n\ntype Status = enum {\n  ---\n  Waiting.\n  ---\n  Pending,\n  Shipped,\n}\n";

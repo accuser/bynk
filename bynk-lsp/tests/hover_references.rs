@@ -649,3 +649,56 @@ fn fixed_path_asset_hovers_its_at_path() {
     assert!(hover.contains("Served at `/favicon.ico`."), "{hover}");
     assert!(!hover.contains("/_assets/"), "{hover}");
 }
+
+/// S4a (#1966): a derived capability (`capability Sessions = Kv`) declares no
+/// operations of its own; it has its base's. Hover on the declaration says it
+/// is a distinct instance of the base, and on an operation reference renders
+/// the base's operation.
+#[test]
+fn derived_capability_hovers_as_an_instance_of_its_base() {
+    let (r, rel, text, root) = analysed(
+        "../bynkc/tests/fixtures/positive/1966_derived_kv_workers/src",
+        "cart.bynk",
+    );
+
+    let decl = hover_at(
+        &r,
+        &rel,
+        &text,
+        &root,
+        at(&text, "capability Sessions", "Sessions"),
+    )
+    .expect("hover on the declaration");
+    assert!(decl.contains("capability Sessions = Kv"), "{decl}");
+    assert!(
+        decl.contains("A distinct instance of `Kv` (`bynk.cloudflare`)"),
+        "{decl}"
+    );
+    assert!(
+        decl.contains("fn put(key: String, value: String) -> Effect[()]"),
+        "the base's operations: {decl}"
+    );
+    assert!(decl.contains("Live carts, keyed by shopper."), "{decl}");
+
+    // The base is `bynk.cloudflare`'s `Kv`, not the instance.
+    let base = hover_at(&r, &rel, &text, &root, at(&text, "Sessions = Kv", "Kv"))
+        .expect("hover on the base");
+    assert!(base.contains("capability Kv {"), "{base}");
+
+    let given = hover_at(
+        &r,
+        &rel,
+        &text,
+        &root,
+        at(&text, "given Sessions", "Sessions"),
+    )
+    .expect("hover on a `given` reference");
+    assert!(given.contains("capability Sessions = Kv"), "{given}");
+
+    let op = hover_at(&r, &rel, &text, &root, at(&text, "Sessions.get(k)", "get"))
+        .expect("hover on the `Sessions.get` reference");
+    assert!(
+        op.contains("get(key: String) -> Effect[Option[String]]"),
+        "{op}"
+    );
+}

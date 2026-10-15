@@ -27,6 +27,7 @@ pub(super) fn contexts_native(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
+    with_derived: bool,
 ) -> HashMap<String, BTreeMap<Platform, String>> {
     kinds
         .iter()
@@ -40,6 +41,7 @@ pub(super) fn contexts_native(
                 unit_consumes,
                 unit_consumes_aliases,
                 unit_flattened,
+                with_derived,
             );
             (!native.is_empty()).then(|| (name.clone(), native))
         })
@@ -109,7 +111,13 @@ pub(super) fn context_bindings(
 ) -> Vec<WorkerBinding> {
     let consumes = service_consumes(consumes_targets, adapter_bindings, own_event_routes);
     let agents: Vec<String> = table.agents.keys().cloned().collect();
-    worker_bindings(&agents, &consumes, needs_kv, uses_emit)
+    let mut kv_instances: Vec<(String, String)> = table
+        .derived
+        .iter()
+        .map(|(cap, d)| (cap.clone(), d.binding.clone()))
+        .collect();
+    kv_instances.sort();
+    worker_bindings(&agents, &consumes, needs_kv, &kv_instances, uses_emit)
 }
 
 /// Every context's bindings ([`context_bindings`]), as its `wrangler.toml`
@@ -129,12 +137,14 @@ pub(super) fn all_context_bindings(
     // `bynk_check::symbols::discover_event_subscribers`' table.
     event_subscribers: &BTreeMap<(String, String), Vec<(String, String)>>,
 ) -> BTreeMap<String, Vec<WorkerBinding>> {
+    // Only `needs_kv` reads it: the bare resources, not named instances.
     let context_native = contexts_native(
         kinds,
         unit_tables,
         unit_consumes,
         unit_consumes_aliases,
         unit_flattened,
+        false,
     );
     let mut bindings = BTreeMap::new();
     for (ctx, kind) in kinds {

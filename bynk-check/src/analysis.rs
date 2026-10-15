@@ -357,6 +357,13 @@ pub fn analyse_project_with_policy(
     );
     let mut unit_tables = unit_tables;
     crate::symbols::record_flattened_caps(&mut unit_tables, &unit_flattened);
+    crate::project_model::phase_resolve_derived(
+        &groups,
+        &kinds,
+        &parsed,
+        &mut unit_tables,
+        &mut errors,
+    );
     let unit_tables = unit_tables;
 
     // -- 5b'. `consumes` aliases. --

@@ -1769,6 +1769,27 @@ impl<'a> Parser<'a> {
     fn parse_capability_decl(&mut self) -> Result<CapabilityDecl, CompileError> {
         let kw = self.expect(TokenKind::Capability, "to start a capability declaration")?;
         let name = self.expect_ident("after `capability`")?;
+        // S4a (#1966): `capability Sessions = Kv @option(…)*`, a derived
+        // capability, rather than a braced list of operations.
+        if self.eat(TokenKind::Eq).is_some() {
+            let base = self.expect_ident("as the base capability after `=`")?;
+            let mut end = base.span;
+            let mut annotations = Vec::new();
+            while self.peek_kind() == Some(TokenKind::At) {
+                let ann = self.parse_annotation()?;
+                end = ann.span;
+                annotations.push(ann);
+            }
+            return Ok(CapabilityDecl {
+                trailing_comments: Vec::new(),
+                name,
+                ops: Vec::new(),
+                derived: Some(DerivedCapability { base, annotations }),
+                documentation: None,
+                span: kw.span.merge(end),
+                trivia: Trivia::default(),
+            });
+        }
         self.expect(TokenKind::LBrace, "to open the capability body")?;
         let mut ops = Vec::new();
         // #1756: comments (and an orphaned doc block) before the closing `}`.
@@ -1830,6 +1851,7 @@ impl<'a> Parser<'a> {
             trailing_comments,
             name,
             ops,
+            derived: None,
             documentation: None,
             span: kw.span.merge(close.span),
             trivia: Trivia::default(),

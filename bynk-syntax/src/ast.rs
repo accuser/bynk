@@ -725,13 +725,32 @@ pub struct MessageEntry {
 #[derive(Debug, Clone)]
 pub struct CapabilityDecl {
     pub name: Ident,
+    /// Empty for a derived capability ([`CapabilityDecl::derived`]), whose
+    /// operations are its base's; the checker resolves them.
     pub ops: Vec<CapabilityOp>,
+    /// Standard-library S4a (#1966): `capability Sessions = Kv @option(…)`, a
+    /// distinct instance of a platform capability the unit consumes. `None` for
+    /// the braced `capability X { fn … }` form.
+    pub derived: Option<DerivedCapability>,
     pub documentation: Option<Doc>,
     pub span: Span,
     /// #1756: comments before the closing `}`, an orphaned doc block among
     /// them, so the formatter keeps them.
     pub trailing_comments: Vec<Comment>,
     pub trivia: Trivia,
+}
+
+/// The `= Base @option(…)*` of a derived capability (S4a, #1966): a new
+/// capability name whose operations are those of `base`, a platform capability
+/// the unit selects with `consumes U { Base }`, provided by the platform
+/// adapter's own provider bound to this instance.
+#[derive(Debug, Clone)]
+pub struct DerivedCapability {
+    /// The base capability, by its flattened (bare) name.
+    pub base: Ident,
+    /// Creation options for the instance, checked against the base kind's
+    /// closed set.
+    pub annotations: Vec<Annotation>,
 }
 
 /// One operation in a capability (signature only; no body).

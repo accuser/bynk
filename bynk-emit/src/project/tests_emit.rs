@@ -441,7 +441,7 @@ fn emit_integration_module(
             BindingSource::Agent { .. } | BindingSource::EventsFanout { .. }
         )
     });
-    let has_kv = binds(|s| matches!(s, BindingSource::Kv));
+    let has_kv = binds(|s| matches!(s, BindingSource::Kv | BindingSource::KvInstance { .. }));
     let runtime_import = emitter::runtime_import_for(&module_path, ImportExt::Js);
     let mut runtime_names: Vec<String> = [
         "Ok",
@@ -1430,7 +1430,10 @@ fn emit_integration_harness<'a>(
                     let dns = test_ns(context);
                     service_binding_forward(&format!("worker_{dns}"), &format!("env_{dns}"))
                 }
-                BindingSource::Kv => call(ident("__makeIntegrationKv"), vec![]),
+                // S4a (#1966): each instance its own fresh namespace.
+                BindingSource::Kv | BindingSource::KvInstance { .. } => {
+                    call(ident("__makeIntegrationKv"), vec![])
+                }
                 BindingSource::Agent { class_name } => call(
                     ident("__makeIntegrationDoNamespace"),
                     vec![member(ident(ns.clone()), class_name), ident(env.clone())],
@@ -2123,8 +2126,8 @@ fn emit_test_module(
     if !stubs.is_empty() {
         stmts.push(TsStmt::raw(STUB_OVERLAY_TS.to_string(), None));
     }
-    for (owner, cap) in &deps.doubles {
-        if let Some(def) = platform_double(owner, cap, &test_ns(owner)) {
+    for (owner, cap, name) in &deps.doubles {
+        if let Some(def) = platform_double(owner, cap, &test_ns(owner), name) {
             stmts.push(TsStmt::raw(def, None));
         }
     }
@@ -3525,7 +3528,9 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
 
 /// #291: the deterministic test double for platform capability `cap` (owned by
 /// first-party unit `owner`, imported in the test module as `ns`), as the
-/// definition of a `__bynkTest_<Cap>()` factory — or `None` for a capability
+/// definition of a `__bynkTest_<name>()` factory — `name` is `cap`, or a
+/// derived capability's own name (S4a, #1966: `capability Sessions = Kv` has
+/// `__bynkTest_Sessions()`, a `Kv` double of its own) — or `None` for a capability
 /// with no double (a user adapter's). Each double is the same on every run and
 /// does no I/O: `Logger` and `Events` do nothing (observation records the
 /// calls), `Clock` reads `0`, `Random` counts its UUIDs and draws integers
@@ -3534,7 +3539,7 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
 /// and ignored: expiry is not modelled), and `Fetch` faults — a test never
 /// reaches the network, so it must `stub Fetch.send`. `__makeTestDeps` builds
 /// fresh ones per case.
-fn platform_double(owner: &str, cap: &str, ns: &str) -> Option<String> {
+fn platform_double(owner: &str, cap: &str, ns: &str, name: &str) -> Option<String> {
     let body = match (owner, cap) {
         ("bynk", "Logger") => "  return {\n    async info() {},\n    async error() {},\n  };\n".to_string(),
         ("bynk", "Events") => "  return {\n    async emit() {},\n  };\n".to_string(),
@@ -3548,7 +3553,7 @@ fn platform_double(owner: &str, cap: &str, ns: &str) -> Option<String> {
         _ => return None,
     };
     Some(format!(
-        "function __bynkTest_{cap}(): {ns}.{cap} {{\n{body}}}\n"
+        "function __bynkTest_{name}(): {ns}.{cap} {{\n{body}}}\n"
     ))
 }
 
@@ -3577,7 +3582,7 @@ fn emit_test_deps(
     unit_flattened: &HashMap<String, HashMap<String, String>>,
 ) -> TestDeps {
     let mut units: BTreeSet<String> = BTreeSet::new();
-    let mut doubles: Vec<(String, String)> = Vec::new();
+    let mut doubles: Vec<(String, String, String)> = Vec::new();
     // Each top-level entry: its deps key, the `(unit, capability)` it is, and
     // how its value is built.
     let mut tops: Vec<(String, (String, String), TopDep)> = Vec::new();
@@ -3595,6 +3600,10 @@ fn emit_test_deps(
             // implementation) is used, as an un-overridden seam.
             let how = if table.providers.contains_key(cap) {
                 TopDep::Provider
+            } else if let Some(inst) = table.derived.get(cap) {
+                // S4a (#1966): a derived capability's instance has its base's
+                // double, its own fresh one.
+                platform_or_placeholder(&inst.base_unit, &inst.base_cap)
             } else {
                 TopDep::Placeholder
             };
@@ -3698,7 +3707,12 @@ fn emit_test_deps(
                 &mut units,
             )),
             TopDep::Double => {
-                doubles.push((unit.clone(), cap.clone()));
+                // A derived capability's double is its base's.
+                let (owner, base) = unit_tables
+                    .get(unit)
+                    .and_then(|t| t.derived.get(cap))
+                    .map_or((unit, cap), |d| (&d.base_unit, &d.base_cap));
+                doubles.push((owner.clone(), base.clone(), cap.clone()));
                 Some(call(ident(format!("__bynkTest_{cap}")), Vec::new()))
             }
             TopDep::Placeholder => None,
@@ -3819,9 +3833,10 @@ struct TestDeps {
     stmt: TsStmt,
     /// The units its providers name, which the test module imports.
     units: BTreeSet<String>,
-    /// Each `(owner, capability)` whose `__bynkTest_<Cap>` test double it
-    /// calls, which the test module defines (`platform_double`).
-    doubles: Vec<(String, String)>,
+    /// Each `(owner, capability, name)` whose `__bynkTest_<name>` test double
+    /// it calls, which the test module defines (`platform_double`): `name` is
+    /// the capability, or a derived capability over it (S4a, #1966).
+    doubles: Vec<(String, String, String)>,
 }
 
 /// One top-level test dep, built ([`emit_test_deps`]).
@@ -3851,7 +3866,7 @@ enum TopDep {
 /// A capability of `owner` with a platform test double is [`TopDep::Double`];
 /// any other, the placeholder, whatever provides it in production.
 fn platform_or_placeholder(owner: &str, cap: &str) -> TopDep {
-    if platform_double(owner, cap, &test_ns(owner)).is_some() {
+    if platform_double(owner, cap, &test_ns(owner), cap).is_some() {
         TopDep::Double
     } else {
         TopDep::Placeholder

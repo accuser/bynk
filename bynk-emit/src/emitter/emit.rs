@@ -2230,6 +2230,57 @@ pub(crate) fn emit_capability(
     stmts
 }
 
+/// S4a (#1966): a derived capability (`capability Sessions = Kv`) is its
+/// base's interface under its own name, `export type Sessions =
+/// bynk_cloudflare.Kv;`, so everything typed by the capability (a handler's
+/// `deps`, the context's deps interface, a test double) has the base's ops,
+/// and compose's base provider satisfies it. The injection token is the same
+/// as a declared capability's.
+pub(crate) fn emit_derived_capability(
+    c: &CapabilityDecl,
+    ctx: &EmitProjectCtx,
+) -> Vec<bynk_ts::TsStmt> {
+    let Some(derived) = &c.derived else {
+        return Vec::new();
+    };
+    let base = &derived.base.name;
+    // The checker resolved the base among the flattened capabilities
+    // (`bynk.capability.unknown_base`), so a miss is a broken build already
+    // reported; the bare name keeps the output printable.
+    let ty = match ctx.cross_context.flattened_caps.get(base) {
+        Some(unit) => format!("{}.{base}", qualified_to_ns(unit)),
+        None => base.clone(),
+    };
+    let mut stmts = Vec::new();
+    if let Some(doc) = c.documentation.as_deref() {
+        stmts.push(bynk_ts::TsStmt::doc_comment(doc, None));
+    }
+    let mut alias = bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::TypeAlias {
+            name: c.name.name.clone(),
+            type_params: Vec::new(),
+            ty: bynk_ts::TsType::named(ty),
+        })),
+        None,
+    );
+    alias.no_blank_before = c.documentation.is_some();
+    stmts.push(alias);
+    stmts.push(bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::Export(Box::new(bynk_ts::TsDecl::ConstDecl {
+            name: format!("__{}Token", c.name.name),
+            ty: Some(bynk_ts::TsType::named("symbol")),
+            init: bynk_ts::TsExpr::Call {
+                callee: Box::new(bynk_ts::TsExpr::Ident("globalThis.Symbol".to_string())),
+                args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
+                    c.name.name.clone(),
+                ))],
+            },
+        })),
+        None,
+    ));
+    stmts
+}
+
 #[cfg(test)]
 mod emit_capability_tests {
     /// Review of #1358, finding 2: the printer-side test
@@ -3266,6 +3317,19 @@ pub(crate) fn cross_context_cap_namespaces(
         }
     }
     collect(sibling_agent_givens(commons, ctx));
+    // S4a (#1966): a derived capability's alias names its base's interface in
+    // the base's module.
+    out.extend(
+        commons
+            .commons
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CommonsItem::Capability(c) => c.derived.as_ref(),
+                _ => None,
+            })
+            .filter_map(|d| info.flattened_caps.get(&d.base.name).cloned()),
+    );
     out
 }
 

@@ -390,6 +390,7 @@ pub fn materialise_deploy_state(
 ) -> Result<bool, String> {
     // P7.4 (#1305): structural, not a substring search — closes R7.6/R8.20.
     let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
+    bynk_emit::emitter::wrangler::refuse_kv_instances(&text)?;
     if !bynk_emit::emitter::wrangler::wrangler_needs_kv_materialisation(&text)? {
         return Ok(false);
     }
@@ -699,7 +700,7 @@ pub(crate) mod tests {
         std::fs::write(
             &path,
             format!(
-                "[[kv_namespaces]]\nbinding = \"BYNK_KV\"\nid = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"\n"
+                "[[kv_namespaces]]\nbinding = \"KV\"\nid = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"\n"
             ),
         )
         .unwrap();
@@ -766,7 +767,7 @@ pub(crate) mod tests {
         std::fs::write(
             &config,
             format!(
-                "[[kv_namespaces]]\nbinding = \"BYNK_KV\"\nid = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"\n"
+                "[[kv_namespaces]]\nbinding = \"KV\"\nid = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"\n"
             ),
         )
         .unwrap();

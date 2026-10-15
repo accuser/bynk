@@ -1,0 +1,14 @@
+context demo
+
+consumes bynk.cloudflare { Kv }
+
+-- #1966: an instance's data stays with the context that owns it.
+exports capability { Sessions }
+
+capability Sessions = Kv
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}

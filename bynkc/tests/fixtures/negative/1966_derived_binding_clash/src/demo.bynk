@@ -1,0 +1,21 @@
+context demo
+
+consumes bynk.cloudflare { Kv }
+
+-- #1966: the instance's binding `KV_SESSIONS` is also agent `KvSessions`'s.
+capability Sessions = Kv
+
+agent KvSessions {
+  key id: String
+  store n: Cell[Int]
+
+  on call bump() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}
+
+service probe {
+  on call() -> Effect[Option[String]] given Sessions {
+    Sessions.get("a")
+  }
+}

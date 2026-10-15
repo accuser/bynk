@@ -2280,6 +2280,10 @@ pub(crate) struct Ctx<'a> {
 pub struct CapabilityInfo {
     pub name: String,
     pub ops: Vec<CapabilityOpInfo>,
+    /// S4a (#1966): for a derived capability (`capability Sessions = Kv`),
+    /// its base as `(unit, capability)`. An operation call on the instance
+    /// references the base's operation, where it is declared.
+    pub derived_from: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone)]

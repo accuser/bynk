@@ -146,6 +146,8 @@
 (call name: (identifier) @function)
 (method_call method: (identifier) @function.method)
 (capability_op name: (identifier) @function.method)
+; S4a (#1966): the base of a derived capability (`capability Sessions = Kv`).
+(capability_decl base: (identifier) @type)
 (provider_op name: (identifier) @function.method)
 (call_handler method: (identifier) @function.method)
 

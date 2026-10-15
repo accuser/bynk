@@ -60,6 +60,31 @@ pub fn describe_symbol(source: &str, name: &str) -> Option<String> {
         SourceUnit::Adapter(a) => &a.items,
         SourceUnit::Suite(_) => &[],
     };
+    // S4a (#1966): a derived capability is rendered with its base, which the
+    // unit selects in a `consumes U { Base }`.
+    if let SourceUnit::Context(ctx) = &unit
+        && let Some(c) = items.iter().find_map(|item| match item {
+            CommonsItem::Capability(c) if c.name.name == name && c.derived.is_some() => Some(c),
+            _ => None,
+        })
+        && let Some(d) = &c.derived
+    {
+        let base_unit = ctx.consumes.iter().find_map(|cd| {
+            cd.selected
+                .as_ref()?
+                .iter()
+                .any(|s| s.name == d.base.name)
+                .then(|| cd.target.joined())
+        });
+        let base = base_unit
+            .as_deref()
+            .and_then(|u| crate::completion::embedded_capability(u, &d.base.name));
+        return Some(describe_derived_capability(
+            c,
+            base_unit.as_deref(),
+            base.as_ref(),
+        ));
+    }
     for item in items {
         if let Some(summary) = describe_item(item, name) {
             return Some(summary);
@@ -1439,6 +1464,10 @@ pub(crate) fn describe_fn(f: &FnDecl) -> String {
 
 pub(crate) fn describe_capability(c: &CapabilityDecl) -> String {
     let mut out = String::new();
+    // S4a (#1966): a derived capability has no body of its own to render.
+    if c.derived.is_some() {
+        return describe_derived_capability(c, None, None);
+    }
     out.push_str("```bynk\ncapability ");
     out.push_str(&c.name.name);
     out.push_str(" {\n");
@@ -1458,6 +1487,56 @@ pub(crate) fn describe_capability(c: &CapabilityDecl) -> String {
         out.push('\n');
     }
     out.push_str("}\n```\n");
+    if let Some(doc) = &c.documentation {
+        out.push('\n');
+        out.push_str(doc);
+        out.push('\n');
+    }
+    out
+}
+
+/// S4a (#1966): a derived capability (`capability Sessions = Kv`): its
+/// declaration, that it is a distinct instance of its base (in `base_unit`,
+/// when known), and the base's operations, when its declaration is at hand.
+pub(crate) fn describe_derived_capability(
+    c: &CapabilityDecl,
+    base_unit: Option<&str>,
+    base: Option<&CapabilityDecl>,
+) -> String {
+    let Some(d) = &c.derived else {
+        return describe_capability(c);
+    };
+    let mut out = format!("```bynk\ncapability {} = {}", c.name.name, d.base.name);
+    for a in &d.annotations {
+        out.push_str(" @");
+        out.push_str(&a.name.name);
+    }
+    let from = base_unit.map_or(String::new(), |u| format!(" (`{u}`)"));
+    out.push_str(&format!(
+        "\n```\n\nA distinct instance of `{}`{from}: its own storage, with `{}`'s operations",
+        d.base.name, d.base.name
+    ));
+    match base {
+        Some(b) if !b.ops.is_empty() => {
+            out.push_str(":\n\n```bynk\n");
+            for op in &b.ops {
+                let params: Vec<String> = op
+                    .params
+                    .iter()
+                    .map(|p| format!("{}: {}", p.name.name, type_ref_str(&p.type_ref)))
+                    .collect();
+                out.push_str(&format!(
+                    "fn {}{}({}) -> {}\n",
+                    op.name.name,
+                    capability_op_type_params_str(op),
+                    params.join(", "),
+                    type_ref_str(&op.return_type)
+                ));
+            }
+            out.push_str("```\n");
+        }
+        _ => out.push_str(".\n"),
+    }
     if let Some(doc) = &c.documentation {
         out.push('\n');
         out.push_str(doc);

@@ -95,3 +95,24 @@ t("WorkersKv.get: without an env.KV binding, says so rather than answering", asy
   await assert.rejects(new WorkersKv({}).get("k"), /requires a KV namespace binding \(env\.KV\)/);
   await assert.rejects(new WorkersKv().get("k"), /env\.KV/);
 });
+
+// S4a (#1966): a derived capability's instance (`capability Sessions = Kv`)
+// reads its own binding, named at construction; the bare `Kv` keeps `KV`.
+t("WorkersKv: a named binding reads env[binding], apart from KV", async () => {
+  const bare = fakeKv();
+  const sessions = fakeKv();
+  const env = { KV: bare, KV_SESSIONS: sessions };
+  await new WorkersKv(env, "KV_SESSIONS").put("k", "instance");
+  await new WorkersKv(env).put("k", "bare");
+  assert.deepEqual(await new WorkersKv(env, "KV_SESSIONS").get("k"), Some("instance"));
+  assert.deepEqual(await new WorkersKv(env).get("k"), Some("bare"));
+  assert.equal(sessions.entries.get("k"), "instance");
+  assert.equal(bare.entries.get("k"), "bare");
+});
+
+t("WorkersKv: a missing named binding names it", async () => {
+  await assert.rejects(
+    new WorkersKv({ KV: fakeKv() }, "KV_SESSIONS").get("k"),
+    /requires a KV namespace binding \(env\.KV_SESSIONS\)/,
+  );
+});

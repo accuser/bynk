@@ -1,0 +1,2 @@
+bynk.exports.derived_capability
+derived capability `Sessions` cannot be exported

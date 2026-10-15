@@ -144,6 +144,53 @@ A capability may not depend on itself, directly or transitively
 (`bynk.provider.dependency_cycle`) — including the trivial `provides X = … given
 X`.
 
+## Derived capabilities (`capability X = K`)
+
+A **derived** capability is a distinct instance of a platform resource, such as
+a second KV namespace:
+
+```bynk
+context shop.cart
+
+consumes bynk.cloudflare { Kv }
+
+capability Sessions = Kv
+capability PriceCache = Kv
+
+service remember {
+  on call(k: String, v: String) -> Effect[Option[String]] given Sessions {
+    let _ <- Sessions.put(k, v)
+    Sessions.get(k)
+  }
+}
+```
+
+`Sessions` has `Kv`'s operations, but its own storage. `PriceCache` is another
+instance, and the bare `Kv`, if used, a third. It is not an alias: a key written
+through `Sessions` is absent through `PriceCache`, just as `type Id = Int` is a
+distinct type over `Int`. Write no `provides`. The base's platform provider
+serves each instance, bound to the instance's own resource. In every other way
+an instance is an ordinary capability: `given`, calls, `stub` and `expect` work
+on it unchanged.
+
+- The base must be a capability the context selects with `consumes U { K }`
+  (`bynk.capability.unknown_base`), and a resource kind with instances
+  (`bynk.capability.base_not_instantiable`). Today that is `bynk.cloudflare`'s
+  `Kv`.
+- Options follow the base as `@annotations`, from the kind's own set
+  (`bynk.capability.unknown_option`). `Kv` takes none.
+- Only a context declares one (`bynk.capability.derived_outside_context`), and
+  it cannot be exported (`bynk.exports.derived_capability`). The data belongs to
+  the context, so another context reaches it through the context's services.
+
+On Workers, each instance gets its own binding, named from the kind and the
+capability (`Sessions` → `KV_SESSIONS`, `PriceCache` → `KV_PRICE_CACHE`), with an
+`Env` member and a `[[kv_namespaces]]` stanza of its own. The bare `KV` stanza is
+emitted only for a context that uses the bare `Kv`. Under `bynkc test`, each
+instance has its own fresh in-memory double. `bynk deploy` does not yet
+provision instances: it refuses a Worker that declares one, naming the binding
+(#1967). See [Use more than one KV namespace](/book/guides/effects-and-capabilities/use-several-kv-namespaces/).
+
 ## Cross-context capabilities (`exports capability`)
 
 A context can offer a capability for *other* contexts to consume — the pattern
