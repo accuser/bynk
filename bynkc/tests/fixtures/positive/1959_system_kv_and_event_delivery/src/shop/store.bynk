@@ -1,0 +1,9 @@
+context shop.store
+
+consumes bynk.cloudflare { Kv }
+
+service read {
+  on call(key: String) -> Effect[Option[String]] given Kv {
+    Kv.get(key)
+  }
+}

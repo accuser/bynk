@@ -1,0 +1,10 @@
+context shop.audit
+
+consumes shop.order
+consumes bynk.cloudflare { Kv }
+
+service OnPlaced from Events(Placed) {
+  on event(e: Placed) -> Effect[()] given Kv {
+    Kv.put(e.id, "seen")
+  }
+}

@@ -112,16 +112,13 @@ pub(super) fn context_bindings(
     worker_bindings(&agents, &consumes, needs_kv, uses_emit)
 }
 
-/// `bynk.context.duplicate_binding`: on a Workers build, each context's
-/// bindings as its `wrangler.toml` would list them, checked by
-/// [`bynk_check::worker_bindings::phase_duplicate_bindings`]. Run on an
-/// otherwise clean program: the KV input walks the provider graph, whose
-/// acyclicity the earlier checks establish.
+/// Every context's bindings ([`context_bindings`]), as its `wrangler.toml`
+/// would list them: what the duplicate check reads, and what the integration
+/// harness binds on each participant's `env` (#1959). Only on an otherwise
+/// clean program: the KV input walks the provider graph, whose acyclicity the
+/// earlier checks establish.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn phase_duplicate_bindings(
-    target: BuildTarget,
-    parsed: &[ParsedFile],
-    groups: &BTreeMap<String, Vec<usize>>,
+pub(super) fn all_context_bindings(
     kinds: &BTreeMap<String, UnitKind>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
@@ -129,11 +126,7 @@ pub(super) fn phase_duplicate_bindings(
     unit_flattened: &HashMap<String, HashMap<String, String>>,
     unit_callees: &HashMap<String, HashMap<ExprId, Callee>>,
     adapter_bindings: &HashMap<String, AdapterBinding>,
-    errors: &mut ErrorSink,
-) {
-    if target != BuildTarget::Workers {
-        return;
-    }
+) -> BTreeMap<String, Vec<WorkerBinding>> {
     let context_native = contexts_native(
         kinds,
         unit_tables,
@@ -166,5 +159,21 @@ pub(super) fn phase_duplicate_bindings(
             ),
         );
     }
-    bynk_check::worker_bindings::phase_duplicate_bindings(parsed, groups, &bindings, errors);
+    bindings
+}
+
+/// `bynk.context.duplicate_binding`: on a Workers build, each context's
+/// bindings ([`all_context_bindings`]), checked by
+/// [`bynk_check::worker_bindings::phase_duplicate_bindings`].
+pub(super) fn phase_duplicate_bindings(
+    target: BuildTarget,
+    parsed: &[ParsedFile],
+    groups: &BTreeMap<String, Vec<usize>>,
+    bindings: &BTreeMap<String, Vec<WorkerBinding>>,
+    errors: &mut ErrorSink,
+) {
+    if target != BuildTarget::Workers {
+        return;
+    }
+    bynk_check::worker_bindings::phase_duplicate_bindings(parsed, groups, bindings, errors);
 }

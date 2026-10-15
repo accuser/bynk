@@ -1,0 +1,14 @@
+context shop.order
+
+consumes bynk { Events }
+consumes shop.store
+exports transparent { Placed }
+
+event Placed = { id: String }
+
+service place {
+  on call(id: String) -> Effect[Option[String]] given Events {
+    let _ <- Events.emit[Placed](Placed { id: id })
+    shop.store.read(id)
+  }
+}

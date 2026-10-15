@@ -16,7 +16,7 @@ import {
 } from "../src/agent.ts";
 import type { BoundaryError, JsonValue } from "../src/boundary.ts";
 import { Ok, Err } from "../src/result.ts";
-import type { DurableObjectState } from "../src/storage.ts";
+import { makeIntegrationKv, type DurableObjectState } from "../src/storage.ts";
 
 test("serialiseAgentKey: strings are identity, primitives are JSON", () => {
   assert.equal(serialiseAgentKey("abc"), "abc");
@@ -84,8 +84,13 @@ function reg(): StateRegistry<unknown> {
 
 test("integration namespace + workers proxy: round-trips method calls and splits deps", async () => {
   // A tiny emitted-style DO: handles POST /_bynk/agent/<method> with {args, deps}.
-  const ns = makeIntegrationDoNamespace((state: DurableObjectState) => ({
+  const ns = makeIntegrationDoNamespace(class {
+    state: DurableObjectState;
+    constructor(state: DurableObjectState) {
+      this.state = state;
+    }
     async fetch(request: Request): Promise<Response> {
+      const state = this.state;
       const url = new URL(request.url);
       const method = url.pathname.split("/").pop();
       const { args, deps } = (await request.json()) as { args: unknown[]; deps: unknown };
@@ -96,8 +101,8 @@ test("integration namespace + workers proxy: round-trips method calls and splits
         return Response.json({ total: next, deps });
       }
       return new Response("no such method", { status: 404 });
-    },
-  }));
+    }
+  });
 
   interface Acc {
     add(n: number, deps: unknown): Promise<{ total: number; deps: unknown }>;
@@ -138,14 +143,14 @@ const hexWire: AgentWire = {
 
 // An emitted-style DO that decodes and encodes through the same table.
 function hexEchoNamespace(): DurableObjectNamespace {
-  return makeIntegrationDoNamespace(() => ({
+  return makeIntegrationDoNamespace(class {
     async fetch(request: Request): Promise<Response> {
       const method = new URL(request.url).pathname.slice("/_bynk/agent/".length);
       const { args } = (await request.json()) as { args: unknown[]; deps: unknown };
       const decoded = decodeAgentArgs(hexWire, method, args);
       return Response.json(encodeAgentResult(hexWire, method, decoded[0]));
-    },
-  }));
+    }
+  });
 }
 
 test("#1678 workers proxy: arguments and result go through the wire table", async () => {
@@ -225,4 +230,34 @@ test("#1678 a pass-through position is carried as is", () => {
   const wire: AgentWire = { m: { args: [AGENT_WIRE_PASS], result: AGENT_WIRE_PASS } };
   assert.deepEqual(decodeAgentArgs(wire, "m", [{ id: "c1" }]), [{ id: "c1" }]);
   assert.deepEqual(encodeAgentResult(wire, "m", { id: "c1" }), { id: "c1" });
+});
+
+test("integration KV: one namespace shared by its holders, listed by prefix", async () => {
+  const kv = makeIntegrationKv();
+  const a = { KV: kv };
+  const b = { KV: kv };
+  await a.KV.put("user:2", "bo");
+  await a.KV.put("user:1", "al", { expirationTtl: 60 });
+  await a.KV.put("order:1", "x");
+  assert.equal(await b.KV.get("user:1"), "al");
+  assert.equal(await b.KV.get("missing"), null);
+  const page = await b.KV.list({ prefix: "user:" });
+  assert.deepEqual(page, { keys: [{ name: "user:1" }, { name: "user:2" }], list_complete: true });
+  await b.KV.delete("user:1");
+  assert.equal(await a.KV.get("user:1"), null);
+});
+
+test("integration namespace: constructs the class with the env it was given", async () => {
+  const env = { NAME: "participant" };
+  const ns = makeIntegrationDoNamespace(class {
+    env: unknown;
+    constructor(_state: DurableObjectState, env?: unknown) {
+      this.env = env;
+    }
+    async fetch(_request: Request): Promise<Response> {
+      return Response.json(this.env);
+    }
+  }, env);
+  const res = await ns.get(ns.idFromName("k")).fetch("https://_bynk/x", { method: "POST" });
+  assert.deepEqual(await res.json(), env);
 });

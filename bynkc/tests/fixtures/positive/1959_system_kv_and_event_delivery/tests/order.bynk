@@ -1,0 +1,18 @@
+-- #1959: a system case stands up `shop.audit`, which subscribes to
+-- `shop.order`'s events, beside the participants the case calls. The event
+-- reaches it through the fan-out, and the value it writes is read back
+-- through `shop.store`: the participants share one KV namespace per case.
+suite shop.order as system {
+  case "an emitted event is delivered and its write is visible" {
+    let before <- shop.store.read("o1")
+    expect before == None
+    let _ <- shop.order.place("o1")
+    let after <- shop.store.read("o1")
+    expect after == Some("seen")
+  }
+
+  case "each case starts with an empty namespace" {
+    let v <- shop.store.read("o1")
+    expect v == None
+  }
+}

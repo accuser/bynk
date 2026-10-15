@@ -443,6 +443,44 @@ pub fn infer_participants(
     order
 }
 
+/// #1959: the contexts a `system`-tier suite's harness stands up as Workers:
+/// [`infer_participants`]' set, plus every context subscribing to an event
+/// one of them declares, plus *its* `consumes` closure, transitively. A
+/// subscriber consumes its publisher, and `consumes` cycles are refused, so
+/// no subscriber of the target is ever in the target's own closure; without
+/// it here, the fan-out would deliver to nobody. Only the harness widens: a
+/// case still reaches just [`infer_participants`]' set. Target first, then
+/// breadth order.
+pub fn infer_harness_participants(
+    target: &str,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    kinds: &BTreeMap<String, UnitKind>,
+    event_subscribers: &BTreeMap<(String, String), Vec<(String, String)>>,
+) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut queue: Vec<String> = vec![target.to_string()];
+    seen.insert(target.to_string());
+    let mut head = 0;
+    while head < queue.len() {
+        let node = queue[head].clone();
+        head += 1;
+        order.push(node.clone());
+        let consumed = unit_consumes.get(&node).into_iter().flatten();
+        let subscribers = event_subscribers
+            .iter()
+            .filter(|((owner, _), _)| *owner == node)
+            .flat_map(|(_, subs)| subs.iter().map(|(ctx, _)| ctx));
+        for next in consumed.chain(subscribers) {
+            if seen.insert(next.clone()) {
+                queue.push(next.clone());
+            }
+        }
+    }
+    order.retain(|u| kinds.get(u) == Some(&UnitKind::Context));
+    order
+}
+
 /// P5.4 (`design/tracks/semantics-in-the-checker.md` §6): the checking half
 /// of `test integration "name"` suite processing — participant inference,
 /// the `system`-needs-a-serialisation-edge gate, duplicate-case-name

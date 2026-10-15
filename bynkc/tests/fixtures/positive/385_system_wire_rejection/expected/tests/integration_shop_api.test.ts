@@ -28,7 +28,7 @@ function __bynkShow(v: unknown): string {
 
 function __makeHarness() {
   const env___ns_shop_api: any = {};
-  env___ns_shop_api.CART = __makeIntegrationDoNamespace((state) => new __ns_shop_api.Cart(state));
+  env___ns_shop_api.CART = __makeIntegrationDoNamespace(__ns_shop_api.Cart, env___ns_shop_api);
   const rootEnv: any = {};
   rootEnv.SHOP_API = { fetch: (req: globalThis.Request) => worker___ns_shop_api.fetch(req, env___ns_shop_api) } as __ServiceBinding;
   return { env: rootEnv };

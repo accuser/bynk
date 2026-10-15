@@ -315,6 +315,33 @@ export interface KVNamespace {
   }>;
 }
 
+/**
+ * #1959: an in-memory KV namespace for multi-Worker integration tests. The
+ * harness makes one per test case and binds it as `env.KV` on every
+ * participant that needs it, as a deployed project's Workers share one
+ * namespace. Keys list in order, on one page; `expirationTtl` is accepted and
+ * ignored, since a test case does not outlive it.
+ */
+export function makeIntegrationKv(): KVNamespace {
+  const values = new Map<string, string>();
+  return {
+    async get(key: string): Promise<string | null> {
+      return values.get(key) ?? null;
+    },
+    async put(key: string, value: string): Promise<void> {
+      values.set(key, value);
+    },
+    async delete(key: string): Promise<void> {
+      values.delete(key);
+    },
+    async list(options?: { prefix?: string; cursor?: string }) {
+      const prefix = options?.prefix ?? "";
+      const names = [...values.keys()].filter((k) => k.startsWith(prefix)).sort();
+      return { keys: names.map((name) => ({ name })), list_complete: true };
+    },
+  };
+}
+
 // v0.8: cross-Worker boundary protocol — JSON wire format and error types.
 
 export type JsonValue =
@@ -1466,12 +1493,21 @@ export async function dispatchToEventsFanout(
 }
 
 // v0.16: an in-process Durable-Object namespace for multi-Worker integration
-// tests. `construct` builds the emitted DO class from a fresh in-memory state;
+// tests. `cls` is the emitted DO class, built from a fresh in-memory state;
 // one instance is kept per key (so state accumulates within a test case). The
 // returned stub bridges the stub-side `fetch(url, init)` the agent runtime
 // speaks to the DO class's server-side `fetch(request)`.
+//
+// #1959: the class is constructed with `(state, env)` as workerd does, so an
+// agent that rebuilds `given` deps or emits events from `env`, and the events
+// fan-out, see the participant's bindings. A class whose constructor takes
+// only `state` still fits this type: a constructor with fewer parameters is
+// assignable to one with more.
 export function makeIntegrationDoNamespace(
-  construct: (state: DurableObjectState) => { fetch(request: Request): Promise<Response> },
+  cls: new (state: DurableObjectState, env?: unknown) => {
+    fetch(request: Request): Promise<Response>;
+  },
+  env?: unknown,
 ): DurableObjectNamespace {
   const instances = new Map<string, { fetch(request: Request): Promise<Response> }>();
   return {
@@ -1482,7 +1518,7 @@ export function makeIntegrationDoNamespace(
       const k = String(id);
       let inst = instances.get(k);
       if (inst === undefined) {
-        inst = construct(makeTestState(k));
+        inst = new cls(makeTestState(k), env);
         instances.set(k, inst);
       }
       const target = inst;
@@ -2092,6 +2128,7 @@ export {
   invariantViolation as __invariantViolation,
   makeAgent as __makeAgent,
   makeIntegrationDoNamespace as __makeIntegrationDoNamespace,
+  makeIntegrationKv as __makeIntegrationKv,
   makeTestState as __makeTestState,
   matchPath as __matchPath,
   newWebSocketPair as __newWebSocketPair,
