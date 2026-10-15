@@ -23,6 +23,7 @@
 
 use super::*;
 use crate::emitter::RuntimeUse;
+use crate::emitter::wrangler::{BindingSource, WorkerBinding};
 // #1759: every namespace a test module imports, from one definition.
 use crate::emitter::emit::test_scaffold_ns as test_ns;
 use bynk_check::checker::Types;
@@ -208,6 +209,11 @@ pub(crate) fn process_integration_tests(
     emitted_barrels: &mut HashSet<PathBuf>,
     // #1883, slice 3: the declared assets, for `svc.GET(asset)` in a case.
     asset_files: &TestAssetFiles,
+    // #1959: each context's Worker bindings, bound on each participant's
+    // `env`. `None` when earlier errors stop the build anyway.
+    context_bindings: Option<&BTreeMap<String, Vec<WorkerBinding>>>,
+    // `bynk_check::symbols::discover_event_subscribers`' table.
+    event_subscribers: &BTreeMap<(String, String), Vec<(String, String)>>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     tys: &Arc<Types>,
@@ -244,6 +250,14 @@ pub(crate) fn process_integration_tests(
         let suite_name = suite_target.clone();
         // #1856: contexts only; a capability-only unit is provided in-process.
         let participants = test_suites::infer_participants(&suite_target, unit_consumes, kinds);
+        // #1959: the Workers the harness stands up: also every subscriber to
+        // a participant's events, so the fan-out has somewhere to deliver.
+        let harness_participants = test_suites::infer_harness_participants(
+            &suite_target,
+            unit_consumes,
+            kinds,
+            event_subscribers,
+        );
         // `ready` only contains groups `phase_integration_bodies` built a
         // harness cross-context view for — this lookup cannot miss.
         let cross_context = ready
@@ -287,10 +301,11 @@ pub(crate) fn process_integration_tests(
         if let Some((path, program, source_map, runnable)) = emit_integration_module(
             &suite_name,
             &participants,
+            &harness_participants,
+            context_bindings,
             &uses_targets,
             &view,
             cross_context,
-            unit_consumes,
             unit_tables,
             &case_inputs,
             participants.first().and_then(|target| {
@@ -341,11 +356,15 @@ struct SystemCaseInput<'a> {
 #[allow(clippy::too_many_arguments)]
 fn emit_integration_module(
     suite: &str,
+    // The contexts a case reaches (`infer_participants`).
     participants: &[String],
+    // #1959: the contexts the harness stands up as Workers
+    // (`infer_harness_participants`): `participants` plus event subscribers.
+    harness_participants: &[String],
+    context_bindings: Option<&BTreeMap<String, Vec<WorkerBinding>>>,
     uses_targets: &[String],
     view: &test_suites::SuiteView,
     cross_context: &resolver::CrossContextInfo,
-    unit_consumes: &HashMap<String, Vec<String>>,
     unit_tables: &HashMap<String, UnitTable>,
     cases: &[SystemCaseInput],
     // #1883, slice 3: `asset_harness`'s text, when the target ships assets.
@@ -397,9 +416,32 @@ fn emit_integration_module(
     // reordering `emit_project`'s own `write_header` already does) and spliced
     // in at this fixed position (index 2, right after the two header comments
     // above) once every case has lowered.
-    let has_agents = participants
-        .iter()
-        .any(|p| unit_tables.get(p).is_some_and(|t| !t.agents.is_empty()));
+    // #1959: what the harness binds, from each harness participant's own
+    // Worker bindings.
+    // `None` only when earlier errors stop the build, so nothing runs this
+    // module; otherwise every context has a list (review of #1964).
+    let empty = Vec::new();
+    let bindings_of = |p: &String| {
+        debug_assert!(
+            context_bindings.is_none_or(|all| all.contains_key(p)),
+            "harness participant `{p}` has no binding list"
+        );
+        context_bindings
+            .and_then(|all| all.get(p))
+            .unwrap_or(&empty)
+    };
+    let binds = |kind: fn(&BindingSource) -> bool| {
+        harness_participants
+            .iter()
+            .any(|p| bindings_of(p).iter().any(|b| kind(&b.source)))
+    };
+    let has_objects = binds(|s| {
+        matches!(
+            s,
+            BindingSource::Agent { .. } | BindingSource::EventsFanout { .. }
+        )
+    });
+    let has_kv = binds(|s| matches!(s, BindingSource::Kv));
     let runtime_import = emitter::runtime_import_for(&module_path, ImportExt::Js);
     let mut runtime_names: Vec<String> = [
         "Ok",
@@ -425,25 +467,36 @@ fn emit_integration_module(
     if asset_harness.is_some() {
         runtime_names.push("HttpResult".to_string());
     }
-    if has_agents {
+    if has_kv {
+        runtime_names.push("__makeIntegrationKv".to_string());
+    }
+    if has_objects {
         runtime_names.push("__makeIntegrationDoNamespace".to_string());
         runtime_names.push("type __DurableObjectState".to_string());
         runtime_names.push("type __DurableObjectNamespace".to_string());
     }
     let import_idx = stmts.len();
 
-    // Per-participant: workers handler namespace + Worker entry default export.
-    for p in participants {
+    // Per-participant: workers handler namespace + Worker entry default export,
+    // and the events fan-out class of one that emits (#1959).
+    for p in harness_participants {
         let ns = test_ns(p);
         let dir = worker_dir_name(p);
-        stmts.push(TsStmt::decl(
-            TsDecl::ImportNamespace {
-                type_only: false,
-                alias: ns.clone(),
-                from: format!("../workers/{dir}/handlers.js"),
-            },
-            None,
-        ));
+        // A case's codecs and the agent classes come from here; a subscriber
+        // the harness only stands up, with no agent, needs neither.
+        let has_agent = bindings_of(p)
+            .iter()
+            .any(|b| matches!(b.source, BindingSource::Agent { .. }));
+        if participants.contains(p) || has_agent {
+            stmts.push(TsStmt::decl(
+                TsDecl::ImportNamespace {
+                    type_only: false,
+                    alias: ns.clone(),
+                    from: format!("../workers/{dir}/handlers.js"),
+                },
+                None,
+            ));
+        }
         stmts.push(TsStmt::decl(
             TsDecl::ImportDefault {
                 alias: format!("worker_{ns}"),
@@ -451,6 +504,19 @@ fn emit_integration_module(
             },
             None,
         ));
+        if bindings_of(p)
+            .iter()
+            .any(|b| matches!(b.source, BindingSource::EventsFanout { .. }))
+        {
+            stmts.push(TsStmt::decl(
+                TsDecl::ImportNamespace {
+                    type_only: false,
+                    alias: fanout_alias(&ns),
+                    from: format!("../workers/{dir}/events_fanout.js"),
+                },
+                None,
+            ));
+        }
     }
 
     // `uses` commons (for constructing arguments).
@@ -503,7 +569,7 @@ fn emit_integration_module(
 
     // The env-graph harness: stand each participant up as an in-process Worker
     // and wire its Service Bindings to its siblings; the root env binds to all.
-    let mut harness_stmt = emit_integration_harness(participants, unit_consumes, unit_tables);
+    let mut harness_stmt = emit_integration_harness(harness_participants, &bindings_of);
     harness_stmt.no_blank_before = true;
     stmts.push(harness_stmt);
 
@@ -1304,6 +1370,12 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
     }
 }
 
+/// #1959: the harness's import alias for participant `ns`'s events fan-out
+/// module, shared by the import and the binding that constructs from it.
+fn fanout_alias(ns: &str) -> String {
+    format!("fanout_{ns}")
+}
+
 /// Emit the `__makeHarness()` factory: an in-process env per participant whose
 /// Service Bindings call the sibling participants' real Worker `fetch` and whose
 /// Durable-Object namespaces back the participant's own agents in memory, plus a
@@ -1313,10 +1385,17 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
 /// the one real declaration this function ever built; its caller now prints
 /// it directly, the same shape `emit_test_deps`'s own identical conversion
 /// used.
-fn emit_integration_harness(
+///
+/// #1959: each participant's `env` holds the bindings its own Worker declares
+/// (`bindings_of`, the list its `wrangler.toml` is written from), by the same
+/// names: a Service Binding forwards to that participant's Worker, the KV
+/// namespace is a fresh in-memory namespace of the participant's own (each
+/// deployed Worker gets its own: `bynk deploy` provisions one per Worker), and
+/// each agent and the events fan-out is an in-memory Durable Object namespace
+/// constructed with the participant's `env`.
+fn emit_integration_harness<'a>(
     participants: &[String],
-    unit_consumes: &HashMap<String, Vec<String>>,
-    unit_tables: &HashMap<String, UnitTable>,
+    bindings_of: &dyn Fn(&String) -> &'a Vec<WorkerBinding>,
 ) -> TsStmt {
     let mut body = Vec::new();
     // Declare every participant env first so sibling references resolve.
@@ -1338,57 +1417,37 @@ fn emit_integration_harness(
             None,
         ));
     }
-    // Wire each participant's consumed Service Bindings to its sibling Workers,
-    // and back its own agents with in-memory Durable Object namespaces. Names
-    // come from the same constructors as the Worker's own bindings (#1958).
-    // This is fewer bindings than the Worker declares: no KV namespace, no
-    // events fan-out, no Service Bindings to event subscribers. So a system
-    // case over a context that uses `Kv` faults, and one that emits drops its
-    // events (#1959).
     for p in participants {
         let ns = test_ns(p);
-        if let Some(deps) = unit_consumes.get(p) {
-            let mut deps_sorted = deps.clone();
-            deps_sorted.sort();
-            // #1856: a consumed unit that is no participant (no Worker) has
-            // no Service Binding to wire.
-            for d in deps_sorted.iter().filter(|d| participants.contains(d)) {
-                let dns = test_ns(d);
-                let binding = crate::emitter::wrangler::service_binding(d).name;
-                body.push(TsStmt::assign(
-                    member(ident(format!("env_{ns}")), binding),
-                    service_binding_forward(&format!("worker_{dns}"), &format!("env_{dns}")),
-                    None,
-                ));
-            }
-        }
-        if let Some(table) = unit_tables.get(p) {
-            let mut agents: Vec<&String> = table.agents.keys().collect();
-            agents.sort();
-            for agent in agents {
-                let binding = crate::emitter::wrangler::agent_binding(agent).name;
-                body.push(TsStmt::assign(
-                    member(ident(format!("env_{ns}")), binding),
-                    call(
-                        ident("__makeIntegrationDoNamespace"),
-                        vec![TsExpr::Arrow {
-                            params: vec![TsParam {
-                                name: "state".to_string(),
-                                ty: None,
-                                optional: false,
-                            }],
-                            is_async: false,
-                            generics: Vec::new(),
-                            return_type: None,
-                            body: Box::new(TsArrowBody::Expr(Box::new(TsExpr::New {
-                                callee: Box::new(member(ident(ns.clone()), agent)),
-                                args: vec![ident("state")],
-                            }))),
-                        }],
-                    ),
-                    None,
-                ));
-            }
+        let env = format!("env_{ns}");
+        for binding in bindings_of(p) {
+            let value = match &binding.source {
+                // #1856: a context that is no participant has no Worker here.
+                BindingSource::Service { context } => {
+                    if !participants.contains(context) {
+                        continue;
+                    }
+                    let dns = test_ns(context);
+                    service_binding_forward(&format!("worker_{dns}"), &format!("env_{dns}"))
+                }
+                BindingSource::Kv => call(ident("__makeIntegrationKv"), vec![]),
+                BindingSource::Agent { class_name } => call(
+                    ident("__makeIntegrationDoNamespace"),
+                    vec![member(ident(ns.clone()), class_name), ident(env.clone())],
+                ),
+                BindingSource::EventsFanout { class_name } => call(
+                    ident("__makeIntegrationDoNamespace"),
+                    vec![
+                        member(ident(fanout_alias(&ns)), class_name),
+                        ident(env.clone()),
+                    ],
+                ),
+            };
+            body.push(TsStmt::assign(
+                member(ident(env.clone()), &binding.name),
+                value,
+                None,
+            ));
         }
     }
     // Root env binds to every participant.

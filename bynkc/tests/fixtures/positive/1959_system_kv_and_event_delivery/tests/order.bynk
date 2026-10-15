@@ -1,0 +1,23 @@
+-- #1959: a system case stands up `shop.audit`, which subscribes to
+-- `shop.order`'s events, beside the participants the case calls. Each event
+-- (one from a handler, one from an agent) reaches it through the fan-out,
+-- and it records what it saw in `shop.ledger`'s KV namespace, which the case
+-- reads back. Each participant has its own namespace, as each deployed
+-- Worker does, fresh per case.
+suite shop.order as system {
+  case "events from a handler and an agent are delivered" {
+    let before <- shop.ledger.read("placed:o1")
+    expect before == None
+    let n <- shop.order.place("o1")
+    expect n == 1
+    let placed <- shop.ledger.read("placed:o1")
+    expect placed == Some("seen")
+    let tallied <- shop.ledger.read("tallied:o1")
+    expect tallied == Some("seen")
+  }
+
+  case "each case starts with an empty namespace" {
+    let v <- shop.ledger.read("placed:o1")
+    expect v == None
+  }
+}

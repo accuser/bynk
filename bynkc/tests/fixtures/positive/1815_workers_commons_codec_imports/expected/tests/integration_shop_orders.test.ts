@@ -32,7 +32,7 @@ function __makeHarness() {
   const env___ns_shop_orders: any = {};
   const env___ns_shop_payment: any = {};
   env___ns_shop_orders.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker___ns_shop_payment.fetch(req, env___ns_shop_payment) } as __ServiceBinding;
-  env___ns_shop_orders.ORDER = __makeIntegrationDoNamespace((state) => new __ns_shop_orders.Order(state));
+  env___ns_shop_orders.ORDER = __makeIntegrationDoNamespace(__ns_shop_orders.Order, env___ns_shop_orders);
   const rootEnv: any = {};
   rootEnv.SHOP_ORDERS = { fetch: (req: globalThis.Request) => worker___ns_shop_orders.fetch(req, env___ns_shop_orders) } as __ServiceBinding;
   rootEnv.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker___ns_shop_payment.fetch(req, env___ns_shop_payment) } as __ServiceBinding;

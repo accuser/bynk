@@ -443,6 +443,44 @@ pub fn infer_participants(
     order
 }
 
+/// #1959: the contexts a `system`-tier suite's harness stands up as Workers:
+/// [`infer_participants`]' set, plus every context subscribing to an event
+/// one of them declares, plus *its* `consumes` closure, transitively. A
+/// subscriber consumes its publisher, and `consumes` cycles are refused, so
+/// no subscriber of the target is ever in the target's own closure; without
+/// it here, the fan-out would deliver to nobody. Only the harness widens: a
+/// case still reaches just [`infer_participants`]' set. Target first, then
+/// breadth order.
+pub fn infer_harness_participants(
+    target: &str,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    kinds: &BTreeMap<String, UnitKind>,
+    event_subscribers: &BTreeMap<(String, String), Vec<(String, String)>>,
+) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut queue: Vec<String> = vec![target.to_string()];
+    seen.insert(target.to_string());
+    let mut head = 0;
+    while head < queue.len() {
+        let node = queue[head].clone();
+        head += 1;
+        order.push(node.clone());
+        let consumed = unit_consumes.get(&node).into_iter().flatten();
+        let subscribers = event_subscribers
+            .iter()
+            .filter(|((owner, _), _)| *owner == node)
+            .flat_map(|(_, subs)| subs.iter().map(|(ctx, _)| ctx));
+        for next in consumed.chain(subscribers) {
+            if seen.insert(next.clone()) {
+                queue.push(next.clone());
+            }
+        }
+    }
+    order.retain(|u| kinds.get(u) == Some(&UnitKind::Context));
+    order
+}
+
 /// P5.4 (`design/tracks/semantics-in-the-checker.md` §6): the checking half
 /// of `test integration "name"` suite processing — participant inference,
 /// the `system`-needs-a-serialisation-edge gate, duplicate-case-name
@@ -3475,5 +3513,102 @@ mod untyped_outcome_tests {
     #[test]
     fn a_shadowing_binding_is_not_loose() {
         case("    let r = \"text\"\n    expect r.length() == 4").assert_clean();
+    }
+}
+
+#[cfg(test)]
+mod participant_tests {
+    use super::*;
+
+    /// `(publisher, event)` → its subscribers, as
+    /// `symbols::discover_event_subscribers` builds it.
+    type Subscribers = BTreeMap<(String, String), Vec<(String, String)>>;
+
+    /// `ops.hub` consumes `ops.store` and the `bynk` adapter, and publishes
+    /// `Ping`. `ops.audit` subscribes to it and consumes `ops.archive`, a
+    /// context outside `ops.hub`'s closure. `ops.store` publishes `Saved`, to
+    /// which `ops.mirror` subscribes, and `ops.audit` publishes `Noted`, to
+    /// which `ops.digest` subscribes.
+    fn project() -> (
+        HashMap<String, Vec<String>>,
+        BTreeMap<String, UnitKind>,
+        Subscribers,
+    ) {
+        let edges = [
+            ("ops.hub", &["ops.store", "bynk"][..]),
+            ("ops.audit", &["ops.hub", "ops.archive"][..]),
+            ("ops.mirror", &["ops.store"][..]),
+            ("ops.digest", &["ops.audit"][..]),
+        ];
+        let unit_consumes = edges
+            .iter()
+            .map(|(u, ds)| (u.to_string(), ds.iter().map(|d| d.to_string()).collect()))
+            .collect();
+        let mut kinds: BTreeMap<String, UnitKind> = [
+            "ops.hub",
+            "ops.store",
+            "ops.audit",
+            "ops.archive",
+            "ops.mirror",
+            "ops.digest",
+        ]
+        .iter()
+        .map(|c| (c.to_string(), UnitKind::Context))
+        .collect();
+        kinds.insert("bynk".to_string(), UnitKind::Adapter);
+        let sub = |owner: &str, event: &str, ctx: &str| {
+            (
+                (owner.to_string(), event.to_string()),
+                vec![(ctx.to_string(), "On".to_string())],
+            )
+        };
+        let subscribers = [
+            sub("ops.hub", "Ping", "ops.audit"),
+            sub("ops.store", "Saved", "ops.mirror"),
+            sub("ops.audit", "Noted", "ops.digest"),
+        ]
+        .into_iter()
+        .collect();
+        (unit_consumes, kinds, subscribers)
+    }
+
+    /// A case reaches the target's `consumes` closure: contexts only, the
+    /// target first.
+    #[test]
+    fn participants_are_the_consumes_closure() {
+        let (consumes, kinds, _) = project();
+        assert_eq!(
+            infer_participants("ops.hub", &consumes, &kinds),
+            ["ops.hub", "ops.store"]
+        );
+    }
+
+    /// #1959: the harness also stands up the target's subscriber and its own
+    /// closure (`ops.archive`), a non-target participant's subscriber
+    /// (`ops.mirror`), and a subscriber's subscriber (`ops.digest`).
+    #[test]
+    fn the_harness_adds_subscribers_and_their_closures_transitively() {
+        let (consumes, kinds, subscribers) = project();
+        assert_eq!(
+            infer_harness_participants("ops.hub", &consumes, &kinds, &subscribers),
+            [
+                "ops.hub",
+                "ops.store",
+                "ops.audit",
+                "ops.mirror",
+                "ops.archive",
+                "ops.digest"
+            ]
+        );
+    }
+
+    /// With no subscribers the two sets agree.
+    #[test]
+    fn without_subscribers_the_harness_is_the_case_set() {
+        let (consumes, kinds, _) = project();
+        assert_eq!(
+            infer_harness_participants("ops.hub", &consumes, &kinds, &BTreeMap::new()),
+            infer_participants("ops.hub", &consumes, &kinds)
+        );
     }
 }

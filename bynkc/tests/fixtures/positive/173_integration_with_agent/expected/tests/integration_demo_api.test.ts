@@ -32,7 +32,7 @@ function __makeHarness() {
   const env___ns_demo_api: any = {};
   const env___ns_demo_counter: any = {};
   env___ns_demo_api.DEMO_COUNTER = { fetch: (req: globalThis.Request) => worker___ns_demo_counter.fetch(req, env___ns_demo_counter) } as __ServiceBinding;
-  env___ns_demo_counter.COUNTER = __makeIntegrationDoNamespace((state) => new __ns_demo_counter.Counter(state));
+  env___ns_demo_counter.COUNTER = __makeIntegrationDoNamespace(__ns_demo_counter.Counter, env___ns_demo_counter);
   const rootEnv: any = {};
   rootEnv.DEMO_API = { fetch: (req: globalThis.Request) => worker___ns_demo_api.fetch(req, env___ns_demo_api) } as __ServiceBinding;
   rootEnv.DEMO_COUNTER = { fetch: (req: globalThis.Request) => worker___ns_demo_counter.fetch(req, env___ns_demo_counter) } as __ServiceBinding;

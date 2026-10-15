@@ -107,3 +107,30 @@ export interface KVNamespace {
     cursor?: string;
   }>;
 }
+
+/**
+ * #1959: an in-memory KV namespace for multi-Worker integration tests. The
+ * harness makes a fresh one per participant per test case and binds it as
+ * that participant's `env.KV`, as `bynk deploy` provisions one namespace per
+ * Worker. Keys list in order, on one page; `expirationTtl` is accepted and
+ * ignored, since a test case does not outlive it.
+ */
+export function makeIntegrationKv(): KVNamespace {
+  const values = new Map<string, string>();
+  return {
+    async get(key: string): Promise<string | null> {
+      return values.get(key) ?? null;
+    },
+    async put(key: string, value: string): Promise<void> {
+      values.set(key, value);
+    },
+    async delete(key: string): Promise<void> {
+      values.delete(key);
+    },
+    async list(options?: { prefix?: string; cursor?: string }) {
+      const prefix = options?.prefix ?? "";
+      const names = [...values.keys()].filter((k) => k.startsWith(prefix)).sort();
+      return { keys: names.map((name) => ({ name })), list_complete: true };
+    },
+  };
+}

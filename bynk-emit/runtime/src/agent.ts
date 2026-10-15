@@ -247,12 +247,21 @@ export async function dispatchToEventsFanout(
 }
 
 // v0.16: an in-process Durable-Object namespace for multi-Worker integration
-// tests. `construct` builds the emitted DO class from a fresh in-memory state;
+// tests. `cls` is the emitted DO class, built from a fresh in-memory state;
 // one instance is kept per key (so state accumulates within a test case). The
 // returned stub bridges the stub-side `fetch(url, init)` the agent runtime
 // speaks to the DO class's server-side `fetch(request)`.
+//
+// #1959: the class is constructed with `(state, env)` as workerd does, so an
+// agent that rebuilds `given` deps or emits events from `env`, and the events
+// fan-out, see the participant's bindings. A class whose constructor takes
+// only `state` still fits this type: a constructor with fewer parameters is
+// assignable to one with more.
 export function makeIntegrationDoNamespace(
-  construct: (state: DurableObjectState) => { fetch(request: Request): Promise<Response> },
+  cls: new (state: DurableObjectState, env?: unknown) => {
+    fetch(request: Request): Promise<Response>;
+  },
+  env?: unknown,
 ): DurableObjectNamespace {
   const instances = new Map<string, { fetch(request: Request): Promise<Response> }>();
   return {
@@ -263,7 +272,7 @@ export function makeIntegrationDoNamespace(
       const k = String(id);
       let inst = instances.get(k);
       if (inst === undefined) {
-        inst = construct(makeTestState(k));
+        inst = new cls(makeTestState(k), env);
         instances.set(k, inst);
       }
       const target = inst;
