@@ -152,7 +152,7 @@ for constraints).
 > **"Revert" means non-persistence, not rollback.** A fault guarantees only that
 > the *staged state is never written* — the handler's `store` writes commit all-or-
 > nothing at the boundary. It does **not** undo effects the handler already
-> performed (a `~>`/`<-` send) before it faulted. The handler is not
+> performed (an awaited `<-` call) before it faulted. The handler is not
 > transactional. (ADR 0107.)
 
 ### Observability limit (MVP)

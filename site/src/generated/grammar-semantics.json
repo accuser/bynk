@@ -368,6 +368,10 @@
   ],
   "effect_send_stmt": [
     {
+      "code": "bynk.send.in_agent_handler",
+      "summary": "A `~>` send was used in an agent handler, which has no execution context to keep a fire-and-forget send alive."
+    },
+    {
       "code": "bynk.send.in_pure_context",
       "summary": "A `~>` send was used in a pure (non-effectful) context."
     },
@@ -378,6 +382,10 @@
     {
       "code": "bynk.send.requires_unit",
       "summary": "A `~>` send targets an operation whose reply is not `Effect[()]`."
+    },
+    {
+      "code": "bynk.send.store_op",
+      "summary": "A `~>` send targets an agent store operation, which is part of the handler's atomic commit and cannot be sent without waiting."
     }
   ],
   "enum_type": [

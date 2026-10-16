@@ -64,6 +64,26 @@ or error would vanish without a trace:
 
 The contract bounds what you *may* do; you still choose whether to wait.
 
+## Not in an agent handler
+
+An agent handler can't send. It runs inside the agent's Durable Object, not a
+request, so there is no execution context to keep a fire-and-forget effect alive
+after the handler returns, and Bynk rejects the `~>`
+([`bynk.send.in_agent_handler`](/book/reference/diagnostics/)). Await the effect
+instead with `let _ <- op(a)` (or `do op(a)`), or send it from the service handler
+that calls the agent.
+
+A store operation gets its own refusal
+([`bynk.send.store_op`](/book/reference/diagnostics/)). A store write isn't a
+message to anyone: it's staged and committed atomically with the rest of the
+handler, so there is nothing to send without waiting for. Write it as a plain
+statement:
+
+```bynk,fragment
+~> count.update((n) => n + 1)   -- ❌ a store write is part of the handler's commit
+do count.update((n) => n + 1)   -- ✅
+```
+
 ## What it compiles to
 
 On the Cloudflare Workers target a send becomes

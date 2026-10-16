@@ -1,0 +1,2 @@
+bynk.send.store_op `~> count.update(…)` sends a store operation, but a store write is part of the agent handler's atomic commit
+# exact
