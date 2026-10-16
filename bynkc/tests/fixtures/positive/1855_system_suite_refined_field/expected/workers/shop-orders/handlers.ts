@@ -26,7 +26,7 @@ export const Line = {
 
 export const place = {
   async call(line: Line, deps: { env: { SHOP_PAYMENT: __ServiceBinding } }): globalThis.Promise<boolean> {
-    return __callService(deps.env.SHOP_PAYMENT, "authorise", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(line.qty), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "shop.orders", "b5e747de6448afda", deps.env);
+    return __callService(deps.env.SHOP_PAYMENT, "authorise", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(line.qty), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "shop.orders", "b5e747de6448afda", deps.env, "shop.payment");
   },
 };
 

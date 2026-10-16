@@ -23,9 +23,9 @@ pub(crate) enum Origin {
     Read,
     /// The user named it. The compiler knows nothing about it either way.
     Supplied,
-    /// #2004: the deployment's call secret, [`bynk_emit::CALL_SECRET_BINDING`].
-    /// Every Worker gets it, and `deploy` mints its value unless the user
-    /// supplies one ([`decide_call_secret`]).
+    /// I2 (#1971): an edge key, `BYNK_CALL_FROM_<caller>` on a callee and
+    /// `BYNK_CALL_TO_<callee>` on a caller ([`Edge`]). `deploy` mints its value
+    /// and sets it on both ends ([`decide_edge_key`]); it is never the user's.
     Managed,
 }
 
@@ -177,9 +177,10 @@ pub(crate) fn wanted_secrets(
     for name in declared {
         marks.insert(name.clone(), Origin::Declared);
     }
-    // #2004: the call secret is handled apart (`decide_call_secret`), a value
-    // supplied for it included: it is not the user's to spread or skip.
-    marks.remove(bynk_emit::CALL_SECRET_BINDING);
+    // I2 (#1971): the edge keys are handled apart (`decide_edge_key`), a value
+    // supplied for one included: spread to every context, it would overwrite
+    // each end's key with one the other end does not hold.
+    marks.retain(|name, _| !is_edge_key(name));
     marks
         .into_iter()
         .map(|(name, origin)| WantedSecret { name, origin })
@@ -235,7 +236,7 @@ fn value_from(name: &str, source: &SecretSource, from_env: Option<String>) -> Op
     source.file.get(name).cloned().or(from_env)
 }
 
-/// Whether `deploy` could see the call secret on one Worker.
+/// Whether `deploy` could see an edge key on one Worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Presence {
     Present,
@@ -259,84 +260,144 @@ pub(crate) fn presence_of(
     }
 }
 
-/// What this run does with the deployment's call secret (#2004).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CallSecret {
-    /// Every Worker in the run already holds one: leave it.
-    Keep,
-    /// Put this value on every Worker in the run: where it is absent, or on
-    /// every one when `overwrite` holds.
-    Set { value: String, overwrite: bool },
+/// I2 (#1971): whether `name` is an edge key's, which `deploy` alone sets.
+pub(crate) fn is_edge_key(name: &str) -> bool {
+    name.starts_with(bynk_emit::EDGE_FROM_PREFIX) || name.starts_with(bynk_emit::EDGE_TO_PREFIX)
 }
 
-/// Decide the call secret for one run. Pure, so the rule is tested without an
+/// I2 (#1971): one edge of the deployment, by Worker: `caller` signs the
+/// requests it sends `callee` (a call, or an event delivery from a publisher
+/// to a subscriber) under a key the two share, and no one else holds.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Edge {
+    pub(crate) caller: String,
+    pub(crate) callee: String,
+}
+
+/// The qualified context a Worker serves. A Worker is named after its context
+/// with each dot dashed (`bynk_project::paths::worker_dir_name`), and a context
+/// name is identifiers, which never hold a dash, so this is the inverse.
+pub(crate) fn context_of(worker: &str) -> String {
+    worker.replace('-', ".")
+}
+
+impl Edge {
+    /// Each end's Worker and the name it holds the edge's key under: the
+    /// callee's `BYNK_CALL_FROM_<caller>`, then the caller's
+    /// `BYNK_CALL_TO_<callee>`. An error names a context whose name no key
+    /// can be derived from.
+    pub(crate) fn ends(&self) -> Result<[(&str, String); 2], String> {
+        let unnamed = |worker: &str| {
+            format!(
+                "context `{}` cannot sign or verify cross-context calls: an edge key is named from the context's name, which must be lowercase letters and digits in dot-separated segments, each starting with a letter, with single underscores between runs",
+                context_of(worker)
+            )
+        };
+        let from = bynk_emit::edge_key_from(&context_of(&self.caller))
+            .ok_or_else(|| unnamed(&self.caller))?;
+        let to = bynk_emit::edge_key_to(&context_of(&self.callee))
+            .ok_or_else(|| unnamed(&self.callee))?;
+        Ok([(&self.callee, from), (&self.caller, to)])
+    }
+
+    /// `caller → callee`, for a message.
+    pub(crate) fn describe(&self) -> String {
+        format!("`{}` → `{}`", self.caller, self.callee)
+    }
+}
+
+/// Every edge of the project: a Worker's Service Binding to another of the
+/// project's Workers is one (a caller to the context it calls, or a publisher
+/// to a subscriber). A binding to anything else is not a Bynk edge.
+pub(crate) fn project_edges(resources: &BTreeMap<String, Resources>) -> Vec<Edge> {
+    let mut edges: Vec<Edge> = resources
+        .iter()
+        .flat_map(|(caller, r)| {
+            r.binds_to
+                .iter()
+                .filter(|callee| resources.contains_key(*callee))
+                .map(|callee| Edge {
+                    caller: caller.clone(),
+                    callee: callee.clone(),
+                })
+        })
+        .collect();
+    edges.sort();
+    edges.dedup();
+    edges
+}
+
+/// The names of the edge keys `worker` holds, in name order.
+pub(crate) fn edge_keys_of(worker: &str, edges: &[Edge]) -> Vec<String> {
+    let mut keys: Vec<String> = edges
+        .iter()
+        .filter_map(|e| e.ends().ok())
+        .flat_map(|ends| ends.into_iter())
+        .filter(|(w, _)| *w == worker)
+        .map(|(_, key)| key)
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+/// What this run does with one edge's key (I2, #1971).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EdgeKey {
+    /// Both ends already hold one: leave it.
+    Keep,
+    /// Put this value on both ends. `rotating` when an end already held a
+    /// key, so a run stopped between the two ends leaves them disagreeing,
+    /// and a plain rerun, seeing a key on each, would keep both.
+    Set { value: String, rotating: bool },
+}
+
+/// Decide one edge's key for one run. Pure, so the rule is tested without an
 /// account; `mint` is only called when a fresh value is wanted.
 ///
-/// Every Worker in a deployment must hold the **same** value, and Cloudflare
-/// never returns one, so a value already set cannot be copied onto a Worker
-/// that lacks it. The ledger is committed, so it cannot hold the value either
-/// (ADR 0195 D1). That leaves three cases:
+/// Both ends of an edge must hold the **same** value, and Cloudflare never
+/// returns one, so a key one end holds cannot be copied to the other. The
+/// ledger is committed, so it cannot hold the value either (ADR 0195 D1). So:
 ///
-/// - The user supplies the value (`--secrets-file` or the environment): set it
-///   where it is absent, and everywhere under `--force`.
-/// - Every Worker in the run already holds one, and `--force` is off: keep it.
-///   An unknown answer about a Worker that has been live counts as holding
-///   it, as for any other secret (`tolerate_unresolvable`).
-/// - Otherwise, and only when the run deploys the whole project: mint a fresh
-///   value and put it on every Worker, replacing any it had. That is a first
-///   deploy, a project upgraded from before the secret existed, a context
-///   added to a live deployment, or `--force` (a rotation). A `--context` run
-///   cannot do this, since the Workers outside it would keep the old value,
-///   so it is refused before anything is pushed.
-pub(crate) fn decide_call_secret(
-    supplied: Option<String>,
-    presence: &[Presence],
-    whole_project: bool,
+/// - Both ends hold a key, and `--force` is off: keep it. An unknown answer
+///   about a Worker that has been live counts as holding it, as for any other
+///   secret (`tolerate_unresolvable`).
+/// - Otherwise mint a fresh key and put it on both ends: a new edge, a
+///   project upgraded from before edge keys, a context redeployed after its
+///   Worker was deleted, or `--force` (a rotation). That needs both ends in
+///   the run. A `--context` run that would have to re-key an edge to a Worker
+///   outside it is refused before anything is pushed; under `--force` such an
+///   edge is kept, since only the edges the run deploys both ends of rotate.
+pub(crate) fn decide_edge_key(
+    edge: &Edge,
+    caller: Presence,
+    callee: Presence,
+    both_in_run: bool,
     force: bool,
-    mint: impl FnOnce() -> Result<String, String>,
-) -> Result<CallSecret, String> {
-    let name = bynk_emit::CALL_SECRET_BINDING;
-    if let Some(value) = supplied {
-        if value.is_empty() {
-            return Err(format!(
-                "the supplied {name} is empty — every internal call would be refused"
-            ));
-        }
-        return Ok(CallSecret::Set {
-            value,
-            overwrite: force,
-        });
+    mint: &mut dyn FnMut() -> Result<String, String>,
+) -> Result<EdgeKey, String> {
+    let held = caller != Presence::Absent && callee != Presence::Absent;
+    if held && (!force || !both_in_run) {
+        return Ok(EdgeKey::Keep);
     }
-    if !force && presence.iter().all(|p| *p != Presence::Absent) {
-        return Ok(CallSecret::Keep);
-    }
-    if !whole_project {
+    if !both_in_run {
         return Err(format!(
-            "this deployment's call secret ({name}) must be set on a Worker this run deploys, \
-             but Cloudflare never returns its value, so `--context` cannot copy it from the others.\n  \
-             Deploy the whole project (`bynk deploy`) to mint a new one for every context, \
-             or supply the current value in --secrets-file or as {name} in the environment."
+            "the edge {} needs a new key on both Workers, but Cloudflare never returns a key's value, so a `--context` run cannot copy it to the Worker it does not deploy.\n  \
+             Deploy the whole project (`bynk deploy`) to mint a key for every edge.",
+            edge.describe()
         ));
     }
-    Ok(CallSecret::Set {
+    Ok(EdgeKey::Set {
         value: mint()?,
-        overwrite: true,
+        rotating: caller != Presence::Absent || callee != Presence::Absent,
     })
 }
 
-/// A fresh call secret: 32 random bytes, hex-encoded.
-pub(crate) fn mint_call_secret() -> Result<String, String> {
+/// A fresh edge key: 32 random bytes, hex-encoded.
+pub(crate) fn mint_edge_key() -> Result<String, String> {
     let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|e| format!("could not generate a call secret: {e}"))?;
+    getrandom::fill(&mut bytes).map_err(|e| format!("could not generate an edge key: {e}"))?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
-}
-
-/// The call secret's value as the user supplied it, by the same precedence as
-/// any other secret: the file, then the environment. Never prompted for: the
-/// usual answer is to let `deploy` mint one.
-pub(crate) fn supplied_call_secret(source: &SecretSource) -> Option<String> {
-    let name = bynk_emit::CALL_SECRET_BINDING;
-    value_from(name, source, std::env::var(name).ok())
 }
 
 /// Everything the secret step needs, threaded as one value rather than as four
@@ -344,10 +405,11 @@ pub(crate) fn supplied_call_secret(source: &SecretSource) -> Option<String> {
 pub(crate) struct Secrets<'a> {
     pub(crate) source: &'a SecretSource,
     pub(crate) force: bool,
-    /// #2004: what [`decide_call_secret`] decided for this run.
-    pub(crate) call_secret: &'a CallSecret,
+    /// I2 (#1971): what [`decide_edge_key`] decided for each edge this run
+    /// sets a key on.
+    pub(crate) edge_keys: &'a BTreeMap<Edge, EdgeKey>,
     /// #2004: each Worker's `secret list` answer, asked once before the loop
-    /// (the call secret is decided over every Worker at once) and reused here.
+    /// (edge keys are decided over both ends at once) and reused here.
     pub(crate) listed: &'a BTreeMap<String, Option<BTreeSet<String>>>,
     /// Values resolved earlier in this run, so two contexts wanting the same
     /// name prompt once rather than once each.
@@ -401,12 +463,17 @@ pub(crate) fn prepare_secrets(
         None => list_secrets(provenance, worker_dir, environment),
     };
     let mut prepared = Vec::new();
-    // #2004: the call secret first, so a Worker never runs a moment without it
-    // that it could have had.
-    if let CallSecret::Set { value, overwrite } = secrets.call_secret {
-        let name = bynk_emit::CALL_SECRET_BINDING;
-        if *overwrite || presence_of(name, present.as_ref(), first_deploy) != Presence::Present {
-            prepared.push((name.to_string(), value.clone()));
+    // I2 (#1971): this Worker's end of each edge being keyed, first, so a
+    // Worker never runs a moment without a key it could have had.
+    for (edge, decision) in secrets.edge_keys {
+        let EdgeKey::Set { value, .. } = decision else {
+            continue;
+        };
+        let ends = edge.ends().map_err(DeployFailure::driver)?;
+        for (end, key) in ends {
+            if end == worker {
+                prepared.push((key, value.clone()));
+            }
         }
     }
     for want in &wanted {
@@ -837,102 +904,161 @@ WITH_EQUALS=a=b
         );
     }
 
-    // ---- #2004: the deployment's call secret --------------------------------
+    // ---- I2 (#1971): per-edge keys -------------------------------------------
 
     use Presence::{Absent, Present, Unknown};
+
+    fn edge(caller: &str, callee: &str) -> Edge {
+        Edge {
+            caller: caller.to_string(),
+            callee: callee.to_string(),
+        }
+    }
 
     fn minted() -> Result<String, String> {
         Ok("minted".to_string())
     }
 
     fn never() -> Result<String, String> {
-        panic!("a run that keeps or is given the call secret must not mint one")
+        panic!("a run that keeps a key must not mint one")
     }
 
-    fn set(value: &str, overwrite: bool) -> Result<CallSecret, String> {
-        Ok(CallSecret::Set {
-            value: value.to_string(),
-            overwrite,
+    fn decide(
+        caller: Presence,
+        callee: Presence,
+        both_in_run: bool,
+        force: bool,
+        mut mint: impl FnMut() -> Result<String, String>,
+    ) -> Result<EdgeKey, String> {
+        decide_edge_key(
+            &edge("shop-orders", "shop-payment"),
+            caller,
+            callee,
+            both_in_run,
+            force,
+            &mut mint,
+        )
+    }
+
+    fn set(rotating: bool) -> Result<EdgeKey, String> {
+        Ok(EdgeKey::Set {
+            value: "minted".to_string(),
+            rotating,
         })
     }
 
     #[test]
-    fn a_first_deploy_mints_the_call_secret_for_every_worker() {
+    fn an_edge_names_its_key_on_each_end() {
+        let e = edge("shop-orders", "shop-payment");
+        let ends = e.ends().unwrap();
         assert_eq!(
-            decide_call_secret(None, &[Absent, Absent], true, false, minted),
-            set("minted", true)
+            ends,
+            [
+                ("shop-payment", "BYNK_CALL_FROM_SHOP__ORDERS".to_string()),
+                ("shop-orders", "BYNK_CALL_TO_SHOP__PAYMENT".to_string()),
+            ]
+        );
+        let refused = edge("a__b", "c").ends().expect_err("not an edge name");
+        assert!(refused.contains("`a__b`"), "{refused}");
+    }
+
+    #[test]
+    fn the_project_edges_are_its_bindings_between_its_own_workers() {
+        let mut resources = BTreeMap::new();
+        resources.insert(
+            "shop-orders".to_string(),
+            Resources {
+                binds_to: vec!["shop-payment".to_string(), "not-a-worker".to_string()],
+                ..Resources::default()
+            },
+        );
+        resources.insert(
+            "shop-payment".to_string(),
+            Resources {
+                binds_to: vec!["shop-payment".to_string()],
+                ..Resources::default()
+            },
+        );
+        let edges = project_edges(&resources);
+        assert_eq!(
+            edges,
+            vec![
+                edge("shop-orders", "shop-payment"),
+                edge("shop-payment", "shop-payment"),
+            ]
+        );
+        assert_eq!(
+            edge_keys_of("shop-payment", &edges),
+            vec![
+                "BYNK_CALL_FROM_SHOP__ORDERS".to_string(),
+                "BYNK_CALL_FROM_SHOP__PAYMENT".to_string(),
+                "BYNK_CALL_TO_SHOP__PAYMENT".to_string(),
+            ],
+            "a context delivering its own events holds both ends of its own edge"
+        );
+        assert_eq!(
+            edge_keys_of("shop-orders", &edges),
+            vec!["BYNK_CALL_TO_SHOP__PAYMENT".to_string()]
         );
     }
 
     #[test]
-    fn a_redeploy_keeps_the_call_secret_every_worker_holds() {
+    fn a_new_edge_is_keyed_on_both_ends() {
+        assert_eq!(decide(Absent, Absent, true, false, minted), set(false));
+    }
+
+    #[test]
+    fn an_edge_both_ends_hold_keeps_its_key() {
         assert_eq!(
-            decide_call_secret(None, &[Present, Present], true, false, never),
-            Ok(CallSecret::Keep)
-        );
-        // `--context` too: nothing needs copying.
-        assert_eq!(
-            decide_call_secret(None, &[Present], false, false, never),
-            Ok(CallSecret::Keep)
+            decide(Present, Present, true, false, never),
+            Ok(EdgeKey::Keep)
         );
         // An unknown answer about a live Worker is read as holding it, as for
         // any other secret (`tolerate_unresolvable`).
         assert_eq!(
-            decide_call_secret(None, &[Present, Unknown], true, false, never),
-            Ok(CallSecret::Keep)
+            decide(Present, Unknown, true, false, never),
+            Ok(EdgeKey::Keep)
+        );
+        // `--context`: nothing needs copying.
+        assert_eq!(
+            decide(Present, Present, false, false, never),
+            Ok(EdgeKey::Keep)
         );
     }
 
     #[test]
-    fn a_worker_without_the_call_secret_rotates_it_for_the_whole_project() {
-        // A context added to a live deployment, or a project from before the
-        // secret: the value the others hold cannot be read back, so all of
-        // them get a fresh one.
-        assert_eq!(
-            decide_call_secret(None, &[Present, Absent], true, false, minted),
-            set("minted", true)
-        );
-        // `--force` rotates even when every Worker holds one.
-        assert_eq!(
-            decide_call_secret(None, &[Present, Present], true, true, minted),
-            set("minted", true)
-        );
+    fn an_end_without_the_key_rekeys_the_edge() {
+        // The value the other end holds cannot be read back, so both get a
+        // fresh one; one end held a key, so an interruption would split them.
+        assert_eq!(decide(Present, Absent, true, false, minted), set(true));
+        // `--force` rotates even when both ends hold one.
+        assert_eq!(decide(Present, Present, true, true, minted), set(true));
     }
 
     #[test]
-    fn a_context_run_cannot_mint_a_call_secret_the_others_would_not_share() {
-        for (presence, force) in [(vec![Absent], false), (vec![Present], true)] {
-            let refused = decide_call_secret(None, &presence, false, force, never)
-                .expect_err("a --context run that needs a value it does not have is refused");
-            assert!(refused.contains("BYNK_CALL_SECRET"), "{refused}");
-            assert!(
-                refused.contains("bynk deploy"),
-                "names the remedy: {refused}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_supplied_call_secret_is_used_and_overwrites_only_under_force() {
-        let supplied = || Some("theirs".to_string());
-        assert_eq!(
-            decide_call_secret(supplied(), &[Present, Absent], false, false, never),
-            set("theirs", false)
-        );
-        assert_eq!(
-            decide_call_secret(supplied(), &[Present], true, true, never),
-            set("theirs", true)
+    fn a_context_run_cannot_rekey_an_edge_to_a_worker_it_does_not_deploy() {
+        let refused = decide(Present, Absent, false, false, never)
+            .expect_err("a --context run that needs a key on a Worker outside it is refused");
+        assert!(
+            refused.contains("`shop-orders` → `shop-payment`"),
+            "{refused}"
         );
         assert!(
-            decide_call_secret(Some(String::new()), &[Absent], true, false, never).is_err(),
-            "an empty value would refuse every internal call"
+            refused.contains("bynk deploy"),
+            "names the remedy: {refused}"
+        );
+        // Under `--force`, such an edge keeps its key: only edges the run
+        // deploys both ends of rotate.
+        assert_eq!(
+            decide(Present, Present, false, true, never),
+            Ok(EdgeKey::Keep)
         );
     }
 
     #[test]
-    fn call_secret_presence_reads_a_never_deployed_worker_as_absent() {
-        let listed: BTreeSet<String> = ["BYNK_CALL_SECRET".to_string()].into_iter().collect();
-        let name = "BYNK_CALL_SECRET";
+    fn edge_key_presence_reads_a_never_deployed_worker_as_absent() {
+        let name = "BYNK_CALL_FROM_SHOP__ORDERS";
+        let listed: BTreeSet<String> = [name.to_string()].into_iter().collect();
         assert_eq!(presence_of(name, Some(&listed), false), Present);
         assert_eq!(presence_of(name, Some(&BTreeSet::new()), false), Absent);
         assert_eq!(presence_of(name, None, false), Unknown);
@@ -941,27 +1067,34 @@ WITH_EQUALS=a=b
     }
 
     #[test]
-    fn a_minted_call_secret_is_64_hex_digits_and_fresh() {
-        let a = mint_call_secret().expect("the OS has randomness");
-        let b = mint_call_secret().expect("the OS has randomness");
+    fn a_minted_edge_key_is_64_hex_digits_and_fresh() {
+        let a = mint_edge_key().expect("the OS has randomness");
+        let b = mint_edge_key().expect("the OS has randomness");
         // Checked without ever printing a value, even on failure: a minted
-        // secret is never logged, test output included.
-        assert!(a.len() == 64, "a minted call secret is 64 characters");
+        // key is never logged, test output included.
+        assert!(a.len() == 64, "a minted edge key is 64 characters");
         assert!(
             a.chars().all(|c| c.is_ascii_hexdigit()),
-            "a minted call secret is hex"
+            "a minted edge key is hex"
         );
         assert!(a != b, "two mints differ");
     }
 
     #[test]
-    fn a_supplied_call_secret_is_not_spread_as_a_user_secret() {
-        let src = source(&[("BYNK_CALL_SECRET", "v"), ("OTHER", "w")], &[]);
+    fn a_supplied_edge_key_is_not_spread_as_a_user_secret() {
+        let src = source(
+            &[
+                ("BYNK_CALL_FROM_SHOP__ORDERS", "v"),
+                ("BYNK_CALL_TO_SHOP__PAYMENT", "v"),
+                ("OTHER", "w"),
+            ],
+            &[],
+        );
         let wanted = wanted_secrets(&[], &[], &src);
         assert_eq!(
             wanted.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(),
             vec!["OTHER"],
-            "the call secret is decided apart, by `decide_call_secret`"
+            "edge keys are decided apart, by `decide_edge_key`"
         );
         assert!(Origin::Managed.required());
         assert_eq!(Origin::Managed.label(), "managed");

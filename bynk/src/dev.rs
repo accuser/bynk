@@ -169,6 +169,16 @@ pub fn run(
         }
     };
     let serving = allocate(&workers, opts.base_port, opts);
+    // I2 (#1971): over every built Worker, not only the served ones, so a
+    // context served here alone still admits a caller served by another
+    // `bynk dev --context` session.
+    let edge_keys = match crate::deploy::local_edge_keys(&workers_dir, &available) {
+        Ok(keys) => keys,
+        Err(e) => {
+            eprintln!("bynk: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     // Where the driver injects a port it owns the allocation, so the same flag
     // arriving through `--` is a conflict — and wrangler rejects a repeated
@@ -295,7 +305,11 @@ pub fn run(
             return ExitCode::FAILURE;
         };
         cmd.current_dir(workers_dir.join(&s.worker));
-        for arg in serve_args(s) {
+        let keys = edge_keys
+            .get(&s.worker)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for arg in serve_args(s, keys) {
             cmd.arg(arg);
         }
         for arg in &opts.wrangler_args {
@@ -686,20 +700,18 @@ fn passthrough_has(args: &[String], flag: &str) -> bool {
 /// A lone worker without `--base-port` or `--inspect` gets no port flag — the
 /// pre-#552 invocation, so that path keeps its `-- --port N` passthrough.
 ///
-/// #2004: and always the local call secret, as a `--var` rather than a file:
-/// every Worker refuses an internal request (`/_bynk/call/`, `/_bynk/event/`)
-/// without the deployment's secret, and a lone context still delivers its own
-/// events to itself. The fixed [`bynk_emit::LOCAL_CALL_SECRET`], so two `bynk
-/// dev --context` sessions run side by side admit each other's calls.
-fn serve_args(s: &Serving) -> Vec<String> {
-    let mut args = vec![
-        "--var".to_string(),
-        format!(
-            "{}:{}",
-            bynk_emit::CALL_SECRET_BINDING,
-            bynk_emit::LOCAL_CALL_SECRET
-        ),
-    ];
+/// I2 (#1971): and the local key for each edge the Worker is on (`edge_keys`,
+/// its [`crate::deploy::local_edge_keys`]), as `--var`s rather than a file:
+/// every internal request (`/_bynk/call/`, `/_bynk/event/`) is signed under
+/// its edge's key, and a lone context still delivers its own events to
+/// itself. The fixed [`bynk_emit::LOCAL_CALL_KEY`], so two `bynk dev
+/// --context` sessions run side by side admit each other's calls.
+fn serve_args(s: &Serving, edge_keys: &[String]) -> Vec<String> {
+    let mut args = Vec::new();
+    for key in edge_keys {
+        args.push("--var".to_string());
+        args.push(format!("{key}:{}", bynk_emit::LOCAL_CALL_KEY));
+    }
     if let Some(port) = s.port {
         args.push("--port".to_string());
         args.push(port.to_string());
@@ -812,11 +824,22 @@ mod tests {
         }
     }
 
-    /// #2004: every `wrangler dev` gets the local call secret first.
-    fn with_secret(rest: &[&str]) -> Vec<String> {
-        let mut args = names(&["--var", "BYNK_CALL_SECRET:bynk-local-call-secret"]);
-        args.extend(names(rest));
-        args
+    /// I2 (#1971): a Worker's edge keys come first, each the local key.
+    #[test]
+    fn every_edge_key_is_passed_as_the_local_key() {
+        let serving = allocate(&names(&["api"]), None, &DevOptions::default());
+        assert_eq!(
+            serve_args(
+                &serving[0],
+                &names(&["BYNK_CALL_FROM_WORKER", "BYNK_CALL_TO_WORKER"])
+            ),
+            names(&[
+                "--var",
+                "BYNK_CALL_FROM_WORKER:bynk-local-call-key",
+                "--var",
+                "BYNK_CALL_TO_WORKER:bynk-local-call-key",
+            ])
+        );
     }
 
     #[test]
@@ -824,8 +847,8 @@ mod tests {
         let off = DevOptions::default();
         let lone = allocate(&names(&["links"]), None, &off);
         assert_eq!(
-            serve_args(&lone[0]),
-            with_secret(&[]),
+            serve_args(&lone[0], &[]),
+            Vec::<String>::new(),
             "a lone worker without --inspect keeps the pre-#552 invocation"
         );
 
@@ -836,8 +859,8 @@ mod tests {
         };
         let lone = allocate(&names(&["links"]), None, &on);
         assert_eq!(
-            serve_args(&lone[0]),
-            with_secret(&["--inspector-port", "9229"])
+            serve_args(&lone[0], &[]),
+            names(&["--inspector-port", "9229"])
         );
     }
 
@@ -905,8 +928,8 @@ mod tests {
             "inspector ports must not collide either"
         );
         assert_eq!(
-            serve_args(&serving[1]),
-            with_secret(&["--port", "8788", "--inspector-port", "9230"])
+            serve_args(&serving[1], &[]),
+            names(&["--port", "8788", "--inspector-port", "9230"])
         );
     }
 
@@ -925,7 +948,7 @@ mod tests {
         // reaches wrangler (a repeated --port is a hard error, not last-wins).
         let serving = allocate(&names(&["links"]), None, &DevOptions::default());
         assert_eq!(serving[0].port, None);
-        assert_eq!(serve_args(&serving[0]), with_secret(&[]));
+        assert_eq!(serve_args(&serving[0], &[]), Vec::<String>::new());
         // …but an explicit --base-port is honoured even for one context.
         let pinned = allocate(&names(&["links"]), Some(8900), &DevOptions::default());
         assert_eq!(pinned[0].port, Some(8900));
@@ -945,8 +968,8 @@ mod tests {
             vec![Some(9229), Some(9230)]
         );
         assert_eq!(
-            serve_args(&serving[1]),
-            with_secret(&["--port", "8788", "--inspector-port", "9230"])
+            serve_args(&serving[1], &[]),
+            names(&["--port", "8788", "--inspector-port", "9230"])
         );
         // `--inspect-port` moves that allocation even without `--inspect`…
         let moved = DevOptions {

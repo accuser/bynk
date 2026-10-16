@@ -182,23 +182,40 @@ fn skip(reason: &str) -> bool {
 /// A raw HTTP/1.1 client returning `(status, body)` — `events_ordering_workerd.rs`'s
 /// `http()` only returns the body and treats non-200 as an error, which loses
 /// exactly the status code this test needs to assert on.
+/// I2 (#1971): the `(publisher, subscriber)` edges the two tests deliver
+/// their events as.
+const PROBE_EDGE: (&str, &str) = ("boundary.probe", "boundary.probe");
+const NOTIFICATIONS_EDGE: (&str, &str) = ("commerce.order", "commerce.notifications");
+
 fn http_status(
     method: &str,
     port: u16,
     path: &str,
     body: Option<&str>,
 ) -> Result<(u16, String), String> {
-    http_status_as(method, port, path, body, Some(bynk_emit::LOCAL_CALL_SECRET))
+    http_status_as(method, port, path, body, &[])
 }
 
-/// [`http_status`] with the call-secret header (#2004) chosen by the caller:
-/// `None` sends none, as a forged request from outside the deployment would.
+/// I2 (#1971): an event delivery `POST`ed to `path`, signed as the
+/// `(publisher, subscriber)` edge under the local key the Worker was given.
+fn post_event(
+    port: u16,
+    path: &str,
+    body: &str,
+    edge: (&str, &str),
+) -> Result<(u16, String), String> {
+    let signed = wrangler::local_signed_headers(edge.0, edge.1, path, body);
+    http_status_as("POST", port, path, Some(body), &signed)
+}
+
+/// [`http_status`] with extra request headers: a signature, or none, as a
+/// forged request from outside the deployment would send.
 fn http_status_as(
     method: &str,
     port: u16,
     path: &str,
     body: Option<&str>,
-    call_secret: Option<&str>,
+    headers: &[(String, String)],
 ) -> Result<(u16, String), String> {
     let addr = format!("127.0.0.1:{port}");
     let mut stream = std::net::TcpStream::connect_timeout(
@@ -210,8 +227,8 @@ fn http_status_as(
         .set_read_timeout(Some(Duration::from_secs(20)))
         .map_err(|e| e.to_string())?;
     let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n");
-    if let Some(secret) = call_secret {
-        request.push_str(&format!("X-Bynk-Call-Secret: {secret}\r\n"));
+    for (name, value) in headers {
+        request.push_str(&format!("{name}: {value}\r\n"));
     }
     if let Some(b) = body {
         request.push_str("Content-Type: application/json\r\n");
@@ -301,12 +318,11 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
     let err_log = out_log.try_clone().unwrap();
     let spawned = wrangler::Wrangler::spawn(
         base_command("npx")
+            .args(["-y", WRANGLER, "dev"])
+            // I2 (#1971): the key for the edge the test signs its deliveries
+            // as, as under `bynk dev`.
+            .args(wrangler::local_edge_vars(&[PROBE_EDGE]))
             .args([
-                "-y",
-                WRANGLER,
-                "dev",
-                "--var",
-                &wrangler::call_secret_var(),
                 "--port",
                 &port.to_string(),
                 "--inspector-port",
@@ -355,23 +371,29 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
     // Baseline: nothing has been delivered yet.
     assert_eq!(read_trace(), "", "trace must start empty");
 
-    // (0) #2004: a well-formed event sent from outside the deployment, with
-    // no call secret or a wrong one, is refused with a bare 401 before the
-    // body is read, and never reaches the handler. The route is reachable
-    // on the Worker's public address, so the path alone admits nothing.
+    // (0) I2 (#1971): a well-formed event sent from outside the deployment,
+    // unsigned, signed by a context that holds no key here, or signed for
+    // another subscriber, is refused with a bare 401 before the body is
+    // parsed, and never reaches the handler. The route is reachable on the
+    // Worker's public address, so the path alone admits nothing.
     let forged_body = format!(r#"{{"payload":{{"tag":"forged"}},{}}}"#, valid_envelope());
-    for secret in [None, Some("not-the-secret")] {
-        let (status, resp_body) = http_status_as(
-            "POST",
-            port,
-            "/_bynk/event/OnTick",
-            Some(&forged_body),
-            secret,
-        )
-        .expect("POST forged event");
+    let path = "/_bynk/event/OnTick";
+    for (what, headers) in [
+        ("unsigned", Vec::new()),
+        (
+            "an intruder",
+            wrangler::local_signed_headers("intruder.ctx", "boundary.probe", path, &forged_body),
+        ),
+        (
+            "another subscriber",
+            wrangler::local_signed_headers("boundary.probe", "other.ctx", path, &forged_body),
+        ),
+    ] {
+        let (status, resp_body) = http_status_as("POST", port, path, Some(&forged_body), &headers)
+            .expect("POST forged event");
         assert_eq!(
             status, 401,
-            "an event without the call secret must be refused, got body: {resp_body}"
+            "an event {what} must be refused, got body: {resp_body}"
         );
         assert!(
             resp_body.contains("Unauthorized") && !resp_body.contains('{'),
@@ -389,7 +411,7 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
     // handler must never have run.
     let bad_payload_body = format!(r#"{{"payload":{{"tag":123}},{}}}"#, valid_envelope());
     let (status, resp_body) =
-        http_status("POST", port, "/_bynk/event/OnTick", Some(&bad_payload_body))
+        post_event(port, "/_bynk/event/OnTick", &bad_payload_body, PROBE_EDGE)
             .expect("POST malformed payload");
     assert_eq!(
         status, 400,
@@ -405,7 +427,7 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
     // rejected with 400, and likewise never reach the handler.
     let bad_envelope_body = r#"{"payload":{"tag":"x"},"envelope":{"eventId":"e1","publisherId":7,"emittedAt":1700000000000,"schemaVersion":1}}"#;
     let (status, resp_body) =
-        http_status("POST", port, "/_bynk/event/OnTick", Some(bad_envelope_body))
+        post_event(port, "/_bynk/event/OnTick", bad_envelope_body, PROBE_EDGE)
             .expect("POST malformed envelope");
     assert_eq!(
         status, 400,
@@ -421,8 +443,8 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
     // still be accepted (204) and actually reach the handler — without this,
     // (1) and (2) could pass merely because the route rejects everything.
     let good_body = format!(r#"{{"payload":{{"tag":"ok"}},{}}}"#, valid_envelope());
-    let (status, resp_body) = http_status("POST", port, "/_bynk/event/OnTick", Some(&good_body))
-        .expect("POST valid event");
+    let (status, resp_body) =
+        post_event(port, "/_bynk/event/OnTick", &good_body, PROBE_EDGE).expect("POST valid event");
     assert_eq!(
         status, 204,
         "a well-formed event must be accepted, got body: {resp_body}"
@@ -502,12 +524,9 @@ fn events_boundary_field_default_cross_context_on_workerd() {
     let err_log = out_log.try_clone().unwrap();
     let spawned = wrangler::Wrangler::spawn(
         base_command("npx")
+            .args(["-y", WRANGLER, "dev"])
+            .args(wrangler::local_edge_vars(&[NOTIFICATIONS_EDGE]))
             .args([
-                "-y",
-                WRANGLER,
-                "dev",
-                "--var",
-                &wrangler::call_secret_var(),
                 "--port",
                 &port.to_string(),
                 "--inspector-port",
@@ -559,11 +578,11 @@ fn events_boundary_field_default_cross_context_on_workerd() {
     // own regenerated `deserialise_PaymentConfirmed` must fall back to the
     // declared default (`"domestic"`) rather than fail structural-mismatch.
     let missing_default_body = format!(r#"{{"payload":{{"orderId":"o1"}},{}}}"#, valid_envelope());
-    let (status, resp_body) = http_status(
-        "POST",
+    let (status, resp_body) = post_event(
         port,
         "/_bynk/event/OnPayment",
-        Some(&missing_default_body),
+        &missing_default_body,
+        NOTIFICATIONS_EDGE,
     )
     .expect("POST payload missing the defaulted field");
     assert_eq!(
@@ -584,11 +603,11 @@ fn events_boundary_field_default_cross_context_on_workerd() {
         r#"{{"payload":{{"region":"international"}},{}}}"#,
         valid_envelope()
     );
-    let (status, resp_body) = http_status(
-        "POST",
+    let (status, resp_body) = post_event(
         port,
         "/_bynk/event/OnPayment",
-        Some(&missing_required_body),
+        &missing_required_body,
+        NOTIFICATIONS_EDGE,
     )
     .expect("POST payload missing the non-defaulted field");
     assert_eq!(

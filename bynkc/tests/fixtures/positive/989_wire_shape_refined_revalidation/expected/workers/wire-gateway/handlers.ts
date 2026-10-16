@@ -29,7 +29,7 @@ export const enter = {
    * `deserialise_Result_Session_LoginError`.
    */
   async call(seed: string, deps: { env: { WIRE_AUTH: __ServiceBinding } }): globalThis.Promise<Result<void, GatewayError>> {
-    const s = await __callService(deps.env.WIRE_AUTH, "login", seed as __JsonValue, __deserialise_Result_Session_LoginError, "wire.gateway", "de515c764e6e0e02", deps.env);
+    const s = await __callService(deps.env.WIRE_AUTH, "login", seed as __JsonValue, __deserialise_Result_Session_LoginError, "wire.gateway", "de515c764e6e0e02", deps.env, "wire.auth");
     switch (s.tag) {
       case "Ok": {
         return Ok(undefined);

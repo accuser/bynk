@@ -14,7 +14,7 @@ export const OrderError = {
 
 export const place = {
   async call(cents: number, deps: { env: { SHOP_PAYMENT: __ServiceBinding } }): globalThis.Promise<Result<number, OrderError>> {
-    const a = await __callService(deps.env.SHOP_PAYMENT, "authorise", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(cents), __deserialise_Result_Int_PayError, "shop.orders", "e32eb3baff10120b", deps.env);
+    const a = await __callService(deps.env.SHOP_PAYMENT, "authorise", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(cents), __deserialise_Result_Int_PayError, "shop.orders", "e32eb3baff10120b", deps.env, "shop.payment");
     switch (a.tag) {
       case "Ok": {
         const n = a.value;

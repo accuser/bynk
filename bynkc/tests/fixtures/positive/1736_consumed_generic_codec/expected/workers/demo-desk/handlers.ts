@@ -22,9 +22,9 @@ export const Wrapper = {
 
 export const total = {
   async call(n: number, deps: { env: { DEMO_VAULT: __ServiceBinding } }): globalThis.Promise<number> {
-    const e = await __callService(deps.env.DEMO_VAULT, "open", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Envelope_Int, "demo.desk", "57700891e7302936", deps.env);
-    const w = await __callService(deps.env.DEMO_VAULT, "wrapPlain", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Envelope_Plain, "demo.desk", "93e4a0f8e9768f44", deps.env);
-    const es = await __callService(deps.env.DEMO_VAULT, "many", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_List_Envelope_Int, "demo.desk", "2487ff1b622fbaa9", deps.env);
+    const e = await __callService(deps.env.DEMO_VAULT, "open", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Envelope_Int, "demo.desk", "57700891e7302936", deps.env, "demo.vault");
+    const w = await __callService(deps.env.DEMO_VAULT, "wrapPlain", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Envelope_Plain, "demo.desk", "93e4a0f8e9768f44", deps.env, "demo.vault");
+    const es = await __callService(deps.env.DEMO_VAULT, "many", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_List_Envelope_Int, "demo.desk", "2487ff1b622fbaa9", deps.env, "demo.vault");
     const count = (es).length;
     return e.item + w.item.n + count;
   },
@@ -32,7 +32,7 @@ export const total = {
 
 export const settled = {
   async call(n: number, deps: { env: { DEMO_VAULT: __ServiceBinding } }): globalThis.Promise<number> {
-    const o = await __callService(deps.env.DEMO_VAULT, "settle", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Outcome_Int, "demo.desk", "d90380f9cd1937cf", deps.env);
+    const o = await __callService(deps.env.DEMO_VAULT, "settle", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Outcome_Int, "demo.desk", "d90380f9cd1937cf", deps.env, "demo.vault");
     switch (o.tag) {
       case "Done": {
         const v = o.value;
@@ -48,21 +48,21 @@ export const settled = {
 
 export const sentBack = {
   async call(n: number, deps: { env: { DEMO_VAULT: __ServiceBinding } }): globalThis.Promise<number> {
-    const e = await __callService(deps.env.DEMO_VAULT, "open", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Envelope_Int, "demo.desk", "57700891e7302936", deps.env);
-    return __callService(deps.env.DEMO_VAULT, "readBack", __serialise_Envelope_Int(e), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "demo.desk", "117e26b47336a282", deps.env);
+    const e = await __callService(deps.env.DEMO_VAULT, "open", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Envelope_Int, "demo.desk", "57700891e7302936", deps.env, "demo.vault");
+    return __callService(deps.env.DEMO_VAULT, "readBack", __serialise_Envelope_Int(e), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "demo.desk", "117e26b47336a282", deps.env, "demo.vault");
   },
 };
 
 export const sent = {
   async call(s: string, deps: { env: { DEMO_VAULT: __ServiceBinding } }): globalThis.Promise<number> {
-    return __callService(deps.env.DEMO_VAULT, "read", __serialise_Envelope_String({ item: s, note: "out" }), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "demo.desk", "b797903bbb7dffed", deps.env);
+    return __callService(deps.env.DEMO_VAULT, "read", __serialise_Envelope_String({ item: s, note: "out" }), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "demo.desk", "b797903bbb7dffed", deps.env, "demo.vault");
   },
 };
 
 export const sentWrapper = {
   async call(n: number, deps: { env: { DEMO_VAULT: __ServiceBinding } }): globalThis.Promise<number> {
     const w: Wrapper<number> = { item: n, note: "mine" };
-    return __callService(deps.env.DEMO_VAULT, "readBack", __serialise_Envelope_Int(w), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "demo.desk", "117e26b47336a282", deps.env);
+    return __callService(deps.env.DEMO_VAULT, "readBack", __serialise_Envelope_Int(w), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "demo.desk", "117e26b47336a282", deps.env, "demo.vault");
   },
 };
 

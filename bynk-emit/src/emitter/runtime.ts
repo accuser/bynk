@@ -451,68 +451,178 @@ export interface ServiceBinding {
   fetch(request: Request): Promise<Response>;
 }
 
-// #2004 (ADR 0092 amended): the deployment's shared call secret. Every Worker
-// in a deployment holds the same value under this binding, every internal
-// request (`/_bynk/call/`, `/_bynk/event/`) carries it in this header, and
-// the receiving Worker refuses a request without it before reading anything
+// I2 (#1971, ADR `per-edge-call-signature`, amending ADR 0092): every
+// internal request (`/_bynk/call/`, `/_bynk/event/`) is signed with
+// HMAC-SHA256 under a key one caller shares with one callee, and the callee
+// refuses a request whose signature does not verify before it reads anything
 // else. The path prefixes are reachable from the public internet on any route
-// the Worker serves, so the prefix alone proves nothing about the sender.
-export const CALL_SECRET_BINDING = "BYNK_CALL_SECRET";
-export const CALL_SECRET_HEADER = "X-Bynk-Call-Secret";
+// the Worker serves, so the prefix alone proves nothing about the sender, and
+// one key per edge means a key's holder can claim only its own name. Bynk's
+// emitter holds the same values in `bynk_check::wire_format`, and
+// `bynkc/tests/wire_reference.rs` fails if the two disagree.
+export const CALLER_HEADER = "X-Bynk-Caller";
+export const TIMESTAMP_HEADER = "X-Bynk-Timestamp";
+export const SIGNATURE_HEADER = "X-Bynk-Signature";
+export const SIGNATURE_WINDOW_SECONDS = 300;
+export const MAX_BODY_BYTES = 1048576;
+export const SIGNING_SCHEME = "BYNK-CALL-1";
+export const EDGE_FROM_PREFIX = "BYNK_CALL_FROM_";
+export const EDGE_TO_PREFIX = "BYNK_CALL_TO_";
 
-// The secret from a Worker's `env`, or `undefined` when it is unset or not a
-// non-empty string. `env` is `unknown` because the binding is a secret, not a
-// declared binding, so no generated `Env` interface names it (the actor auth
-// secrets read theirs the same way).
-export function callSecretOf(env: unknown): string | undefined {
-  if (typeof env !== "object" || env === null) return undefined;
-  const value = (env as Record<string, unknown>)[CALL_SECRET_BINDING];
+// A context name an edge key can be derived from: dot-separated segments of
+// lowercase letters and digits, starting with a letter, with single
+// underscores between runs. On these names `edgeSuffix` is injective, so one
+// caller's key never verifies another caller's name.
+const EDGE_NAME = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*)*$/;
+
+// `shop.orders` → `SHOP__ORDERS`, or `undefined` outside the domain above.
+export function edgeSuffix(context: string): string | undefined {
+  return EDGE_NAME.test(context) ? context.toUpperCase().split(".").join("__") : undefined;
+}
+
+// The edge key under `prefix` + the context's suffix in a Worker's `env`, or
+// `undefined` when the name is outside the domain, or the key unset or not a
+// non-empty string. `env` is `unknown` because the keys are secrets, not
+// declared bindings, so no generated `Env` interface names them (the actor
+// auth secrets read theirs the same way).
+export function edgeKeyOf(env: unknown, prefix: string, context: string): string | undefined {
+  const suffix = edgeSuffix(context);
+  if (suffix === undefined || typeof env !== "object" || env === null) return undefined;
+  const value = (env as Record<string, unknown>)[prefix + suffix];
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
-// Logged once per isolate, not once per request: an unset secret refuses
-// every internal request, and anyone can send those.
-let callSecretUnsetLogged = false;
-
-// Does `request` carry this Worker's call secret? Fails closed: an unset
-// secret on the receiving side refuses everything. The comparison runs over
-// SHA-256 digests of both values, so it takes the same time whatever the
-// header holds, its length included; `crypto.subtle.timingSafeEqual` would
-// do, but it is workerd-only and the generated test harness runs on Node.
-export async function verifyCallSecret(request: Request, env: unknown): Promise<boolean> {
-  const expected = callSecretOf(env);
-  if (expected === undefined) {
-    if (!callSecretUnsetLogged) {
-      callSecretUnsetLogged = true;
-      globalThis.console.error(
-        `${CALL_SECRET_BINDING} is not set: refusing every internal call to this Worker. \`bynk deploy\` sets it; \`bynk dev\` passes a local one.`,
-      );
-    }
-    return false;
-  }
-  const given = request.headers.get(CALL_SECRET_HEADER) ?? "";
-  const encoder = new TextEncoder();
-  const [a, b] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(given)),
-    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
-  ]);
-  const x = new Uint8Array(a);
-  const y = new Uint8Array(b);
-  let diff = 0;
-  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
-  return diff === 0;
+// The fields a signature covers, one per line (`signing_input` in
+// `bynk_check::wire_format`). Every header the callee acts on is here; an
+// absent contract is signed as empty and an absent wire version as `1`.
+export interface SignedFields {
+  caller: string;
+  callee: string;
+  method: string;
+  path: string;
+  contract: string;
+  wire: string;
+  timestamp: string;
+  bodyDigest: string;
 }
 
-// The sending side: the secret to stamp, or a thrown error naming the unset
-// binding. Sending without it would only come back as an opaque 401.
-function requireCallSecret(env: unknown, what: string): string {
-  const secret = callSecretOf(env);
-  if (secret === undefined) {
+export function signingInput(f: SignedFields): string {
+  return [SIGNING_SCHEME, f.caller, f.callee, f.method, f.path, f.contract, f.wire, f.timestamp, f.bodyDigest].join("\n");
+}
+
+function hex(bytes: ArrayBuffer): string {
+  return Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  return hex(await crypto.subtle.digest("SHA-256", bytes));
+}
+
+function hmacKey(secret: string, usage: "sign" | "verify"): Promise<CryptoKey> {
+  return crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, [usage]);
+}
+
+// The signature a caller holding `key` sends over `fields`.
+export async function signature(key: string, fields: SignedFields): Promise<string> {
+  return hex(await crypto.subtle.sign("HMAC", await hmacKey(key, "sign"), new TextEncoder().encode(signingInput(fields))));
+}
+
+// The sending side: the headers that prove `caller` sent `body` to `callee`.
+// Throws, naming the unset key, when the Worker holds none for the edge:
+// sending without it would only come back as an opaque 401.
+export async function signedHeaders(
+  env: unknown,
+  caller: string,
+  callee: string,
+  path: string,
+  contract: string,
+  // The wire version as sent; `"1"` for a request that sends no header.
+  wire: string,
+  body: string,
+  what: string,
+): Promise<Record<string, string>> {
+  const key = edgeKeyOf(env, EDGE_TO_PREFIX, callee);
+  if (key === undefined) {
     throw new Error(
-      `${CALL_SECRET_BINDING} is not set, so ${what} cannot be sent: \`bynk deploy\` sets it on every Worker, and \`bynk dev\` passes a local one.`,
+      `${EDGE_TO_PREFIX}${edgeSuffix(callee) ?? callee} is not set, so ${what} cannot be sent: \`bynk deploy\` sets one key per calling edge, and \`bynk dev\` passes a local one.`,
     );
   }
-  return secret;
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const bodyDigest = await sha256Hex(new TextEncoder().encode(body));
+  const sig = await signature(key, { caller, callee, method: "POST", path, contract, wire, timestamp, bodyDigest });
+  return { [CALLER_HEADER]: caller, [TIMESTAMP_HEADER]: timestamp, [SIGNATURE_HEADER]: sig };
+}
+
+// The body's bytes, read under `MAX_BODY_BYTES`, or `undefined` once it is
+// past the cap: a declared length is refused before reading, and a streamed
+// body is cancelled as soon as it crosses the cap, so an unauthenticated
+// sender cannot make the callee buffer an unbounded body.
+async function readCapped(request: Request): Promise<Uint8Array<ArrayBuffer> | undefined> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && Number(declared) > MAX_BODY_BYTES) return undefined;
+  if (request.body === null) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY_BYTES) {
+      await reader.cancel();
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    bytes.set(c, at);
+    at += c.byteLength;
+  }
+  return bytes;
+}
+
+const SIGNATURE_SHAPE = /^[0-9a-f]{64}$/;
+const TIMESTAMP_SHAPE = /^[0-9]{1,15}$/;
+
+// The receiving side, the first thing every internal dispatch does: the body
+// as text when `request` is signed for `callee` by a caller this Worker holds
+// a key for, within the window; otherwise the refusal to return, a bare 413
+// or 401. Fails closed: a caller with no key here (an undeclared or forged
+// one, or any caller when no key is set) is refused. `crypto.subtle.verify`
+// compares in constant time.
+export async function verifyCall(request: Request, env: unknown, callee: string): Promise<string | Response> {
+  const bytes = await readCapped(request);
+  if (bytes === undefined) return new Response("Payload Too Large", { status: 413 });
+  const refused = new Response("Unauthorized", { status: 401 });
+  const caller = request.headers.get(CALLER_HEADER) ?? "";
+  const key = edgeKeyOf(env, EDGE_FROM_PREFIX, caller);
+  if (key === undefined) return refused;
+  const timestamp = request.headers.get(TIMESTAMP_HEADER) ?? "";
+  if (!TIMESTAMP_SHAPE.test(timestamp)) return refused;
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > SIGNATURE_WINDOW_SECONDS) return refused;
+  const given = request.headers.get(SIGNATURE_HEADER) ?? "";
+  if (!SIGNATURE_SHAPE.test(given)) return refused;
+  const sig = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) sig[i] = parseInt(given.slice(2 * i, 2 * i + 2), 16);
+  const fields: SignedFields = {
+    caller,
+    callee,
+    method: request.method,
+    path: new URL(request.url).pathname,
+    contract: request.headers.get("X-Bynk-Contract") ?? "",
+    wire: request.headers.get(WIRE_VERSION_HEADER) ?? "1",
+    timestamp,
+    bodyDigest: await sha256Hex(bytes),
+  };
+  const ok = await crypto.subtle.verify(
+    "HMAC",
+    await hmacKey(key, "verify"),
+    sig,
+    new TextEncoder().encode(signingInput(fields)),
+  );
+  return ok ? new TextDecoder().decode(bytes) : refused;
 }
 
 // #1969: the published cross-context wire format's version
@@ -545,11 +655,15 @@ export async function callService<R>(
   // fails closed on mismatch (409), which is what makes a `deploy --context`
   // skew a loud, nameable failure instead of a silent misinterpretation.
   contractHash: string = "",
-  // #2004: the calling Worker's `env`, for the deployment's call secret
-  // ([`CALL_SECRET_BINDING`]), which the callee checks before anything else.
+  // I2 (#1971): the calling Worker's `env`, which holds the key for the edge
+  // to `calleeContext` ([`EDGE_TO_PREFIX`]), and the callee's qualified name,
+  // which the signature binds the request to.
   env: unknown = undefined,
+  calleeContext: string = "",
 ): Promise<R> {
-  const secret = requireCallSecret(env, `the call to ${servicePath}`);
+  const body = JSON.stringify(argsJson);
+  const path = `/_bynk/call/${servicePath}`;
+  const signed = await signedHeaders(env, callerContext, calleeContext, path, contractHash, WIRE_VERSION, body, `the call to ${servicePath}`);
   const request = new Request(`http://internal/_bynk/call/${servicePath}`, {
     method: "POST",
     headers: {
@@ -557,9 +671,9 @@ export async function callService<R>(
       "X-Bynk-Caller": callerContext,
       "X-Bynk-Contract": contractHash,
       [WIRE_VERSION_HEADER]: WIRE_VERSION,
-      [CALL_SECRET_HEADER]: secret,
+      ...signed,
     },
-    body: JSON.stringify(argsJson),
+    body,
   });
   const response = await binding.fetch(request);
   if (!response.ok) {
@@ -624,15 +738,20 @@ export async function deliverEvent(
   servicePath: string,
   payload: unknown,
   envelope: unknown,
-  // #2004: the fan-out Durable Object's `env`, for the call secret the
-  // subscriber checks before it reads the body.
+  // I2 (#1971): the fan-out Durable Object's `env`, which holds the key for
+  // the edge from the publishing context to the subscriber, and the two
+  // contexts' qualified names. The subscriber verifies before it reads.
   env: unknown = undefined,
+  publisher: string = "",
+  subscriber: string = "",
 ): Promise<void> {
-  const secret = requireCallSecret(env, `the event delivery to ${servicePath}`);
+  const body = JSON.stringify({ payload, envelope });
+  const path = `/_bynk/event/${servicePath}`;
+  const signed = await signedHeaders(env, publisher, subscriber, path, "", "1", body, `the event delivery to ${servicePath}`);
   const request = new Request(`http://internal/_bynk/event/${servicePath}`, {
     method: "POST",
-    headers: { "content-type": "application/json", [CALL_SECRET_HEADER]: secret },
-    body: JSON.stringify({ payload, envelope }),
+    headers: { "content-type": "application/json", ...signed },
+    body,
   });
   const response = await binding.fetch(request);
   if (!response.ok) {
@@ -2223,7 +2342,7 @@ export {
   selectPluralArm as __selectPluralArm,
   serialiseAgentKey as __serialiseAgentKey,
   verifyBearerJwtHs256 as __verifyBearerJwtHs256,
-  verifyCallSecret as __verifyCallSecret,
+  verifyCall as __verifyCall,
   verifyOidcJwt as __verifyOidcJwt,
   verifySignatureHmacSha256 as __verifySignatureHmacSha256,
   webSocketUpgradeResponse as __webSocketUpgradeResponse,

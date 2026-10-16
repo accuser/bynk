@@ -84,7 +84,7 @@ export function __makeOrder(key: string, env?: { ORDER?: __DurableObjectNamespac
 export const place = {
   async call(deps: { env: { SHOP_PAYMENT: __ServiceBinding; ORDER: __DurableObjectNamespace } }): globalThis.Promise<boolean> {
     await __makeOrder("o1", deps.env).begin(someone(), deps);
-    return __callService(deps.env.SHOP_PAYMENT, "authorise", __serialise_Cents(priced().price), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "shop.orders", "64c4101e9bac5424", deps.env);
+    return __callService(deps.env.SHOP_PAYMENT, "authorise", __serialise_Cents(priced().price), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "shop.orders", "64c4101e9bac5424", deps.env, "shop.payment");
   },
 };
 

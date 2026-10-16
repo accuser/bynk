@@ -453,13 +453,25 @@ pub fn run(
     // Shared across the loop: a queue two contexts consume is one queue, so it
     // wants one create attempt per run, not one per consumer (ADR 0194 D2).
     let mut attempted_queues = BTreeSet::new();
-    // #2004: the deployment's call secret is decided over every Worker in the
-    // run at once, so each one's `secret list` is asked here, before anything
-    // is pushed, and the per-context step reuses the answer. Asked before the
-    // KV ids are materialised and any `[env.<name>]` table is synthesised:
-    // wrangler loads that config (a placeholder id included) and addresses the
-    // same Worker either way, since the synthesised table sets no `name`.
-    let listed: BTreeMap<String, Option<BTreeSet<String>>> = order
+    // I2 (#1971): each edge's key is decided over both its ends at once, so
+    // each Worker's `secret list` is asked here, before anything is pushed,
+    // and the per-context step reuses the answer. That covers every Worker
+    // this run deploys and the far end of each edge it touches, which a
+    // `--context` run does not deploy. Asked before the KV ids are
+    // materialised and any `[env.<name>]` table is synthesised: wrangler loads
+    // that config (a placeholder id included) and addresses the same Worker
+    // either way, since the synthesised table sets no `name`.
+    let in_run: BTreeSet<&str> = order.iter().map(String::as_str).collect();
+    let edges: Vec<Edge> = project_edges(&resources)
+        .into_iter()
+        .filter(|e| in_run.contains(e.caller.as_str()) || in_run.contains(e.callee.as_str()))
+        .collect();
+    let mut asked: BTreeSet<&str> = in_run.clone();
+    for e in &edges {
+        asked.insert(&e.caller);
+        asked.insert(&e.callee);
+    }
+    let listed: BTreeMap<String, Option<BTreeSet<String>>> = asked
         .iter()
         .map(|worker| {
             let answer = list_secrets(
@@ -467,42 +479,53 @@ pub fn run(
                 &workers_dir.join(worker),
                 &opts.environment,
             );
-            (worker.clone(), answer)
+            (worker.to_string(), answer)
         })
         .collect();
-    let presence: Vec<Presence> = order
-        .iter()
-        .map(|worker| {
-            presence_of(
-                bynk_emit::CALL_SECRET_BINDING,
+    let mut edge_keys: BTreeMap<Edge, EdgeKey> = BTreeMap::new();
+    for edge in &edges {
+        let ends = match edge.ends() {
+            Ok(ends) => ends,
+            Err(e) => {
+                eprintln!("bynk: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let [callee, caller] = ends.map(|(worker, key)| {
+            let p = presence_of(
+                &key,
                 listed[worker].as_ref(),
                 !lock.is_deployed(&opts.environment, worker),
-            )
-        })
-        .collect();
-    // #2004 review: name the Workers whose answer could not be read, since
-    // the decision below counts them as holding the secret.
-    for (worker, p) in order.iter().zip(&presence) {
-        if *p == Presence::Unknown {
-            eprintln!(
-                "bynk: could not ask Cloudflare whether `{worker}` holds {}; assuming it does. If it does not, it refuses every cross-context call — `bynk deploy --force` sets a fresh one everywhere.",
-                bynk_emit::CALL_SECRET_BINDING
             );
+            // #2004 review: name the Workers whose answer could not be read,
+            // since the decision counts them as holding the key.
+            if p == Presence::Unknown {
+                eprintln!(
+                    "bynk: could not ask Cloudflare whether `{worker}` holds {key}; assuming it does. If it does not, the edge {} refuses every call — `bynk deploy --force` sets a fresh key on every edge.",
+                    edge.describe()
+                );
+            }
+            p
+        });
+        let both_in_run =
+            in_run.contains(edge.caller.as_str()) && in_run.contains(edge.callee.as_str());
+        match decide_edge_key(
+            edge,
+            caller,
+            callee,
+            both_in_run,
+            opts.force,
+            &mut mint_edge_key,
+        ) {
+            Ok(decision) => {
+                edge_keys.insert(edge.clone(), decision);
+            }
+            Err(e) => {
+                eprintln!("bynk: {e}");
+                return ExitCode::FAILURE;
+            }
         }
     }
-    let call_secret = match decide_call_secret(
-        supplied_call_secret(&secret_source),
-        &presence,
-        opts.context.is_none(),
-        opts.force,
-        mint_call_secret,
-    ) {
-        Ok(decision) => decision,
-        Err(e) => {
-            eprintln!("bynk: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
     // Shared across the loop so two contexts wanting the same secret prompt
     // once. Dropped with the run — nothing here is ever written (ADR 0195 D1).
     let mut resolved_secrets = BTreeMap::new();
@@ -522,7 +545,7 @@ pub fn run(
             &mut Secrets {
                 source: &secret_source,
                 force: opts.force,
-                call_secret: &call_secret,
+                edge_keys: &edge_keys,
                 listed: &listed,
                 resolved: &mut resolved_secrets,
             },
@@ -570,11 +593,11 @@ pub fn run(
                 // and listing it here again as "not deployed" would double-count
                 // it against the number.
                 eprint!("{}", stopped_report(&order[i + 1..]));
-                // #2004 review: a run that set a new call secret everywhere and
-                // stopped partway leaves two groups that refuse each other.
-                // The next plain run sees the secret present on every Worker
-                // and keeps it, so say how to repair it.
-                if let Some(hint) = interrupted_rotation_hint(&call_secret, &order[..=i]) {
+                // #2004 review: a run that re-keyed an edge and stopped between
+                // its two ends leaves them refusing each other. The next plain
+                // run sees a key on each end and keeps both, so say how to
+                // repair it.
+                if let Some(hint) = interrupted_rotation_hint(&edge_keys, &order[..i]) {
                     eprint!("{hint}");
                 }
                 // Wrangler's own code, not a flat 1 (slice 0's contract).
@@ -606,30 +629,33 @@ pub fn run(
     ExitCode::SUCCESS
 }
 
-/// #2004 review: what to tell the user when a run that put a new call secret
-/// on every Worker (`overwrite`) stopped after `reached` (the Workers up to and
-/// including the one that failed). Some of them may hold the new value and the
-/// rest the old one, and the next plain `bynk deploy` keeps both, since every
-/// Worker reports the secret present. `None` when the run set no new value.
+/// #2004 review, I2 (#1971): what to tell the user when a run that re-keyed
+/// edges stopped before every end of them was deployed. `completed` is the
+/// Workers that finished (not the one that failed, which may or may not hold
+/// its new keys). An edge whose ends had no key before cannot be split: the
+/// next run finds an end without one and re-keys it. One that was rotating
+/// can: each end may hold a different key, and a plain rerun keeps both.
+/// `None` when no such edge was left incomplete.
 pub(crate) fn interrupted_rotation_hint(
-    call_secret: &CallSecret,
-    reached: &[String],
+    edge_keys: &BTreeMap<Edge, EdgeKey>,
+    completed: &[String],
 ) -> Option<String> {
-    let CallSecret::Set {
-        overwrite: true, ..
-    } = call_secret
-    else {
-        return None;
-    };
-    let names = reached
+    let done = |w: &String| completed.contains(w);
+    let split: Vec<String> = edge_keys
         .iter()
-        .map(|w| format!("`{w}`"))
-        .collect::<Vec<_>>()
-        .join(", ");
+        .filter(|(edge, key)| {
+            matches!(key, EdgeKey::Set { rotating: true, .. })
+                && !(done(&edge.caller) && done(&edge.callee))
+        })
+        .map(|(edge, _)| edge.describe())
+        .collect();
+    if split.is_empty() {
+        return None;
+    }
     Some(format!(
-        "bynk: this run was setting a new {} on every context and stopped partway: {names} may hold the new value, the rest the old one, so calls between them are refused.\n  \
-         Rerun `bynk deploy --force` (the whole project) to set one value everywhere; a plain rerun would keep both.\n",
-        bynk_emit::CALL_SECRET_BINDING
+        "bynk: this run was setting new keys on {} and stopped before both ends of each were deployed, so each end may hold a different key and calls along it are refused.\n  \
+         Rerun `bynk deploy --force` (the whole project) to set one key on both ends; a plain rerun would keep both.\n",
+        split.join(", ")
     ))
 }
 
@@ -805,6 +831,7 @@ pub(crate) fn derive_plan<'a>(
     force: bool,
     environment: &'a str,
 ) -> Plan<'a> {
+    let edges = project_edges(resources);
     Plan {
         environment,
         orphans: find_orphans(lock, environment, resources),
@@ -855,11 +882,15 @@ pub(crate) fn derive_plan<'a>(
                         secrets,
                     )
                     .into_iter()
-                    // #2004: every Worker holds the deployment's call secret.
-                    .chain(std::iter::once(WantedSecret {
-                        name: bynk_emit::CALL_SECRET_BINDING.to_string(),
-                        origin: Origin::Managed,
-                    }))
+                    // I2 (#1971): the key for each edge this Worker is on.
+                    .chain(
+                        edge_keys_of(worker, &edges)
+                            .into_iter()
+                            .map(|name| WantedSecret {
+                                name,
+                                origin: Origin::Managed,
+                            }),
+                    )
                     .map(|want| PlanSecret {
                         name: want.name,
                         origin: want.origin,
@@ -1323,26 +1354,39 @@ pub(crate) mod tests {
 
     #[test]
     fn an_interrupted_rotation_says_how_to_repair_it() {
-        let reached = names(&["commerce-payment", "commerce-orders"]);
-        let rotating = CallSecret::Set {
-            value: "minted-value".into(),
-            overwrite: true,
+        let edge = |caller: &str, callee: &str| Edge {
+            caller: caller.to_string(),
+            callee: callee.to_string(),
         };
-        let hint =
-            interrupted_rotation_hint(&rotating, &reached).expect("a rotation was interrupted");
+        let set = |rotating: bool| EdgeKey::Set {
+            value: "minted-value".into(),
+            rotating,
+        };
+        let keys: BTreeMap<Edge, EdgeKey> = [
+            (edge("commerce-orders", "commerce-payment"), set(true)),
+            (edge("commerce-orders", "commerce-ledger"), set(false)),
+            (edge("commerce-ledger", "commerce-payment"), EdgeKey::Keep),
+        ]
+        .into_iter()
+        .collect();
+        // `commerce-payment` finished; `commerce-orders` did not.
+        let hint = interrupted_rotation_hint(&keys, &names(&["commerce-payment"]))
+            .expect("a rotation was interrupted");
         assert!(
-            hint.contains("`commerce-payment`, `commerce-orders`"),
+            hint.contains("`commerce-orders` → `commerce-payment`"),
             "{hint}"
+        );
+        assert!(
+            !hint.contains("commerce-ledger"),
+            "an edge that had no key, or kept its key, cannot be split: {hint}"
         );
         assert!(hint.contains("bynk deploy --force"), "{hint}");
         assert!(!hint.contains("minted-value"), "never the value: {hint}");
-        // Nothing new was set everywhere, so nothing was split.
-        assert_eq!(interrupted_rotation_hint(&CallSecret::Keep, &reached), None);
-        let filling = CallSecret::Set {
-            value: "v".into(),
-            overwrite: false,
-        };
-        assert_eq!(interrupted_rotation_hint(&filling, &reached), None);
+        // Both ends finished, so nothing was split.
+        assert_eq!(
+            interrupted_rotation_hint(&keys, &names(&["commerce-payment", "commerce-orders"])),
+            None
+        );
     }
 
     #[test]

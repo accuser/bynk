@@ -34,14 +34,18 @@ function __makeHarness() {
   const env___ns_shop_orders: any = {};
   const env___ns_shop_fees: any = {};
   const env___ns_shop_payment: any = {};
-  env___ns_shop_orders.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  env___ns_shop_orders.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
+  env___ns_shop_orders.BYNK_CALL_TO_SHOP__PAYMENT = "bynk-local-call-key";
   env___ns_shop_orders.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker___ns_shop_payment.fetch(req, env___ns_shop_payment) } as __ServiceBinding;
   env___ns_shop_orders.BOOK = __makeIntegrationDoNamespace(__ns_shop_orders.Book, env___ns_shop_orders);
   env___ns_shop_orders.TALLY = __makeIntegrationDoNamespace(__ns_shop_orders.Tally, env___ns_shop_orders);
-  env___ns_shop_fees.BYNK_CALL_SECRET = "bynk-local-call-secret";
-  env___ns_shop_payment.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  env___ns_shop_fees.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
+  env___ns_shop_payment.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
+  env___ns_shop_payment.BYNK_CALL_FROM_SHOP__ORDERS = "bynk-local-call-key";
   const rootEnv: any = {};
-  rootEnv.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  rootEnv.BYNK_CALL_TO_SHOP__ORDERS = "bynk-local-call-key";
+  rootEnv.BYNK_CALL_TO_SHOP__FEES = "bynk-local-call-key";
+  rootEnv.BYNK_CALL_TO_SHOP__PAYMENT = "bynk-local-call-key";
   rootEnv.SHOP_ORDERS = { fetch: (req: globalThis.Request) => worker___ns_shop_orders.fetch(req, env___ns_shop_orders) } as __ServiceBinding;
   rootEnv.SHOP_FEES = { fetch: (req: globalThis.Request) => worker___ns_shop_fees.fetch(req, env___ns_shop_fees) } as __ServiceBinding;
   rootEnv.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker___ns_shop_payment.fetch(req, env___ns_shop_payment) } as __ServiceBinding;
@@ -51,7 +55,7 @@ function __makeHarness() {
 async function test_a_call_crosses_every_file_of_the_context() {
   try {
     const deps = __makeHarness();
-    const n = await __callService(deps.env.SHOP_ORDERS, "place", __ns_shop_orders.__serialise_Line({ sku: "o1", qty: 2 }), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "79c966765bfd2c72", deps.env);
+    const n = await __callService(deps.env.SHOP_ORDERS, "place", __ns_shop_orders.__serialise_Line({ sku: "o1", qty: 2 }), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "79c966765bfd2c72", deps.env, "shop.orders");
     if (!(n === 113)) { throw __bynkExpectFailure("tests/orders.bynk:4:12", 152, 160, "expect n == 113\n  expected: n == 113\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((113))); }
     return { pass: true };
   } catch (e) {

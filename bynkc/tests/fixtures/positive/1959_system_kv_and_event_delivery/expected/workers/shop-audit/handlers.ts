@@ -10,13 +10,13 @@ import type * as shop_order from "../shop-order/handlers.js";
 
 export const OnPlaced = {
   async event(e: Placed, deps: { env: { SHOP_LEDGER: __ServiceBinding } }): globalThis.Promise<void> {
-    return __callService(deps.env.SHOP_LEDGER, "note", `placed:${String(e.id)}` as __JsonValue, (__j: __JsonValue) => Ok(undefined) as Result<void, __BoundaryError>, "shop.audit", "30a07120d171ca72", deps.env);
+    return __callService(deps.env.SHOP_LEDGER, "note", `placed:${String(e.id)}` as __JsonValue, (__j: __JsonValue) => Ok(undefined) as Result<void, __BoundaryError>, "shop.audit", "30a07120d171ca72", deps.env, "shop.ledger");
   },
 };
 
 export const OnTallied = {
   async event(e: Tallied, deps: { env: { SHOP_LEDGER: __ServiceBinding } }): globalThis.Promise<void> {
-    return __callService(deps.env.SHOP_LEDGER, "note", `tallied:${String(e.id)}` as __JsonValue, (__j: __JsonValue) => Ok(undefined) as Result<void, __BoundaryError>, "shop.audit", "30a07120d171ca72", deps.env);
+    return __callService(deps.env.SHOP_LEDGER, "note", `tallied:${String(e.id)}` as __JsonValue, (__j: __JsonValue) => Ok(undefined) as Result<void, __BoundaryError>, "shop.audit", "30a07120d171ca72", deps.env, "shop.ledger");
   },
 };
 

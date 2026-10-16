@@ -63,6 +63,26 @@ pub use ledger::materialise_deploy_state;
 pub(crate) use plan::conflicting_env_passthrough;
 pub use plan::{DeployFormat, DeployOptions, run};
 
+/// I2 (#1971): for `bynk dev`, the names of the edge keys each built Worker
+/// holds (a Worker on no edge is absent), read from the build's own
+/// configurations as `bynk deploy` reads them. An edge between contexts whose
+/// names no key can be derived from is an error, as it is at deploy.
+pub(crate) fn local_edge_keys(
+    workers_dir: &Path,
+    workers: &[String],
+) -> Result<BTreeMap<String, Vec<String>>, String> {
+    let resources = project_resources(workers_dir, workers)?;
+    let edges = project_edges(&resources);
+    for edge in &edges {
+        edge.ends()?;
+    }
+    Ok(workers
+        .iter()
+        .map(|w| (w.clone(), edge_keys_of(w, &edges)))
+        .filter(|(_, keys)| !keys.is_empty())
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

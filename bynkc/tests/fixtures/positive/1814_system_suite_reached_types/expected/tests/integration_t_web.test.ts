@@ -30,9 +30,9 @@ function __bynkShow(v: unknown): string {
 
 function __makeHarness() {
   const env___ns_t_web: any = {};
-  env___ns_t_web.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  env___ns_t_web.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
   const rootEnv: any = {};
-  rootEnv.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  rootEnv.BYNK_CALL_TO_T__WEB = "bynk-local-call-key";
   rootEnv.T_WEB = { fetch: (req: globalThis.Request) => worker___ns_t_web.fetch(req, env___ns_t_web) } as __ServiceBinding;
   return { env: rootEnv };
 }

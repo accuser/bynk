@@ -112,18 +112,22 @@ fn the_pages_example_hashes_are_the_emitted_constants() {
 fn marker(check: CallCheck) -> String {
     match check {
         CallCheck::Method => format!("if (method !== \"{}\")", wf::CALL_METHOD),
-        CallCheck::Authentication => "__verifyCallSecret(request, env)".to_string(),
+        // I2: one runtime call reads the body under the cap and verifies the
+        // signature; its result is returned for either refusal.
+        CallCheck::BodyTooLarge => "const __body = await __verifyCall(request, env, ".to_string(),
+        CallCheck::Authentication => "if (typeof __body !== \"string\") return __body;".to_string(),
         CallCheck::WireVersion => format!("request.headers.get(\"{}\")", wf::WIRE_HEADER),
         CallCheck::UnknownService => "switch (servicePath)".to_string(),
         CallCheck::Contract => format!("request.headers.get(\"{}\")", wf::CONTRACT_HEADER),
-        CallCheck::MalformedJson => "globalThis.JSON.parse(await request.text())".to_string(),
-        CallCheck::MissingCaller => format!("request.headers.get(\"{}\")", wf::CALLER_HEADER),
+        CallCheck::MalformedJson => "globalThis.JSON.parse(__body)".to_string(),
         CallCheck::Arguments => "const __r_".to_string(),
     }
 }
 
 /// The emitted call dispatch makes the published checks in the published
 /// order. Fixture 216's callee binds `by c: Caller`, so it makes all eight.
+/// The two the runtime's `verifyCall` makes, the body cap and the signature,
+/// are held to the page by `the_pages_examples_and_checks_hold_on_the_generated_code`.
 #[test]
 fn the_emitted_dispatch_makes_the_published_checks_in_order() {
     let golden = repo(
@@ -173,16 +177,32 @@ fn the_runtime_caller_sends_the_published_request() {
             wf::WIRE_HEADER
         ),
         format!("export const WIRE_VERSION = \"{}\";", wf::WIRE_VERSION),
+        format!("export const CALLER_HEADER = \"{}\";", wf::CALLER_HEADER),
         format!(
-            "export const CALL_SECRET_HEADER = \"{}\";",
-            wf::CALL_SECRET_HEADER
+            "export const TIMESTAMP_HEADER = \"{}\";",
+            wf::TIMESTAMP_HEADER
         ),
+        format!(
+            "export const SIGNATURE_HEADER = \"{}\";",
+            wf::SIGNATURE_HEADER
+        ),
+        format!(
+            "export const SIGNATURE_WINDOW_SECONDS = {};",
+            wf::SIGNATURE_WINDOW_SECONDS
+        ),
+        format!("export const MAX_BODY_BYTES = {};", wf::MAX_BODY_BYTES),
+        format!("export const SIGNING_SCHEME = \"{}\";", wf::SIGNING_SCHEME),
+        format!(
+            "export const EDGE_FROM_PREFIX = \"{}\";",
+            wf::EDGE_FROM_PREFIX
+        ),
+        format!("export const EDGE_TO_PREFIX = \"{}\";", wf::EDGE_TO_PREFIX),
         format!("`http://internal{}${{servicePath}}`", wf::CALL_PATH_PREFIX),
         format!("method: \"{}\",", wf::CALL_METHOD),
         format!("\"{}\": callerContext,", wf::CALLER_HEADER),
         format!("\"{}\": contractHash,", wf::CONTRACT_HEADER),
         "[WIRE_VERSION_HEADER]: WIRE_VERSION,".to_string(),
-        "[CALL_SECRET_HEADER]: secret,".to_string(),
+        "...signed,".to_string(),
     ] {
         assert!(
             boundary.contains(&needle),
@@ -314,28 +334,56 @@ for (const ex of EXAMPLES) {
   }
 }
 
-// The dispatch, against the page's checks table.
-const SECRET = "s3cret";
-const env: any = { BYNK_CALL_SECRET: SECRET };
+// The dispatch, against the page's checks table. The callee holds the key
+// for the edge from `shop.orders`; requests are signed here from the page's
+// description of the signing input, not with the runtime's own signer.
+const KEY = "edge-key";
+const CALLER = "shop.orders";
+const CALLEE = "wire.sample";
+const env: any = { __FROM_KEY__: KEY };
 const QUOTE = "__QUOTE_HASH__";
 const LINE = JSON.parse(__LINE__);
 
-function call(opts: { method?: string; headers?: Record<string, string>; body?: string | null; service?: string }): Request {
-  const method = opts.method ?? "POST";
-  return new Request("http://internal/_bynk/call/" + (opts.service ?? "quote"), {
-    method,
-    headers: {
-      "content-type": "application/json",
-      "X-Bynk-Contract": QUOTE,
-      "X-Bynk-Call-Secret": SECRET,
-      ...(opts.headers ?? {}),
-    },
-    body: method === "GET" || method === "HEAD" ? null : (opts.body ?? JSON.stringify({ line: LINE, size: 3 })),
-  });
+function hex(buf: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function expectStatus(req: Request, status: number, what: string): Promise<Response> {
-  const res = await worker.fetch(req, env);
+async function sign(key: string, fields: string[]): Promise<string> {
+  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return hex(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(["__SCHEME__", ...fields].join("\n"))));
+}
+
+// A call signed over its final headers, then with `after` applied, so a test
+// can break the signature without breaking anything else.
+async function call(opts: { method?: string; headers?: Record<string, string>; body?: string | null; service?: string; key?: string; skew?: number; after?: Record<string, string> }): Promise<Request> {
+  const method = opts.method ?? "POST";
+  const path = "/_bynk/call/" + (opts.service ?? "quote");
+  const body = method === "GET" || method === "HEAD" ? null : (opts.body ?? JSON.stringify({ line: LINE, size: 3 }));
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "X-Bynk-Contract": QUOTE,
+    "X-Bynk-Caller": CALLER,
+    ...(opts.headers ?? {}),
+  };
+  const timestamp = String(Math.floor(Date.now() / 1000) + (opts.skew ?? 0));
+  const digest = hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body ?? "")));
+  headers["X-Bynk-Timestamp"] = timestamp;
+  headers["X-Bynk-Signature"] = await sign(opts.key ?? KEY, [
+    headers["X-Bynk-Caller"] ?? "",
+    CALLEE,
+    method,
+    path,
+    headers["X-Bynk-Contract"] ?? "",
+    headers["X-Bynk-Wire"] ?? "1",
+    timestamp,
+    digest,
+  ]);
+  Object.assign(headers, opts.after ?? {});
+  return new Request("http://internal" + path, { method, headers, body });
+}
+
+async function expectStatus(req: Request | Promise<Request>, status: number, what: string): Promise<Response> {
+  const res = await worker.fetch(await req, env);
   assert(res.status === status, what + " → " + status + ", got " + res.status);
   return res;
 }
@@ -351,43 +399,49 @@ res = await expectStatus(call({ method: "GET" }), 405, "a GET");
 assert(res.headers.get("allow") === "POST", "405 names the allowed method");
 await expectStatus(call({ method: "PUT" }), 405, "a PUT");
 
-// 2. Authentication precedes everything after it.
-res = await expectStatus(call({ headers: { "X-Bynk-Call-Secret": "nope", "X-Bynk-Wire": "9" }, service: "nosuch" }), 401, "a wrong secret");
-assert((await res.text()) === "Unauthorized", "401 is bare");
+// 2. Body size, before authentication: an unsigned oversized body.
+res = await expectStatus(new Request("http://internal/_bynk/call/nosuch", { method: "POST", body: "x".repeat(__MAX_BODY__ + 1) }), 413, "an oversized body");
+assert((await res.text()) === "Payload Too Large", "413 is bare");
 
-// 3. Wire version.
+// 3. Authentication precedes everything after it.
+for (const [what, req] of [
+  ["the wrong key", call({ key: "nope", headers: { "X-Bynk-Wire": "9" }, service: "nosuch" })],
+  ["no signature", call({ after: { "X-Bynk-Signature": "" }, service: "nosuch" })],
+  ["a tampered contract", call({ after: { "X-Bynk-Contract": "0000000000000000" } })],
+  ["a caller with no key here", call({ headers: { "X-Bynk-Caller": "shop.payment" } })],
+  ["no caller", call({ after: { "X-Bynk-Caller": "" } })],
+  ["a stale timestamp", call({ skew: -(__WINDOW__ + 5) })],
+] as [string, Promise<Request>][]) {
+  res = await expectStatus(req, 401, what);
+  assert((await res.text()) === "Unauthorized", "401 is bare");
+}
+
+// 4. Wire version.
 res = await expectStatus(call({ headers: { "X-Bynk-Wire": "2" }, service: "nosuch" }), 400, "wire version 2");
 body = await res.json();
 assert(body.kind === "UnsupportedWireVersion" && JSON.stringify(body.accepted) === "[1]", "the accepted versions, got " + JSON.stringify(body));
 
-// 4. Unknown service.
+// 5. Unknown service.
 res = await expectStatus(call({ service: "nosuch" }), 404, "an unknown service");
 assert((await res.text()) === "Not found", "404 body");
 
-// 5. Contract.
+// 6. Contract.
 res = await expectStatus(call({ headers: { "X-Bynk-Contract": "0000000000000000" }, body: "{" }), 409, "a skewed contract");
 body = await res.json();
 assert(body.kind === "ContractMismatch" && body.expected === QUOTE, "409 body, got " + JSON.stringify(body));
 
-// 6. Malformed JSON.
+// 7. Malformed JSON.
 for (const bad of ["{", "", "{\"line\": }"]) {
   res = await expectStatus(call({ body: bad }), 400, "malformed body " + JSON.stringify(bad));
   body = await res.json();
   assert(body.kind === "MalformedJson" && body.details === "Invalid request body", "MalformedJson body, got " + JSON.stringify(body));
 }
 
-// 7. Missing caller, for a handler that binds `by c: Caller`.
+// A handler that binds `by c: Caller` reads the proved caller.
 const WHO = "__WHO_HASH__";
-for (const caller of [null, ""]) {
-  const headers: Record<string, string> = { "X-Bynk-Contract": WHO };
-  if (caller !== null) headers["X-Bynk-Caller"] = caller;
-  res = await expectStatus(call({ service: "who", headers, body: JSON.stringify({ n: 1, v: "x" }) }), 401, "caller " + JSON.stringify(caller));
-  body = await res.json();
-  assert(body.kind === "Unauthorized" && body.details === "missing caller identity", "the 401 body, got " + JSON.stringify(body));
-}
-res = await expectStatus(call({ service: "who", headers: { "X-Bynk-Contract": WHO, "X-Bynk-Caller": "shop.orders" }, body: JSON.stringify({ n: 1, v: "x" }) }), 200, "with a caller");
+res = await expectStatus(call({ service: "who", headers: { "X-Bynk-Contract": WHO }, body: JSON.stringify({ n: 1, v: "x" }) }), 200, "with a caller");
 body = await res.json();
-assert(body.kind === "Ok" && body.value === "shop.orders", "the handler reads the caller, got " + JSON.stringify(body));
+assert(body.kind === "Ok" && body.value === CALLER, "the handler reads the caller, got " + JSON.stringify(body));
 
 // 8. Arguments: an inline field refinement, through the dispatch's path.
 res = await expectStatus(call({ body: JSON.stringify({ line: { ...LINE, qty: 0 }, size: 3 }) }), 400, "qty 0");
@@ -442,7 +496,14 @@ fn the_pages_examples_and_checks_hold_on_the_generated_code() {
         .replace("__EXAMPLES__", &examples_ts())
         .replace("__QUOTE_HASH__", &quote)
         .replace("__WHO_HASH__", &who)
-        .replace("__LINE__", &ts_str(line));
+        .replace("__LINE__", &ts_str(line))
+        .replace(
+            "__FROM_KEY__",
+            &wf::edge_key_from("shop.orders").expect("an edge name"),
+        )
+        .replace("__SCHEME__", wf::SIGNING_SCHEME)
+        .replace("__MAX_BODY__", &wf::MAX_BODY_BYTES.to_string())
+        .replace("__WINDOW__", &wf::SIGNATURE_WINDOW_SECONDS.to_string());
     fs::write(run_dir.join("driver.ts"), driver).unwrap();
     fs::write(run_dir.join("tsconfig.json"), TSCONFIG_JSON).unwrap();
     fs::write(run_dir.join("package.json"), r#"{ "type": "module" }"#).unwrap();

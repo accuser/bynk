@@ -34,16 +34,22 @@ function __makeHarness() {
   const env___ns_shop_order: any = {};
   const env___ns_shop_ledger: any = {};
   const env___ns_shop_audit: any = {};
-  env___ns_shop_order.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  env___ns_shop_order.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
+  env___ns_shop_order.BYNK_CALL_TO_SHOP__AUDIT = "bynk-local-call-key";
   env___ns_shop_order.SHOP_AUDIT = { fetch: (req: globalThis.Request) => worker___ns_shop_audit.fetch(req, env___ns_shop_audit) } as __ServiceBinding;
   env___ns_shop_order.TALLY = __makeIntegrationDoNamespace(__ns_shop_order.Tally, env___ns_shop_order);
   env___ns_shop_order.___EVENTS_FANOUT = __makeIntegrationDoNamespace(fanout___ns_shop_order.__EventsFanout, env___ns_shop_order);
-  env___ns_shop_ledger.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  env___ns_shop_ledger.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
+  env___ns_shop_ledger.BYNK_CALL_FROM_SHOP__AUDIT = "bynk-local-call-key";
   env___ns_shop_ledger.KV = __makeIntegrationKv();
-  env___ns_shop_audit.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  env___ns_shop_audit.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
+  env___ns_shop_audit.BYNK_CALL_FROM_SHOP__ORDER = "bynk-local-call-key";
+  env___ns_shop_audit.BYNK_CALL_TO_SHOP__LEDGER = "bynk-local-call-key";
   env___ns_shop_audit.SHOP_LEDGER = { fetch: (req: globalThis.Request) => worker___ns_shop_ledger.fetch(req, env___ns_shop_ledger) } as __ServiceBinding;
   const rootEnv: any = {};
-  rootEnv.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  rootEnv.BYNK_CALL_TO_SHOP__ORDER = "bynk-local-call-key";
+  rootEnv.BYNK_CALL_TO_SHOP__LEDGER = "bynk-local-call-key";
+  rootEnv.BYNK_CALL_TO_SHOP__AUDIT = "bynk-local-call-key";
   rootEnv.SHOP_ORDER = { fetch: (req: globalThis.Request) => worker___ns_shop_order.fetch(req, env___ns_shop_order) } as __ServiceBinding;
   rootEnv.SHOP_LEDGER = { fetch: (req: globalThis.Request) => worker___ns_shop_ledger.fetch(req, env___ns_shop_ledger) } as __ServiceBinding;
   rootEnv.SHOP_AUDIT = { fetch: (req: globalThis.Request) => worker___ns_shop_audit.fetch(req, env___ns_shop_audit) } as __ServiceBinding;
@@ -53,13 +59,13 @@ function __makeHarness() {
 async function test_events_from_a_handler_and_an_agent_are_delivered() {
   try {
     const deps = __makeHarness();
-    const before = await __callService(deps.env.SHOP_LEDGER, "read", "placed:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217", deps.env);
+    const before = await __callService(deps.env.SHOP_LEDGER, "read", "placed:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217", deps.env, "shop.ledger");
     if (!(__bynkEq(before, None))) { throw __bynkExpectFailure("tests/order.bynk:10:12", 550, 564, "expect before == None\n  expected: before == None\n  actual:   " + __bynkShow((before)) + " == " + __bynkShow((None))); }
-    const n = await __callService(deps.env.SHOP_ORDER, "place", "o1" as __JsonValue, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "8e985779c0dd78f1", deps.env);
+    const n = await __callService(deps.env.SHOP_ORDER, "place", "o1" as __JsonValue, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "8e985779c0dd78f1", deps.env, "shop.order");
     if (!(n === 1)) { throw __bynkExpectFailure("tests/order.bynk:12:12", 612, 618, "expect n == 1\n  expected: n == 1\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((1))); }
-    const placed = await __callService(deps.env.SHOP_LEDGER, "read", "placed:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217", deps.env);
+    const placed = await __callService(deps.env.SHOP_LEDGER, "read", "placed:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217", deps.env, "shop.ledger");
     if (!(__bynkEq(placed, Some("seen")))) { throw __bynkExpectFailure("tests/order.bynk:14:12", 678, 700, "expect placed == Some(\"seen\")\n  expected: placed == Some(\"seen\")\n  actual:   " + __bynkShow((placed)) + " == " + __bynkShow((Some("seen")))); }
-    const tallied = await __callService(deps.env.SHOP_LEDGER, "read", "tallied:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217", deps.env);
+    const tallied = await __callService(deps.env.SHOP_LEDGER, "read", "tallied:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217", deps.env, "shop.ledger");
     if (!(__bynkEq(tallied, Some("seen")))) { throw __bynkExpectFailure("tests/order.bynk:16:12", 762, 785, "expect tallied == Some(\"seen\")\n  expected: tallied == Some(\"seen\")\n  actual:   " + __bynkShow((tallied)) + " == " + __bynkShow((Some("seen")))); }
     return { pass: true };
   } catch (e) {
@@ -73,7 +79,7 @@ async function test_events_from_a_handler_and_an_agent_are_delivered() {
 async function test_each_case_starts_with_an_empty_namespace() {
   try {
     const deps = __makeHarness();
-    const v = await __callService(deps.env.SHOP_LEDGER, "read", "placed:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217", deps.env);
+    const v = await __callService(deps.env.SHOP_LEDGER, "read", "placed:o1" as __JsonValue, __ns_shop_ledger.__deserialise_Option_String, "integration", "46115351d8436217", deps.env, "shop.ledger");
     if (!(__bynkEq(v, None))) { throw __bynkExpectFailure("tests/order.bynk:21:12", 897, 906, "expect v == None\n  expected: v == None\n  actual:   " + __bynkShow((v)) + " == " + __bynkShow((None))); }
     return { pass: true };
   } catch (e) {

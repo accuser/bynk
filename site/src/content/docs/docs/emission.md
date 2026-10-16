@@ -294,15 +294,18 @@ wrong:
 
 `callService` stamps the calling context's qualified name into an `X-Bynk-Caller`
 header. The callee threads this into a handler's `by c: Caller` binding so it can
-present a live `CallerId`. This is *identity, not authentication*: the header
-records who called, and the callee does not verify it.
+present a live `CallerId`.
 
-What the callee does verify is the deployment's call secret (#2004).
-`callService` also stamps `BYNK_CALL_SECRET`, from the calling Worker's `env`, in an
-`X-Bynk-Call-Secret` header. Every Worker refuses a `/_bynk/call/` or `/_bynk/event/`
-request without it (`401`, checked straight after the method), because those
-paths answer on the Worker's public address too. Every holder shares the one
-secret, so it admits members of the deployment without telling them apart.
+The callee proves that name (#1971). Each pair of contexts that talk, a caller
+and a callee or a publisher and a subscriber, shares a key of its own:
+`BYNK_CALL_TO_<CALLEE>` on the sender, `BYNK_CALL_FROM_<CALLER>` on the
+receiver. `callService` and the events fan-out sign every request with it
+(HMAC-SHA256 over the caller, the callee, the path, the contract and wire
+headers, a timestamp and the body). Every Worker refuses a `/_bynk/call/` or
+`/_bynk/event/` request whose signature does not verify under the key it holds
+for the claimed caller (`401`, checked straight after the method and a 1 MiB
+body cap), because those paths answer on the Worker's public address too. A
+key's holder can claim only its own name.
 
 The whole request and response format of `/_bynk/call/`, with its own version
 (`X-Bynk-Wire`), is published in the [wire format reference](/book/reference/wire-format/).

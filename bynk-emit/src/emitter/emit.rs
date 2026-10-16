@@ -4046,12 +4046,15 @@ pub(crate) fn lower_workers_cross_context_call(
             // itself (documented byte-for-byte match, #1388).
             bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(cx.commons().commons.name.joined())),
             bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(contract)),
-            // #2004: the calling Worker's `env`, which holds the deployment's
-            // call secret; the runtime stamps it, and refuses to send without it.
+            // I2 (#1971): the calling Worker's `env`, which holds the key for
+            // the edge to the callee, and the callee's qualified name, which
+            // the signature binds the request to; the runtime signs with them,
+            // and refuses to send without the key.
             bynk_ts::TsExpr::Member {
                 object: Box::new(bynk_ts::TsExpr::Ident("deps".to_string())),
                 property: "env".to_string(),
             },
+            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(consumed.to_string())),
         ],
     };
     pre.finish(bynk_ts::print_expr(&call_expr))

@@ -28,6 +28,7 @@ use crate::emitter::wrangler::{BindingSource, WorkerBinding};
 use crate::emitter::emit::test_scaffold_ns as test_ns;
 use bynk_check::checker::Types;
 use bynk_check::test_suites::{self, ResolvedStub, StubScope};
+use bynk_check::wire_format;
 use bynk_syntax::ast::{
     ArgPattern, BaseType, BinOp, Block, CapabilityOp, Case, Commons, CommonsForm, CommonsItem,
     Expr, ExprKind, FnDecl, FnName, Ident, Param, PredKind, PropertyDecl, QualifiedName,
@@ -1409,6 +1410,12 @@ fn fanout_alias(ns: &str) -> String {
     format!("fanout_{ns}")
 }
 
+/// The name a system test case calls a participant as: its cases lower in a
+/// commons of this name ([`integration_typed_commons`]), and a cross-context
+/// call stamps the calling commons' name. I2 (#1971): the harness gives every
+/// participant the local key for the edge from it.
+const HARNESS_CALLER: &str = "integration";
+
 /// Emit the `__makeHarness()` factory: an in-process env per participant whose
 /// Service Bindings call the sibling participants' real Worker `fetch` and whose
 /// Durable-Object namespaces back the participant's own agents in memory, plus a
@@ -1454,13 +1461,36 @@ fn emit_integration_harness<'a>(
     for p in participants {
         let ns = test_ns(p);
         let env = format!("env_{ns}");
-        // #2004: every participant admits the others' calls and event
-        // deliveries under the local call secret, as under `bynk dev`.
-        body.push(TsStmt::assign(
-            member(ident(env.clone()), crate::CALL_SECRET_BINDING),
-            str_lit(crate::LOCAL_CALL_SECRET),
-            None,
-        ));
+        // I2 (#1971): every participant holds the local key for each edge it
+        // is on, as under `bynk dev`: from the test cases' caller, from each
+        // participant that binds to it (a caller or an event publisher), and
+        // to each participant it binds to.
+        let callers = std::iter::once(HARNESS_CALLER).chain(
+            participants
+                .iter()
+                .filter(|q| {
+                    bindings_of(q).iter().any(
+                        |b| matches!(&b.source, BindingSource::Service { context } if context == p),
+                    )
+                })
+                .map(String::as_str),
+        );
+        let callees = bindings_of(p).iter().filter_map(|b| match &b.source {
+            BindingSource::Service { context } if participants.contains(context) => {
+                Some(context.as_str())
+            }
+            _ => None,
+        });
+        for key in callers
+            .filter_map(wire_format::edge_key_from)
+            .chain(callees.filter_map(wire_format::edge_key_to))
+        {
+            body.push(TsStmt::assign(
+                member(ident(env.clone()), &key),
+                str_lit(crate::LOCAL_CALL_KEY),
+                None,
+            ));
+        }
         for binding in bindings_of(p) {
             let value = match &binding.source {
                 // #1856: a context that is no participant has no Worker here.
@@ -1506,13 +1536,18 @@ fn emit_integration_harness<'a>(
         TsExpr::object(vec![]),
         None,
     ));
-    // #2004: the test cases call in through `rootEnv`, so it holds the
-    // secret their `__callService` stamps.
-    body.push(TsStmt::assign(
-        member(ident("rootEnv"), crate::CALL_SECRET_BINDING),
-        str_lit(crate::LOCAL_CALL_SECRET),
-        None,
-    ));
+    // I2 (#1971): the test cases call in through `rootEnv`, as
+    // [`HARNESS_CALLER`], so it holds the key for the edge to each participant.
+    for key in participants
+        .iter()
+        .filter_map(|p| wire_format::edge_key_to(p))
+    {
+        body.push(TsStmt::assign(
+            member(ident("rootEnv"), &key),
+            str_lit(crate::LOCAL_CALL_KEY),
+            None,
+        ));
+    }
     for p in participants {
         let ns = test_ns(p);
         let binding = crate::emitter::wrangler::service_binding(p).name;
@@ -1558,7 +1593,7 @@ fn integration_typed_commons(
         commons: Commons {
             name: QualifiedName {
                 parts: vec![Ident {
-                    name: "integration".to_string(),
+                    name: HARNESS_CALLER.to_string(),
                     span: Span::default(),
                 }],
                 span: Span::default(),

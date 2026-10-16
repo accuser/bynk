@@ -8,7 +8,7 @@ import type * as demo_payment from "../demo-payment/handlers.js";
 
 export const ping = {
   async call(id: string, deps: { Clock: bynk.Clock; env: { DEMO_PAYMENT: __ServiceBinding } }): globalThis.Promise<number> {
-    const __r0 = await __callService(deps.env.DEMO_PAYMENT, "authorise", id as __JsonValue, __deserialise_Result_Receipt_Int, "ops.hub", "594ea73b40bdd341", deps.env);
+    const __r0 = await __callService(deps.env.DEMO_PAYMENT, "authorise", id as __JsonValue, __deserialise_Result_Receipt_Int, "ops.hub", "594ea73b40bdd341", deps.env, "demo.payment");
     const __r1 = await deps.Clock.now();
     return 1;
   },

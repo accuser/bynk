@@ -353,13 +353,13 @@ The **`Caller` actor** (`on call … by c: Caller`, v0.54) mints a live `CallerI
 over the cross-context Service Binding. The call site (`callService`) stamps the
 calling context's qualified name — a compile-time constant — into a reserved
 `X-Bynk-Caller` header beside the (unchanged) args body. The callee's
-`/_bynk/call/<service>` dispatch reads the header, rejects fail-closed if it is
-absent or empty (the internal analogue of 401), and threads the name into the
+`/_bynk/call/<service>` dispatch reads the header and threads the name into the
 handler's `deps` as the `CallerId` identity, so `<binder>.identity` lowers to
 `deps.identity` (replacing the `undefined` placeholder). A binder-less `on call`
-reads no `X-Bynk-Caller` header. The name is not verified. What admits the
-request at all is the deployment's call secret
-([§7.3.4d](#734d-the-call-secret)), which every holder shares.
+reads no `X-Bynk-Caller` header. The name is proved, not claimed: the request's
+signature ([§7.3.4d](#734d-the-request-signature)) is checked under the key the
+callee holds for the edge from that caller, so a request whose caller is absent,
+or holds no key there, never reaches the dispatch.
 
 ### §7.3.4b The cross-context boundary codec (v0.176)
 
@@ -443,35 +443,44 @@ Each Worker also emits `bynk-contracts.json` beside its `wrangler.toml`, carryin
 what the context **provides** per service and what it **expects** of each
 dependency. This is a driver artifact, not part of the wire.
 
-### §7.3.4d The call secret
+### §7.3.4d The request signature
 
 `/_bynk/call/` and `/_bynk/event/` are paths on the Worker's single `fetch`
 entry, so they answer on every route the Worker serves, its `workers.dev`
 address included. The prefix does not prove that a Bynk Worker sent the
-request, so every internal request carries the deployment's **call secret**.
+request, so every internal request is **signed**, under a key one sender
+shares with one receiver: an **edge**.
 
-Every Worker in a deployment holds the same value as the secret
-`BYNK_CALL_SECRET`. `callService` and the events fan-out's `deliverEvent` read
-it from the sending Worker's `env` and stamp it in a reserved
-`X-Bynk-Call-Secret` header. They refuse to send without it, naming the unset
-binding. The receiving Worker checks the header as the **first** statement of
-each internal dispatch. The check runs before the service is looked up, before
-the §7.3.4c contract check, and before the body is read. It applies to every
-`on call` and every event subscriber, whether or not the handler binds a
-`Caller`. A request without the secret, or with a wrong one, gets `401` with
-the body `Unauthorized` and no detail. So a sender without the secret cannot
+An edge is a Service Binding between two of a project's Workers: a caller to a
+context it calls, or a publisher to a subscriber its events fan out to. The
+receiver holds the edge's key as `BYNK_CALL_FROM_<SENDER>` and the sender as
+`BYNK_CALL_TO_<RECEIVER>`, the qualified context name upper-cased with each dot
+written `__`. `callService` and the events fan-out's `deliverEvent` sign each
+request with HMAC-SHA256 over the fields the
+[wire format reference](/book/reference/wire-format/#authentication) lists (the
+sender, the receiver, the method, the path, the contract and wire headers, a
+timestamp and the body's SHA-256), and send the sender's name, the timestamp and
+the signature in `X-Bynk-Caller`, `X-Bynk-Timestamp` and `X-Bynk-Signature`.
+They refuse to send without the edge's key, naming it.
+
+The receiving Worker verifies as the **first** step of each internal dispatch,
+after only the call dispatch's method check. `__verifyCall` reads the body
+under a 1 MiB cap (else `413`), picks the key it holds for the edge from the
+claimed sender, and checks the timestamp (within 300 seconds of its clock) and
+the signature, in constant time; any failure is `401` with the body
+`Unauthorized` and no detail. It runs before the service is looked up, before
+the §7.3.4c contract check and before the body is parsed, which then parses the
+verified text. It applies to every `on call` and every event subscriber,
+whether or not the handler binds a `Caller`. So a sender without a key cannot
 tell services apart (no `404` against `409`), never has a contract hash echoed
-back, and cannot write the skew log line.
+back, and cannot write the skew log line; and a key's holder can claim only its
+own name. A captured request can be replayed until its timestamp leaves the
+window.
 
-The comparison is constant-time over SHA-256 digests of both values. A Worker
-whose own `BYNK_CALL_SECRET` is unset or empty refuses every internal request
-(fail closed), and logs that once per isolate.
-
-The secret proves that the sender belongs to the deployment. It does not prove
-*which* context sent the request: any holder can claim any `X-Bynk-Caller`.
-`bynk deploy` mints and sets the value. `bynk dev` and the generated test
-harnesses use a fixed local value, which is never written into a generated
-`wrangler.toml`.
+`bynk deploy` mints each edge's key and sets it on both ends. `bynk dev` and
+the generated test harnesses give every edge a fixed local key, which is never
+written into a generated `wrangler.toml`; the harness calls its participants as
+`integration`.
 
 ### §7.3.4e The published wire format
 
@@ -485,10 +494,10 @@ compiler and guarded against it. A caller states the version it speaks in
 other version with `400 UnsupportedWireVersion`.
 
 The dispatch makes its checks in the published order: the method (`POST`, else
-`405` with `Allow: POST`), the call secret (§7.3.4d), the wire version, the
-service (`404`), the contract (§7.3.4c), the body's JSON (read as text and
-parsed, else `400 MalformedJson`), the caller (§7.3.4a, for a handler binding
-`Caller`), then the arguments (§7.3.4b). A record field's inline refinement is
+`405` with `Allow: POST`), the body's size and the signature (§7.3.4d), the
+wire version, the service (`404`), the contract (§7.3.4c), the body's JSON
+(the verified text, parsed, else `400 MalformedJson`), then the arguments
+(§7.3.4b). A record field's inline refinement is
 checked when the record is decoded, failing as a `RefinementViolation` at the
 field's path, and a `Duration` or `Instant` must be a safe integer wherever it
 appears.

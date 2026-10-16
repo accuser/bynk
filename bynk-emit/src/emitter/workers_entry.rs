@@ -253,30 +253,41 @@ fn text_response(text: &str, status: i64) -> TsExpr {
     new_response(vec![str_lit(text), status_obj(status)])
 }
 
-/// #2004: `if (!(await __verifyCallSecret(request, env))) return new
-/// Response("Unauthorized", { status: 401 });` — the first statement of every
-/// internal dispatch (`/_bynk/call/`, `/_bynk/event/`).
+/// I2 (#1971): `const __body = await __verifyCall(request, env, "<context>");
+/// if (typeof __body !== "string") return __body;`. Every internal dispatch
+/// (`/_bynk/call/`, `/_bynk/event/`) makes it first, after only the call
+/// dispatch's method check.
 ///
-/// The prefixes are reachable from the public internet on any route the Worker
-/// serves (ADR 0092's "not externally routable" premise does not hold), so a
-/// request is refused here, before the service is looked up, the contract
-/// compared or the body read: an unauthenticated sender learns nothing about
-/// which services exist (no 404 against 409), never has a hash echoed, and
-/// cannot write the skew log line. The body is a fixed word, not JSON detail.
-fn call_secret_gate() -> TsStmt {
-    if_(
-        TsExpr::Unary {
-            op: bynk_ts::TsUnaryOp::Not,
-            expr: Box::new(paren(await_expr(call(
-                ident("__verifyCallSecret"),
-                vec![ident("request"), ident("env")],
-            )))),
-        },
-        return_(Some(text_response(
-            CallCheck::Authentication.text_body().unwrap_or_default(),
-            check_status(CallCheck::Authentication),
-        ))),
-    )
+/// The runtime reads the body under the published cap (`413`), then checks
+/// the request's signature under the key this Worker holds for the edge from
+/// the claimed caller, bound to `context` as the callee (`401`), and hands back
+/// the verified body as text. The prefixes are reachable from the public
+/// internet on any route the Worker serves (ADR 0092's "not externally
+/// routable" premise does not hold), so a request is refused here, before the
+/// service is looked up, the contract compared or the body parsed: an
+/// unauthenticated sender learns nothing about which services exist (no 404
+/// against 409), never has a hash echoed, and cannot write the skew log line.
+/// The refusals are bare words, not JSON detail.
+fn verify_gate(context: &str) -> [TsStmt; 2] {
+    [
+        const_(
+            "__body",
+            await_expr(call(
+                ident("__verifyCall"),
+                vec![ident("request"), ident("env"), str_lit(context)],
+            )),
+        ),
+        if_(
+            strict_neq(
+                TsExpr::Unary {
+                    op: bynk_ts::TsUnaryOp::Typeof,
+                    expr: Box::new(ident("__body")),
+                },
+                str_lit("string"),
+            ),
+            return_(Some(ident("__body"))),
+        ),
+    ]
 }
 
 /// #1969: a [`CallCheck`]'s published status, as the emitter's `i64`.
@@ -318,7 +329,7 @@ fn call_method_gate() -> TsStmt {
 /// #1969 (wire format v1): `const __wire = request.headers.get("X-Bynk-Wire");
 /// if (__wire !== null && __wire !== "1") return <400 UnsupportedWireVersion>;`.
 ///
-/// After the call secret, so an unauthenticated sender cannot probe which
+/// After the signature, so an unauthenticated sender cannot probe which
 /// versions a callee speaks; before the service lookup, because the version
 /// decides how everything after it reads. An absent header is version 1. The
 /// refusal names the versions this callee accepts, which is how a caller
@@ -653,8 +664,9 @@ pub(crate) fn emit_worker_entry(
         "type __JsonValue".to_string(),
         "type __BoundaryError".to_string(),
         "__boundaryError".to_string(),
-        // #2004: every Worker answers `/_bynk/call/`, so every Worker gates it.
-        "__verifyCallSecret".to_string(),
+        // I2 (#1971): every Worker answers `/_bynk/call/`, so every Worker
+        // verifies it.
+        "__verifyCall".to_string(),
     ];
     if has_http {
         imports.push("__matchPath".to_string());
@@ -880,20 +892,16 @@ pub(crate) fn emit_worker_entry(
                 ]),
             ));
         }
-        // #1969 (wire format v1): the body is read as text and parsed here, so
-        // malformed JSON is the caller's fault (`400 MalformedJson`), not a
-        // fault in this Worker (`500`). Reading the raw bytes first is also
-        // what a body signature (the interop track's I2) will verify.
+        // #1969 (wire format v1): the body is parsed here, so malformed JSON is
+        // the caller's fault (`400 MalformedJson`), not a fault in this Worker
+        // (`500`). I2 (#1971): it is the text `__verifyCall` read and verified,
+        // so the bytes decoded are the bytes signed.
         case_body.push(let_typed("args", TsType::named("__JsonValue")));
         case_body.push(try_catch_stmt(
             vec![TsStmt::assign(
                 ident("args"),
                 as_expr(
-                    method_call(
-                        ident("globalThis.JSON"),
-                        "parse",
-                        vec![await_expr(method_call(ident("request"), "text", vec![]))],
-                    ),
+                    method_call(ident("globalThis.JSON"), "parse", vec![ident("__body")]),
                     TsType::named("__JsonValue"),
                 ),
                 None,
@@ -921,8 +929,8 @@ pub(crate) fn emit_worker_entry(
     )))]));
     // #1969: the call dispatch makes the published wire format's checks
     // (`bynk_check::wire_format::CALL_CHECKS`) in their published order:
-    // method, call secret, wire version, then (per service, above) the
-    // service, its contract, the body's JSON, the caller and the arguments.
+    // method, body size and signature (I2), wire version, then (per service,
+    // above) the service, its contract, the body's JSON and the arguments.
     try_body.push(if_(
         method_call(
             ident("path"),
@@ -930,8 +938,8 @@ pub(crate) fn emit_worker_entry(
             vec![str_lit(wf::CALL_PATH_PREFIX)],
         ),
         block(
-            [call_method_gate(), call_secret_gate()]
-                .into_iter()
+            std::iter::once(call_method_gate())
+                .chain(verify_gate(context))
                 .chain(wire_version_gate())
                 .chain([
                     const_(
@@ -1018,8 +1026,8 @@ pub(crate) fn emit_worker_entry(
         .copied()
         .collect();
     if !event_services.is_empty() {
-        let mut event_body: Vec<TsStmt> = vec![
-            call_secret_gate(),
+        let mut event_body: Vec<TsStmt> = verify_gate(context).into_iter().collect();
+        event_body.extend([
             const_(
                 "servicePath",
                 method_call(
@@ -1050,13 +1058,8 @@ pub(crate) fn emit_worker_entry(
                 TsBindingName::ObjectPattern(vec!["payload".to_string(), "envelope".to_string()]),
                 None,
                 as_expr(
-                    // This file's own two real `await ... as T` sites disagree
-                    // on parens (`/_bynk/call/`'s `args` has none; this one
-                    // does) — a real, pre-existing inconsistency in the hand-
-                    // written strings this slice replicates exactly, not a
-                    // rule. `Paren` makes the grouping explicit here without
-                    // affecting the other site.
-                    paren(await_expr(method_call(ident("request"), "json", vec![]))),
+                    // I2 (#1971): the text `__verifyCall` read and verified.
+                    method_call(ident("globalThis.JSON"), "parse", vec![ident("__body")]),
                     TsType::Object(vec![
                         TsTypeMember::prop("payload", TsType::named("__JsonValue")),
                         TsTypeMember::prop("envelope", TsType::named("__JsonValue")),
@@ -1071,7 +1074,7 @@ pub(crate) fn emit_worker_entry(
                     vec![ident("envelope"), str_lit("$.envelope")],
                 ),
             ),
-        ];
+        ]);
         event_body.push(if_(
             strict_eq(member(ident("__r_envelope"), "tag"), str_lit("Err")),
             return_(Some(json_response(
@@ -2400,30 +2403,21 @@ fn emit_call_handler_dispatch(
     let mut stmts: Vec<TsStmt> = Vec::new();
     // v0.54: a `by c: Caller` handler reads the caller's context name from the
     // `X-Bynk-Caller` header (stamped by `callService`) and threads it into the
-    // surface call. The internal channel is trusted, but a missing caller means
-    // a malformed / non-Bynk call — fail-closed (the `Internal` 401-analogue).
+    // surface call. I2 (#1971): `__verifyCall` already refused a request whose
+    // caller holds no key here, so the header is present, non-empty and
+    // proved: there is no separate missing-caller check.
     let has_caller = bynk_check::actors::caller_binder_for(h, actors).is_some();
     if has_caller {
         stmts.push(const_(
             "__caller",
-            method_call(
-                member(ident("request"), "headers"),
-                "get",
-                vec![str_lit(wf::CALLER_HEADER)],
-            ),
-        ));
-        stmts.push(if_(
-            or_expr(
-                strict_eq(ident("__caller"), null_lit()),
-                strict_eq(ident("__caller"), str_lit("")),
-            ),
-            return_(Some(json_response(
-                json_error_kind(
-                    check_kind(CallCheck::MissingCaller),
-                    vec![("details".to_string(), str_lit("missing caller identity"))],
+            as_expr(
+                method_call(
+                    member(ident("request"), "headers"),
+                    "get",
+                    vec![str_lit(wf::CALLER_HEADER)],
                 ),
-                check_status(CallCheck::MissingCaller),
-            ))),
+                TsType::named("string"),
+            ),
         ));
     }
 

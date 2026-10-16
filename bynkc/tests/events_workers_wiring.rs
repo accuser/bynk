@@ -186,7 +186,7 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
     // the wire (ADR 0284's DECISION — see `emit_events_fanout_do`).
     let fanout_ts = find("workers/commerce-order/events_fanout.ts");
     assert!(
-        fanout_ts.contains("\"PaymentConfirmed\": [{ binding: \"COMMERCE_NOTIFICATIONS\", service: \"OnPayment\" }]"),
+        fanout_ts.contains("\"PaymentConfirmed\": [{ binding: \"COMMERCE_NOTIFICATIONS\", context: \"commerce.notifications\", service: \"OnPayment\" }]"),
         "the fan-out DO's routing table must name the real subscriber:\n{fanout_ts}"
     );
     assert!(
@@ -347,7 +347,7 @@ fn workers_events_pattern_leaves_fanout_routing_unchanged() {
     );
     let fanout_ts = find("workers/commerce-order/events_fanout.ts");
     assert!(
-        fanout_ts.contains("\"PaymentConfirmed\": [{ binding: \"COMMERCE_NOTIFICATIONS\", service: \"OnPayment\" }]"),
+        fanout_ts.contains("\"PaymentConfirmed\": [{ binding: \"COMMERCE_NOTIFICATIONS\", context: \"commerce.notifications\", service: \"OnPayment\" }]"),
         "a subscription pattern must not change the fan-out DO's routing table \
          (deliver-and-filter, ADR 0286 — the guard lives in the subscriber's own \
          handler, not in routing):\n{fanout_ts}"
@@ -481,7 +481,7 @@ fn workers_events_envelope_param_type_checks_and_leaves_fanout_unchanged() {
     );
     let fanout_ts = find("workers/commerce-order/events_fanout.ts");
     assert!(
-        fanout_ts.contains("\"PaymentConfirmed\": [{ binding: \"COMMERCE_NOTIFICATIONS\", service: \"OnPayment\" }]"),
+        fanout_ts.contains("\"PaymentConfirmed\": [{ binding: \"COMMERCE_NOTIFICATIONS\", context: \"commerce.notifications\", service: \"OnPayment\" }]"),
         "declaring `env: EventEnvelope` must not change the fan-out DO's \
          routing table:\n{fanout_ts}"
     );

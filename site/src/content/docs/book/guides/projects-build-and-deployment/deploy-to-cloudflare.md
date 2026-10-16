@@ -241,40 +241,63 @@ One consequence worth knowing: `--dry-run` never authenticates, which is what
 lets you plan offline — so a plan says `set` for everything, and the skip shows
 up when you actually run.
 
-### The call secret
+### Edge keys
 
-Every Worker in a deployment also gets one secret you never write:
-`BYNK_CALL_SECRET`. Your contexts send it with every cross-context call and
-event delivery, and a Worker refuses those requests without it. Their paths
-(`/_bynk/call/…`, `/_bynk/event/…`) answer on the Worker's public address too,
-so without the secret anyone could call your `on call` services, claiming any
-context as the caller. The plan lists it on every context:
+Each pair of contexts that talk to each other, a caller and the context it
+calls or a publisher and a subscriber, shares a key of its own, which you never
+write. The sender holds it as `BYNK_CALL_TO_<CALLEE>` and the receiver as
+`BYNK_CALL_FROM_<CALLER>` (the context's name in capitals, a dot written `__`).
+Every cross-context call and event delivery is signed with it, and a Worker
+refuses one whose signature does not check out. Their paths (`/_bynk/call/…`,
+`/_bynk/event/…`) answer on the Worker's public address too, so without the
+signature anyone could call your `on call` services, claiming any context as the
+caller. With it, a context can claim only its own name. The plan lists each key
+on the context that holds it:
 
 ```
-secret set BYNK_CALL_SECRET (managed)
+secret set BYNK_CALL_FROM_COMMERCE__ORDERS (managed)
+deploy commerce-payment
+secret set BYNK_CALL_TO_COMMERCE__PAYMENT (managed)
+deploy commerce-orders
 ```
 
-`bynk deploy` mints it and never shows or stores the value. Every Worker must
-hold the same one, and Cloudflare won't give it back, so:
+`bynk deploy` mints every key and never shows or stores the value. Both ends of
+an edge must hold the same key, and Cloudflare won't give one back, so:
 
-- A first deploy, or one where any Worker lacks it, mints a fresh value and sets
-  it on **every** context. Cross-context calls can fail for the moment between
-  one Worker taking the new value and the next.
-- A redeploy where every Worker has it leaves it alone. `--force` rotates it.
-- `--context NAME` can't mint, since the others would keep the old value. If the
-  context lacks it, the deploy stops and asks for a whole-project deploy, or for
-  the value in `--secrets-file` or as `BYNK_CALL_SECRET` in the environment.
+- A first deploy, a new edge, or an edge where either end lacks its key mints a
+  fresh key and sets it on **both** ends. Calls along that edge can fail for the
+  moment between one end taking the new key and the other.
+- A redeploy where both ends hold the key leaves it alone. `--force` rotates the
+  key of every edge the run deploys both ends of.
+- `--context NAME` can't mint a key for an edge whose other end it doesn't
+  deploy. If such an edge lacks its key, the deploy stops before pushing
+  anything and asks for a whole-project deploy.
 
-If a deploy that is setting a new value stops partway, some contexts hold the
-new value and the rest the old one, and a plain rerun keeps both. The deploy
-says so when it stops. Rerun `bynk deploy --force` to set one value everywhere.
+If a deploy that is rotating keys stops partway, the two ends of an edge can
+hold different keys, and a plain rerun keeps both. The deploy names those edges
+when it stops. Rerun `bynk deploy --force` to set one key on both ends.
 
-To hold the value yourself, put `BYNK_CALL_SECRET` in your `--secrets-file`;
-`bynk deploy` then sets yours instead of minting one. Like any secret, a
-supplied value only fills contexts that lack one, so pass `--force` when you
-change it. `bynk dev` and `bynk test`
-use a fixed local value. A Worker you push with `wrangler deploy` yourself
-needs the secret set too (`wrangler secret put BYNK_CALL_SECRET`).
+You can't supply an edge key: one in `--secrets-file` is ignored, since spread
+to every context it would break the edges it doesn't belong to. `bynk dev` and
+`bynk test` use a fixed local key. A Worker you push with `wrangler deploy`
+yourself needs its keys set too.
+
+A key is a name the context is known by, so a context whose name can't be
+written as one is refused at deploy: each dot-separated part must be lowercase
+letters and digits, start with a letter, and use single underscores.
+
+#### Upgrading from the shared call secret
+
+A project deployed before edge keys used one secret, `BYNK_CALL_SECRET`, on
+every Worker. Workers built now no longer read it, and the new ones refuse
+calls from Workers still on it, and the other way round. So:
+
+1. Redeploy the **whole project** once (`bynk deploy`, not `--context`). Every
+   edge lacks its key, so the deploy mints and sets them all. Calls between a
+   Worker already pushed and one not yet pushed fail until the run finishes.
+2. Optionally delete the old secret from each Worker, which nothing reads now:
+   `wrangler secret delete BYNK_CALL_SECRET --name <worker>` for each Worker
+   (the context's name with its dots as dashes, as the plan shows it).
 
 ### Several KV namespaces
 

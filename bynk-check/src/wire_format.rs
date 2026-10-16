@@ -17,8 +17,9 @@
 //! `kind` or a new optional header may be added within the version. Changing an
 //! existing encoding, check, status or the hash's normal form is a new wire
 //! version, which a callee accepts beside the old one for an overlap window
-//! ([`ACCEPTED_WIRE_VERSIONS`]). The one exception, until the interop track's
-//! slice I2 lands, is the authentication credential: see [`CALL_SECRET_HEADER`].
+//! ([`ACCEPTED_WIRE_VERSIONS`]). That includes the request signature
+//! ([`signing_input`]): its canonical input and its headers are part of the
+//! version, the keys are not.
 
 pub mod reference;
 
@@ -44,14 +45,118 @@ pub const CALLER_HEADER: &str = "X-Bynk-Caller";
 /// The wire version the caller speaks; absent means 1.
 pub const WIRE_HEADER: &str = "X-Bynk-Wire";
 
-/// #2004: the deployment's shared call secret.
+/// I2 (#1971): when the caller signed the request, in whole seconds since the
+/// Unix epoch, as a decimal integer.
+pub const TIMESTAMP_HEADER: &str = "X-Bynk-Timestamp";
+
+/// I2 (#1971): the request's signature, HMAC-SHA256 over [`signing_input`]
+/// under the edge's key, as 64 lowercase hex digits.
+pub const SIGNATURE_HEADER: &str = "X-Bynk-Signature";
+
+/// I2 (#1971): how far, in seconds, a request's timestamp may be from the
+/// callee's clock, either way. A requirement, not a tuning knob (ADR
+/// `per-edge-call-signature`): it bounds how long a captured request can be
+/// replayed, and nothing else does.
+pub const SIGNATURE_WINDOW_SECONDS: u64 = 300;
+
+/// I2 (#1971): the largest body a callee reads, in bytes. The body is read
+/// under this cap before it is hashed, so a sender without a key cannot make
+/// the callee buffer and hash an unbounded one.
+pub const MAX_BODY_BYTES: usize = 1_048_576;
+
+/// I2 (#1971): the first line of [`signing_input`], naming the scheme, so a
+/// signature over this input can never verify as one over another format's.
+pub const SIGNING_SCHEME: &str = "BYNK-CALL-1";
+
+/// I2 (#1971): the secret a callee holds for the edge from one caller,
+/// [`edge_key_from`].
+pub const EDGE_FROM_PREFIX: &str = "BYNK_CALL_FROM_";
+
+/// I2 (#1971): the secret a caller holds for the edge to one callee,
+/// [`edge_key_to`].
+pub const EDGE_TO_PREFIX: &str = "BYNK_CALL_TO_";
+
+/// I2 (#1971): whether `context` is a name an edge key can be derived from:
+/// dot-separated segments, each a lowercase letter, then lowercase letters
+/// and digits, with single underscores between runs of them (`shop.orders`,
+/// `a_b.c2`). On that domain [`edge_suffix`] is injective, which is what
+/// keeps one caller's key from verifying another's name.
+pub fn is_edge_name(context: &str) -> bool {
+    !context.is_empty()
+        && context.split('.').all(|segment| {
+            let bytes = segment.as_bytes();
+            bytes.first().is_some_and(u8::is_ascii_lowercase)
+                && bytes.last() != Some(&b'_')
+                && !segment.contains("__")
+                && bytes
+                    .iter()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
+        })
+}
+
+/// I2 (#1971): the part of an edge key's name that names the context at its
+/// other end: upper case, a dot written `__` (`shop.orders` → `SHOP__ORDERS`).
+/// `None` for a name outside [`is_edge_name`]'s domain.
+pub fn edge_suffix(context: &str) -> Option<String> {
+    is_edge_name(context).then(|| context.to_ascii_uppercase().replace('.', "__"))
+}
+
+/// I2 (#1971): the secret the **callee** holds for calls from `caller`
+/// (`BYNK_CALL_FROM_SHOP__ORDERS`). The callee picks it by the request's
+/// [`CALLER_HEADER`], so an undeclared caller finds no key and is refused.
+pub fn edge_key_from(caller: &str) -> Option<String> {
+    edge_suffix(caller).map(|s| format!("{EDGE_FROM_PREFIX}{s}"))
+}
+
+/// I2 (#1971): the secret the **caller** holds for calls to `callee`
+/// (`BYNK_CALL_TO_SHOP__PAYMENT`). Same value as the callee's
+/// [`edge_key_from`] for the same edge.
+pub fn edge_key_to(callee: &str) -> Option<String> {
+    edge_suffix(callee).map(|s| format!("{EDGE_TO_PREFIX}{s}"))
+}
+
+/// I2 (#1971): the bytes a request's signature is computed over. One field
+/// per line, `\n`-separated, no trailing newline:
 ///
-/// Version 1 freezes *where* authentication sits in the check order and what a
-/// refusal looks like (a bare `401`), but not the credential itself: the
-/// interop track's slice I2 replaces this shared secret with a per-edge
-/// signature, and that swap is not a wire-version change. No non-Bynk caller
-/// can hold this secret, so nothing outside a deployment depends on it.
-pub const CALL_SECRET_HEADER: &str = "X-Bynk-Call-Secret";
+/// 1. [`SIGNING_SCHEME`];
+/// 2. the caller, as sent in [`CALLER_HEADER`];
+/// 3. the callee's qualified context name, so a signature verifies at one
+///    callee only;
+/// 4. the method;
+/// 5. the URL's pathname exactly as sent, with no query string and no
+///    percent-normalisation;
+/// 6. [`CONTRACT_HEADER`] as sent, empty when absent;
+/// 7. [`WIRE_HEADER`] as sent, `1` when absent, so the version a callee
+///    decodes under is the one that was signed;
+/// 8. [`TIMESTAMP_HEADER`] as sent;
+/// 9. the SHA-256 of the body's bytes, 64 lowercase hex digits.
+///
+/// Every header the callee acts on is in it. Header values cannot hold a
+/// newline, so no field can forge another's line.
+#[allow(clippy::too_many_arguments)]
+pub fn signing_input(
+    caller: &str,
+    callee: &str,
+    method: &str,
+    path: &str,
+    contract: &str,
+    wire: &str,
+    timestamp: &str,
+    body_sha256_hex: &str,
+) -> String {
+    [
+        SIGNING_SCHEME,
+        caller,
+        callee,
+        method,
+        path,
+        contract,
+        wire,
+        timestamp,
+        body_sha256_hex,
+    ]
+    .join("\n")
+}
 
 /// The `details` of a `MalformedJson` refusal. The HTTP routes use the same.
 pub const MALFORMED_JSON_DETAILS: &str = "Invalid request body";
@@ -66,19 +171,24 @@ pub struct Header {
 /// Every header a call carries, in the order the reference lists them.
 pub const HEADERS: &[Header] = &[
     Header {
-        name: CALL_SECRET_HEADER,
-        required: "yes",
-        meaning: "The deployment's call secret (`BYNK_CALL_SECRET`). Compared in constant time. Its value, and this header, are replaced by a per-edge signature before non-Bynk callers are supported; see *Authentication* below.",
-    },
-    Header {
         name: CONTRACT_HEADER,
         required: "yes",
         meaning: "The caller's hash of the service's contract, 16 lowercase hex digits. Must equal the callee's; a missing header does not.",
     },
     Header {
         name: CALLER_HEADER,
-        required: "when the handler binds `by c: Caller`",
-        meaning: "The calling context's qualified name (`shop.orders`), which the handler reads as `c.identity`. Not authenticated beyond the call secret.",
+        required: "yes",
+        meaning: "The calling context's qualified name (`shop.orders`), which the handler reads as `c.identity`. Selects the key the signature is checked under, so it is proved, not claimed.",
+    },
+    Header {
+        name: TIMESTAMP_HEADER,
+        required: "yes",
+        meaning: "When the caller signed the request, in whole seconds since the Unix epoch.",
+    },
+    Header {
+        name: SIGNATURE_HEADER,
+        required: "yes",
+        meaning: "HMAC-SHA256 of the signing input under the edge's key, 64 lowercase hex digits. See *Authentication* below.",
     },
     Header {
         name: WIRE_HEADER,
@@ -96,25 +206,29 @@ pub const HEADERS: &[Header] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallCheck {
     Method,
+    BodyTooLarge,
     Authentication,
     WireVersion,
     UnknownService,
     Contract,
     MalformedJson,
-    MissingCaller,
     Arguments,
 }
 
 /// The callee's checks, in the order it makes them. The first that fails
 /// answers the request.
+///
+/// I2 (#1971): a signature is checked under the key the caller header
+/// selects, so a call without a caller fails [`CallCheck::Authentication`];
+/// there is no separate missing-caller check after it.
 pub const CALL_CHECKS: [CallCheck; 8] = [
     CallCheck::Method,
+    CallCheck::BodyTooLarge,
     CallCheck::Authentication,
     CallCheck::WireVersion,
     CallCheck::UnknownService,
     CallCheck::Contract,
     CallCheck::MalformedJson,
-    CallCheck::MissingCaller,
     CallCheck::Arguments,
 ];
 
@@ -123,12 +237,12 @@ impl CallCheck {
     pub fn status(self) -> u16 {
         match self {
             CallCheck::Method => 405,
+            CallCheck::BodyTooLarge => 413,
             CallCheck::Authentication => 401,
             CallCheck::WireVersion => 400,
             CallCheck::UnknownService => 404,
             CallCheck::Contract => 409,
             CallCheck::MalformedJson => 400,
-            CallCheck::MissingCaller => 401,
             CallCheck::Arguments => 400,
         }
     }
@@ -141,8 +255,8 @@ impl CallCheck {
             CallCheck::WireVersion => Some("UnsupportedWireVersion"),
             CallCheck::Contract => Some("ContractMismatch"),
             CallCheck::MalformedJson => Some("MalformedJson"),
-            CallCheck::MissingCaller => Some("Unauthorized"),
             CallCheck::Method
+            | CallCheck::BodyTooLarge
             | CallCheck::Authentication
             | CallCheck::UnknownService
             | CallCheck::Arguments => None,
@@ -152,6 +266,7 @@ impl CallCheck {
     /// The plain-text body of a check that answers with one.
     pub fn text_body(self) -> Option<&'static str> {
         match self {
+            CallCheck::BodyTooLarge => Some("Payload Too Large"),
             CallCheck::Authentication => Some("Unauthorized"),
             CallCheck::UnknownService => Some("Not found"),
             _ => None,
@@ -162,7 +277,12 @@ impl CallCheck {
     pub fn condition(self) -> &'static str {
         match self {
             CallCheck::Method => "The method is `POST`.",
-            CallCheck::Authentication => "The call secret matches the callee's own.",
+            CallCheck::BodyTooLarge => {
+                "The body is at most 1 MiB (1048576 bytes). Read under the cap, before anything is hashed."
+            }
+            CallCheck::Authentication => {
+                "`X-Bynk-Signature` verifies, under the key the callee holds for the edge from `X-Bynk-Caller`, over the signing input, and `X-Bynk-Timestamp` is within 300 seconds of the callee's clock. Compared in constant time."
+            }
             CallCheck::WireVersion => {
                 "`X-Bynk-Wire` is absent or names a version the callee accepts."
             }
@@ -171,9 +291,6 @@ impl CallCheck {
             }
             CallCheck::Contract => "`X-Bynk-Contract` equals the callee's hash of that service.",
             CallCheck::MalformedJson => "The body parses as JSON.",
-            CallCheck::MissingCaller => {
-                "`X-Bynk-Caller` is present and non-empty. Checked only when the handler binds `by c: Caller`."
-            }
             CallCheck::Arguments => {
                 "The body decodes as the handler's parameters (see *Encoding*)."
             }
@@ -184,6 +301,7 @@ impl CallCheck {
     pub fn response(self) -> String {
         let text = match self {
             CallCheck::Method => "empty body, `Allow: POST`",
+            CallCheck::BodyTooLarge => "text `Payload Too Large`",
             CallCheck::Authentication => "text `Unauthorized`",
             CallCheck::WireVersion => {
                 let accepted: Vec<String> =
@@ -200,11 +318,74 @@ impl CallCheck {
             CallCheck::MalformedJson => {
                 r#"`{"kind":"MalformedJson","details":"Invalid request body"}`"#
             }
-            CallCheck::MissingCaller => {
-                r#"`{"kind":"Unauthorized","details":"missing caller identity"}`"#
-            }
             CallCheck::Arguments => "a `StructuralMismatch` or `RefinementViolation` body",
         };
         text.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edge_keys_name_the_context_at_the_other_end() {
+        assert_eq!(
+            edge_key_from("shop.orders").as_deref(),
+            Some("BYNK_CALL_FROM_SHOP__ORDERS")
+        );
+        assert_eq!(
+            edge_key_to("shop.payment").as_deref(),
+            Some("BYNK_CALL_TO_SHOP__PAYMENT")
+        );
+        assert_eq!(edge_suffix("a_b.c2").as_deref(), Some("A_B__C2"));
+    }
+
+    #[test]
+    fn edge_suffixes_never_collide_on_their_domain() {
+        // A dot and an underscore stay apart, which a plain
+        // `replace('.', "_")` would merge.
+        assert_ne!(edge_suffix("a.b"), edge_suffix("a_b"));
+        // Names that would make the encoding ambiguous are outside it.
+        for bad in [
+            "", "a..b", ".a", "a.", "a__b", "_a", "a_", "a._b", "A.b", "a-b", "1a", "a b",
+        ] {
+            assert!(!is_edge_name(bad), "{bad:?} is not an edge name");
+            assert_eq!(edge_key_from(bad), None);
+        }
+        for good in ["integration", "shop.orders", "a_b.c2", "x1.y_2_z"] {
+            assert!(is_edge_name(good), "{good:?} is an edge name");
+        }
+    }
+
+    #[test]
+    fn the_signing_input_is_one_field_per_line() {
+        assert_eq!(
+            signing_input(
+                "shop.orders",
+                "shop.payment",
+                "POST",
+                "/_bynk/call/authorise",
+                "0123456789abcdef",
+                "1",
+                "1700000000",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ),
+            "BYNK-CALL-1\nshop.orders\nshop.payment\nPOST\n/_bynk/call/authorise\n0123456789abcdef\n1\n1700000000\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn the_checks_state_the_published_limits() {
+        assert!(
+            CallCheck::BodyTooLarge
+                .condition()
+                .contains(&MAX_BODY_BYTES.to_string())
+        );
+        assert!(
+            CallCheck::Authentication
+                .condition()
+                .contains(&format!("{SIGNATURE_WINDOW_SECONDS} seconds"))
+        );
     }
 }
