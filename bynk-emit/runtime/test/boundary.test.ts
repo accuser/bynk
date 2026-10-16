@@ -445,3 +445,42 @@ test("deliverEvent: signs the delivery for the subscriber, as the publisher", as
   await deliverEvent(binding, "svc", { n: 1 }, {}, { BYNK_CALL_TO_SHOP__AUDIT: "s3cret" }, "shop.orders", "shop.audit");
   assert.equal(verified, JSON.stringify({ payload: { n: 1 }, envelope: {} }));
 });
+
+// I3 (#1971): foreign callers, checked under their own declared secret.
+
+const FOREIGN = { Legacy: "LEGACY_CALL_KEY" };
+
+test("edgeSuffix: no capitalised name is an edge name, so a foreign actor never selects an edge key", () => {
+  for (const name of ["Legacy", "L", "Legacy.orders", "LEGACY", "Ledger_2"]) {
+    assert.equal(edgeSuffix(name), undefined, name);
+  }
+});
+
+test("verifyCall: a foreign caller verifies under its declared secret, not an edge key", async () => {
+  const req = await signedRequest({ caller: "Legacy", env: { BYNK_CALL_TO_SHOP__PAYMENT: "legacy-key" } });
+  assert.equal(await verifyCall(req, { LEGACY_CALL_KEY: "legacy-key" }, "shop.payment", FOREIGN), "{}");
+  // Without the table, `Legacy` is no caller this Worker knows.
+  const again = await signedRequest({ caller: "Legacy", env: { BYNK_CALL_TO_SHOP__PAYMENT: "legacy-key" } });
+  const res = await verifyCall(again, { LEGACY_CALL_KEY: "legacy-key" }, "shop.payment");
+  assert.ok(res instanceof Response && res.status === 401);
+});
+
+test("verifyCall: a foreign caller's secret does not admit it under another name", async () => {
+  // Signed as `Legacy`, under Legacy's secret, but claiming a context.
+  const req = await signedRequest({
+    caller: "Legacy",
+    env: { BYNK_CALL_TO_SHOP__PAYMENT: "legacy-key" },
+    tweak: (h) => (h[CALLER_HEADER] = "shop.orders"),
+  });
+  const res = await verifyCall(req, { LEGACY_CALL_KEY: "legacy-key", BYNK_CALL_FROM_SHOP__ORDERS: "legacy-key" }, "shop.payment", FOREIGN);
+  assert.ok(res instanceof Response && res.status === 401);
+  // A caller named after an Object.prototype member finds no key.
+  for (const name of ["constructor", "toString", "__proto__"]) {
+    const r = await verifyCall(await signedRequest({ tweak: (h) => (h[CALLER_HEADER] = name) }), CALLEE_ENV, "shop.payment", FOREIGN);
+    assert.ok(r instanceof Response && r.status === 401, name);
+  }
+  // An unset secret fails closed.
+  const unset = await signedRequest({ caller: "Legacy", env: { BYNK_CALL_TO_SHOP__PAYMENT: "legacy-key" } });
+  const r = await verifyCall(unset, {}, "shop.payment", FOREIGN);
+  assert.ok(r instanceof Response && r.status === 401);
+});

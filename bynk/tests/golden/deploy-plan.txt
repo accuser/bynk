@@ -10,6 +10,16 @@ secret set BYNK_CALL_TO_COMMERCE__PAYMENT (managed)
 deploy commerce-orders
 order commerce-payment → commerce-orders
 
+# I3: foreign callers' secrets
+kv create commerce-payment
+secret set BYNK_CALL_FROM_COMMERCE__ORDERS (managed)
+secret set LEDGER_CALL_KEY (managed)
+secret set LEGACY_CALL_KEY (managed)
+deploy commerce-payment
+secret set BYNK_CALL_TO_COMMERCE__PAYMENT (managed)
+deploy commerce-orders
+order commerce-payment → commerce-orders
+
 # several contexts, already live — a re-run re-pushes
 kv reuse commerce-payment
 secret set BYNK_CALL_FROM_COMMERCE__ORDERS (managed)

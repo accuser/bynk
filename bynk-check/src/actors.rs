@@ -50,6 +50,12 @@ pub enum Scheme {
     /// trust root is the provider's public key set (a URL), so the declaration
     /// carries **no inline secret** — only public trust parameters.
     Oidc,
+    /// I3 (#1971, interop track D2): a caller that is not Bynk, declared by the
+    /// context it calls (`auth = Foreign(secret = "LEGACY_CALL_KEY")`). It signs
+    /// a call like a Bynk caller does (`bynk_check::wire_format`), naming
+    /// itself by the actor's name, under the declared secret. Admitted on
+    /// `call` only, and resolves to its own actor, never to `Caller`.
+    Foreign,
 }
 
 impl Scheme {
@@ -62,6 +68,7 @@ impl Scheme {
             "Bearer" => Scheme::Bearer,
             "Signature" => Scheme::Signature,
             "Oidc" => Scheme::Oidc,
+            "Foreign" => Scheme::Foreign,
             _ => return None,
         })
     }
@@ -73,7 +80,12 @@ impl Scheme {
     pub fn admitted(self) -> bool {
         matches!(
             self,
-            Scheme::None | Scheme::Internal | Scheme::Bearer | Scheme::Signature | Scheme::Oidc
+            Scheme::None
+                | Scheme::Internal
+                | Scheme::Bearer
+                | Scheme::Signature
+                | Scheme::Oidc
+                | Scheme::Foreign
         )
     }
 
@@ -84,6 +96,7 @@ impl Scheme {
             Scheme::Bearer => "Bearer",
             Scheme::Signature => "Signature",
             Scheme::Oidc => "Oidc",
+            Scheme::Foreign => "Foreign",
         }
     }
 }
@@ -303,6 +316,12 @@ pub fn caller_binder_for(handler: &Handler, actors: &HashMap<String, ActorDecl>)
         return None;
     }
     let by = handler.by_clause.as_ref()?;
+    // I3 (#1971): a sum (`by who: Caller | Legacy`) binds the resolved actor,
+    // not a `CallerId`, even when `Caller` is its first member
+    // ([`call_admission_for`]).
+    if by.is_sum() {
+        return None;
+    }
     let binder = by.binder.as_ref()?;
     let name = &by.primary().name;
     // `CallerId` is yielded only by the `Caller` prelude actor; a local actor
@@ -312,6 +331,113 @@ pub fn caller_binder_for(handler: &Handler, actors: &HashMap<String, ActorDecl>)
         && prelude_actor(name).map(|c| c.identity) == Some(Identity::CallerId)
         && !handler.params.iter().any(|p| p.name.name == binder.name);
     is_caller.then(|| binder.name.clone())
+}
+
+/// I3 (#1971): a declared foreign caller, as a `call` handler admits it: the
+/// actor's name, which the caller sends as `X-Bynk-Caller`, and the secret
+/// the callee verifies its signature under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignCaller {
+    pub actor: String,
+    pub secret: String,
+    /// The foreign Worker's name, when the declaration gives one
+    /// (`worker = "ledger-svc"`), so `bynk deploy`'s hand-off can name it.
+    pub worker: Option<String>,
+}
+
+/// I3 (#1971): the foreign caller an actor declaration describes, if it is a
+/// `Foreign`-scheme actor with a `secret`.
+pub fn foreign_caller_of(decl: &ActorDecl) -> Option<ForeignCaller> {
+    (Scheme::from_name(decl.auth.as_ref()?.name.as_str())? == Scheme::Foreign).then_some(())?;
+    Some(ForeignCaller {
+        actor: decl.name.name.clone(),
+        secret: decl.scheme_arg("secret")?.value.as_str()?.to_string(),
+        worker: decl
+            .scheme_arg("worker")
+            .and_then(|a| a.value.as_str())
+            .map(str::to_string),
+    })
+}
+
+/// I3 (#1971): which verified callers an `on call` handler admits. Every call
+/// is authenticated before it reaches a handler (`wire_format`); this is what
+/// the handler then admits, in its `by` clause's order. A Bynk context is
+/// admitted by `Caller` (the default with no `by`) or a local `Internal`
+/// actor; a foreign caller only by its own `Foreign` actor, never by `Caller`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallAdmission {
+    /// Whether a Bynk context is admitted.
+    pub contexts: bool,
+    /// The foreign callers admitted, in `by` order.
+    pub foreign: Vec<ForeignCaller>,
+    /// For a sum, the members in `by` order: `None` for the member that
+    /// admits a context (`Caller`), the foreign caller otherwise. The body's
+    /// `match` reads the resolved one.
+    pub sum: Option<Vec<CallSumMember>>,
+}
+
+/// I3 (#1971): one member of a `call` handler's actor sum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallSumMember {
+    /// `Caller`: a Bynk context, with its name as the identity.
+    Caller,
+    /// A declared foreign caller, with no identity beyond its actor.
+    Foreign(ForeignCaller),
+}
+
+impl CallSumMember {
+    /// The member's tag, the actor's name.
+    pub fn actor_name(&self) -> &str {
+        match self {
+            CallSumMember::Caller => "Caller",
+            CallSumMember::Foreign(f) => &f.actor,
+        }
+    }
+}
+
+/// I3 (#1971): what an `on call` handler admits. `None` off the call path.
+pub fn call_admission_for(
+    handler: &Handler,
+    actors: &HashMap<String, ActorDecl>,
+) -> Option<CallAdmission> {
+    if !matches!(handler.kind, HandlerKind::Call) {
+        return None;
+    }
+    let Some(by) = handler.by_clause.as_ref() else {
+        return Some(CallAdmission {
+            contexts: true,
+            foreign: Vec::new(),
+            sum: None,
+        });
+    };
+    let mut admission = CallAdmission {
+        contexts: false,
+        foreign: Vec::new(),
+        sum: None,
+    };
+    let mut members = Vec::new();
+    for actor in &by.actors {
+        match actors.get(&actor.name) {
+            Some(decl) => match foreign_caller_of(decl) {
+                Some(f) => {
+                    admission.foreign.push(f.clone());
+                    members.push(CallSumMember::Foreign(f));
+                }
+                None => {
+                    admission.contexts = true;
+                    members.push(CallSumMember::Caller);
+                }
+            },
+            None => {
+                admission.contexts = true;
+                members.push(CallSumMember::Caller);
+            }
+        }
+    }
+    if by.is_sum() {
+        admission.sum = Some(members);
+    }
+    Some(admission)
 }
 
 /// v0.51: the data the emitter needs to lower a Signature verification seam —
@@ -424,7 +550,8 @@ pub fn sum_members_for(
                 // a well-formed program never reaches here with an Oidc peer.
                 // Return `None` (fail closed → no sum emission) defensively.
                 Scheme::Oidc => return None,
-                Scheme::Internal => return None,
+                // I3: a `Foreign` sum is a `call` sum (`call_admission_for`).
+                Scheme::Internal | Scheme::Foreign => return None,
             }
         } else {
             // A prelude actor: only `Visitor` (scheme `None`) is an HTTP peer.
@@ -464,10 +591,9 @@ pub fn scheme_admissible(protocol: &ServiceProtocol, scheme: Scheme) -> bool {
         // Events track, slice 0 (spine #936): delivery is an internal,
         // runtime-triggered invocation, like `Call`/`Cron`/`Queue` — no
         // external network request, so no external auth scheme applies.
-        ServiceProtocol::Call
-        | ServiceProtocol::Cron
-        | ServiceProtocol::Queue { .. }
-        | ServiceProtocol::Events { .. } => {
+        // I3 (#1971): a `call` also admits a declared foreign caller.
+        ServiceProtocol::Call => matches!(scheme, Scheme::Internal | Scheme::Foreign),
+        ServiceProtocol::Cron | ServiceProtocol::Queue { .. } | ServiceProtocol::Events { .. } => {
             matches!(scheme, Scheme::Internal)
         }
     }

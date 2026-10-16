@@ -5158,6 +5158,10 @@
         {
           "type": "STRING",
           "value": "Oidc"
+        },
+        {
+          "type": "STRING",
+          "value": "Foreign"
         }
       ]
     },

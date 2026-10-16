@@ -286,6 +286,44 @@ A key is a name the context is known by, so a context whose name can't be
 written as one is refused at deploy: each dot-separated part must be lowercase
 letters and digits, start with a letter, and use single underscores.
 
+#### Foreign callers
+
+A Worker that isn't Bynk can call a context's `on call` services once the context
+declares it as a foreign caller:
+
+```bynk,ignore
+actor Ledger { auth = Foreign(secret = "LEDGER_CALL_KEY", worker = "ledger-svc") }
+
+service status {
+  on call(id: String) -> Effect[Result[String, String]] by who: Caller | Ledger { … }
+}
+```
+
+The plan lists the secret on the context that declares it:
+
+```
+secret set LEDGER_CALL_KEY (managed)
+```
+
+The deploy mints the secret and sets it on your context. Your deploy never
+writes to a Worker it doesn't own, so it then prints the command that hands
+the secret to the other Worker's operator:
+
+```
+bynk: minted LEDGER_CALL_KEY for `Ledger`, a foreign caller of `shop.orders`. Its operator sets it on their Worker:
+
+  printf '%s' '<value>' | npx wrangler secret put BYNK_CALL_TO_SHOP__ORDERS --name ledger-svc
+```
+
+The deploy prints the value only this once. It can't read it back later, so if
+you lose it, run `bynk deploy --force` to mint and print a new one; the
+foreign Worker then needs the new value. To share a value you already hold,
+supply it (`--secrets-file`, or `LEDGER_CALL_KEY` in the environment). The
+deploy then sets yours and prints nothing. Only your end is yours to set, so
+`--context` can mint these too. The foreign Worker signs each call as `Ledger`,
+as the [wire format](/book/reference/wire-format/#foreign-callers) describes.
+`bynk dev` gives the secret a fixed local value.
+
 #### Upgrading from the shared call secret
 
 A project deployed before edge keys used one secret, `BYNK_CALL_SECRET`, on

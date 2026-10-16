@@ -577,7 +577,25 @@ fn emit_integration_module(
 
     // The env-graph harness: stand each participant up as an in-process Worker
     // and wire its Service Bindings to its siblings; the root env binds to all.
-    let mut harness_stmt = emit_integration_harness(harness_participants, &bindings_of, &sends);
+    // I3 (#1971): the secrets a participant's foreign callers sign under, so
+    // a case calling `by <ForeignActor>` signs as that actor.
+    let foreign_secrets = |p: &String| -> Vec<String> {
+        let Some(t) = unit_tables.get(p) else {
+            return Vec::new();
+        };
+        let mut secrets: Vec<String> = t
+            .services
+            .values()
+            .flat_map(|s| s.handlers.iter())
+            .filter_map(|h| bynk_check::actors::call_admission_for(h, &t.actors))
+            .flat_map(|a| a.foreign.into_iter().map(|f| f.secret))
+            .collect();
+        secrets.sort();
+        secrets.dedup();
+        secrets
+    };
+    let mut harness_stmt =
+        emit_integration_harness(harness_participants, &bindings_of, &sends, &foreign_secrets);
     harness_stmt.no_blank_before = true;
     stmts.push(harness_stmt);
 
@@ -1437,6 +1455,7 @@ fn emit_integration_harness<'a>(
     participants: &[String],
     bindings_of: &dyn Fn(&String) -> &'a Vec<WorkerBinding>,
     sends: &dyn Fn(&String) -> bool,
+    foreign_secrets: &dyn Fn(&String) -> Vec<String>,
 ) -> TsStmt {
     let mut body = Vec::new();
     // Declare every participant env first so sibling references resolve.
@@ -1484,6 +1503,7 @@ fn emit_integration_harness<'a>(
         for key in callers
             .filter_map(wire_format::edge_key_from)
             .chain(callees.filter_map(wire_format::edge_key_to))
+            .chain(foreign_secrets(p))
         {
             body.push(TsStmt::assign(
                 member(ident(env.clone()), &key),
@@ -1740,6 +1760,25 @@ fn target_service_handler_kinds(
                     .collect(),
             )
         })
+        .collect()
+}
+
+/// I3 (#1971): the target's services whose `on call` handler binds an actor
+/// sum (`by who: Caller | Legacy`), whose `deps.who` a call-site principal
+/// builds.
+fn target_call_sum_services(table: Option<&UnitTable>) -> HashSet<String> {
+    let Some(t) = table else {
+        return HashSet::new();
+    };
+    t.services
+        .iter()
+        .filter(|(_, decl)| {
+            decl.handlers.iter().any(|h| {
+                bynk_check::actors::call_admission_for(h, &t.actors)
+                    .is_some_and(|a| a.sum.is_some())
+            })
+        })
+        .map(|(name, _)| name.clone())
         .collect()
 }
 
@@ -4593,6 +4632,7 @@ fn emit_test_case_function(
         &cross,
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
+        target_call_sum_services(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
         source,
@@ -5827,6 +5867,7 @@ fn emit_test_property_function(
         &cross,
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
+        target_call_sum_services(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
         source,
@@ -6047,6 +6088,7 @@ fn emit_test_history_property_function(
         &cross,
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
+        target_call_sum_services(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
         source,

@@ -689,7 +689,9 @@ pub(crate) fn emit_worker_compose(
                                 Some(&seam),
                             ));
                         }
-                        bynk_ir::ActorSeamIr::Caller(_) | bynk_ir::ActorSeamIr::None => {
+                        bynk_ir::ActorSeamIr::Caller(_)
+                        | bynk_ir::ActorSeamIr::CallSum(_)
+                        | bynk_ir::ActorSeamIr::None => {
                             return_entries.push(emit_http_wrapper(sname, h, method, &path, None));
                         }
                     }
@@ -1030,7 +1032,21 @@ fn emit_call_wrapper(
     // v0.54: a `by c: Caller` handler's wrapper takes the caller's context name
     // (read from the header in the entry dispatch) and threads it into `deps`
     // as the `CallerId` identity — mirroring the Bearer identity threading.
-    let deps_expr = if bynk_check::actors::caller_binder_for(h, actors).is_some() {
+    // I3 (#1971): a `call` sum's wrapper takes the resolved actor, which the
+    // entry dispatch builds from the verified caller, and threads it into
+    // `deps` as `who`.
+    let call_sum = bynk_check::actors::call_admission_for(h, actors).and_then(|a| a.sum);
+    let deps_expr = if let Some(members) = &call_sum {
+        params.insert(
+            0,
+            TsParam {
+                name: "__who".to_string(),
+                ty: Some(crate::emitter::emit::call_sum_ts_type(members)),
+                optional: false,
+            },
+        );
+        deps_spread_with("who", ident("__who"))
+    } else if bynk_check::actors::caller_binder_for(h, actors).is_some() {
         params.insert(
             0,
             TsParam {

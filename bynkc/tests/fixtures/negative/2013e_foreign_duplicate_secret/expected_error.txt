@@ -1,0 +1,2 @@
+bynk.actor.foreign_duplicate_secret
+shares the secret `SHARED_KEY`

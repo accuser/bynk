@@ -1113,7 +1113,7 @@ module.exports = grammar({
     // The closed, compiler-known scheme set. `None`/`Internal` are zero-crypto;
     // `Bearer` (JWT/HS256), `Signature` (HMAC over the body), and `Oidc`
     // (JWKS/RS256+ES256) are compiler-generated verifiers.
-    scheme: () => choice("None", "Internal", "Bearer", "Signature", "Oidc"),
+    scheme: () => choice("None", "Internal", "Bearer", "Signature", "Oidc", "Foreign"),
     // v0.51: the keyed-args scheme config — `(key = value, …)`. Values are
     // string or integer literals; the checker validates which keys each scheme
     // admits (Bearer: secret; Signature: secret/header/timestamp/tolerance).

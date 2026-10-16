@@ -116,6 +116,22 @@ pub(crate) struct Resources {
     /// is not everything. The plan must say so rather than
     /// presenting its list as whole.
     pub(crate) reads_complete: bool,
+    /// I3 (#1971): the foreign callers this context's `on call` handlers admit,
+    /// from the manifest's `foreign` list. `deploy` mints each one's secret,
+    /// sets it here, and prints the hand-off for the foreign Worker.
+    pub(crate) foreign_callers: Vec<ForeignCaller>,
+}
+
+/// I3 (#1971): one foreign caller a context admits, as the manifest records it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct ForeignCaller {
+    /// The `Foreign` actor's name, which the caller sends as `X-Bynk-Caller`.
+    pub(crate) actor: String,
+    /// The secret the context verifies its calls under.
+    pub(crate) secret: String,
+    /// The foreign Worker's name, when the declaration gives one.
+    #[serde(default)]
+    pub(crate) worker: Option<String>,
 }
 
 impl Default for Resources {
@@ -133,6 +149,7 @@ impl Default for Resources {
             declared_secrets: Vec::new(),
             read_secrets: Vec::new(),
             reads_complete: true,
+            foreign_callers: Vec::new(),
         }
     }
 }
@@ -157,6 +174,10 @@ struct SecretsManifest {
     /// field — no v1 file reaches this.
     #[serde(default = "read_complete_default")]
     read_complete: bool,
+    /// I3 (#1971): additive within version 2 — absent means the context
+    /// admits no foreign caller, which is what an older manifest means too.
+    #[serde(default)]
+    foreign: Vec<ForeignCaller>,
 }
 
 fn read_complete_default() -> bool {
@@ -189,6 +210,7 @@ fn read_secrets_manifest(worker_dir: &Path) -> Result<SecretsManifest, String> {
             // Vacuously: a context that emits no manifest names no secret at
             // all, computed or otherwise.
             read_complete: true,
+            foreign: Vec::new(),
         });
     }
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -266,6 +288,7 @@ fn read_resources(config: &Path) -> Result<Resources, String> {
         declared_secrets: secrets.declared,
         read_secrets: secrets.read,
         reads_complete: secrets.read_complete,
+        foreign_callers: secrets.foreign,
     })
 }
 

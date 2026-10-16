@@ -226,6 +226,26 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Two peers in a multi-actor sum share an authentication scheme.",
     ),
     d(
+        "bynk.actor.foreign_duplicate_secret",
+        "Two `Foreign` peers in a multi-actor sum name the same secret.",
+    ),
+    d(
+        "bynk.actor.foreign_identity_unsupported",
+        "A `Foreign` actor declares an `identity`.",
+    ),
+    d(
+        "bynk.actor.foreign_missing_secret",
+        "A `Foreign` actor does not name the secret its calls are signed with.",
+    ),
+    d(
+        "bynk.actor.foreign_name_is_context_name",
+        "A `Foreign` actor's name could be read as a context's name.",
+    ),
+    d(
+        "bynk.actor.foreign_reserved_secret",
+        "A `Foreign` actor's secret uses a `BYNK_CALL_` edge key's name.",
+    ),
+    d(
         "bynk.actor.identity_not_sealed",
         "An actor identity type is not a context-ownable (sealed) value type.",
     ),
