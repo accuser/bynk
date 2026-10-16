@@ -126,14 +126,18 @@ fn semantic_tokens_cover_pattern_names_and_none_is_empty() {
     let path = PathBuf::from(PATH);
     let locals = result.locals.get(&path).expect("the file has locals");
     let local_tokens = bynk_ide::locals_nav::local_token_sites(locals, SRC);
-    // The uses — in the second step's `else match` and in the tail — are
-    // variable tokens. (Occurrence 0 is the definition site, which the token
-    // pass does not mark for any local today, `let` or parameter alike.)
-    for n in 1..3 {
+    // Occurrence 0 — the name in the pattern `Ok(count)` — is the definition
+    // (a declaration token); the uses, in the second step's `else match` and in
+    // the tail, are plain variable tokens.
+    for n in 0..3 {
         let at = offset_of("count", n);
+        let declaration = n == 0;
         assert!(
-            local_tokens.iter().any(|(s, _)| s.start == at),
-            "`count` occurrence {n} should be a variable token"
+            local_tokens
+                .iter()
+                .any(|(s, decl)| s.start == at && *decl == declaration),
+            "`count` occurrence {n} should be a variable token \
+             (declaration: {declaration}): {local_tokens:?}"
         );
     }
     let tokens =
