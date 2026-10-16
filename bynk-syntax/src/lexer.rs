@@ -351,8 +351,8 @@ pub enum TokenKind {
     // v0.2 match-arm arrow
     #[token("=>")]
     FatArrow,
-    // v0.2 wildcard pattern (also valid as identifier start; the lexer
-    // prefers identifier for any longer match, so `_foo` is still Ident).
+    // v0.2 wildcard pattern. An identifier must start with a letter, so
+    // `_foo` lexes as `_` then `foo`, never as one Ident.
     #[token("_")]
     Underscore,
     // v0.2 sum-type variant separator (also used as future bitwise OR);

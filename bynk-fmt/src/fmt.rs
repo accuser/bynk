@@ -984,19 +984,9 @@ impl<'a> Formatter<'a> {
             for pv in stubs {
                 f.format_stub_clause(pv);
             }
-            for stmt in &b.statements {
-                let trivia = statement_trivia(stmt);
-                f.emit_leading_comments(&trivia.leading);
-                f.format_statement(stmt);
-                f.emit_trailing_comment_or_newline(trivia.trailing.as_deref());
-            }
-            f.emit_leading_comments(&b.tail_leading_comments);
-            // See `format_block` / #981: any `()` tail is omitted, not just an
-            // implicit one.
-            if !omit_unit_tail(b) {
-                f.format_expr(&b.tail);
-                f.newline();
-            }
+            // Through `format_block_body`, so a `let … else` prints back as
+            // written (#2010).
+            f.format_block_body(b);
         });
         self.push("}");
     }
@@ -3630,12 +3620,14 @@ fn let_else_binding(s: &Statement) -> Option<(&LetStmt, bool, &LetElse)> {
 /// binding, not a pattern (`let Missing | Late = p` would re-parse as a
 /// binding named `Missing`), so a pattern whose text opens with a name not
 /// followed by `(` or `.` keeps the parentheses its author had to write.
+/// `None`, `true` and `false` are keywords, not names, so they need none.
 fn let_pattern_src(p: &Pattern) -> String {
     let src = pattern_to_string(p);
     let name_len = src
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .unwrap_or(src.len());
-    let opens_with_name = src.starts_with(|c: char| c.is_ascii_alphabetic());
+    let opens_with_name = src.starts_with(|c: char| c.is_ascii_alphabetic())
+        && !matches!(&src[..name_len], "None" | "true" | "false");
     let then = src[name_len..].chars().next();
     if opens_with_name && !matches!(then, Some('(' | '.')) {
         format!("({src})")
