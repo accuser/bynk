@@ -85,7 +85,8 @@ jobs:
       site: ${{ steps.filter.outputs.site }}
       all: ${{ steps.all.outputs.value }}
       # JSON array of OSes for the `test` matrix. PRs run Linux + Windows; every
-      # other event (push to main, merge_group, the weekly schedule) adds macOS.
+      # other event (push to main, merge_group, the weekly schedule) adds macOS,
+      # except the stamp's own commit, which runs Linux only (see the step).
       #
       # Windows is on the PR gate because the evidence said it had to be. This
       # leg was Linux-only on PRs until 2026-07-29, on the theory that cross-OS
@@ -186,11 +187,27 @@ jobs:
             echo "value=false" >> "$GITHUB_OUTPUT"
           fi
       # Decide the `test` job's OS matrix from the event: Linux + Windows on PRs,
-      # all three OSes on everything else (push/main, merge_group, schedule).
+      # all three OSes on everything else (push/main, merge_group, schedule) —
+      # except the stamp's own commit on `main`, which runs Linux only.
+      #
+      # The stamp commit changes no code: it rewrites version strings, the
+      # changelog, ADR files and the greenfield table, and stamp.yml already
+      # builds the workspace and runs the tests covering exactly those outputs
+      # (doc_version, decisions_index, xtask) before pushing. The merge commit
+      # it follows has just had the full three-OS run on identical code, so
+      # repeating macOS and Windows on the stamp bought nothing but runner time
+      # — and every increment merge paid it. The stamp commit still completes a
+      # full Linux run of its own (see the concurrency note above: every commit
+      # on `main` is validated). The message is matched from the env, never
+      # interpolated into the script.
       - id: test-os
+        env:
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo 'value=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ] && [[ "$HEAD_MESSAGE" == "chore(stamp):"* ]]; then
+            echo 'value=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
           else
             echo 'value=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
           fi
