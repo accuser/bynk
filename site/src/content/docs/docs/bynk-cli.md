@@ -105,7 +105,7 @@ bynk dev [PATH] [--context NAME]... [--base-port N] [--inspect] [--inspect-port 
 | `--context NAME` | every context | Which context to serve. **Repeatable**; omit to serve them all with their service bindings wired. Accepts the dotted name (`a.b`) or its worker-directory form (`a-b`). |
 | `--base-port N` | `8787` | First port of the per-context allocation: context *i* is served on `N + i`, in the order listed. |
 | `--inspect` | off | Serve with the V8 inspector enabled (`wrangler dev --inspector-port`) so a JavaScript debugger can attach. Breakpoints set in `.bynk` sources resolve through the emitted source maps, composed into the worker bundle. Prints an inspector URL per context on start. |
-| `--inspect-port N` | `9229` | First inspector port for `--inspect`, allocated per context exactly as `--base-port` is. |
+| `--inspect-port N` | `9229` | First inspector port, allocated per context exactly as `--base-port` is. Used under `--inspect`, and also whenever several contexts are served: wrangler always starts an inspector, so each context gets its own port rather than all racing for 9229. A range that overlaps the `--base-port` range is an error. |
 | `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler dev` verbatim (e.g. `-- --var K:V`). Ports are the driver's to allocate: passing `-- --port` or `-- --inspector-port` against an allocation is an error naming the flag that owns it. |
 
 **Behaviour**
@@ -123,6 +123,9 @@ bynk dev [PATH] [--context NAME]... [--base-port N] [--inspect] [--inspect-port 
    needed** and `wrangler.toml` is served untouched. The processes discover each
    other through wrangler's dev registry and wire the generated `[[services]]`
    bindings between themselves, so a cross-context call resolves locally.
+   When `wrangler` resolves via `npx` and several contexts are served, it is
+   installed once (`npx --yes wrangler@4 --version`) before they start, so their
+   first-run installs do not race in npm's cache.
 6. Watch the `.bynk` sources; a save rebuilds in place and the affected workers
    hot-reload. Any worker exiting stops the rest — a survivor's bindings would
    point at a context that is gone.

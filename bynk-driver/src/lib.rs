@@ -321,8 +321,11 @@ fn attributed_snapshot<'a>(
 /// Render `ae` with ariadne against its own file's `text` (shown as `label`),
 /// each secondary label against the file it lies in: a "previously declared
 /// here" in a sibling file of a multi-file unit is drawn in a snippet of that
-/// file, from `snapshots`, not at the same offsets in this one. A label whose
-/// file has no snapshot becomes a note.
+/// file, from `snapshots`, not at the same offsets in this one. A label into a
+/// first-party unit (#1956) is drawn against that unit's own source, named by
+/// its bare identity path (`bynk.bynk`) — it is not under the project root, so
+/// [`display_path`] would name a file that doesn't exist. A label whose file
+/// has no text becomes a note.
 fn print_attributed(
     ae: &project::AttributedError,
     label: &str,
@@ -336,6 +339,10 @@ fn print_attributed(
                 .iter()
                 .find(|(p, _)| p == path)
                 .map(|(_, t)| (display_path(display_root, path), t.as_str())),
+            project::LabelFile::FirstParty {
+                identity_path,
+                source,
+            } => Some(((*identity_path).to_string(), *source)),
             _ => None,
         })
         .collect();

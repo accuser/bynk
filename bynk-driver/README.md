@@ -63,7 +63,7 @@ no standalone CLI of its own.
 
 ```toml
 [dependencies]
-bynk-driver = "0.332"
+bynk-driver = "0.333"
 ```
 
 See the [API docs](https://docs.rs/bynk-driver) for the full surface.

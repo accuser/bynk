@@ -1,0 +1,13 @@
+context shop.quotes
+
+exports opaque { Box }
+
+type Amount = { cents: Int }
+
+type Box = { a: Amount }
+
+service quote {
+  on call() -> Effect[Box] {
+    Effect.pure(Box { a: Amount { cents: 1 } })
+  }
+}

@@ -36,8 +36,17 @@ pub enum LabelFile {
     Primary,
     /// Another project file, by identity path — `snapshots`' key for its text.
     Other(PathBuf),
-    /// A known file with no text to show it against: a toolchain-injected
-    /// unit. Rendered as a note, never against the primary file's text.
+    /// A toolchain-injected first-party unit (#1956): its synthetic identity
+    /// path (`bynk.bynk`) and its source text, which is not a project file and
+    /// so is never in `snapshots`. A renderer that can show it draws the label
+    /// against `source`; one that can't (the LSP, with no document to point
+    /// at) makes it a note. Never drawn against the primary file's text.
+    FirstParty {
+        identity_path: &'static str,
+        source: &'static str,
+    },
+    /// A file with no text to show it against. Rendered as a note, never
+    /// against the primary file's text.
     Unavailable,
 }
 

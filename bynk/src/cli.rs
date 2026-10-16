@@ -80,8 +80,9 @@ pub enum Command {
         /// maps, composed into the worker bundle. Prints the inspector URL on start.
         #[arg(long)]
         inspect: bool,
-        /// First inspector port for `--inspect`, allocated per context exactly
-        /// as `--base-port` is (default 9229).
+        /// First inspector port, allocated per context exactly as `--base-port`
+        /// is (default 9229). Used under `--inspect`, and also whenever several
+        /// contexts are served, so their always-on inspectors do not collide.
         #[arg(long, default_value_t = 9229)]
         inspect_port: u16,
         /// Which `bynk.deploy.lock` environment `-- --remote` reads the KV id

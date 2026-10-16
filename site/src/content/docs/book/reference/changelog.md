@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.332**.
+written against **v0.333**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,10 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.333.2** | `bynk dev` with two or more contexts now starts without `--inspect`: each context gets its own inspector port instead of all racing for 9229, and a wrangler resolved via `npx` is installed once before the contexts start |
+| **v0.333.1** | An agent handler that calls a consumed context's service (`Alias.service(…)`) or constructs another agent now works on the Workers target, reaching the Service Binding and the agent's namespace through the Durable Object's own `env`, instead of reading `deps.surface` and faulting with a `TypeError` |
+| **v0.333.0** | A field read on a value of a consumed context's type is checked — rejected for an `exports opaque` type (`bynk.context.opaque_inspection`), typed against the providing context's declaration for an unexported one, and rejected as `bynk.boundary.ambiguous_type` where two consumed contexts declare the name differently |
+| **v0.332.3** | A diagnostic's secondary label into a standard-library unit (such as `bynk.resolve.missing_field`'s "field declared here" pointing at `Request` in `bynk.bynk`) renders in a snippet of that unit's own source instead of underlining unrelated code in the user's file, and a label in another file after non-ASCII text no longer gets a wrong header or panics the renderer |
 | **v0.332.2** | `bynk deploy` provisions, records and binds a KV namespace per derived capability (`capability Sessions = Kv`, titled `shop-cart-sessions`), and plans a removed or renamed instance as an orphan; `bynk dev --remote` binds every instance. **Breaking (machine output):** in `bynk deploy --format json`, a context's `kv` is now a list of `{binding, action, namespace}` (empty, not `null`, without KV), and each `orphans.kv` entry is `{worker, binding?}` rather than a bare worker name. Ledgers and configs of projects with only the bare `Kv` are unchanged |
 | **v0.332.1** | An increment acknowledges a gated greenfield-status probe it moves in its pending file's `probes` key, and the merge-time stamp rewrites `design/greenfield-status.md`, so parallel PRs no longer conflict on the table |
 | **v0.332.0** | A derived capability, `capability Sessions = Kv`, is a distinct instance of a platform resource with its own Worker binding (`KV_SESSIONS`); `bynk deploy` does not provision instances yet |

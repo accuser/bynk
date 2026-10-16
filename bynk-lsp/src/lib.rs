@@ -4359,7 +4359,8 @@ fn make_diagnostic(
                     continue;
                 }
             },
-            bynk_ide::LabelFile::Unavailable => {
+            // A first-party unit (`bynk.bynk`) has no document to point at.
+            bynk_ide::LabelFile::FirstParty { .. } | bynk_ide::LabelFile::Unavailable => {
                 label_notes.push(msg);
                 continue;
             }
@@ -4754,10 +4755,15 @@ mod tests {
                 "msg",
             )
             .with_label(bynk_syntax::span::Span::new(0, 1), "in an injected unit")
-            .with_label(bynk_syntax::span::Span::new(0, 1), "in an unanalysed file"),
+            .with_label(bynk_syntax::span::Span::new(0, 1), "in an unanalysed file")
+            .with_label(bynk_syntax::span::Span::new(0, 1), "in no known file"),
             label_files: vec![
-                bynk_ide::LabelFile::Unavailable,
+                bynk_ide::LabelFile::FirstParty {
+                    identity_path: "bynk.bynk",
+                    source: "commons bynk\n",
+                },
                 bynk_ide::LabelFile::Other(PathBuf::from("src/missing.bynk")),
+                bynk_ide::LabelFile::Unavailable,
             ],
         };
         let diagnostic = make_diagnostic(&d, &positions, &uri, &ProjectFiles::new());
@@ -4768,7 +4774,7 @@ mod tests {
         );
         assert_eq!(
             diagnostic.message,
-            "msg\n\nnote: in an injected unit\n\nnote: in an unanalysed file"
+            "msg\n\nnote: in an injected unit\n\nnote: in an unanalysed file\n\nnote: in no known file"
         );
     }
 
