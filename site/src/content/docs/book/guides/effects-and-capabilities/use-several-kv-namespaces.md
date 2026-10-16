@@ -70,11 +70,13 @@ case "instances are separate" {
 
 ## Deploying
 
-`bynk dev` runs instances locally. `bynk deploy` and `bynk dev --remote` do not
-yet create a namespace per instance: they stop with a message naming the
-binding (tracked in #1967). Until then, create the namespaces with
-`wrangler kv namespace create` and put their ids in the generated
-`wrangler.toml` by hand.
+`bynk deploy` creates a namespace for each instance the first time, records its
+id in `bynk.deploy.lock`, and reuses it after that. Each namespace is titled
+`<worker>-<capability>`, here `shop-cart-sessions` and `shop-cart-price-cache`,
+with an environment suffix under `--env`. `bynk dev --remote` binds each
+instance to its recorded namespace. Renaming an instance creates a new namespace
+and reports the old one as an orphan: see
+[Several KV namespaces](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/#several-kv-namespaces).
 
 **See also:** [Derived capabilities](/book/reference/capabilities/#derived-capabilities-capability-x--k),
 [The Cloudflare surface](/book/reference/bynk-capabilities/#the-cloudflare-surface--bynkcloudflare).

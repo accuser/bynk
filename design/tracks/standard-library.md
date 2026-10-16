@@ -621,7 +621,7 @@ increment** (ADR 0023), and the ordering follows §13.
 | Slice | What | Needs |
 |---|---|---|
 | S4a ✅ #1966 | Derived capabilities for KV, the language and build half: `capability X = Kv` grammar, checker rules 1–4 and 6 (D3; rule 5, adapter-declared instances, comes with the first adapter that needs one), kind-prefixed binding emission (`KV_SESSIONS`) under the per-Worker uniqueness check (§11 Q2), implied provision, per-instance test doubles; bare `Kv` byte-identical where it is referenced, and its stanza gated on reference (rule 4); `bynk deploy` and `dev --remote` refuse instances until S4b | S1, D3 |
-| S4b #1967 | Derived capabilities for KV, the deploy half: ledger keyed by (environment, Worker, capability), one namespace provisioned per instance, the deploy plan shows creates and orphans; S4a's deploy guard lifted | S4a |
+| S4b ✅ #1967 | Derived capabilities for KV, the deploy half: ledger keyed by (environment, Worker, instance binding), one namespace provisioned per instance (`<worker>-<capability>`, environment-qualified), the deploy plan shows creates and orphans, `dev --remote` binds every instance; S4a's deploy guard lifted. S4 is complete | S4a |
 
 **Core (L0–L2):**
 

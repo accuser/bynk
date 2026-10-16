@@ -187,9 +187,9 @@ On Workers, each instance gets its own binding, named from the kind and the
 capability (`Sessions` → `KV_SESSIONS`, `PriceCache` → `KV_PRICE_CACHE`), with an
 `Env` member and a `[[kv_namespaces]]` stanza of its own. The bare `KV` stanza is
 emitted only for a context that uses the bare `Kv`. Under `bynkc test`, each
-instance has its own fresh in-memory double. `bynk deploy` does not yet
-provision instances: it refuses a Worker that declares one, naming the binding
-(#1967). See [Use more than one KV namespace](/book/guides/effects-and-capabilities/use-several-kv-namespaces/).
+instance has its own fresh in-memory double. `bynk deploy` provisions each
+instance's namespace and records its id, titled `<worker>-<capability>`
+([Several KV namespaces](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/#several-kv-namespaces)). See [Use more than one KV namespace](/book/guides/effects-and-capabilities/use-several-kv-namespaces/).
 
 ## Cross-context capabilities (`exports capability`)
 

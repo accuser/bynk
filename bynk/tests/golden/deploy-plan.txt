@@ -65,10 +65,13 @@ deploy api
   "contexts": [
     {
       "worker": "commerce-payment",
-      "kv": {
-        "action": "create",
-        "namespace": "commerce-payment"
-      },
+      "kv": [
+        {
+          "binding": "KV",
+          "action": "create",
+          "namespace": "commerce-payment"
+        }
+      ],
       "queues": [],
       "durable_objects": [],
       "secrets": [],
@@ -78,7 +81,7 @@ deploy api
     },
     {
       "worker": "commerce-orders",
-      "kv": null,
+      "kv": [],
       "queues": [],
       "durable_objects": [],
       "secrets": [],
@@ -105,7 +108,7 @@ deploy api
   "contexts": [
     {
       "worker": "api",
-      "kv": null,
+      "kv": [],
       "queues": [],
       "durable_objects": [],
       "secrets": [
@@ -136,7 +139,7 @@ deploy api
   "contexts": [
     {
       "worker": "api",
-      "kv": null,
+      "kv": [],
       "queues": [],
       "durable_objects": [],
       "secrets": [
@@ -182,7 +185,7 @@ deploy api
   "contexts": [
     {
       "worker": "jobs",
-      "kv": null,
+      "kv": [],
       "queues": [
         {
           "action": "create",
@@ -203,3 +206,67 @@ deploy api
     }
   ]
 }
+
+# S4b: the bare namespace and two derived instances, first deploy
+kv create shop-cart
+kv create shop-cart-price-cache (KV_PRICE_CACHE)
+kv create shop-cart-sessions (KV_SESSIONS)
+deploy shop-cart
+
+# S4b: an instance renamed, under --env staging
+orphan kv shop-cart KV_CARTS
+kv reuse shop-cart
+kv create shop-cart-price-cache-staging (KV_PRICE_CACHE)
+kv reuse shop-cart-sessions-staging (KV_SESSIONS)
+redeploy shop-cart
+
+# --format json, the same rename
+{
+  "environment": "staging",
+  "orphans": {
+    "kv": [
+      {
+        "worker": "shop-cart",
+        "binding": "KV_CARTS"
+      }
+    ],
+    "workers": [],
+    "queues": []
+  },
+  "order": [
+    "shop-cart"
+  ],
+  "contexts": [
+    {
+      "worker": "shop-cart",
+      "kv": [
+        {
+          "binding": "KV",
+          "action": "reuse",
+          "namespace": "shop-cart"
+        },
+        {
+          "binding": "KV_PRICE_CACHE",
+          "action": "create",
+          "namespace": "shop-cart-price-cache-staging"
+        },
+        {
+          "binding": "KV_SESSIONS",
+          "action": "reuse",
+          "namespace": "shop-cart-sessions-staging"
+        }
+      ],
+      "queues": [],
+      "durable_objects": [],
+      "secrets": [],
+      "secrets_complete": true,
+      "action": "redeploy",
+      "binds_to": []
+    }
+  ]
+}
+
+# S4b: a removed context's bare namespace and instance, both orphans
+orphan kv gone
+orphan kv gone KV_SESSIONS
+deploy api

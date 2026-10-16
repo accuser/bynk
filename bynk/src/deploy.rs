@@ -1,7 +1,7 @@
 //! `bynk deploy` — provision persistent Cloudflare identity, then publish.
 //!
 //! The generated `wrangler.toml` is deliberately disposable. This module owns
-//! the small, committed `bynk.deploy.lock` ledger and materialises its KV id
+//! the small, committed `bynk.deploy.lock` ledger and materialises its KV ids
 //! into a freshly compiled worker immediately before Wrangler sees it.
 //!
 //! The command mints real Cloudflare resources and writes secrets, so it is
@@ -37,7 +37,7 @@ use crate::workers;
 const LOCK_FILE: &str = "bynk.deploy.lock";
 // P7.4 (#1305): every non-test use of the placeholder now goes through
 // `bynk_emit::emitter::wrangler`'s own structural functions
-// (`materialise_kv_namespace_id`/`wrangler_needs_kv_materialisation`) —
+// (`materialise_kv_namespace_ids`/`kv_bindings_needing_ids`) —
 // this name survives only for `deploy/ledger.rs`'s own test fixtures, which
 // build a minimal `wrangler.toml` containing it.
 #[cfg(test)]
@@ -67,7 +67,7 @@ pub use plan::{DeployFormat, DeployOptions, run};
 mod tests {
     use super::*;
     use config::tests::project;
-    use ledger::tests::{lock_with_deployed, with_kv, with_queue};
+    use ledger::tests::{lock_with_deployed, with_kv, with_kv_instance, with_queue};
     use plan::tests::plan_of;
     use secrets::tests::source;
 
@@ -330,6 +330,61 @@ mod tests {
                 &DeployLock::default(),
             ),
             DeployFormat::Json,
+        ));
+
+        // S4b (#1967): derived KV instances. Each is its own namespace, titled
+        // `<worker>-<capability>`; the bare `KV` keeps its line as it was.
+        let cart = || {
+            project(vec![(
+                "shop-cart",
+                Resources::default()
+                    .needs_kv()
+                    .kv_instances(&["KV_PRICE_CACHE", "KV_SESSIONS"]),
+            )])
+        };
+        out.push_str("\n# S4b: the bare namespace and two derived instances, first deploy\n");
+        out.push_str(&plan_report(
+            &plan_of(&names(&["shop-cart"]), &cart(), &DeployLock::default()),
+            DeployFormat::Short,
+        ));
+
+        // A renamed capability (`Carts` → `PriceCache`) is a new binding: a
+        // create beside the reuse, and the old instance an orphan, never
+        // pruned without `--prune`'s confirmation. Under `--env staging` the
+        // instances' titles are qualified; the bare one's is not.
+        out.push_str("\n# S4b: an instance renamed, under --env staging\n");
+        let mut staged = DeployLock::default();
+        staged.record_deployed("staging", "shop-cart", Some(Default::default()));
+        staged.record_kv("staging", "shop-cart", "KV", "bare-id");
+        staged.record_kv("staging", "shop-cart", "KV_SESSIONS", "sessions-id");
+        staged.record_kv("staging", "shop-cart", "KV_CARTS", "carts-id");
+        let cart_order = names(&["shop-cart"]);
+        let cart_resources = cart();
+        let renamed = derive_plan(
+            &cart_order,
+            &cart_resources,
+            &staged,
+            &SecretSource::default(),
+            false,
+            "staging",
+        );
+        out.push_str(&plan_report(&renamed, DeployFormat::Short));
+
+        out.push_str("\n# --format json, the same rename\n");
+        out.push_str(&plan_report(&renamed, DeployFormat::Json));
+
+        out.push_str("\n# S4b: a removed context's bare namespace and instance, both orphans\n");
+        out.push_str(&plan_report(
+            &plan_of(
+                &names(&["api"]),
+                &project(vec![("api", Resources::default())]),
+                &with_kv_instance(
+                    with_kv(DeployLock::default(), "gone"),
+                    "gone",
+                    "KV_SESSIONS",
+                ),
+            ),
+            DeployFormat::Short,
         ));
 
         bless_or_assert("deploy-plan.txt", &out);

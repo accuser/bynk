@@ -87,37 +87,39 @@ pub(crate) fn deploy_one(
 ) -> Result<Pushed, DeployFailure> {
     let worker_dir = workers_dir.join(worker);
     let config = worker_dir.join("wrangler.toml");
-    let mut kv_id = None;
-    if declared.needs_kv {
-        let recorded = recorded_kv(lock, worker, environment).map(str::to_owned);
+    // Every KV namespace the Worker binds: the bare `KV`, then each derived
+    // instance (S4b, #1967), each its own namespace with its own ledger entry.
+    let mut kv_ids = BTreeMap::new();
+    for binding in kv_bindings(declared) {
+        let recorded = recorded_kv_binding(lock, worker, binding, environment).map(str::to_owned);
         let trust_recorded = should_trust_recorded_kv(recorded.as_deref(), live_kv_ids);
         let id = if trust_recorded {
             recorded.expect("trust_recorded is only true when recorded is Some")
         } else {
-            let id = create_kv(provenance, worker, project_root).map_err(|e| {
-                DeployFailure::driver(format!("could not create KV namespace for `{worker}`: {e}"))
-            })?;
-            lock.environments
-                .entry(environment.to_string())
-                .or_default()
-                .kv
-                .insert(worker.to_string(), KvNamespace { id: id.clone() });
+            let what = kv_namespace_noun(worker, binding);
+            let id = create_kv(
+                provenance,
+                &kv_title(worker, binding, environment),
+                project_root,
+            )
+            .map_err(|e| DeployFailure::driver(format!("could not create {what}: {e}")))?;
+            lock.record_kv(environment, worker, binding, &id);
             // Recorded before the push, so an interrupted run never makes a
             // second namespace (ADR 0180).
             write_lock(lock_path, lock).map_err(|e| {
                 DeployFailure::driver(format!(
-                    "created KV namespace for `{worker}` but could not record it in {}: {e}",
+                    "created {what} but could not record it in {}: {e}",
                     lock_path.display()
                 ))
             })?;
             id
         };
-        if !materialise_kv_id(&config, &id) {
-            return Err(DeployFailure::driver(format!(
-                "could not materialise the KV namespace id into `{worker}`'s generated configuration"
-            )));
-        }
-        kv_id = Some(id);
+        kv_ids.insert(binding.to_string(), id);
+    }
+    if !kv_ids.is_empty() && !materialise_kv_ids(&config, &kv_ids) {
+        return Err(DeployFailure::driver(format!(
+            "could not materialise the KV namespace ids into `{worker}`'s generated configuration"
+        )));
     }
     // Reconciled against the account on every run, never against the ledger:
     // the ledger's queue set is a planning aid, so trusting it to skip would
@@ -166,7 +168,7 @@ pub(crate) fn deploy_one(
             ))
         })?;
         let synthesised =
-            synthesise_environment_block(&config_text, environment, kv_id.as_deref()).map_err(
+            synthesise_environment_block(&config_text, environment, &kv_ids).map_err(
                 |e| {
                     DeployFailure::driver(format!(
                         "could not synthesise the `[env.{environment}]` configuration for `{worker}`: {e}"
@@ -255,6 +257,17 @@ pub(crate) fn whoami(provenance: &Provenance) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+/// How a message names one of `worker`'s KV namespaces: `KV namespace for
+/// `api`` for the bare one, as it always has, `KV namespace `KV_SESSIONS` for
+/// `shop-cart`` for a derived instance (S4b, #1967).
+pub(crate) fn kv_namespace_noun(worker: &str, binding: &str) -> String {
+    if is_bare_kv(binding) {
+        format!("KV namespace for `{worker}`")
+    } else {
+        format!("KV namespace `{binding}` for `{worker}`")
+    }
 }
 
 fn create_kv(provenance: &Provenance, name: &str, project_root: &Path) -> Result<String, String> {
@@ -789,7 +802,7 @@ mod tests {
     fn confirm_prune_short_circuits_on_yes_without_touching_stdin() {
         // The one path of confirm_prune testable without a terminal: --yes
         // must return true immediately, exactly as `confirm` does.
-        assert!(confirm_prune(true, &Orphans::default()));
+        assert!(confirm_prune(true, &Orphans::default(), "default"));
     }
 
     #[test]
