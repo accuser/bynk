@@ -359,7 +359,7 @@ handler's `deps` as the `CallerId` identity, so `<binder>.identity` lowers to
 `deps.identity` (replacing the `undefined` placeholder). A binder-less `on call`
 reads no `X-Bynk-Caller` header. The name is not verified. What admits the
 request at all is the deployment's call secret
-([§7.3.4d](#734d-the-call-secret-2003)), which every holder shares.
+([§7.3.4d](#734d-the-call-secret)), which every holder shares.
 
 ### §7.3.4b The cross-context boundary codec (v0.176)
 
@@ -442,7 +442,7 @@ Each Worker also emits `bynk-contracts.json` beside its `wrangler.toml`, carryin
 what the context **provides** per service and what it **expects** of each
 dependency. This is a driver artifact, not part of the wire.
 
-### §7.3.4d The call secret (#2003)
+### §7.3.4d The call secret
 
 `/_bynk/call/` and `/_bynk/event/` are paths on the Worker's single `fetch`
 entry, so they answer on every route the Worker serves, its `workers.dev`

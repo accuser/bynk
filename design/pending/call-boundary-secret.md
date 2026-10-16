@@ -13,8 +13,8 @@ the compiler writes it and every context in a deployment is one trust domain.
 That premise is false. A Worker has one `fetch` entry, which dispatches
 `/_bynk/call/` and `/_bynk/event/` on the path alone, on every route the
 Worker serves. The generated `wrangler.toml` sets neither `routes` nor
-`workers_dev`. Wrangler 4.120.0 then turns `workers.dev` on
-(`getSubdomainValues`: `const defaultWorkersDev = routes.length === 0`), so
+`workers_dev`. Wrangler then turns `workers.dev` on (4.120.0 and 4.149.0,
+`getSubdomainValues`: `const defaultWorkersDev = routes.length === 0`), so
 every deployed context has a public address. Anyone could call any `on call`
 service from the internet, claim any context as the caller, and inject events
 into any subscriber. The contract hash is no credential: it is in

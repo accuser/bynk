@@ -423,7 +423,10 @@ pub fn run(
     let mut attempted_queues = BTreeSet::new();
     // #2003: the deployment's call secret is decided over every Worker in the
     // run at once, so each one's `secret list` is asked here, before anything
-    // is pushed, and the per-context step reuses the answer.
+    // is pushed, and the per-context step reuses the answer. Asked before the
+    // KV ids are materialised and any `[env.<name>]` table is synthesised:
+    // wrangler loads that config (a placeholder id included) and addresses the
+    // same Worker either way, since the synthesised table sets no `name`.
     let listed: BTreeMap<String, Option<BTreeSet<String>>> = order
         .iter()
         .map(|worker| {
