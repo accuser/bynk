@@ -194,8 +194,12 @@ cannot arise — the compiler rejects one before emit.
 
 A `Secrets.get` call with a **computed** name cannot be planned. The compiler
 warns (`bynk.secrets.computed_name`), and the plan says so rather than
-under-reporting — `secrets incomplete <worker>`, or `secrets_complete: false` on
-the context in `--format json`. **A short `read` list with `secrets_complete:
+under-reporting. Neither can a read inside an adapter's TypeScript binding: a
+Worker that composes an adapter provider `given Secrets` is marked incomplete
+too. Literal names in `provides` bodies — including providers reached through
+`given` — are collected like those in handlers. Either way the plan says so —
+`secrets incomplete <worker>`, or `secrets_complete: false` on the context in
+`--format json`. **A short `read` list with `secrets_complete:
 false` is not a census** — see [the deploy
 guide](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/).
 

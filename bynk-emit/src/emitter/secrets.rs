@@ -18,7 +18,8 @@
 //! And `read_complete`, which is the honesty. `Secrets.get` takes an ordinary
 //! `String` expression, so a computed name is invisible to any pass: where one
 //! is seen, the context warns (`bynk.secrets.computed_name`) and this flag goes
-//! false. `declared` is a **floor, not a census** (ADR 0195 D2); `read` is a
+//! false. So does composing an adapter provider `given` `bynk`'s `Secrets`
+//! (#1976): its binding is TypeScript, and reads names no pass can see. `declared` is a **floor, not a census** (ADR 0195 D2); `read` is a
 //! census only while `read_complete` holds, and says so when it does not.
 //!
 //! Why a file rather than an API: the driver has two compile paths, and under a
@@ -96,22 +97,31 @@ pub(crate) fn declared_secrets(table: &UnitTable) -> BTreeSet<String> {
     names
 }
 
-/// The reads half of what a context knows about its own `bynk.Secrets` use —
+/// The reads half of what a Worker knows about its own `bynk.Secrets` use —
 /// `declared_secrets`'s counterpart, read from the AST rather than derived
 /// from actor bindings. The walk itself, its `bynk.secrets.computed_name`
 /// diagnostic, and the `reads_secrets_of_bynk` capability-resolution guard
-/// now live in [`bynk_check::secrets::secret_reads_of`] (P5.5) — this wrapper
-/// calls it qualified rather than duplicating it, discarding the warnings
-/// `build_output` has no use for (`run_checks` raises them, via
-/// `bynk_check::project_model::phase_secrets_computed_name`, its own caller
-/// of the same function).
+/// live in `bynk_check::secrets` (P5.5); the Worker-wide closure — handlers
+/// plus every provider the composition root builds, and the adapter-binding
+/// case no pass can see (#1976) — is [`bynk_check::secrets::worker_secret_reads`].
+/// `run_checks` raises the warnings, via
+/// `bynk_check::project_model::phase_secrets_computed_name`, per file.
 pub(crate) fn secret_reads(
-    table: &UnitTable,
-    flattened: &std::collections::HashMap<String, String>,
-) -> (SecretReads, Vec<bynk_syntax::CompileError>) {
-    bynk_check::secrets::secret_reads_of(
-        table.services.values().flat_map(|s| s.handlers.iter()),
-        flattened,
+    context: &str,
+    unit_tables: &std::collections::HashMap<String, UnitTable>,
+    unit_consumes: &std::collections::HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, String>,
+    >,
+    unit_flattened: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+) -> SecretReads {
+    bynk_check::secrets::worker_secret_reads(
+        context,
+        unit_tables,
+        unit_consumes,
+        unit_consumes_aliases,
+        unit_flattened,
     )
 }
 
