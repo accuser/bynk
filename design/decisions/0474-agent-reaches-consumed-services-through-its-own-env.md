@@ -1,11 +1,6 @@
----
-level: patch
-changelog: An agent handler that calls a consumed context's service (`Alias.service(…)`) or constructs another agent now works on the Workers target, reaching the Service Binding and the agent's namespace through the Durable Object's own `env`, instead of reading `deps.surface` and faulting with a `TypeError`
----
+# 0474 — An agent reaches consumed services and other agents through its Durable Object's own env
 
-## ADR: agent-reaches-consumed-services-through-its-own-env
-title: An agent reaches consumed services and other agents through its Durable Object's own env
-summary: Agent handlers lower for the build target and rebuild `deps.env` in the DO, as `given` deps are
+- **Status:** Accepted (v0.333.1)
 
 **Context.** An agent handler could call a consumed context's service, as
 `consumes` allows, but its body was always lowered for the bundle target: on

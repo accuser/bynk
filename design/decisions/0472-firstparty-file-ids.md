@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A diagnostic's secondary label into a standard-library unit (such as `bynk.resolve.missing_field`'s "field declared here" pointing at `Request` in `bynk.bynk`) renders in a snippet of that unit's own source instead of underlining unrelated code in the user's file, and a label in another file after non-ASCII text no longer gets a wrong header or panics the renderer
----
+# 0472 — First-party units carry reserved `FileId`s and their labels render against their own source
 
-## ADR: firstparty-file-ids
-title: First-party units carry reserved `FileId`s and their labels render against their own source
-summary: Injected `bynk.*` units stamp `FIRSTPARTY_FILE_ID_BASE + id_block` on their spans; a label into one is `LabelFile::FirstParty` and renders against the unit's source
+- **Status:** Accepted (v0.332.3)
 
 **Context.** Secondary labels are attributed to a file by the `FileId` their
 span carries (#1659), and a label whose span has no identity

@@ -1,0 +1,2 @@
+bynk.boundary.ambiguous_type cannot read field `x` of a `Box`
+# exact

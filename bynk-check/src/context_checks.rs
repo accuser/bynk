@@ -220,16 +220,9 @@ fn walk_expr_for_constraints(
                 }
             }
         }
-        // For opaque-exported types from consumed contexts, field access is
-        // forbidden — but record types have field access anyway, so the
-        // visibility check applies only when the receiver's type is a
-        // consumed type. To do this rigorously, we'd consult the
-        // expr_types map. Easy path: peek at the receiver if it's an Ident
-        // referring to a binding whose declared type points to a consumed
-        // type.
-        // For v0.4 we use a simpler conservative rule: if the receiver is
-        // `T.X` syntax (FieldAccess from an Ident that's a type name) and
-        // `T` is consumed and opaque, reject it.
+        // `T.X` on an opaquely-exported sum's type name names a variant, and
+        // a field read on a value of an opaquely-exported type reads its
+        // fields: both inspect the shape the export hides (#1948).
         ExprKind::FieldAccess { receiver, field } => {
             if let ExprKind::Ident(id) = &receiver.kind
                 && let Some(ct) = consumed.get(&id.name)
@@ -251,6 +244,20 @@ fn walk_expr_for_constraints(
                     )
                     .with_note(
                         "opaque exports hide the type's shape; the owning context did not expose variants or fields",
+                    ),
+                );
+            } else if let Some((name, ct)) = opaque_export_of(receiver, typed, consumed) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.context.opaque_inspection",
+                        field.span,
+                        format!(
+                            "cannot read field `{}` of opaquely-exported type `{name}` from outside context `{}`",
+                            field.name, ct.owning_context,
+                        ),
+                    )
+                    .with_note(
+                        "opaque exports hide the type's shape; a consumer can hold and pass the value, and call its methods, but not read its fields",
                     ),
                 );
             }
@@ -284,6 +291,22 @@ fn walk_expr_for_constraints(
     for child in expr_children(e) {
         walk_expr_for_constraints(child, typed, consumed, local, errors, tys);
     }
+}
+
+/// #1948: the opaquely-exported consumed type `e` is a value of, if any,
+/// with its export's metadata. Reads the type `e` was checked at, so a
+/// value bound from a call or a parameter is caught however it is spelled.
+fn opaque_export_of<'c>(
+    e: &Expr,
+    typed: &checker::TypedCommons,
+    consumed: &'c HashMap<String, ConsumedType>,
+) -> Option<(String, &'c ConsumedType)> {
+    let ty = typed.expr_ty(e.id)?;
+    let Ty::Named { name, .. } = &*ty else {
+        return None;
+    };
+    let ct = consumed.get(name)?;
+    (ct.visibility == Visibility::Opaque).then(|| (name.clone(), ct))
 }
 
 /// Check capability/provider/service/agent declaration bodies for a context (or
