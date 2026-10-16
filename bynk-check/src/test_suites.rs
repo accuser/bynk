@@ -2326,6 +2326,18 @@ fn history_pred_matches(body: &Expr, s: &str, decl: &Expr, mode: HistoryRestate)
         (ExprKind::UnaryOp(o1, x), ExprKind::UnaryOp(o2, y)) => {
             o1 == o2 && history_pred_matches(x, s, y, mode)
         }
+        // #2018: `x is Variant` — a transition over an enum state (`old.status is
+        // Closed implies new.status is Closed`) is written with `is`.
+        (
+            ExprKind::Is {
+                value: v1,
+                pattern: p1,
+            },
+            ExprKind::Is {
+                value: v2,
+                pattern: p2,
+            },
+        ) => history_pattern_matches(p1, p2) && history_pred_matches(v1, s, v2, mode),
         (ExprKind::BinOp(o1, l1, r1), ExprKind::BinOp(o2, l2, r2)) => {
             o1 == o2
                 && history_pred_matches(l1, s, l2, mode)
@@ -2377,6 +2389,36 @@ fn history_pred_matches(body: &Expr, s: &str, decl: &Expr, mode: HistoryRestate)
                     .iter()
                     .zip(a2)
                     .all(|(x, y)| history_pred_matches(x, s, y, mode))
+        }
+        _ => false,
+    }
+}
+
+/// #2018: span-insensitive equality of the pattern in an `is` test, for
+/// [`history_pred_matches`]. Conservative like the rest of the restate check: only
+/// a literal or a payload-free variant (same name, same optional `Type.`
+/// qualifier) is compared; any other pattern shape compares unequal.
+fn history_pattern_matches(a: &Pattern, b: &Pattern) -> bool {
+    match (a, b) {
+        (Pattern::Literal { value: x, .. }, Pattern::Literal { value: y, .. }) => x == y,
+        (
+            Pattern::Variant {
+                type_name: t1,
+                variant: v1,
+                bindings: b1,
+                ..
+            },
+            Pattern::Variant {
+                type_name: t2,
+                variant: v2,
+                bindings: b2,
+                ..
+            },
+        ) => {
+            b1.is_empty()
+                && b2.is_empty()
+                && v1.name == v2.name
+                && t1.as_ref().map(|t| &t.name) == t2.as_ref().map(|t| &t.name)
         }
         _ => false,
     }
