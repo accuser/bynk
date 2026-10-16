@@ -23,16 +23,61 @@
 /// The `npx` package spec every workerd smoke provisions.
 pub const SPEC: &str = "wrangler@4";
 
-/// #2004: the `--var` every workerd smoke passes `wrangler dev`, so its Worker
-/// holds the local call secret `bynk dev` gives it and admits internal
-/// (`/_bynk/call/`, `/_bynk/event/`) requests stamped with it.
+/// I2 (#1971): the `--var`s a workerd smoke passes `wrangler dev` so its
+/// Worker holds the local key `bynk dev` gives it for each `(caller, callee)`
+/// edge in `edges`, on both ends. A Worker holding a key for an edge it is not
+/// on is harmless, so one list can serve every Worker of a test.
 #[allow(dead_code)]
-pub fn call_secret_var() -> String {
-    format!(
-        "{}:{}",
-        bynk_emit::CALL_SECRET_BINDING,
-        bynk_emit::LOCAL_CALL_SECRET
-    )
+pub fn local_edge_vars(edges: &[(&str, &str)]) -> Vec<String> {
+    let mut vars = Vec::new();
+    for (caller, callee) in edges {
+        for key in [
+            bynk_check::wire_format::edge_key_from(caller),
+            bynk_check::wire_format::edge_key_to(callee),
+        ] {
+            let key = key.expect("a test context's name is an edge name");
+            vars.push("--var".to_string());
+            vars.push(format!("{key}:{}", bynk_emit::LOCAL_CALL_KEY));
+        }
+    }
+    vars
+}
+
+/// I2 (#1971): the headers `caller` signs a `POST` to `path` on `callee` with,
+/// under the local key, computed by Node's `crypto` from the published signing
+/// input (the smokes already need Node to run wrangler).
+#[allow(dead_code)]
+pub fn local_signed_headers(
+    caller: &str,
+    callee: &str,
+    path: &str,
+    body: &str,
+) -> Vec<(String, String)> {
+    use bynk_check::wire_format as wf;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after 1970")
+        .as_secs()
+        .to_string();
+    let script = r#"const c = require("node:crypto");
+const [key, input, body] = process.argv.slice(1);
+const digest = c.createHash("sha256").update(body, "utf8").digest("hex");
+process.stdout.write(c.createHmac("sha256", key).update(input + digest, "utf8").digest("hex"));"#;
+    // Everything but the body digest, which the script appends.
+    let input = wf::signing_input(caller, callee, "POST", path, "", "1", &timestamp, "");
+    let out = std::process::Command::new("node")
+        .args(["-e", script, bynk_emit::LOCAL_CALL_KEY, &input, body])
+        .output()
+        .expect("node runs");
+    assert!(out.status.success(), "node could not sign: {out:?}");
+    vec![
+        (wf::CALLER_HEADER.to_string(), caller.to_string()),
+        (wf::TIMESTAMP_HEADER.to_string(), timestamp),
+        (
+            wf::SIGNATURE_HEADER.to_string(),
+            String::from_utf8(out.stdout).expect("hex"),
+        ),
+    ]
 }
 
 /// A spawned `npx -y wrangler@4 dev`, stopped together with **every process

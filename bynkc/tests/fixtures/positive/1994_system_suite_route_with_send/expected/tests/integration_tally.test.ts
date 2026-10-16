@@ -44,9 +44,9 @@ function __bynkFetchSettled<T>(fetch: (exec: { waitUntil(promise: Promise<unknow
 }
 function __makeHarness() {
   const env___ns_tally: any = {};
-  env___ns_tally.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  env___ns_tally.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
   const rootEnv: any = {};
-  rootEnv.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  rootEnv.BYNK_CALL_TO_TALLY = "bynk-local-call-key";
   rootEnv.TALLY = { fetch: (req: globalThis.Request) => __bynkFetchSettled((exec) => worker___ns_tally.fetch(req, env___ns_tally, exec)) } as __ServiceBinding;
   return { env: rootEnv };
 }

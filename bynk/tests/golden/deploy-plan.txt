@@ -1,21 +1,20 @@
 # one context, first deploy
 kv create api
-secret set BYNK_CALL_SECRET (managed)
 deploy api
 
 # several contexts, first deploy
 kv create commerce-payment
-secret set BYNK_CALL_SECRET (managed)
+secret set BYNK_CALL_FROM_COMMERCE__ORDERS (managed)
 deploy commerce-payment
-secret set BYNK_CALL_SECRET (managed)
+secret set BYNK_CALL_TO_COMMERCE__PAYMENT (managed)
 deploy commerce-orders
 order commerce-payment → commerce-orders
 
 # several contexts, already live — a re-run re-pushes
 kv reuse commerce-payment
-secret set BYNK_CALL_SECRET (managed)
+secret set BYNK_CALL_FROM_COMMERCE__ORDERS (managed)
 redeploy commerce-payment
-secret set BYNK_CALL_SECRET (managed)
+secret set BYNK_CALL_TO_COMMERCE__PAYMENT (managed)
 redeploy commerce-orders
 order commerce-payment → commerce-orders
 
@@ -23,35 +22,31 @@ order commerce-payment → commerce-orders
 kv create jobs
 queue create job-intake
 durable object JobLedger (sqlite; advisory — Cloudflare reconciles it)
-secret set BYNK_CALL_SECRET (managed)
 deploy jobs
 
 # slice 1: the same context, already provisioned
 kv reuse jobs
 queue reuse job-intake
 durable object JobLedger (sqlite; advisory — Cloudflare reconciles it)
-secret set BYNK_CALL_SECRET (managed)
 redeploy jobs
 
 # slice 3: a declared auth secret, and one the user supplied
 secret set AUTH_JWT_SECRET (declared)
 secret set STRIPE_KEY (supplied)
-secret set BYNK_CALL_SECRET (managed)
 deploy api
 
 # slice 3: --force overwrites rather than setting if absent
 secret overwrite AUTH_JWT_SECRET (declared)
 secret overwrite PROBE_TOKEN (supplied)
-secret overwrite BYNK_CALL_SECRET (managed)
 redeploy api
 
 # slice 3: a supplied secret reaches every context
 kv create commerce-payment
 secret set SHARED_KEY (supplied)
-secret set BYNK_CALL_SECRET (managed)
+secret set BYNK_CALL_FROM_COMMERCE__ORDERS (managed)
 deploy commerce-payment
 secret set SHARED_KEY (supplied)
-secret set BYNK_CALL_SECRET (managed)
+secret set BYNK_CALL_TO_COMMERCE__PAYMENT (managed)
 deploy commerce-orders
 order commerce-payment → commerce-orders
 
@@ -59,7 +54,6 @@ order commerce-payment → commerce-orders
 secret set AUTH_JWT_SECRET (declared)
 secret set PROBE_TOKEN (supplied)
 secret set STRIPE_KEY (read)
-secret set BYNK_CALL_SECRET (managed)
 deploy api
 
 # --format json
@@ -88,7 +82,7 @@ deploy api
       "durable_objects": [],
       "secrets": [
         {
-          "name": "BYNK_CALL_SECRET",
+          "name": "BYNK_CALL_FROM_COMMERCE__ORDERS",
           "origin": "managed",
           "action": "set"
         }
@@ -105,7 +99,7 @@ deploy api
       "durable_objects": [],
       "secrets": [
         {
-          "name": "BYNK_CALL_SECRET",
+          "name": "BYNK_CALL_TO_COMMERCE__PAYMENT",
           "origin": "managed",
           "action": "set"
         }
@@ -141,11 +135,6 @@ deploy api
         {
           "name": "WELL_KNOWN",
           "origin": "read",
-          "action": "set"
-        },
-        {
-          "name": "BYNK_CALL_SECRET",
-          "origin": "managed",
           "action": "set"
         }
       ],
@@ -194,11 +183,6 @@ deploy api
           "name": "WH_SECRET",
           "origin": "declared",
           "action": "set"
-        },
-        {
-          "name": "BYNK_CALL_SECRET",
-          "origin": "managed",
-          "action": "set"
         }
       ],
       "secrets_complete": true,
@@ -237,13 +221,7 @@ deploy api
           "reconciled_by": "Cloudflare"
         }
       ],
-      "secrets": [
-        {
-          "name": "BYNK_CALL_SECRET",
-          "origin": "managed",
-          "action": "set"
-        }
-      ],
+      "secrets": [],
       "secrets_complete": true,
       "action": "deploy",
       "binds_to": [],
@@ -256,7 +234,6 @@ deploy api
 kv create shop-cart
 kv create shop-cart-price-cache (KV_PRICE_CACHE)
 kv create shop-cart-sessions (KV_SESSIONS)
-secret set BYNK_CALL_SECRET (managed)
 deploy shop-cart
 
 # S4b: an instance renamed, under --env staging
@@ -264,7 +241,6 @@ orphan kv shop-cart KV_CARTS
 kv reuse shop-cart
 kv create shop-cart-price-cache-staging (KV_PRICE_CACHE)
 kv reuse shop-cart-sessions-staging (KV_SESSIONS)
-secret set BYNK_CALL_SECRET (managed)
 redeploy shop-cart
 
 # --format json, the same rename
@@ -305,13 +281,7 @@ redeploy shop-cart
       ],
       "queues": [],
       "durable_objects": [],
-      "secrets": [
-        {
-          "name": "BYNK_CALL_SECRET",
-          "origin": "managed",
-          "action": "set"
-        }
-      ],
+      "secrets": [],
       "secrets_complete": true,
       "action": "redeploy",
       "binds_to": [],
@@ -323,13 +293,12 @@ redeploy shop-cart
 # S4b: a removed context's bare namespace and instance, both orphans
 orphan kv gone
 orphan kv gone KV_SESSIONS
-secret set BYNK_CALL_SECRET (managed)
 deploy api
 
 # interop I5: a foreign Worker beside a project context
-secret set BYNK_CALL_SECRET (managed)
+secret set BYNK_CALL_FROM_SHOP__CHECKOUT (managed)
 deploy shop-payment
 service SERVICE_BILLING legacy-billing (foreign Worker; not provisioned)
-secret set BYNK_CALL_SECRET (managed)
+secret set BYNK_CALL_TO_SHOP__PAYMENT (managed)
 deploy shop-checkout
 order shop-payment → shop-checkout

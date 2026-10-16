@@ -23,7 +23,7 @@ fn every_stamped_hash_matches_its_callees_constant() {
         // Capture the binding (whose worker is called), the service, and the
         // stamped hash.
         regex::Regex::new(
-            r#"callService\(deps\.env\.([A-Z0-9_]+), "([A-Za-z_][A-Za-z0-9_]*)",.*?"([0-9a-f]{16})", deps\.env\)"#,
+            r#"callService\(deps\.env\.([A-Z0-9_]+), "([A-Za-z_][A-Za-z0-9_]*)",.*?"([0-9a-f]{16})", deps\.env, "[a-z0-9_.]+"\)"#,
         )
             .unwrap();
     let expect = regex::Regex::new(
@@ -139,7 +139,7 @@ fn stamped_hash(b_body: &str, tag: &str) -> String {
         .expect("caller emitted")
         .1
         .text();
-    let h = regex::Regex::new(r#"callService\([^)]*?"([0-9a-f]{16})", deps\.env\)"#)
+    let h = regex::Regex::new(r#"callService\([^)]*?"([0-9a-f]{16})", deps\.env, "[a-z0-9_.]+"\)"#)
         .unwrap()
         .captures(&caller_text)
         .map(|c| c[1].to_string())

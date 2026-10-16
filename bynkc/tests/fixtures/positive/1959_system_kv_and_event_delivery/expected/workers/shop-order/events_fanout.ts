@@ -10,9 +10,9 @@ interface FanoutEvent {
   envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number };
 }
 
-const __eventRoutes: globalThis.Record<string, globalThis.Array<{ binding: string; service: string }>> = {
-  "Placed": [{ binding: "SHOP_AUDIT", service: "OnPlaced" }],
-  "Tallied": [{ binding: "SHOP_AUDIT", service: "OnTallied" }],
+const __eventRoutes: globalThis.Record<string, globalThis.Array<{ binding: string; context: string; service: string }>> = {
+  "Placed": [{ binding: "SHOP_AUDIT", context: "shop.audit", service: "OnPlaced" }],
+  "Tallied": [{ binding: "SHOP_AUDIT", context: "shop.audit", service: "OnTallied" }],
 };
 
 export class __EventsFanout {
@@ -30,7 +30,7 @@ export class __EventsFanout {
         const binding = this.env[sub.binding];
         if (!binding) continue;
         try {
-          await __deliverEvent(binding, sub.service, ev.payload, ev.envelope, this.env);
+          await __deliverEvent(binding, sub.service, ev.payload, ev.envelope, this.env, "shop.order", sub.context);
         } catch (e) {
           globalThis.console.error("EventsFanout delivery failed", { event: ev.type, service: sub.service, error: String(e) });
         }

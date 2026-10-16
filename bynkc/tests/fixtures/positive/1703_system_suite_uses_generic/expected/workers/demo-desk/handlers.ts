@@ -17,7 +17,7 @@ export type Pair<A, B> = __CommonsPair<A, B> & { readonly __ctxBrand?: "demo.des
 
 export const check = {
   async call(n: number, deps: { env: { DEMO_VAULT: __ServiceBinding } }): globalThis.Promise<number> {
-    const e = await __callService(deps.env.DEMO_VAULT, "open", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Envelope_Int, "demo.desk", "57700891e7302936", deps.env);
+    const e = await __callService(deps.env.DEMO_VAULT, "open", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), __deserialise_Envelope_Int, "demo.desk", "57700891e7302936", deps.env, "demo.vault");
     return e.item;
   },
 };

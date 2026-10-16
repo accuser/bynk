@@ -9,7 +9,7 @@ import type * as commerce_payment from "../commerce-payment/handlers.js";
 
 export const pay = {
   async call(id: string, deps: { env: { COMMERCE_PAYMENT: __ServiceBinding } }): globalThis.Promise<Result<Receipt, number>> {
-    return __callService(deps.env.COMMERCE_PAYMENT, "authorise", id as __JsonValue, __deserialise_Result_Receipt_Int, "commerce.checkout", "aee5199bfc118568", deps.env);
+    return __callService(deps.env.COMMERCE_PAYMENT, "authorise", id as __JsonValue, __deserialise_Result_Receipt_Int, "commerce.checkout", "aee5199bfc118568", deps.env, "commerce.payment");
   },
 };
 

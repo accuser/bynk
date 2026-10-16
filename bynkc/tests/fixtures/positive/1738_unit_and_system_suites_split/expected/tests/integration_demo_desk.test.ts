@@ -31,11 +31,14 @@ function __bynkShow(v: unknown): string {
 function __makeHarness() {
   const env___ns_demo_desk: any = {};
   const env___ns_demo_vault: any = {};
-  env___ns_demo_desk.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  env___ns_demo_desk.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
+  env___ns_demo_desk.BYNK_CALL_TO_DEMO__VAULT = "bynk-local-call-key";
   env___ns_demo_desk.DEMO_VAULT = { fetch: (req: globalThis.Request) => worker___ns_demo_vault.fetch(req, env___ns_demo_vault) } as __ServiceBinding;
-  env___ns_demo_vault.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  env___ns_demo_vault.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
+  env___ns_demo_vault.BYNK_CALL_FROM_DEMO__DESK = "bynk-local-call-key";
   const rootEnv: any = {};
-  rootEnv.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  rootEnv.BYNK_CALL_TO_DEMO__DESK = "bynk-local-call-key";
+  rootEnv.BYNK_CALL_TO_DEMO__VAULT = "bynk-local-call-key";
   rootEnv.DEMO_DESK = { fetch: (req: globalThis.Request) => worker___ns_demo_desk.fetch(req, env___ns_demo_desk) } as __ServiceBinding;
   rootEnv.DEMO_VAULT = { fetch: (req: globalThis.Request) => worker___ns_demo_vault.fetch(req, env___ns_demo_vault) } as __ServiceBinding;
   return { env: rootEnv };
@@ -44,7 +47,7 @@ function __makeHarness() {
 async function test_a_system_case_crosses_into_the_consumed_context() {
   try {
     const deps = __makeHarness();
-    const n = await __callService(deps.env.DEMO_DESK, "check", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(5), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "c4ebec6946345787", deps.env);
+    const n = await __callService(deps.env.DEMO_DESK, "check", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(5), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "c4ebec6946345787", deps.env, "demo.desk");
     if (!(n === 5)) { throw __bynkExpectFailure("tests/demo/desk_system.bynk:8:12", 247, 253, "expect n == 5\n  expected: n == 5\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((5))); }
     return { pass: true };
   } catch (e) {

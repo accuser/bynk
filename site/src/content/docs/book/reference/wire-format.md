@@ -31,11 +31,8 @@ version.
   `1`. **The callee accepts a range** (this compiler's callees accept
   `1`) and refuses any other version with the versions it accepts, so a
   version is retired after an overlap window, not on a flag day.
-- **Authentication is the exception until per-edge signatures land.** Version 1
-  fixes where authentication sits in the check order and what its refusal
-  looks like. The credential itself, today the deployment's shared call
-  secret, is replaced by a per-caller signature (the interop track's slice I2)
-  without a new wire version. See [Authentication](#authentication).
+- **The signature is part of the version:** its headers, its signing input
+  and its window. The keys are not; they belong to a deployment.
 
 What the format does **not** cover: the TypeScript the compiler emits, the
 in-memory representation of values, and the Worker's other entry points
@@ -53,9 +50,10 @@ POST /_bynk/call/<service>
 
 | Header | Required | Meaning |
 |---|---|---|
-| `X-Bynk-Call-Secret` | yes | The deployment's call secret (`BYNK_CALL_SECRET`). Compared in constant time. Its value, and this header, are replaced by a per-edge signature before non-Bynk callers are supported; see *Authentication* below. |
 | `X-Bynk-Contract` | yes | The caller's hash of the service's contract, 16 lowercase hex digits. Must equal the callee's; a missing header does not. |
-| `X-Bynk-Caller` | when the handler binds `by c: Caller` | The calling context's qualified name (`shop.orders`), which the handler reads as `c.identity`. Not authenticated beyond the call secret. |
+| `X-Bynk-Caller` | yes | The calling context's qualified name (`shop.orders`), which the handler reads as `c.identity`. Selects the key the signature is checked under, so it is proved, not claimed. |
+| `X-Bynk-Timestamp` | yes | When the caller signed the request, in whole seconds since the Unix epoch. |
+| `X-Bynk-Signature` | yes | HMAC-SHA256 of the signing input under the edge's key, 64 lowercase hex digits. See *Authentication* below. |
 | `X-Bynk-Wire` | no | The wire version the caller speaks, exactly the decimal digits of an accepted version (`1`, not `01` or `+1`). Absent means `1`. |
 | `content-type` | no | Bynk callers send `application/json`. The callee does not check it. |
 
@@ -77,12 +75,12 @@ request.
 | # | Check | Status on failure | Body on failure |
 |---|---|---|---|
 | 1 | The method is `POST`. | `405` | empty body, `Allow: POST` |
-| 2 | The call secret matches the callee's own. | `401` | text `Unauthorized` |
-| 3 | `X-Bynk-Wire` is absent or names a version the callee accepts. | `400` | `{"kind":"UnsupportedWireVersion","accepted":[1]}` |
-| 4 | The path names a service of the callee's context with an `on call` handler. | `404` | text `Not found` |
-| 5 | `X-Bynk-Contract` equals the callee's hash of that service. | `409` | `{"kind":"ContractMismatch","service":"…","expected":"…","actual":"…"}` |
-| 6 | The body parses as JSON. (A body that cannot be read at all is a `500`.) | `400` | `{"kind":"MalformedJson","details":"Invalid request body"}` |
-| 7 | `X-Bynk-Caller` is present and non-empty. Checked only when the handler binds `by c: Caller`. | `401` | `{"kind":"Unauthorized","details":"missing caller identity"}` |
+| 2 | The body is at most 1 MiB (1048576 bytes). Read under the cap, before anything is hashed. | `413` | text `Payload Too Large` |
+| 3 | `X-Bynk-Signature` verifies, under the key the callee holds for the edge from `X-Bynk-Caller`, over the signing input, and `X-Bynk-Timestamp` is within 300 seconds of the callee's clock. Compared in constant time. | `401` | text `Unauthorized` |
+| 4 | `X-Bynk-Wire` is absent or names a version the callee accepts. | `400` | `{"kind":"UnsupportedWireVersion","accepted":[1]}` |
+| 5 | The path names a service of the callee's context with an `on call` handler. | `404` | text `Not found` |
+| 6 | `X-Bynk-Contract` equals the callee's hash of that service. | `409` | `{"kind":"ContractMismatch","service":"…","expected":"…","actual":"…"}` |
+| 7 | The body parses as JSON. | `400` | `{"kind":"MalformedJson","details":"Invalid request body"}` |
 | 8 | The body decodes as the handler's parameters (see *Encoding*). | `400` | a `StructuralMismatch` or `RefinementViolation` body |
 
 If every check passes, the handler runs:
@@ -107,7 +105,6 @@ Every JSON error body is an object with a `kind`:
 | `UnsupportedWireVersion` | `400` | `accepted`: the wire versions the callee accepts |
 | `ContractMismatch` | `409` | `service`, `expected` (the callee's hash), `actual` (the header as received) |
 | `MalformedJson` | `400` | `details` |
-| `Unauthorized` | `401` | `details` |
 | `StructuralMismatch` | `400` | `path`, `expected`, `actual`: the value had the wrong shape |
 | `RefinementViolation` | `400` | `path`, `violation`: `{"field", "message", "value"}`, a value of the right shape broke a predicate |
 
@@ -304,25 +301,70 @@ built once embeds hashes, so they change only with a new wire version.
 
 ## Authentication
 
-A callee refuses a call without the deployment's call secret
-(`X-Bynk-Call-Secret`, compared with the Worker's `BYNK_CALL_SECRET`) with a
-bare `401`, before it looks at anything else. `bynk deploy` gives every Worker
-in a deployment the same secret. So, today:
+Every call is signed. The callee refuses a call whose signature does not verify
+with a bare `401`, before it looks at anything but the method and the body's
+size, so a sender without a key learns nothing: not which services exist, not
+a contract hash.
 
-- **A Worker holding the secret can claim any caller.** `X-Bynk-Caller` is not
-  authenticated beyond the secret, and the secret is shared by the whole
-  deployment, so it does not tell one context from another.
-- **Do not give the secret to code outside the deployment.** Giving a non-Bynk
-  Worker the secret, or a Service Binding to a context together with it, gives
-  that Worker every context's identity.
+**Keys.** One key per *edge*, a caller and a callee. The callee holds it as
+`BYNK_CALL_FROM_<CALLER>` and the caller as `BYNK_CALL_TO_<CALLEE>`, where
+`<CALLER>` and `<CALLEE>` are the qualified context names upper-cased with each
+dot written `__` (`shop.orders` → `BYNK_CALL_FROM_SHOP__ORDERS`, `shop.payment` →
+`BYNK_CALL_TO_SHOP__PAYMENT`). A name the key can be named from is dot-separated segments of
+lowercase letters and digits, each starting with a letter, with single
+underscores between runs. `bynk deploy` mints each key and sets it on both
+Workers; `bynk dev` uses a fixed local key.
 
-Per-edge signatures (the interop track's slice I2) replace the shared secret
-with one key per caller and callee, signing the request; foreign callers are
-supported only after that. Until then this format is published so that it can
-be reviewed and built against, not so that non-Bynk code can be granted a call
-secret.
+**Signing.** The caller sends `X-Bynk-Caller` (its qualified name),
+`X-Bynk-Timestamp` (whole seconds since the Unix epoch) and `X-Bynk-Signature`:
+HMAC-SHA256, under the edge's key, of the *signing input*, written as 64
+lowercase hex digits. The signing input is these fields, one per line,
+separated by `\n` with no trailing newline:
 
-## Not yet in version 1
+1. `BYNK-CALL-1`
+2. the caller, as sent in `X-Bynk-Caller`
+3. the callee's qualified context name
+4. the method
+5. the URL's pathname exactly as sent, with no query string and no
+   percent-normalisation
+6. `X-Bynk-Contract` as sent, empty when absent
+7. `X-Bynk-Wire` as sent, `1` when absent
+8. `X-Bynk-Timestamp` as sent
+9. the SHA-256 of the body's bytes, 64 lowercase hex digits
 
-- **A body-size limit.** The callee reads the whole body. A limit, refused with
-  `413`, is planned; adding it is an additive change.
+For example, `shop.orders` calling `authorise` on `shop.payment` with an empty
+body signs:
+
+```text
+BYNK-CALL-1
+shop.orders
+shop.payment
+POST
+/_bynk/call/authorise
+0123456789abcdef
+1
+1760000000
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+**Verifying.** The callee reads the body under its cap (1 MiB, 1048576
+bytes, else `413`), picks the key it holds for the edge from `X-Bynk-Caller`,
+and refuses (`401`) when it holds none, when `X-Bynk-Timestamp` is more than
+300 seconds from its clock either way, or when the
+signature does not match, compared in constant time. So:
+
+- **A key's holder can claim only its own name.** A caller's name is the
+  handler's `c.identity`, proved by the key, not claimed.
+- **A key binds one callee.** The callee's name is signed, so a request cannot
+  be replayed against another callee, even one that holds the same key.
+- **Every header the callee acts on is signed**, so none can be changed in
+  flight: not the contract, not the wire version.
+- **A captured call can be replayed inside the window.** The timestamp bounds
+  replay; nothing stops it within those 300 seconds. An
+  `on call` handler with side effects that must happen once should make itself
+  idempotent (the `Idempotency` capability).
+- **An undeclared caller cannot call.** Without a key on the callee there is
+  nothing to verify against, whether or not the handler reads its caller.
+
+Calls from code that is not Bynk are signed the same way under keys the callee
+declares for them; that is the interop track's slice I3.

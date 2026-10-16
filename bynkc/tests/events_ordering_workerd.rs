@@ -428,12 +428,14 @@ fn per_publisher_fifo_on_workerd() {
         let err_log = out_log.try_clone()?;
         wrangler::Wrangler::spawn(
             base_command("npx")
+                .args(["-y", WRANGLER, "dev"])
+                // I2 (#1971): the publisher signs each delivery under the key
+                // for its edge to the subscriber, as under `bynk dev`.
+                .args(wrangler::local_edge_vars(&[(
+                    "fifo.publisher",
+                    "fifo.subscriber",
+                )]))
                 .args([
-                    "-y",
-                    WRANGLER,
-                    "dev",
-                    "--var",
-                    &wrangler::call_secret_var(),
                     "--port",
                     &port.to_string(),
                     "--inspector-port",

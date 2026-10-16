@@ -28,8 +28,8 @@ use crate::emitter::wrangler::{EVENTS_FANOUT_CLASS_NAME, service_binding};
 /// from — same depth as `compose.ts` (`workers/<worker>/events_fanout.ts`).
 const EVENTS_FANOUT_RUNTIME_SPECIFIER: &str = "../../runtime.js";
 
-/// `context`: the publishing context's qualified name (used only in the
-/// header comment). `routes`: this context's own declared event type names →
+/// `context`: the publishing context's qualified name (the header comment,
+/// and I2's signing identity for every delivery). `routes`: this context's own declared event type names →
 /// their subscribers, as `(subscriber_context, subscriber_service)` pairs —
 /// already sorted (`discover_event_subscribers` sorts each `Vec`), so the
 /// generated table (and so the fan-out order for a multi-subscriber event) is
@@ -103,6 +103,7 @@ pub(crate) fn emit_events_fanout_do(
                         "globalThis.Array",
                         vec![TsType::Object(vec![
                             TsTypeMember::prop("binding", TsType::named("string")),
+                            TsTypeMember::prop("context", TsType::named("string")),
                             TsTypeMember::prop("service", TsType::named("string")),
                         ])],
                     ),
@@ -124,14 +125,16 @@ pub(crate) fn emit_events_fanout_do(
                 private: true,
             }],
             constructor: Some(events_fanout_ctor()),
-            methods: vec![events_fanout_fetch()],
+            methods: vec![events_fanout_fetch(context)],
         })),
         None,
     ));
     program
 }
 
-/// `{ "<event type>": [{ binding: "...", service: "..." }, ...], ... }` —
+/// `{ "<event type>": [{ binding: "...", context: "...", service: "..." },
+/// ...], ... }` — I2 (#1971): `context` is the subscriber's qualified name,
+/// which a delivery's signature binds it to —
 /// built from `routes` the same "loop over real data, build real nodes"
 /// pattern P7.9 already established for `Ty`/`TypeRef` conversion
 /// (`bynk-emit/src/emitter.rs`'s `ts_ty_to_ts_type`/`ts_type_ref_to_ts_type`),
@@ -152,6 +155,10 @@ fn event_routes_table(routes: &BTreeMap<String, Vec<(String, String)>>) -> TsExp
                             (
                                 "binding".to_string(),
                                 TsExpr::Lit(TsLit::Str(service_binding(sub_ctx).name)),
+                            ),
+                            (
+                                "context".to_string(),
+                                TsExpr::Lit(TsLit::Str(sub_ctx.clone())),
                             ),
                             (
                                 "service".to_string(),
@@ -201,7 +208,7 @@ fn events_fanout_ctor() -> TsClassCtor {
     }
 }
 
-fn events_fanout_fetch() -> TsClassMethod {
+fn events_fanout_fetch(context: &str) -> TsClassMethod {
     TsClassMethod {
         name: "fetch".to_string(),
         private: false,
@@ -347,13 +354,26 @@ fn events_fanout_fetch() -> TsClassMethod {
                                                             )),
                                                             property: "envelope".to_string(),
                                                         },
-                                                        // #2004: the call secret
-                                                        // the subscriber checks.
+                                                        // I2 (#1971): the key for
+                                                        // the edge to the
+                                                        // subscriber, and the
+                                                        // two names the
+                                                        // delivery is signed
+                                                        // between.
                                                         TsExpr::Member {
                                                             object: Box::new(TsExpr::Ident(
                                                                 "this".to_string(),
                                                             )),
                                                             property: "env".to_string(),
+                                                        },
+                                                        TsExpr::Lit(TsLit::Str(
+                                                            context.to_string(),
+                                                        )),
+                                                        TsExpr::Member {
+                                                            object: Box::new(TsExpr::Ident(
+                                                                "sub".to_string(),
+                                                            )),
+                                                            property: "context".to_string(),
                                                         },
                                                     ],
                                                 })),
@@ -496,7 +516,7 @@ mod tests {
         let printed = bynk_ts::print(&program, "", "", "");
         assert!(
             printed.text.contains(
-                "const __eventRoutes: globalThis.Record<string, globalThis.Array<{ binding: string; service: string }>> = {\n};\n"
+                "const __eventRoutes: globalThis.Record<string, globalThis.Array<{ binding: string; context: string; service: string }>> = {\n};\n"
             ),
             "expected the empty-table shape, got:\n{}",
             printed.text

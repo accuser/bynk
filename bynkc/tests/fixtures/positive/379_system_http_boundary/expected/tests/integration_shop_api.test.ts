@@ -28,10 +28,10 @@ function __bynkShow(v: unknown): string {
 
 function __makeHarness() {
   const env___ns_shop_api: any = {};
-  env___ns_shop_api.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  env___ns_shop_api.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
   env___ns_shop_api.CART = __makeIntegrationDoNamespace(__ns_shop_api.Cart, env___ns_shop_api);
   const rootEnv: any = {};
-  rootEnv.BYNK_CALL_SECRET = "bynk-local-call-secret";
+  rootEnv.BYNK_CALL_TO_SHOP__API = "bynk-local-call-key";
   rootEnv.SHOP_API = { fetch: (req: globalThis.Request) => worker___ns_shop_api.fetch(req, env___ns_shop_api) } as __ServiceBinding;
   return { env: rootEnv };
 }

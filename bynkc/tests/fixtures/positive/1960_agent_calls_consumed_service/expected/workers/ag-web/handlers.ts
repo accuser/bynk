@@ -108,7 +108,7 @@ export class Acc {
   async add(n: number, deps: { env: { AG_DOUBLER: __ServiceBinding; ACC: __DurableObjectNamespace; CALLS: __DurableObjectNamespace } }): globalThis.Promise<number> {
     const __state = { ...(await this.loadState()) };
     const __result = await (async () => {
-      const d = await __callService(deps.env.AG_DOUBLER, "double", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "ag.web", "ba9949c18d7d9b5a", deps.env);
+      const d = await __callService(deps.env.AG_DOUBLER, "double", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(n), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "ag.web", "ba9949c18d7d9b5a", deps.env, "ag.doubler");
       const __r0 = await (() => { __state.total = ((t) => t + d)(__state.total); return undefined; })();
       const __r1 = await __makeCalls(this.__key, deps.env).bump(deps);
       return __state.total;

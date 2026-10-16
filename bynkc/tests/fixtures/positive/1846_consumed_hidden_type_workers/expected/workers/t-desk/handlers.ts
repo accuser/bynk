@@ -19,7 +19,7 @@ export const Code = {
 
 export const probe = {
   async call(c: Code, deps: { env: { T_VAULT: __ServiceBinding } }): globalThis.Promise<Option<Code>> {
-    const t = await __callService(deps.env.T_VAULT, "fetch", {  }, __deserialise_Ticket, "t.desk", "b6c615871c2a456a", deps.env);
+    const t = await __callService(deps.env.T_VAULT, "fetch", {  }, __deserialise_Ticket, "t.desk", "b6c615871c2a456a", deps.env, "t.vault");
     return (t.label === "vault" ? Some(c) : None);
   },
 };
