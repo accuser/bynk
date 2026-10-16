@@ -1,12 +1,6 @@
----
-level: minor
-probes: diagnostic_coverage, emit_diagnostics
-changelog: The checker refuses a `~>` send in an agent handler, which checked clean and then failed `tsc` because an agent handler's `deps` has no `__exec`: a store operation such as `~> count.update(f)` is `bynk.send.store_op`, since a store write is part of the handler's atomic commit (write `do count.update(f)`), and any other send, a capability call or another agent's handler, is `bynk.send.in_agent_handler` (await it with `let _ <- …` or `do …`)
----
+# 0487 — An agent handler cannot `~>` send; a store operation is refused with its own code
 
-## ADR: no-send-in-agent-handler
-title: An agent handler cannot `~>` send; a store operation is refused with its own code
-summary: `~>` needs an execution context to keep the effect alive, and an agent handler has none, so the checker refuses it there (`bynk.send.in_agent_handler`), and refuses a sent store operation as `bynk.send.store_op`
+- **Status:** Accepted (v0.342)
 
 **Context.** A `~>` send lowers to `deps.__exec.waitUntil(…)`, and `__exec` is
 threaded only into service handlers, from the Worker's request context (ADR
