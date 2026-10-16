@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.332.3** | A diagnostic's secondary label into a standard-library unit (such as `bynk.resolve.missing_field`'s "field declared here" pointing at `Request` in `bynk.bynk`) renders in a snippet of that unit's own source instead of underlining unrelated code in the user's file, and a label in another file after non-ASCII text no longer gets a wrong header or panics the renderer |
 | **v0.332.2** | `bynk deploy` provisions, records and binds a KV namespace per derived capability (`capability Sessions = Kv`, titled `shop-cart-sessions`), and plans a removed or renamed instance as an orphan; `bynk dev --remote` binds every instance. **Breaking (machine output):** in `bynk deploy --format json`, a context's `kv` is now a list of `{binding, action, namespace}` (empty, not `null`, without KV), and each `orphans.kv` entry is `{worker, binding?}` rather than a bare worker name. Ledgers and configs of projects with only the bare `Kv` are unchanged |
 | **v0.332.1** | An increment acknowledges a gated greenfield-status probe it moves in its pending file's `probes` key, and the merge-time stamp rewrites `design/greenfield-status.md`, so parallel PRs no longer conflict on the table |
 | **v0.332.0** | A derived capability, `capability Sessions = Kv`, is a distinct instance of a platform resource with its own Worker binding (`KV_SESSIONS`); `bynk deploy` does not provision instances yet |

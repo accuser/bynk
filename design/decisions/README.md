@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0472](0472-firstparty-file-ids.md) | **First-party units carry reserved `FileId`s and their labels render against their own source** (v0.332.3) — Injected `bynk.*` units stamp `FIRSTPARTY_FILE_ID_BASE + id_block` on their spans; a label into one is `LabelFile::FirstParty` and renders against the unit's source | Accepted (v0.332.3) |
 | [0471](0471-kv-instance-ledger.md) | **The deploy ledger keys a derived KV instance by its binding** (v0.332.2) — `bynk.deploy.lock` records each derived instance's namespace under its Worker and binding (`kv_instances.<worker>.KV_SESSIONS`), titled `<worker>-<capability>` and environment-qualified; the bare `Kv`'s entry and title are untouched | Accepted (v0.332.2) |
 | [0470](0470-greenfield-probes-acknowledged-at-stamp.md) | **Gated greenfield probes are acknowledged in the pending file and rewritten by the stamp** (v0.332.1) — A PR names the gated probes it moves (`probes:`); the stamp rewrites the table's gated rows on `main` in merge order | Accepted (v0.332.1) |
 | [0469](0469-derived-capabilities.md) | **Derived capabilities name context-owned platform resources** (v0.332) — `capability X = K` declares a distinct instance of platform resource `K`, provided implicitly, owned by its context and bound as `<PREFIX>_<X>`; S4a builds the language and the build, S4b the deploy | Accepted (v0.332) |
