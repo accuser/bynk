@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **514** codes in total.
+There are **515** codes in total.
 
 ## Agents
 
@@ -213,11 +213,12 @@ There are **514** codes in total.
 | `bynk.actor.binder_shadows_param` | A `by` actor binder collides with a handler parameter of the same name. |  | — |
 | `bynk.actor.by_on_agent` | A `by` actor clause was placed on an agent `on call` handler, which has no actor. |  | — |
 | `bynk.actor.duplicate_sum_scheme` | Two peers in a multi-actor sum share an authentication scheme. |  | — |
-| `bynk.actor.foreign_duplicate_secret` | Two `Foreign` peers in a multi-actor sum name the same secret. |  | — |
+| `bynk.actor.foreign_duplicate_secret` | A `Foreign` actor's secret is also another actor's secret in the same context. |  | — |
 | `bynk.actor.foreign_identity_unsupported` | A `Foreign` actor declares an `identity`. |  | — |
 | `bynk.actor.foreign_missing_secret` | A `Foreign` actor does not name the secret its calls are signed with. |  | — |
 | `bynk.actor.foreign_name_is_context_name` | A `Foreign` actor's name could be read as a context's name. |  | — |
 | `bynk.actor.foreign_reserved_secret` | A `Foreign` actor's secret uses a `BYNK_CALL_` edge key's name. |  | — |
+| `bynk.actor.foreign_secret_not_string` | A `Foreign` actor's secret is not a string. |  | — |
 | `bynk.actor.identity_not_sealed` | An actor identity type is not a context-ownable (sealed) value type. |  | — |
 | `bynk.actor.missing_by_on_http` | An HTTP handler lacks the required `by` actor clause. |  | — |
 | `bynk.actor.oidc_identity_not_string_constructible` | An `Oidc` actor's identity is not a string-constructible type. |  | — |

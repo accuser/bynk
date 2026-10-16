@@ -1,0 +1,9 @@
+context app.main
+
+actor Legacy { auth = Foreign(secret = 42) }
+
+service ping {
+  on call(n: Int) -> Effect[Int] by Legacy {
+    n
+  }
+}

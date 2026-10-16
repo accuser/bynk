@@ -1109,7 +1109,9 @@ value type, so the verified identity is sealed — minted only inside the owning
 context (`bynk.actor.identity_not_sealed`). A **`Foreign`** actor (#1971) is a
 caller that is not Bynk, declared by the context it calls. It MUST name the
 secret its calls are signed with (`auth = Foreign(secret = "<ENV>")`,
-`bynk.actor.foreign_missing_secret`), which MUST NOT begin with an edge key's
+`bynk.actor.foreign_missing_secret`) as a string
+(`bynk.actor.foreign_secret_not_string`). No other actor in the context MAY
+name the same secret (`bynk.actor.foreign_duplicate_secret`), and it MUST NOT begin with an edge key's
 prefix, `BYNK_CALL_FROM_` or `BYNK_CALL_TO_` (`bynk.actor.foreign_reserved_secret`);
 it MAY name the foreign Worker (`worker = "<name>"`). Its name MUST NOT be one a
 context could have (`bynk.actor.foreign_name_is_context_name`): it is what the
@@ -1146,8 +1148,7 @@ MUST be admissible on the handler's protocol — HTTP admits `None`, `Bearer`,
 `Signature`, and `Oidc`; the internal protocols (call/cron/queue) admit `Internal`,
 and `call` admits `Foreign` too (`bynk.actor.scheme_not_admissible`). In a sum,
 `Foreign` peers are exempt from the one-peer-per-scheme rule, since each is told
-apart by name, but no two MAY name the same secret
-(`bynk.actor.foreign_duplicate_secret`). A `Signature` handler MUST take a `body`
+apart by name. A `Signature` handler MUST take a `body`
 parameter — the signature is computed over the request body, so a bodyless signed
 request is meaningless (`bynk.actor.signature_requires_body`). A handler that
 omits `by` inherits its protocol's default actor; an **HTTP handler has no safe

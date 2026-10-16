@@ -1,0 +1,2 @@
+bynk.actor.foreign_secret_not_string
+must name an env binding, as a string

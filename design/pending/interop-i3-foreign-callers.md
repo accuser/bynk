@@ -25,6 +25,15 @@ Bynk context in the type of its `by` binder. `CallerId` must stay `String` and
   - The optional `worker` names the foreign Worker, for the hand-off below.
   - A `Foreign` actor takes no `identity` (`bynk.actor.foreign_identity_unsupported`):
     the actor is the identity.
+  - The `secret` must be a string (`bynk.actor.foreign_secret_not_string`).
+    A malformed `Foreign` actor admits nobody: admission classifies a `by`
+    member by its scheme, never by whether its declaration was whole.
+  - A foreign secret is the context's only use of its name: no other actor in
+    the context, foreign or not, may name it (`bynk.actor.foreign_duplicate_secret`).
+    The Worker's table holds every foreign caller, so two on one secret could
+    each pass for the other wherever either is admitted, in any handler. And
+    `bynk deploy` mints a foreign secret, which would overwrite another
+    actor's.
   - It needs no new declaration form. Actors already carry schemes, secrets and
     `by` sums with a `match` on the resolved actor.
 - **The wire name is the actor's name.** A foreign caller signs exactly as a
@@ -57,8 +66,7 @@ Bynk context in the type of its `by` binder. `CallerId` must stay `String` and
     alone.
   - The body `match`es it, through the same `ActorSum` typing an HTTP sum uses.
   - `Foreign` peers are exempt from the one-peer-per-scheme rule, since each is
-    told apart by name. No two may share a secret
-    (`bynk.actor.foreign_duplicate_secret`).
+    told apart by name.
   - `caller_binder_for` no longer resolves for a sum, whose binder is the
     resolved actor, not a `CallerId`.
 - **The secret's hand-off (§11 Q4).** The compiler lists each context's foreign

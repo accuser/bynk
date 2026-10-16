@@ -39,7 +39,8 @@ A closed, compiler-known set. `auth = <Scheme>` with keyed config where noted.
 - A **`Foreign`** actor is a caller that is not Bynk, declared by the context it
   calls. Its name starts with a capital letter, so it never reads as a
   context's; it takes **no** `identity` (the actor is the identity); its
-  `secret` may not be a `BYNK_CALL_` edge key's name. `bynk deploy` mints the
+  `secret` must be a string, may not be a `BYNK_CALL_` edge key's name, and may
+  not be any other actor's secret in the context. `bynk deploy` mints the
   secret, sets it on the context, and prints the `wrangler secret put` for the
   foreign Worker's operator, naming the Worker when `worker` is given.
 
@@ -59,7 +60,7 @@ by <binder>: <A> | <B> | …      -- an ordered sum of peer actors, first-wins
   refinements are not members, and total failure is `401`. On `call`, a sum
   admits a Bynk context (`Caller`) and declared foreign callers, each told apart
   by name: `by who: Caller | Legacy | Ledger`. Several `Foreign` peers may share
-  a sum, each with its own secret.
+  a sum; each has its own secret.
 - **Refinement actors** (`<Admin> = <User> where <pred>`) add an authorisation
   invariant over a `Bearer` base: scheme failure is `401`, predicate failure is
   `403`. The predicate is a closed set — `hasClaim("n")`, `claimEquals("n","v")`,
@@ -86,8 +87,8 @@ them `missing_by_on_http`, `scheme_not_admissible`, `signature_requires_body`,
 `oidc_missing_issuer`, `oidc_missing_audience`, `oidc_missing_jwks`,
 `oidc_identity_not_string_constructible`, `oidc_not_in_sum`,
 `foreign_missing_secret`, `foreign_reserved_secret`,
-`foreign_name_is_context_name`, `foreign_identity_unsupported`, and
-`foreign_duplicate_secret`.
+`foreign_name_is_context_name`, `foreign_identity_unsupported`,
+`foreign_secret_not_string`, and `foreign_duplicate_secret`.
 
 ## Who, not whose
 

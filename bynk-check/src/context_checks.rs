@@ -1534,7 +1534,6 @@ fn check_by_clause_contracts(
     // predicate-level disjointness — that is what keeps this decidable (Q4).
     if by.is_sum() {
         let mut seen: Vec<actors::Scheme> = Vec::new();
-        let mut foreign_secrets: Vec<String> = Vec::new();
         let mut seen_catch_all = false;
         for (actor_ref, contract) in &members {
             if seen_catch_all {
@@ -1555,33 +1554,9 @@ fn check_by_clause_contracts(
                 seen_catch_all = true;
             } else if contract.scheme == actors::Scheme::Foreign {
                 // I3 (#1971): foreign peers are told apart by name, each
-                // verified under its own secret, so several can share a sum;
-                // two on one secret could not be told apart.
-                let secret = table
-                    .actors
-                    .get(&actor_ref.name)
-                    .and_then(actors::foreign_caller_of)
-                    .map(|f| f.secret);
-                if let Some(secret) = secret {
-                    if foreign_secrets.contains(&secret) {
-                        errors.push(
-                            CompileError::new(
-                                "bynk.actor.foreign_duplicate_secret",
-                                actor_ref.span,
-                                format!(
-                                    "foreign actor `{}` shares the secret `{secret}` with an earlier peer",
-                                    actor_ref.name
-                                ),
-                            )
-                            .with_note(
-                                "foreign callers are told apart by the secret their calls verify under — \
-                                 give each its own",
-                            ),
-                        );
-                    } else {
-                        foreign_secrets.push(secret);
-                    }
-                }
+                // verified under its own secret, so several can share a sum.
+                // That every foreign secret is the context's only use of its
+                // name is checked once per context (`check_actor_contracts`).
             } else if seen.contains(&contract.scheme) {
                 errors.push(
                     CompileError::new(
@@ -1685,6 +1660,14 @@ fn check_actor_contracts(
                             "bynk.actor.foreign_missing_secret",
                             auth.span,
                             "a `Foreign` actor must name the secret its calls are signed with",
+                        )
+                        .with_note("write `auth = Foreign(secret = \"<ENV_NAME>\")`"),
+                    ),
+                    Some(arg) if arg.value.as_str().is_none() => errors.push(
+                        CompileError::new(
+                            "bynk.actor.foreign_secret_not_string",
+                            arg.span,
+                            "a `Foreign` actor's secret must name an env binding, as a string",
                         )
                         .with_note("write `auth = Foreign(secret = \"<ENV_NAME>\")`"),
                     ),
@@ -1938,6 +1921,51 @@ fn check_actor_contracts(
                          minted only inside the context and unforgeable downstream",
                     ),
                 );
+            }
+        }
+    }
+
+    // I3 (#1971): a foreign caller's secret is the context's only use of that
+    // name. The Worker's table of foreign callers maps every one of them to
+    // its secret, and a caller is checked under the secret its claimed name
+    // selects, so two foreign actors on one secret could each pass for the
+    // other wherever either is admitted; and `bynk deploy` mints a foreign
+    // secret, which would overwrite another actor's. In declaration order, so
+    // the later one is reported.
+    let mut by_position: Vec<&ActorDecl> = table.actors.values().collect();
+    by_position.sort_by_key(|a| a.name.span.start);
+    let mut secret_owner: HashMap<&str, (&str, bool)> = HashMap::new();
+    for actor in by_position {
+        let Some(arg) = actor.scheme_arg("secret") else {
+            continue;
+        };
+        let Some(secret) = arg.value.as_str() else {
+            continue;
+        };
+        let foreign = actor
+            .auth
+            .as_ref()
+            .is_some_and(|au| Scheme::from_name(&au.name) == Some(Scheme::Foreign));
+        match secret_owner.get(secret) {
+            Some((other, other_foreign)) if foreign || *other_foreign => {
+                errors.push(
+                    CompileError::new(
+                        "bynk.actor.foreign_duplicate_secret",
+                        arg.span,
+                        format!(
+                            "actor `{}` uses the secret `{secret}` already named by actor `{other}`, and one of them is a foreign caller",
+                            actor.name.name
+                        ),
+                    )
+                    .with_note(
+                        "a foreign caller is told apart by the secret its calls verify under, and \
+                         `bynk deploy` mints it — give it a name no other actor uses",
+                    ),
+                );
+            }
+            Some(_) => {}
+            None => {
+                secret_owner.insert(secret, (&actor.name.name, foreign));
             }
         }
     }

@@ -418,16 +418,22 @@ pub fn call_admission_for(
     let mut members = Vec::new();
     for actor in &by.actors {
         match actors.get(&actor.name) {
-            Some(decl) => match foreign_caller_of(decl) {
-                Some(f) => {
+            // Classified by scheme, not by whether the declaration is whole:
+            // a malformed `Foreign` actor (the checker reports it) admits
+            // nobody, rather than falling through to admit contexts.
+            Some(decl)
+                if decl.auth.as_ref().and_then(|a| Scheme::from_name(&a.name))
+                    == Some(Scheme::Foreign) =>
+            {
+                if let Some(f) = foreign_caller_of(decl) {
                     admission.foreign.push(f.clone());
                     members.push(CallSumMember::Foreign(f));
                 }
-                None => {
-                    admission.contexts = true;
-                    members.push(CallSumMember::Caller);
-                }
-            },
+            }
+            Some(_) => {
+                admission.contexts = true;
+                members.push(CallSumMember::Caller);
+            }
             None => {
                 admission.contexts = true;
                 members.push(CallSumMember::Caller);

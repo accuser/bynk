@@ -227,7 +227,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.actor.foreign_duplicate_secret",
-        "Two `Foreign` peers in a multi-actor sum name the same secret.",
+        "A `Foreign` actor's secret is also another actor's secret in the same context.",
     ),
     d(
         "bynk.actor.foreign_identity_unsupported",
@@ -244,6 +244,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.actor.foreign_reserved_secret",
         "A `Foreign` actor's secret uses a `BYNK_CALL_` edge key's name.",
+    ),
+    d(
+        "bynk.actor.foreign_secret_not_string",
+        "A `Foreign` actor's secret is not a string.",
     ),
     d(
         "bynk.actor.identity_not_sealed",
