@@ -295,6 +295,16 @@ suite money {
 }
 ```
 
+A consumed adapter's capability is a seam at the `unit` tier: with no `stub`, it
+has no provider. At the `integration` tier the adapter's real binding runs, and the
+binding's own `given` capabilities take the tier's doubles, and any `stub` the case
+puts on one the target also reaches.
+
+A `suite` may target an **adapter**. The binding is the unit under test, so it runs
+at every tier. A case calls the adapter's capabilities directly
+(`let s <- Greeter.hello("ann")`), and the binding's `given` capabilities take their
+doubles and stubs as above.
+
 `unit` is the default and is **never written**. `as` also sits on the **`suite`**
 header, setting a default every `case` inherits and may override (case wins):
 

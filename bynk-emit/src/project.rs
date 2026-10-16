@@ -2388,6 +2388,25 @@ fn run_checks(
         served: &asset_served,
         bytes: asset_bytes.as_ref().unwrap_or(&no_asset_bytes),
     };
+    // #1975: a user adapter's binding module, for a test that builds the
+    // binding for real. A first-party adapter's binding reaches the platform
+    // (the network, a KV namespace), so a test keeps its double.
+    let test_binding_modules: HashMap<String, String> = adapter_bindings
+        .iter()
+        .filter(|(name, _)| {
+            let first_party = bynk_check::firstparty::BYNK_UNIT;
+            name.as_str() != first_party
+                && !name
+                    .strip_prefix(first_party)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
+        .map(|(name, b)| {
+            (
+                name.clone(),
+                emitter::ts_specifier(&b.output_path.with_extension("")),
+            )
+        })
+        .collect();
     let (test_outputs, runnable_tests) = process_tests(
         &test_groups,
         &parsed,
@@ -2403,6 +2422,7 @@ fn run_checks(
         contracts,
         &mut emitted_barrels,
         &test_asset_files,
+        &test_binding_modules,
         &mut test_errors,
         &mut refs,
         tys,
@@ -3331,9 +3351,19 @@ pub(crate) enum ProviderNamespaces<'a> {
     /// that resolves to one is that local, not a fresh construction, so a
     /// `stub` overlaid on it reaches every provider built over it (#1864
     /// review). Each one so used is recorded in `used`.
+    ///
+    /// #1975: `bindings` names, by adapter, the binding module a test module
+    /// imports as `{ns}__binding` when it builds that adapter's external
+    /// provider for real (an adapter suite, or an `integration` case); an
+    /// adapter absent from it is the placeholder. `double` answers a
+    /// capability that has a deterministic test double (`__bynkTest_<Cap>()`)
+    /// with that double, recording it, so a real binding's own `given` takes
+    /// the tier's double rather than the platform's real provider.
     Test {
         prebuilt: &'a HashMap<(String, String), String>,
         used: &'a std::cell::RefCell<BTreeSet<(String, String)>>,
+        bindings: Option<&'a HashMap<String, String>>,
+        double: &'a dyn Fn(&str, &str) -> Option<bynk_ts::TsExpr>,
     },
 }
 
@@ -3443,10 +3473,18 @@ pub(crate) fn instantiate_provider_ts_expr(
     let provider = unit_tables
         .get(provider_ctx)
         .and_then(|t| t.providers.get(cap));
-    // #1863: a test module imports no binding module, so an external
-    // provider is the same placeholder as a capability with no provider.
-    if matches!(namespaces, ProviderNamespaces::Test { .. }) && provider.is_none_or(|p| p.external)
+    // #1863: an external provider is the same placeholder as a capability
+    // with no provider, unless (#1975) the test module builds this adapter's
+    // binding for real; a capability with a test double takes the double.
+    if let ProviderNamespaces::Test {
+        bindings, double, ..
+    } = namespaces
+        && provider.is_none_or(|p| p.external)
+        && !(provider.is_some() && bindings.is_some_and(|b| b.contains_key(provider_ctx)))
     {
+        if let Some(d) = double(provider_ctx, cap) {
+            return d;
+        }
         return bynk_ts::TsExpr::As {
             expr: Box::new(bynk_ts::TsExpr::As {
                 expr: Box::new(bynk_ts::TsExpr::Ident("undefined".to_string())),
@@ -3488,7 +3526,7 @@ pub(crate) fn instantiate_provider_ts_expr(
                         .cloned()
                         .unwrap_or_else(|| provider_ctx.to_string()),
                 };
-                if let ProviderNamespaces::Test { prebuilt, used } = namespaces {
+                if let ProviderNamespaces::Test { prebuilt, used, .. } = namespaces {
                     let key = (target_ctx.clone(), g.name.clone());
                     if let Some(local) = prebuilt.get(&key) {
                         used.borrow_mut().insert(key);

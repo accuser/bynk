@@ -1,0 +1,11 @@
+context app
+
+consumes greet { Greeter }
+consumes bynk { Secrets }
+
+service welcome {
+	on call(name: String) -> Effect[String] given Greeter {
+		let s <- Greeter.hello(name)
+		s
+	}
+}
