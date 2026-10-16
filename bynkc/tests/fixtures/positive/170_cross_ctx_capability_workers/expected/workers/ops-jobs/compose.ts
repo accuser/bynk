@@ -6,7 +6,6 @@ import * as handlers from "./handlers.js";
 import * as handlers_platform_time from "../platform-time/handlers.js";
 
 export interface Env {
-  PLATFORM_TIME: __ServiceBinding;
 }
 
 export function compose(env: Env) {

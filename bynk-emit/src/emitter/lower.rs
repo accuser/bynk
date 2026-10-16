@@ -2943,7 +2943,7 @@ fn lower_cross_context_service_call(
     let mut pre = Pre::new();
     let text: Option<String> =
         if let Some((consumed, key)) = cross_context_lowering_prefix(receiver, cx) {
-            cx.note_cross_context_used();
+            cx.note_cross_context_used(&consumed);
             match cx.target() {
                 BuildTarget::Bundle => {
                     let args_lowered: Vec<String> = args

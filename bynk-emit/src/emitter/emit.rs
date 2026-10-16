@@ -3445,7 +3445,7 @@ fn build_deps_object_ty_with_surface(
                 };
                 members.push(bynk_ts::TsTypeMember::prop(
                     "env",
-                    workers_env_ty(cross_context, &agents),
+                    workers_env_ty(&cx.cross_contexts_called(), &agents),
                 ));
             }
         }
@@ -3474,32 +3474,19 @@ fn sorted_local_agents(cx: &LowerCtx<'_>) -> Vec<String> {
 
 /// Workers-mode deps.env shape: the bindings handlers reach
 /// ([`crate::emitter::wrangler::handler_bindings`], #1950) — one Service
-/// Binding per consumed context with services and one Durable Object
+/// Binding per consumed context the handler calls and one Durable Object
 /// namespace per local agent.
-fn workers_env_ty(
-    cross_context: &bynk_check::resolver::CrossContextInfo,
-    agents: &[String],
-) -> bynk_ts::TsType {
-    // #1950 (review of #1951): only a consumed context with services, the one
-    // thing a handler reaches through `env` (`lower_workers_cross_context_call`).
-    // That is never an adapter (`bynk.adapter.disallowed_item`), so the
-    // Worker's `wrangler.toml` and `Env` always declare its Service Binding.
-    // A unit consumed for capabilities or types only has nothing to call: an
-    // adapter has no Service Binding at all, whether consumed bare
-    // (`consumes bynk`) or selecting (`consumes bynk { Clock }`), and naming
-    // one here made the compose module fail `tsc --strict`.
-    let consumed: Vec<String> = cross_context
-        .consumed_contexts
-        .iter()
-        .filter(|q| {
-            cross_context
-                .consumed_services
-                .get(*q)
-                .is_some_and(|svcs| !svcs.is_empty())
-        })
-        .cloned()
-        .collect();
-    let members = crate::emitter::wrangler::handler_bindings(&consumed, agents)
+fn workers_env_ty(called: &[String], agents: &[String]) -> bynk_ts::TsType {
+    // #1961: only a consumed context this handler **calls**
+    // (`lower_workers_cross_context_call`), the one thing a handler reaches
+    // through `env`. The Worker binds exactly the contexts some body of it
+    // calls (`worker_bindings::context_bindings`), a superset of any one
+    // handler's, so `compose`'s `env` always satisfies this type. A unit
+    // consumed for capabilities, types or events only has no binding at all —
+    // an adapter is not a Worker, and a context whose services go uncalled
+    // need not be bound (binding it made an event subscriber and its
+    // publisher bind each other, which no deploy order satisfies).
+    let members = crate::emitter::wrangler::handler_bindings(called, agents)
         .into_iter()
         .map(|b| {
             let ty = crate::emitter::wrangler::binding_ts_type(&b.source);

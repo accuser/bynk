@@ -3844,9 +3844,11 @@ pub(crate) struct HandlerShared {
     /// v0.12: the receiver expression a capability call resolves against —
     /// `deps` in a handler body, `this.deps` in a composed provider body.
     cap_deps_expr: String,
-    /// True if the current handler made at least one cross-context call
-    /// (drives whether `deps` gets a `surface` field type).
-    cross_context_used: bool,
+    /// The consumed contexts the current handler calls across the boundary.
+    /// Non-empty drives whether `deps` gets a `surface` field type; in
+    /// workers mode it is also exactly the Service Bindings the handler's
+    /// `deps.env` type names (#1961).
+    cross_contexts_called: std::collections::BTreeSet<String>,
     /// v0.9.2: set when the body instantiates a local agent. In workers mode
     /// this drives `env` (carrying the DO namespaces) into the handler's deps
     /// type so the agent factory can reach its Durable Object binding.
@@ -3864,7 +3866,7 @@ impl Default for HandlerShared {
             handler_scope: None,
             owning_context: String::new(),
             cap_deps_expr: "deps".to_string(),
-            cross_context_used: false,
+            cross_contexts_called: std::collections::BTreeSet::new(),
             agents_instantiated: false,
             agent_given_caps_used: std::collections::BTreeMap::new(),
         }
@@ -4321,18 +4323,26 @@ impl<'a> LowerCtx<'a> {
         self.handler().map_or("deps", |h| h.cap_deps_expr.as_str())
     }
 
-    /// Note that this body made a cross-context call. A no-op in a body kind
-    /// that carries no deps shape to widen (a plain method, a predicate, a test
-    /// case) — those never read the flag back.
-    pub(crate) fn note_cross_context_used(&mut self) {
+    /// Note that this body called a service of `consumed`. A no-op in a body
+    /// kind that carries no deps shape to widen (a plain method, a predicate, a
+    /// test case) — those never read it back.
+    pub(crate) fn note_cross_context_used(&mut self, consumed: &str) {
         if let Some(h) = self.handler_mut() {
-            h.cross_context_used = true;
+            h.cross_contexts_called.insert(consumed.to_string());
         }
     }
 
     /// True if this handler made at least one cross-context call.
     pub(crate) fn cross_context_used(&self) -> bool {
-        self.handler().is_some_and(|h| h.cross_context_used)
+        self.handler()
+            .is_some_and(|h| !h.cross_contexts_called.is_empty())
+    }
+
+    /// The consumed contexts this handler calls, in name order (#1961).
+    pub(crate) fn cross_contexts_called(&self) -> Vec<String> {
+        self.handler()
+            .map(|h| h.cross_contexts_called.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// v0.9.2: true if this body instantiated a local agent.

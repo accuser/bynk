@@ -35,12 +35,10 @@ function __makeHarness() {
   const env___ns_shop_ledger: any = {};
   const env___ns_shop_audit: any = {};
   env___ns_shop_order.SHOP_AUDIT = { fetch: (req: globalThis.Request) => worker___ns_shop_audit.fetch(req, env___ns_shop_audit) } as __ServiceBinding;
-  env___ns_shop_order.SHOP_LEDGER = { fetch: (req: globalThis.Request) => worker___ns_shop_ledger.fetch(req, env___ns_shop_ledger) } as __ServiceBinding;
   env___ns_shop_order.TALLY = __makeIntegrationDoNamespace(__ns_shop_order.Tally, env___ns_shop_order);
   env___ns_shop_order.___EVENTS_FANOUT = __makeIntegrationDoNamespace(fanout___ns_shop_order.__EventsFanout, env___ns_shop_order);
   env___ns_shop_ledger.KV = __makeIntegrationKv();
   env___ns_shop_audit.SHOP_LEDGER = { fetch: (req: globalThis.Request) => worker___ns_shop_ledger.fetch(req, env___ns_shop_ledger) } as __ServiceBinding;
-  env___ns_shop_audit.SHOP_ORDER = { fetch: (req: globalThis.Request) => worker___ns_shop_order.fetch(req, env___ns_shop_order) } as __ServiceBinding;
   const rootEnv: any = {};
   rootEnv.SHOP_ORDER = { fetch: (req: globalThis.Request) => worker___ns_shop_order.fetch(req, env___ns_shop_order) } as __ServiceBinding;
   rootEnv.SHOP_LEDGER = { fetch: (req: globalThis.Request) => worker___ns_shop_ledger.fetch(req, env___ns_shop_ledger) } as __ServiceBinding;

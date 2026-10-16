@@ -2432,7 +2432,6 @@ fn run_checks(
             &unit_consumes_aliases,
             &unit_flattened,
             &unit_callees,
-            &adapter_bindings,
             &event_subscribers,
         )
     });
@@ -2751,10 +2750,17 @@ fn build_output(
                 // it, and the duplicate check read the same list.
                 let own_event_routes =
                     worker_bindings::own_event_routes(ctx_name, &event_subscribers);
-                let bindings = worker_bindings::context_bindings(
+                // What this context calls on each dependency (#1961): its
+                // Service Bindings, and below, its contracts manifest.
+                let called = called_cross_context_services(
                     table,
                     &consumes_targets,
-                    &adapter_bindings,
+                    unit_callees.get(ctx_name),
+                );
+                let called_contexts: Vec<String> = called.keys().cloned().collect();
+                let bindings = worker_bindings::context_bindings(
+                    table,
+                    &called_contexts,
                     &own_event_routes,
                     needs_kv,
                     ctx_uses_emit,
@@ -2900,14 +2906,6 @@ fn build_output(
                 // everything the dependency provides would refuse a deploy over a
                 // service this caller never touches — a skew its runtime check
                 // could never fire on. See `called_cross_context_services`.
-                let called = called_cross_context_services(
-                    table,
-                    unit_consumes
-                        .get(ctx_name)
-                        .map(Vec::as_slice)
-                        .unwrap_or(&[]),
-                    unit_callees.get(ctx_name),
-                );
                 let mut expects: std::collections::BTreeMap<
                     String,
                     std::collections::BTreeMap<String, String>,

@@ -31,7 +31,6 @@ function __bynkShow(v: unknown): string {
 function __makeHarness() {
   const env___ns_ops_jobs: any = {};
   const env___ns_platform_time: any = {};
-  env___ns_ops_jobs.PLATFORM_TIME = { fetch: (req: globalThis.Request) => worker___ns_platform_time.fetch(req, env___ns_platform_time) } as __ServiceBinding;
   const rootEnv: any = {};
   rootEnv.OPS_JOBS = { fetch: (req: globalThis.Request) => worker___ns_ops_jobs.fetch(req, env___ns_ops_jobs) } as __ServiceBinding;
   rootEnv.PLATFORM_TIME = { fetch: (req: globalThis.Request) => worker___ns_platform_time.fetch(req, env___ns_platform_time) } as __ServiceBinding;

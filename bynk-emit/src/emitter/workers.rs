@@ -2320,6 +2320,28 @@ service pay {
         assert!(ts.contains("const deps = { env };"), "{ts}");
     }
 
+    /// #1961: a context consumed only for its types is not called, so it gets
+    /// no Service Binding and its handlers' `env` does not name one.
+    #[test]
+    fn a_consumed_context_that_is_never_called_is_not_bound() {
+        let ledger = "context demo.ledger
+
+consumes demo.payment
+
+service keep {
+  on call(r: Receipt) -> Effect[Int] {
+    Effect.pure(1)
+  }
+}
+";
+        let out = emit_workers(&[("demo/payment.bynk", PAYMENT), ("demo/ledger.bynk", ledger)]);
+        let ts = out.text("workers/demo-ledger/compose.ts");
+        assert!(!ts.contains("DEMO_PAYMENT"), "{ts}");
+        assert!(ts.contains("export interface Env {\n}"), "{ts}");
+        let toml = out.text("workers/demo-ledger/wrangler.toml");
+        assert!(!toml.contains("[[services]]"), "{toml}");
+    }
+
     /// #1944: `Env` declares exactly the bindings `wrangler.toml` does, in
     /// the same order: services, the KV namespace, then the Durable Objects
     /// by class name, the events fan-out (`__EventsFanout`) after an agent.
@@ -2346,6 +2368,7 @@ agent Ledger {
 service ping {
   on call(id: String) -> Effect[()] given Events, Kv {
     let _ <- Kv.put(id, id)
+    let _ <- demo.payment.authorise(id)
     Events.emit[Pinged](Pinged { id: id })
   }
 }
