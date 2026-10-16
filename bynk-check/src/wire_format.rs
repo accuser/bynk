@@ -193,7 +193,7 @@ pub const HEADERS: &[Header] = &[
     Header {
         name: WIRE_HEADER,
         required: "no",
-        meaning: "The wire version the caller speaks, as a decimal integer. Absent means `1`.",
+        meaning: "The wire version the caller speaks, exactly the decimal digits of an accepted version (`1`, not `01` or `+1`). Absent means `1`.",
     },
     Header {
         name: "content-type",

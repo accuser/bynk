@@ -54,7 +54,7 @@ POST /_bynk/call/<service>
 | `X-Bynk-Caller` | yes | The calling context's qualified name (`shop.orders`), which the handler reads as `c.identity`. Selects the key the signature is checked under, so it is proved, not claimed. |
 | `X-Bynk-Timestamp` | yes | When the caller signed the request, in whole seconds since the Unix epoch. |
 | `X-Bynk-Signature` | yes | HMAC-SHA256 of the signing input under the edge's key, 64 lowercase hex digits. See *Authentication* below. |
-| `X-Bynk-Wire` | no | The wire version the caller speaks, as a decimal integer. Absent means `1`. |
+| `X-Bynk-Wire` | no | The wire version the caller speaks, exactly the decimal digits of an accepted version (`1`, not `01` or `+1`). Absent means `1`. |
 | `content-type` | no | Bynk callers send `application/json`. The callee does not check it. |
 
 **Body.** JSON, encoding the handler's parameters:
