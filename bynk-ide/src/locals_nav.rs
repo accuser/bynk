@@ -13,6 +13,14 @@ use bynk_check::locals::{LocalBinding, LocalKind, binding_at_def, locals_at};
 use bynk_syntax::lexer::{self, TokenKind};
 use bynk_syntax::span::Span;
 
+/// Whether two spans cover the same byte range. Lexer tokens carry
+/// `FileId::UNKNOWN` while the checker's `def_span`s carry the analysed file's
+/// id, so whole-`Span` equality never holds between them; compare offsets, as
+/// the rest of bynk-ide does for lexer spans.
+fn same_range(a: Span, b: Span) -> bool {
+    a.start == b.start && a.end == b.end
+}
+
 /// The identifier-token name covering `offset`, if any. Interpolation holes are
 /// expanded (issue #473), so a cursor inside `"… \(name) …"` resolves to the
 /// hole's `name` identifier rather than the opaque `InterpStr` token.
@@ -62,11 +70,11 @@ pub fn local_sites_at(locals: &[LocalBinding], text: &str, offset: usize) -> Opt
         if t.kind != TokenKind::Ident || text[t.span.start..t.span.end] != target.name {
             continue;
         }
-        if t.span == target.def_span {
+        if same_range(t.span, target.def_span) {
             continue; // the definition, already added
         }
         // A binding's own def token is not a use of anything.
-        if locals.iter().any(|b| b.def_span == t.span) {
+        if locals.iter().any(|b| same_range(b.def_span, t.span)) {
             continue;
         }
         // Finding #63: a field-access member name (`r.total`) is not a use of
@@ -123,7 +131,7 @@ pub fn local_token_sites(locals: &[LocalBinding], text: &str) -> Vec<(Span, bool
             continue;
         }
         let name = &text[t.span.start..t.span.end];
-        if locals.iter().any(|b| b.def_span == t.span) {
+        if locals.iter().any(|b| same_range(b.def_span, t.span)) {
             out.push((t.span, true)); // a binding's def
         } else if !is_dot_preceded(text, t.span.start)
             && locals_at(locals, t.span.start)
@@ -338,30 +346,39 @@ fn greet(name: String) -> String {
 
     /// `(text, locals)` for `demo/text.bynk` after a real project analysis.
     fn analyse_hole_fixture(test_name: &str) -> (String, Vec<LocalBinding>) {
-        let root = std::env::temp_dir().join(format!(
-            "bynk-locals-hole-{test_name}-{}",
-            std::process::id()
-        ));
+        analyse_source(&format!("hole-{test_name}"), "demo/text.bynk", HOLE_SRC)
+    }
+
+    /// `(text, locals)` for `src` written at `rel` (e.g. `demo/text.bynk`) in a
+    /// fresh temp project, after a real `diagnose_project` analysis — so the
+    /// locals carry the checker's real file id, not `FileId::UNKNOWN`.
+    fn analyse_source(tag: &str, rel: &str, src: &str) -> (String, Vec<LocalBinding>) {
+        let root = std::env::temp_dir().join(format!("bynk-locals-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let file = root.join("demo/text.bynk");
+        let file = root.join(rel);
         std::fs::create_dir_all(file.parent().unwrap()).expect("create dirs");
-        std::fs::write(&file, HOLE_SRC).expect("write fixture");
+        std::fs::write(&file, src).expect("write fixture");
         let root = root.canonicalize().unwrap_or(root);
 
+        let name = std::path::Path::new(rel)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         let r = crate::testkit::diagnose_project(&root);
         let text = r
             .files
             .iter()
-            .find(|f| f.source_path.to_string_lossy().ends_with("text.bynk"))
-            .expect("text.bynk analysed")
+            .find(|f| f.source_path.to_string_lossy().ends_with(&name))
+            .expect("fixture analysed")
             .text
             .clone();
         let locals = r
             .locals
             .iter()
-            .find(|(p, _)| p.to_string_lossy().ends_with("text.bynk"))
+            .find(|(p, _)| p.to_string_lossy().ends_with(&name))
             .map(|(_, l)| l.clone())
-            .expect("text.bynk locals");
+            .expect("fixture locals");
         (text, locals)
     }
 
@@ -401,5 +418,68 @@ fn greet(name: String) -> String {
             sites.iter().any(|s| s.start <= in_hole && in_hole < s.end),
             "references include the in-hole use at {in_hole}; got {sites:?}"
         );
+    }
+
+    // A `let` binding and a parameter, each defined once and used once.
+    const STEPS_SRC: &str =
+        "commons demo.steps\n\nfn total(r: Int) -> Int {\n  let plain = r\n  plain\n}\n";
+
+    /// Definition tokens must survive real checker output: the lexer's spans
+    /// carry `FileId::UNKNOWN`, the checker's `def_span`s the file's real id,
+    /// so a whole-`Span` comparison dropped every definition token.
+    #[test]
+    fn token_sites_include_real_definitions_from_diagnose_project() {
+        let (text, locals) = analyse_source("tokens", "demo/steps.bynk", STEPS_SRC);
+        let sites = local_token_sites(&locals, &text);
+        let at = |needle: &str, n: usize| {
+            let start = nth_offset(&text, needle, n);
+            Span::new(start, start + needle.len())
+        };
+        let has = |span: Span, decl: bool| {
+            sites
+                .iter()
+                .any(|(s, d)| same_range(*s, span) && *d == decl)
+        };
+
+        let r_param = text.find("r: Int").unwrap();
+        assert!(
+            has(Span::new(r_param, r_param + 1), true),
+            "param `r` def is a declaration token: {sites:?}"
+        );
+        assert!(
+            has(at("plain", 0), true),
+            "`let plain` def is a declaration token: {sites:?}"
+        );
+        // Uses are still reported, as uses.
+        assert!(has(at("plain", 1), false), "`plain` use: {sites:?}");
+        let r_use = text.find("= r").unwrap() + 2;
+        assert!(
+            has(Span::new(r_use, r_use + 1), false),
+            "`r` use: {sites:?}"
+        );
+        // Every token is reported once — a def is never also a use.
+        assert_eq!(sites.len(), 4, "two defs + two uses: {sites:?}");
+    }
+
+    /// References/rename over real checker output: an inner `let x` that
+    /// shadows an outer one is its own binding's definition, not a use of the
+    /// outer `x` — and the outer definition is listed exactly once.
+    #[test]
+    fn sites_exclude_a_shadowing_definition_from_diagnose_project() {
+        const SRC: &str =
+            "commons demo.shadow\n\nfn f(r: Int) -> Int {\n  let x = r\n  let x = x + 1\n  x\n}\n";
+        let (text, locals) = analyse_source("shadow", "demo/shadow.bynk", SRC);
+        let outer = nth_offset(&text, "x", 0);
+        let inner = nth_offset(&text, "x", 1);
+        let outer_use = nth_offset(&text, "x", 2);
+
+        let sites = local_sites_at(&locals, &text, outer).expect("on the outer x");
+        let starts: Vec<usize> = sites.iter().map(|s| s.start).collect();
+        assert_eq!(
+            starts,
+            vec![outer, outer_use],
+            "outer def once, then its one use; never the inner def: {sites:?}"
+        );
+        assert!(!starts.contains(&inner));
     }
 }
