@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.331**.
+written against **v0.332**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.332.0** | A derived capability, `capability Sessions = Kv`, is a distinct instance of a platform resource with its own Worker binding (`KV_SESSIONS`); `bynk deploy` does not provision instances yet |
 | **v0.331.0** | Standard-library items are stable or experimental, with an `[unstable] allow` opt-in in `bynk.toml`; a `match` on the extensible `FetchError` or `Method` needs a wildcard |
 | **v0.330.16** | A `system`-tier suite stands up every subscriber to a participant's events and gives each participant its own in-memory `Kv` namespace per case, so an emitted event is delivered and a `Kv` call works instead of faulting |
 | **v0.330.15** | Every place the compiler reads a Worker binding by name now gets the name from the binding's constructor, and a test pins `bynk.cloudflare`'s `env.KV` read to `KV_BINDING_NAME` |

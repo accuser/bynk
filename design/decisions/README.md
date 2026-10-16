@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0469](0469-derived-capabilities.md) | **Derived capabilities name context-owned platform resources** (v0.332) — `capability X = K` declares a distinct instance of platform resource `K`, provided implicitly, owned by its context and bound as `<PREFIX>_<X>`; S4a builds the language and the build, S4b the deploy | Accepted (v0.332) |
 | [0468](0468-stdlib-stability-tiers.md) | **The standard library's 1.0 stability tiers, the `[unstable]` opt-in, and extensible enums** (v0.331) — Stable kernel and commons are Foundations-level, stable capabilities only grow, experimental items need `[unstable] allow`, and an extensible enum gains variants only because its `match`es carry a wildcard | Accepted (v0.331) |
 | [0467](0467-system-harness-binds-the-worker-bindings.md) | **A system suite's harness binds each participant's own Worker bindings** (v0.330.16) — Each participant's env is built from its binding list, with its own in-memory KV namespace; subscribers are stood up as participants | Accepted (v0.330.16) |
 | [0466](0466-handler-env-projects-the-binding-list.md) | **A handler's deps.env is a projection of the Worker's binding list** (v0.330.14) — deps.env takes its bindings from the constructors worker_bindings uses, filtered by kind; amends ADR 0464's separate-deps.env note | Accepted (v0.330.14) |

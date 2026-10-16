@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A derived capability, `capability Sessions = Kv`, is a distinct instance of a platform resource with its own Worker binding (`KV_SESSIONS`); `bynk deploy` does not provision instances yet
----
+# 0469 — Derived capabilities name context-owned platform resources
 
-## ADR: derived-capabilities
-title: Derived capabilities name context-owned platform resources
-summary: `capability X = K` declares a distinct instance of platform resource `K`, provided implicitly, owned by its context and bound as `<PREFIX>_<X>`; S4a builds the language and the build, S4b the deploy
+- **Status:** Accepted (v0.332)
 
 **Context.** A Worker can bind any number of KV namespaces, D1 databases, R2 buckets and queues, but
 Bynk offered one of each kind: `consumes bynk.cloudflare { Kv }` gave a context exactly one namespace,
