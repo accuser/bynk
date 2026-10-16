@@ -1,0 +1,6 @@
+commons demo
+
+fn f(r: Int) -> Int {
+  let n = r else { 0 }
+  n
+}

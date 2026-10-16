@@ -1,0 +1,56 @@
+commons demo.steps
+
+type Problem = enum { Missing, Broken, Late }
+
+type Shape = | Circle(r: Int) | Square(side: Int)
+
+fn total(r: Result[Int, Problem], o: Option[Int]) -> Int {
+  let Ok(count) = r else { 0 }
+  let Some(extra) = o else match {
+    None => count,
+  }
+  count + extra
+}
+
+fn residual(r: Result[Int, Problem]) -> Int {
+  let Ok(n) = r else match {
+    Err(Missing) => 0,
+    Err(e) if e == Broken => 1,
+    Err(_) => 2,
+  }
+  n
+}
+
+fn literal(n: Int) -> String {
+  let 0 = n else { "nonzero" }
+  "zero"
+}
+
+fn transient(p: Problem) -> Bool {
+  let (Missing | Late) = p else { false }
+  true
+}
+
+fn late(p: Problem) -> Bool {
+  let Problem.Late = p else { false }
+  true
+}
+
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) => r * r * 3,
+    Square(side) => {
+      let Some(doubled) = Some(side * 2) else { 0 }
+      doubled * doubled / 4
+    },
+  }
+}
+
+fn effectful(o: Option[Int]) -> Effect[Int] {
+  let Some(n) <- Effect.pure(o) else { 0 }
+  n
+}
+
+fn finish(o: Option[Int]) -> Effect[()] {
+  let Some(n) <- Effect.pure(o) else { () }
+}

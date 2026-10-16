@@ -1,0 +1,11 @@
+commons demo
+
+type Problem = enum { Missing, Broken }
+
+fn f(r: Result[Int, Problem]) -> Int {
+  let Ok(n) = r else match {
+    Err(_) => 0,
+    Err(Broken) => 1,
+  }
+  n
+}

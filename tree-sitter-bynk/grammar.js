@@ -1239,6 +1239,7 @@ module.exports = grammar({
       choice(
         $.let_stmt,
         $.effect_let_stmt,
+        $.let_else_stmt,
         $.effect_send_stmt,
         $.do_stmt,
         $.assign_stmt,
@@ -1266,6 +1267,52 @@ module.exports = grammar({
         // binder, and there is no actor sum.
         optional(field("principal", $.call_site_actor)),
       ),
+    // #2010: `let <pattern> (= | <-) <value> else <block>` or
+    // `… else match { <arms> }`. The `else` is the value of the rest of the
+    // enclosing block when the pattern does not match. The Rust parser reads a
+    // bare name after `let` as a binding, never a pattern; this grammar is more
+    // lenient (a bare-name `variant_pattern` is admitted) because the compiler,
+    // not the highlighter, reports `bynk.parse.let_else_on_binding`.
+    let_else_stmt: ($) =>
+      seq(
+        "let",
+        field("pattern", choice($._let_pattern, alias($._let_or_pattern, $.or_pattern))),
+        field("bind", choice("=", "<-")),
+        field("value", $._expression),
+        optional(field("principal", $.call_site_actor)),
+        "else",
+        field("else", choice($.block, $.let_else_match)),
+      ),
+    // #2010: the patterns that may open a `let … else`, mirroring the Rust
+    // parser's `let_pattern_ahead`: a literal, a parenthesised pattern, or a
+    // variant with a payload or a qualifier. A bare name stays a binding (and
+    // a bare `_` a discard), so `let x = …` is never ambiguous here.
+    _let_pattern: ($) =>
+      choice(
+        $.literal_pattern,
+        $.paren_pattern,
+        alias($._let_variant_pattern, $.variant_pattern),
+      ),
+    // `let Ok(x) | Err(x) = …`: an or-chain whose first alternative opens a
+    // pattern; the rest are any patterns.
+    _let_or_pattern: ($) => prec.left(1, seq($._let_pattern, "|", $._pattern)),
+    _let_variant_pattern: ($) => {
+      const payload = seq("(", optional(sep1($._pattern_binding, ",")), optional(","), ")");
+      return prec.right(
+        choice(
+          seq(
+            field("type", $.identifier),
+            ".",
+            field("variant", $.identifier),
+            optional(payload),
+          ),
+          seq(field("variant", $.identifier), payload),
+        ),
+      );
+    },
+    // #2010: the `else match { <arms> }` form, whose arms cover the values the
+    // `let` pattern does not.
+    let_else_match: ($) => seq("match", "{", repeat($.match_arm), "}"),
     // v0.182 (#664): `by <Actor>` (unit identity) or `by <Actor>(<identity>)`.
     // `prec.right` so an immediately-following `(` is taken as the identity
     // argument rather than starting a fresh token sequence.
@@ -1373,12 +1420,17 @@ module.exports = grammar({
 
     // v0.146 (ADR 0170): `else` is optional. A missing `else` defaults to a
     // unit branch (legal only for a unit then-branch, enforced by the checker).
+    // #2010: `prec.right` settles the dangling `else` in
+    // `let P = if c { … } else …` the way the Rust parser does: the `if`
+    // takes the `else`. (No other rule could follow an `if` with `else`.)
     if_expr: ($) =>
-      seq(
-        "if",
-        field("cond", $._expression),
-        field("then", $.block),
-        optional(seq("else", field("else", choice($.if_expr, $.block)))),
+      prec.right(
+        seq(
+          "if",
+          field("cond", $._expression),
+          field("then", $.block),
+          optional(seq("else", field("else", choice($.if_expr, $.block)))),
+        ),
       ),
 
     match_expr: ($) =>

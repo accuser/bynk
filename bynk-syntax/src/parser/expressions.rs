@@ -1286,7 +1286,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_match_arm(&mut self) -> Result<MatchArm, CompileError> {
+    pub(crate) fn parse_match_arm(&mut self) -> Result<MatchArm, CompileError> {
         // #472: a match arm's pattern is a top-level position — a trailing
         // `where` is admitted here, but not on a nested payload pattern.
         let pattern = self.parse_pattern_top()?;
@@ -1345,7 +1345,7 @@ impl<'a> Parser<'a> {
     /// would admit exactly that unparseable shape — a real grammar/parser
     /// conformance gap caught while resolving this merge (#827/#472 met
     /// #474 for the first time here).
-    fn parse_pattern_top(&mut self) -> Result<Pattern, CompileError> {
+    pub(crate) fn parse_pattern_top(&mut self) -> Result<Pattern, CompileError> {
         self.enter_recursion("this pattern")?;
         let result = self
             .parse_pattern_or()

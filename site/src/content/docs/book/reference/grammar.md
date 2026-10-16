@@ -1669,8 +1669,8 @@ the block's value.
 
 {{#grammar _statement}}
 
-A statement: a `let`, an effectful `let`, a `:=` store write, an async send, or
-an assertion.
+A statement: a `let`, an effectful `let`, a `let … else`, a `:=` store write, an
+async send, or an assertion.
 
 ### let_stmt {#rule-let_stmt}
 
@@ -1703,6 +1703,52 @@ a unit-identity actor. It trails an effect-let's value, or sits between a fault
 claim's call and `faults` ([`faults_expr`](#rule-faults_expr), #1812). Distinct
 from [`by_clause`](#rule-by_clause), the handler
 form, which binds an actor and admits a sum but carries no identity argument.
+
+### let_else_stmt {#rule-let_else_stmt}
+
+{{#grammar let_else_stmt}}
+
+Matches a value against a pattern, binding its names for the rest of the block,
+with a fallback for the values it does not match: `let Ok(x) = r else { … }`, or
+`let Ok(x) <- effect else { … }` for an effect's result (#2010). The `else` is
+what the enclosing block produces instead of its remaining statements, so it has
+that block's type. It is a [`block`](#rule-block) or a
+[`let_else_match`](#rule-let_else_match).
+
+**Static semantics.**
+{{#grammar-semantics let_else_stmt}}
+
+### let_else_match {#rule-let_else_match}
+
+{{#grammar let_else_match}}
+
+The `else match { arms }` form of a `let … else`: [`match_arm`](#rule-match_arm)s
+over the values the `let` pattern does not cover, so an arm can bind them
+(`Err(why) => …`).
+
+### let_pattern {#rule-_let_pattern}
+
+{{#grammar _let_pattern}}
+
+The patterns that may follow `let` in a `let … else`: a literal, a parenthesised
+pattern, or a variant written with a payload or a qualifier. A bare name after
+`let` is always a binding, so a nullary variant is written `Status.Done` or
+`(Done)`.
+
+### let_variant_pattern {#rule-_let_variant_pattern}
+
+{{#grammar _let_variant_pattern}}
+
+A [`variant_pattern`](#rule-variant_pattern) that cannot be mistaken for a
+binding name: qualified (`Status.Done`, `Status.Shipped(at)`) or with a payload
+(`Ok(x)`, `Shipped(at)`).
+
+### let_or_pattern {#rule-_let_or_pattern}
+
+{{#grammar _let_or_pattern}}
+
+An [`or_pattern`](#rule-or_pattern) after `let`, whose first alternative opens as
+a [`let_pattern`](#rule-_let_pattern): `let Ok(x) | Err(x) = r else { … }`.
 
 ### effect_send_stmt {#rule-effect_send_stmt}
 

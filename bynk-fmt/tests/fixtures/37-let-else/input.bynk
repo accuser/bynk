@@ -1,0 +1,47 @@
+commons demo.steps
+
+type Problem = enum { Missing, Broken, Late }
+
+-- A chain of steps, each with its own failure handling.
+fn total(r: Result[Int, Problem], o: Option[Int], s: Option[Int]) -> Int {
+  let   Ok(count)   =   r    else   {   0   }
+  -- Before the second step.
+  let Some(extra) = o else match {
+      None => count,
+  }   -- After the second step.
+  let   base = count + extra
+  let Some(scale) = s else {
+  let fallback = base * 2
+  fallback
+  }
+  -- Before the tail.
+  base * scale
+}
+
+fn residual(r: Result[Int, Problem]) -> Int {
+  let Ok(n) = r else match { Err(Missing) => 0, Err(Broken) => 1, Err(Late) => { let late = 2
+  late } }
+  n
+}
+
+fn last(o: Option[Int]) -> Effect[()] {
+  let Some(n) <- Effect.pure(o) else { Effect.pure(()) }
+}
+
+fn qualified(p: Problem) -> Int {
+  let Problem.Late = p else { 0 }
+  1
+}
+
+fn grouped(p: Problem) -> Bool {
+  let (Missing | Late) = p else { false }
+  let (  Missing|Late  ) = p else { false }
+  true
+}
+
+fn keywords(o: Option[Int], b: Bool) -> Int {
+  let None = o else { 1 }
+  let true = b   else { 2 }
+  let None | Some(0) = o else { 3 }
+  0
+}

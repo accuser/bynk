@@ -2850,6 +2850,216 @@ mod tests {
         ));
     }
 
+    fn body_block(body: &str) -> Block {
+        let src = format!("commons x\n\nfn f() -> Int {{\n  {body}\n}}\n");
+        let c = parse_str(&src).unwrap_or_else(|e| panic!("parse failed for {body:?}: {e:?}"));
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!("expected fn, got {:?}", c.items[0]);
+        };
+        f.body.clone()
+    }
+
+    fn has_error(errs: &[CompileError], code: &str) -> bool {
+        errs.iter().any(|e| e.category == code)
+    }
+
+    #[test]
+    fn let_else_desugars_to_a_hidden_binding_and_a_match() {
+        // #2010: `let P = e else E; rest` is `let __v = e` then
+        // `match __v { P => { rest }, _ => E }`.
+        let b = body_block("let x = 1\n  let Some(n) = find(x) else { 0 }\n  n + x");
+        assert_eq!(
+            b.statements.len(),
+            2,
+            "the plain let and the hidden binding"
+        );
+        let Statement::Let(hidden) = &b.statements[1] else {
+            panic!("expected a pure hidden binding, got {:?}", b.statements[1]);
+        };
+        assert!(
+            is_generated_binding(&hidden.name.name),
+            "{}",
+            hidden.name.name
+        );
+        assert_eq!(
+            hidden.name.span.start, hidden.name.span.end,
+            "the binder has no extent"
+        );
+        let le = hidden
+            .let_else
+            .as_ref()
+            .expect("the binding records the sugar");
+        assert_eq!(le.form, LetElseForm::Block);
+        let ExprKind::Match { discriminant, arms } = &b.tail.kind else {
+            panic!("expected a match tail, got {:?}", b.tail.kind);
+        };
+        assert!(matches!(&discriminant.kind, ExprKind::Ident(i) if i.name == hidden.name.name));
+        assert_eq!(arms.len(), 2);
+        assert!(matches!(arms[0].pattern, Pattern::Variant { .. }));
+        let MatchBody::Block(rest) = &arms[0].body else {
+            panic!("the pattern's arm runs the rest of the block");
+        };
+        assert!(rest.statements.is_empty());
+        assert!(
+            !matches!(rest.tail.kind, ExprKind::UnitLit),
+            "{:?}",
+            rest.tail.kind
+        );
+        assert!(matches!(arms[1].pattern, Pattern::Wildcard(_)));
+    }
+
+    #[test]
+    fn effectful_let_else_binds_with_an_arrow() {
+        let b = body_block("let Ok(v) <- load() else { Effect.pure(0) }\n  v");
+        assert!(matches!(&b.statements[0], Statement::EffectLet(l) if l.let_else.is_some()));
+    }
+
+    #[test]
+    fn let_else_chain_nests_each_step_in_the_previous_arm() {
+        // Three steps in one flat block: each later step lives in the earlier
+        // one's pattern arm, and the plain `let` between them stays in order.
+        let b = body_block(
+            "let Ok(a) = one() else { 1 }\n  let y = a\n  let Ok(b) = two(y) else { 2 }\n  let Ok(c) = three(b) else { 3 }\n  c",
+        );
+        let ExprKind::Match { arms, .. } = &b.tail.kind else {
+            panic!("expected a match tail");
+        };
+        let MatchBody::Block(second) = &arms[0].body else {
+            panic!("expected a block arm");
+        };
+        assert_eq!(
+            second.statements.len(),
+            2,
+            "`let y` and the second hidden binding"
+        );
+        assert!(matches!(&second.statements[0], Statement::Let(l) if l.name.name == "y"));
+        let ExprKind::Match { arms, .. } = &second.tail.kind else {
+            panic!("expected the second step's match");
+        };
+        let MatchBody::Block(third) = &arms[0].body else {
+            panic!("expected a block arm");
+        };
+        let ExprKind::Match { arms, .. } = &third.tail.kind else {
+            panic!("expected the third step's match");
+        };
+        let MatchBody::Block(last) = &arms[0].body else {
+            panic!("expected a block arm");
+        };
+        assert!(matches!(&last.tail.kind, ExprKind::Ident(i) if i.name == "c"));
+    }
+
+    #[test]
+    fn else_match_arms_follow_the_patterns_arm() {
+        let b = body_block("let Ok(v) = r else match { Err(e) => 0 }\n  v");
+        let Statement::Let(l) = &b.statements[0] else {
+            panic!("expected the hidden binding");
+        };
+        assert_eq!(l.let_else.as_ref().unwrap().form, LetElseForm::Match);
+        let ExprKind::Match { arms, .. } = &b.tail.kind else {
+            panic!("expected a match tail");
+        };
+        assert_eq!(arms.len(), 2);
+        assert!(
+            matches!(&arms[1].pattern, Pattern::Variant { variant, .. } if variant.name == "Err")
+        );
+    }
+
+    #[test]
+    fn let_else_as_the_last_statement_leaves_a_unit_rest() {
+        let b = body_block("let Some(n) = find(1) else { () }");
+        let ExprKind::Match { arms, .. } = &b.tail.kind else {
+            panic!("expected a match tail");
+        };
+        let MatchBody::Block(rest) = &arms[0].body else {
+            panic!("expected a block arm");
+        };
+        assert!(rest.implicit_tail && rest.statements.is_empty());
+    }
+
+    #[test]
+    fn let_pattern_forms_are_recognised() {
+        for src in [
+            "let None = o else { 0 }\n  1",
+            "let Status.Done = s else { 0 }\n  1",
+            "let Shipped(at) = s else { 0 }\n  at",
+            "let 0 = n else { 1 }\n  0",
+            "let -1 = n else { 1 }\n  0",
+            "let \"a\" = s else { 1 }\n  0",
+            "let (Ok(x) | Err(x)) = r else { 1 }\n  x",
+        ] {
+            let b = body_block(src);
+            assert!(
+                matches!(&b.statements[0], Statement::Let(l) if l.let_else.is_some()),
+                "{src:?} should parse as a let-else"
+            );
+        }
+        // A bare name, even capitalised, is still a binding.
+        let b = body_block("let Total = 1\n  Total");
+        assert!(
+            matches!(&b.statements[0], Statement::Let(l) if l.let_else.is_none() && l.name.name == "Total")
+        );
+    }
+
+    #[test]
+    fn let_pattern_without_else_is_refused() {
+        assert!(has_error(
+            &body_err("let Ok(v) = r\n  v"),
+            "bynk.parse.let_pattern_without_else"
+        ));
+        assert!(has_error(
+            &body_err("let Ok(v) <- r()\n  v"),
+            "bynk.parse.let_pattern_without_else"
+        ));
+    }
+
+    #[test]
+    fn else_on_a_plain_binding_is_refused() {
+        assert!(has_error(
+            &body_err("let v = r else { 0 }\n  v"),
+            "bynk.parse.let_else_on_binding"
+        ));
+        assert!(has_error(
+            &body_err("let v <- r() else { 0 }\n  v"),
+            "bynk.parse.let_else_on_binding"
+        ));
+    }
+
+    #[test]
+    fn annotated_let_pattern_is_refused() {
+        assert!(has_error(
+            &body_err("let Ok(v): Int = r else { 0 }\n  v"),
+            "bynk.parse.let_pattern_annotation"
+        ));
+    }
+
+    #[test]
+    fn empty_else_match_is_refused() {
+        assert!(has_error(
+            &body_err("let Ok(v) = r else match { }\n  v"),
+            "bynk.parse.empty_match"
+        ));
+    }
+
+    #[test]
+    fn let_else_steps_count_against_the_nesting_budget() {
+        // Each step nests the rest of the block one level deeper, exactly as
+        // the hand-written `match` it stands for, so a very long chain is
+        // refused with the nesting diagnostic rather than overflowing later.
+        let chain = |n: usize| -> String {
+            let steps: String = (0..n)
+                .map(|i| format!("let Ok(v{i}) = step() else {{ {i} }}\n  "))
+                .collect();
+            format!("{steps}0")
+        };
+        body_block(&chain(40));
+        let errs = body_err(&chain(400));
+        assert!(
+            errs.iter()
+                .any(|e| e.category == "bynk.parse.nesting_too_deep"),
+            "{errs:?}"
+        );
+    }
+
     #[test]
     fn empty_match_reports_its_own_diagnostic() {
         // #636: `match result {}` once parsed `result {}` as an empty record,
