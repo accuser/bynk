@@ -3777,8 +3777,11 @@ pub(crate) fn check_effect_let_principal(
 }
 
 /// #1978: whether an `on call` handler binds the prelude `Caller`'s identity
-/// (`by c: Caller`) — the test-side mirror of [`crate::actors::caller_binder_for`],
-/// which decides whether the emitted handler's `deps` requires `identity`.
+/// (`by c: Caller`), so its emitted `deps` requires `identity`. This mirrors
+/// `bynk_lower::lower_actor_seam_ir`, which resolves a sum `by` clause
+/// (`by who: Caller | …`) as a sum (`deps.who`) before it consults
+/// [`crate::actors::caller_binder_for`]; hence the `!is_sum()` that
+/// `caller_binder_for` alone does not need.
 fn handler_binds_caller(handler: &TestHandler, ctx: &Ctx) -> bool {
     use crate::actors::{Identity, prelude_actor};
     let Some(by) = &handler.by_clause else {
