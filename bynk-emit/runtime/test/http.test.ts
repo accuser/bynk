@@ -11,6 +11,8 @@ import {
   weakETag,
   applyCache,
   notModifiedIfMatch,
+  responseToHttpOutcome,
+  responseToUnauthOutcome,
   type CorsPolicy,
   type SecurityPolicy,
 } from "../src/http.ts";
@@ -288,4 +290,29 @@ test("notModifiedIfMatch: handles a list and the wildcard, and never 304s a body
   // A response with no ETag (e.g. a Streaming/Raw GET) is never revalidated.
   const noEtag = httpResultToResponse(HttpResult.Ok(1), id);
   assert.equal(notModifiedIfMatch(noEtag, star).status, 200);
+});
+
+// #1934: every `Rejected` carries a `detail` string, the router's description
+// of a refused body or path, and `""` for the seam's and router's refusals.
+test("responseToHttpOutcome gives each rejection a detail", async () => {
+  const deser = (json: JsonValue) => ({ tag: "Ok" as const, value: json });
+  const rejected = (body: unknown) =>
+    responseToHttpOutcome(new Response(JSON.stringify(body), { status: 400 }), deser);
+  const detailOf = async (p: Promise<{ tag: string; value: unknown }>) => {
+    const o = await p;
+    assert.equal(o.tag, "Rejected");
+    return (o.value as { detail: string }).detail;
+  };
+  assert.equal(await detailOf(rejected({ kind: "MalformedJson", details: "Unexpected token" })), "Unexpected token");
+  assert.equal(
+    await detailOf(rejected({ kind: "StructuralMismatch", path: "$.sku", expected: "string", actual: "number" })),
+    "$.sku: expected string, got number",
+  );
+  assert.equal(
+    await detailOf(rejected({ kind: "RefinementViolation", path: "$.sku", violation: { field: "sku", message: "must not be empty", value: "" } })),
+    "$.sku: must not be empty",
+  );
+  const notAllowed = new Response(null, { status: 405, headers: { allow: "POST" } });
+  assert.equal(await detailOf(responseToHttpOutcome(notAllowed, deser)), "");
+  assert.equal(await detailOf(responseToUnauthOutcome(new Response(null, { status: 401 }), deser)), "");
 });

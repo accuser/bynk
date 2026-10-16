@@ -990,13 +990,14 @@ export async function responseToHttpResult<T>(
 // `tag` mirroring the router's `BoundaryError.kind` (`RefinementViolation`,
 // `MalformedJson`, `StructuralMismatch`), so `expect r is Rejected(
 // RefinementViolation(_))` lowers to a plain `.tag` test. #1934: the checker
-// types it as `HttpOutcome[T]`, and a body or path rejection carries `detail`,
-// the router's description of what it refused, which `RefinementViolation(d)`
-// binds (`BOUNDARY_REJECTIONS` in `bynk-check/src/checker.rs`).
+// types it as `HttpOutcome[T]`, and every rejection carries `detail`: for a body
+// or path rejection the router's description of what it refused, which
+// `RefinementViolation(d)` binds (`BOUNDARY_REJECTIONS` in
+// `bynk-check/src/checker.rs`), and `""` for the seam's and router's refusals.
 export type HttpOutcome<T> =
   | {
       readonly tag: "Rejected";
-      readonly value: { readonly tag: string; readonly detail?: string; readonly [k: string]: unknown };
+      readonly value: { readonly tag: string; readonly detail: string; readonly [k: string]: unknown };
     }
   | { readonly tag: "Handled"; readonly value: HttpResult<T> };
 
@@ -1057,7 +1058,7 @@ export async function responseToHttpOutcome<T>(
   // — the handler produced it, so it stays `Handled`. Same shape-vs-status care
   // as the `400` (`kind` body) path.
   if (response.status === 405 && response.headers.has("allow")) {
-    return { tag: "Rejected", value: { tag: "MethodNotAllowed" } };
+    return { tag: "Rejected", value: { tag: "MethodNotAllowed", detail: "" } };
   }
   const handled = await responseToHttpResult(response, deserialiseValue);
   return { tag: "Handled", value: handled };
@@ -1076,7 +1077,7 @@ export async function responseToUnauthOutcome<T>(
   deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
 ): Promise<HttpOutcome<T>> {
   if (response.status === 401) {
-    return { tag: "Rejected", value: { tag: "Unauthorized" } };
+    return { tag: "Rejected", value: { tag: "Unauthorized", detail: "" } };
   }
   return responseToHttpOutcome(response, deserialiseValue);
 }

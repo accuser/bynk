@@ -738,6 +738,10 @@ fn emit_integration_module(
     if runtime_use.eq() {
         append_missing_bindings(&mut runtime_names, emitter::EQ_RUNTIME_IMPORTS);
     }
+    // #1934: a case that compares a typed http outcome with `Ok(…)`.
+    if runtime_use.http_result() {
+        append_missing_bindings(&mut runtime_names, "HttpResult");
+    }
     if runtime_use.int() {
         append_missing_bindings(&mut runtime_names, emitter::INT_RUNTIME_IMPORTS);
     }
@@ -2493,6 +2497,10 @@ fn emit_test_module(
     }
     if runtime_use.eq() {
         append_missing_bindings(&mut runtime_names, emitter::EQ_RUNTIME_IMPORTS);
+    }
+    // #1934: a case that compares a typed http outcome with `Ok(…)`.
+    if runtime_use.http_result() {
+        append_missing_bindings(&mut runtime_names, "HttpResult");
     }
     if runtime_use.int() {
         append_missing_bindings(&mut runtime_names, emitter::INT_RUNTIME_IMPORTS);

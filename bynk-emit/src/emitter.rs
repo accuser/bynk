@@ -4753,6 +4753,12 @@ impl<'a> LowerCtx<'a> {
         self.runtime_use().note_bytes();
     }
 
+    /// Record that this lowering constructed an `HttpResult` variant (#1934),
+    /// so a test module imports it.
+    fn note_http_result(&self) {
+        self.runtime_use().note_http_result();
+    }
+
     /// Record that this lowering emitted a reference to `__bynkEq` (#1652), so
     /// the module imports it.
     fn note_eq(&self) {
@@ -5816,9 +5822,7 @@ fn ts_ty_to_ts_type(t: TyId, tys: &Arc<Types>) -> TsType {
         Ty::HttpOutcome(t) => {
             TsType::named_with_args("HttpOutcome", vec![ts_ty_to_ts_type(*t, tys)])
         }
-        Ty::BoundaryRejection => {
-            TsType::named("{ readonly tag: string; readonly detail?: string }")
-        }
+        Ty::BoundaryRejection => TsType::named("{ readonly tag: string; readonly detail: string }"),
         Ty::Asset => asset_ts_type(),
         Ty::ValidationError => TsType::named("ValidationError"),
         Ty::JsonError => TsType::named("JsonError"),

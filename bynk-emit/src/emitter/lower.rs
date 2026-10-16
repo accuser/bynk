@@ -1098,6 +1098,7 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
                 cx.commons().expr_ty(e.id).as_deref(),
                 Some(Ty::HttpResult(_))
             ) {
+                cx.note_http_result();
                 format!("HttpResult.Ok({s})")
             } else {
                 format!("Ok({s})")
@@ -2020,6 +2021,7 @@ fn lower_method_call(
             Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
         )
     {
+        cx.note_http_result();
         let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
         return pre.finish(format!(
             "HttpResult.{}({})",
@@ -4886,6 +4888,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
         cx.commons().callee(e.id),
         Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
     ) {
+        cx.note_http_result();
         return format!("HttpResult.{}", id.name);
     }
     // v0.44: a nullary QueueResult variant (`Ack`) constructs `QueueResult.Ack`.
@@ -4939,6 +4942,7 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
         cx.commons().callee(e.id),
         Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
     ) {
+        cx.note_http_result();
         return pre.finish(format!(
             "HttpResult.{}({})",
             name.name,
@@ -5424,6 +5428,7 @@ fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCt
             Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
         )
     {
+        cx.note_http_result();
         return pre.finish(format!("HttpResult.{}", field.name));
     }
     // Agent-handler `self.<key>` rewrite.
