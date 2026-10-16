@@ -32,7 +32,6 @@ function __makeHarness() {
   const env___ns_ops_jobs: any = {};
   const env___ns_platform_time: any = {};
   env___ns_ops_jobs.BYNK_CALL_SECRET = "bynk-local-call-secret";
-  env___ns_ops_jobs.PLATFORM_TIME = { fetch: (req: globalThis.Request) => worker___ns_platform_time.fetch(req, env___ns_platform_time) } as __ServiceBinding;
   env___ns_platform_time.BYNK_CALL_SECRET = "bynk-local-call-secret";
   const rootEnv: any = {};
   rootEnv.BYNK_CALL_SECRET = "bynk-local-call-secret";

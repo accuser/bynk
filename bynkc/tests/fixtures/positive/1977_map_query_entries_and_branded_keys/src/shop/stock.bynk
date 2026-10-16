@@ -1,0 +1,86 @@
+context shop.stock
+
+uses shop.values
+
+type Stale = {
+  sku: Sku,
+  qty: Int,
+}
+
+-- #1977: a fold over a collected `List[MapEntry[K, V]]` types its helper with
+-- the entry type, which no module declares.
+agent Box {
+  key id: String
+
+  store items: Map[String, Int]
+
+  on call add(k: String, n: Int) -> Effect[()] {
+    items.put(k, n)
+  }
+
+  on call total() -> Effect[Int] {
+    let all <- items.entries.collect()
+    all.fold(0, (n, e) => n + e.value)
+  }
+
+  on call totalEff() -> Effect[Int] {
+    let all <- items.entries.collect()
+    all.foldEff(0, (n, e) => Effect.pure(n + e.value))
+  }
+}
+
+-- #1982: keys of a map keyed by an opaque or refined type are that branded
+-- type, not the stored string.
+agent ByKey {
+  key id: String
+
+  store items: Map[Sku, Int]
+
+  on call add(k: String, n: Int) -> Effect[()] {
+    items.put(sku(k), n)
+  }
+
+  on call keys() -> Effect[List[Sku]] { items.keys.collect() }
+
+  on call stale() -> Effect[List[Stale]] {
+    items.entries
+      .filter((e) => e.value > 1)
+      .map((e) => Stale { sku: e.key, qty: e.value })
+      .collect()
+  }
+
+  on call keyCount() -> Effect[Int] {
+    let ks <- items.keys.collect()
+    ks.fold(0, (n, k) => n + 1)
+  }
+
+  on call has(k: String) -> Effect[Bool] {
+    items.contains(sku(k))
+  }
+
+  on call qty(k: String) -> Effect[Option[Int]] {
+    items.get(sku(k))
+  }
+}
+
+agent Ledger {
+  key book: String
+
+  store balances: Map[Acct, Int]
+
+  on call open(a: Int, n: Int) -> Effect[()] {
+    match Acct.of(a) {
+      Ok(acct) => balances.put(acct, n),
+      Err(_) => Effect.pure(()),
+    }
+  }
+
+  on call accounts() -> Effect[List[Acct]] {
+    balances.keys.sortBy((k) => k).collect()
+  }
+
+  on call sum() -> Effect[Int] {
+    let all <- balances.entries.collect()
+    all.fold(0, (n, e) => n + e.key + e.value)
+  }
+}

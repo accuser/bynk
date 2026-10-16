@@ -8,10 +8,6 @@ compatibility_flags = ["global_fetch_strictly_public"]
 binding = "SHOP_AUDIT"
 service = "shop-audit"
 
-[[services]]
-binding = "SHOP_LEDGER"
-service = "shop-ledger"
-
 [[durable_objects.bindings]]
 name = "TALLY"
 class_name = "Tally"

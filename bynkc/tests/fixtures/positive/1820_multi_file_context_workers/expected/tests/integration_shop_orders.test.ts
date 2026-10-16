@@ -35,7 +35,6 @@ function __makeHarness() {
   const env___ns_shop_fees: any = {};
   const env___ns_shop_payment: any = {};
   env___ns_shop_orders.BYNK_CALL_SECRET = "bynk-local-call-secret";
-  env___ns_shop_orders.SHOP_FEES = { fetch: (req: globalThis.Request) => worker___ns_shop_fees.fetch(req, env___ns_shop_fees) } as __ServiceBinding;
   env___ns_shop_orders.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker___ns_shop_payment.fetch(req, env___ns_shop_payment) } as __ServiceBinding;
   env___ns_shop_orders.BOOK = __makeIntegrationDoNamespace(__ns_shop_orders.Book, env___ns_shop_orders);
   env___ns_shop_orders.TALLY = __makeIntegrationDoNamespace(__ns_shop_orders.Tally, env___ns_shop_orders);
