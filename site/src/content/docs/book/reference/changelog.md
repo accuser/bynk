@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.333**.
+written against **v0.334**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,8 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.334.0** | In a test case, a `svc.call(…)` outcome takes the handler's declared type, so `expect r == Ok("a")` checks; a `by c: Caller` handler called without `by Caller("…")` is `bynk.test.actor_identity_required`; and a handler that sends with `~>` runs at every tier, its sends awaited before the case's expectations |
+| **v0.333.6** | A `fold` over a collected `store` map's `.entries` no longer names an unimported `MapEntry` type, and `.keys`/`.entries` over a map keyed by an opaque or refined type now yield that branded key type, so both pass `tsc` |
 | **v0.333.5** | A SIGINT or SIGTERM sent to `bynk dev` itself now stops its `wrangler` and `workerd` processes before it exits, instead of leaving them running with their ports bound |
 | **v0.333.4** | A Worker binds only the contexts it calls, so an event subscriber that `consumes` its publisher for the event type no longer forms a Service Binding cycle that `bynk deploy` refuses; a subscriber that also calls its publisher is still refused, now with the cause named |
 | **v0.333.3** | "`bynk-secrets.json` no longer claims a complete read list it does not have (closes #1976): literal `Secrets.get` names in `provides` bodies — including providers reached through `given` — and in agent handlers are collected into `read`, a Worker that composes an adapter provider `given Secrets` is marked `read_complete: false` because its TypeScript binding's reads cannot be seen, and `bynk deploy`'s `secrets incomplete` line no longer blames a computed name for both" |
