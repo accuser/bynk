@@ -8,3 +8,11 @@ compatibility_flags = ["global_fetch_strictly_public"]
 binding = "TONE"
 service = "tone"
 
+[[durable_objects.bindings]]
+name = "GATE"
+class_name = "Gate"
+
+[exports.Gate]
+type = "durable-object"
+storage = "sqlite"
+

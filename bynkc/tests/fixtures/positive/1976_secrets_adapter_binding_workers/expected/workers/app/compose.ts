@@ -5,13 +5,14 @@ import { type __ServiceBinding } from "../../runtime.js";
 import * as handlers from "./handlers.js";
 import * as bynk__binding from "../../bynk-cloudflare.js";
 import * as greet__binding from "../../greet.binding.js";
+import * as relay__binding from "../../relay.binding.js";
 
 export interface Env {
 }
 
 export function compose(env: Env) {
-  const Greeter = new greet__binding.SecretGreeter({ Secrets: new bynk__binding.SecretsProvider(env) });
-  const deps = { Greeter };
+  const Relay = new relay__binding.GreetRelay({ Greeter: new greet__binding.SecretGreeter({ Secrets: new bynk__binding.SecretsProvider(env) }) });
+  const deps = { Relay };
   return {
     async welcome(name: string) {
       return handlers.welcome.call(name, deps);

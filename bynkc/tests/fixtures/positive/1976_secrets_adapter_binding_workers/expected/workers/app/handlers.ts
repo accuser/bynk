@@ -3,11 +3,11 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
-import * as greet from "../../greet.js";
+import * as relay from "../../relay.js";
 
 export const welcome = {
-  async call(name: string, deps: { Greeter: greet.Greeter }): globalThis.Promise<string> {
-    const s = await deps.Greeter.hello(name);
+  async call(name: string, deps: { Relay: relay.Relay }): globalThis.Promise<string> {
+    const s = await deps.Relay.hello(name);
     return s;
   },
 };

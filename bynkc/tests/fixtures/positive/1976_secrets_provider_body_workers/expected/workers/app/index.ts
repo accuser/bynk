@@ -5,6 +5,8 @@ import { Ok, Err, type Result, type __JsonValue, type __BoundaryError, __boundar
 import { compose, type Env } from "./compose.js";
 import * as handlers from "./handlers.js";
 
+export { Gate } from "./handlers.js";
+
 export default {
   async fetch(request: globalThis.Request, env: Env): globalThis.Promise<globalThis.Response> {
     const url = new globalThis.URL(request.url);

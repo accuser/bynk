@@ -8,7 +8,10 @@ import * as handlers_tone from "../tone/handlers.js";
 
 export interface Env {
   TONE: __ServiceBinding;
+  GATE: __DurableObjectNamespace;
 }
+
+type __DurableObjectNamespace = { idFromName(name: string): { toString(): string }; get(id: any): any };
 
 export function compose(env: Env) {
   const Secrets = new bynk__binding.SecretsProvider(env);

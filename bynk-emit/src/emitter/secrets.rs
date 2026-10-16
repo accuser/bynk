@@ -19,8 +19,9 @@
 //! `String` expression, so a computed name is invisible to any pass: where one
 //! is seen, the context warns (`bynk.secrets.computed_name`) and this flag goes
 //! false. So does composing an adapter provider `given` `bynk`'s `Secrets`
-//! (#1976): its binding is TypeScript, and reads names no pass can see. `declared` is a **floor, not a census** (ADR 0195 D2); `read` is a
-//! census only while `read_complete` holds, and says so when it does not.
+//! (#1976): its binding is TypeScript, and reads names no pass can see.
+//! `declared` is a **floor, not a census** (ADR 0195 D2); `read` is a census
+//! only while `read_complete` holds, and says so when it does not.
 //!
 //! Why a file rather than an API: the driver has two compile paths, and under a
 //! `bynkc` override the compiler is a child process handing back an exit status
