@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.332.1** | An increment acknowledges a gated greenfield-status probe it moves in its pending file's `probes` key, and the merge-time stamp rewrites `design/greenfield-status.md`, so parallel PRs no longer conflict on the table |
 | **v0.332.0** | A derived capability, `capability Sessions = Kv`, is a distinct instance of a platform resource with its own Worker binding (`KV_SESSIONS`); `bynk deploy` does not provision instances yet |
 | **v0.331.0** | Standard-library items are stable or experimental, with an `[unstable] allow` opt-in in `bynk.toml`; a `match` on the extensible `FetchError` or `Method` needs a wildcard |
 | **v0.330.16** | A `system`-tier suite stands up every subscriber to a participant's events and gives each participant its own in-memory `Kv` namespace per case, so an emitted event is delivered and a `Kv` call works instead of faulting |

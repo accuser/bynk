@@ -56,6 +56,22 @@ summary: How a case addresses a handler and names its principal
   mistyped `/book/no-such-page/` or `#no-such-anchor` still passes the stamp and
   then fails the docs build on `main`. Check those by hand.
 
+### Frontmatter (optional)
+
+- **`closes_rule`** — comma-separated greenfield reference rule ids (`R2.3`)
+  this increment closes; the stamp writes them to
+  `design/greenfield-status-rules.md`.
+- **`probes`** — comma-separated **gated** probes from
+  `design/greenfield-status.md` whose reading this increment changes, e.g.
+  `probes: ts_writes, diagnostic_coverage`. Name them here instead of
+  regenerating the table: `greenfield_status_table_is_current` accepts a
+  disagreement on an acknowledged probe (and prints the move, so review still
+  sees it), and the stamp rewrites the table's gated rows on `main` in merge
+  order. That keeps the shared table out of feature PRs, which is what made it
+  the most-conflicted file in the repo. A PR with no increment can still run
+  `cargo xtask greenfield-status --apply` and commit the table as before.
+  Trend probes aren't gated, so they're never named here.
+
 No other keys are permitted — a typo like `levl:` is rejected rather than
 silently ignored.
 

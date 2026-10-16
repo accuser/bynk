@@ -134,6 +134,34 @@ fn stamp(apply: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // Compute the refreshed greenfield-status table *before* applying, so a
+    // table that can't be refreshed fails the stamp with nothing written. The
+    // probes read Rust sources and fixtures, none of which the stamp touches, so
+    // the pre-apply reading is the post-apply one. Only moves named by the
+    // increments being stamped are written; any other drift refuses the stamp
+    // rather than being silently absorbed (see `refresh_for_stamp`).
+    let acknowledged: std::collections::BTreeSet<String> = plan
+        .increments
+        .iter()
+        .flat_map(|inc| inc.probes.iter().cloned())
+        .collect();
+    let table_path = xtask::greenfield_status::table_path(&root);
+    let refreshed_table = match std::fs::read_to_string(&table_path)
+        .map_err(|e| format!("cannot read {}: {e}", table_path.display()))
+        .and_then(|committed| {
+            xtask::greenfield_status::refresh_for_stamp(
+                &committed,
+                &xtask::greenfield_status::run_gated(&root),
+                &acknowledged,
+            )
+        }) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("stamp: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let pr_number = pr_number_from_head(&root);
     match pr_number {
         Some(n) => println!("stamp: rule-ledger provenance: #{n} (from HEAD's commit message)"),
@@ -146,6 +174,11 @@ fn stamp(apply: bool) -> ExitCode {
     match xtask::stamp::apply(&root, &plan, pr_number, |v| run_bump_version(&root, v)) {
         Ok(()) => {
             println!("stamp: applied — manifests on v{}", plan.final_version());
+            if let Err(e) = std::fs::write(&table_path, refreshed_table) {
+                eprintln!("stamp: failed to rewrite {}: {e}", table_path.display());
+                return ExitCode::FAILURE;
+            }
+            println!("stamp: refreshed gated rows of design/greenfield-status.md");
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -250,14 +283,25 @@ fn greenfield_status(apply: bool) -> ExitCode {
     }
 
     let disagreements = xtask::greenfield_status::gated_disagreements_in(&report.probes, &root);
-    if disagreements.is_empty() {
-        println!("greenfield-status: table current");
+    let acknowledged = xtask::acknowledged_probes(&root);
+    for (name, committed, live) in &disagreements {
+        if acknowledged.contains(name) {
+            println!(
+                "greenfield-status: {name} moves {committed:?} -> {live:?} (acknowledged by a \
+                 pending file — the stamp rewrites the row on merge)"
+            );
+        }
+    }
+    let unacknowledged = xtask::greenfield_status::unacknowledged(disagreements, &acknowledged);
+    if unacknowledged.is_empty() {
+        println!("greenfield-status: table current (or every move acknowledged)");
         ExitCode::SUCCESS
     } else {
         eprintln!(
-            "greenfield-status: table is stale — run `cargo xtask greenfield-status --apply`:"
+            "greenfield-status: gated probe(s) moved without acknowledgement — name them in \
+             your pending file's `probes` key, or run `cargo xtask greenfield-status --apply`:"
         );
-        for (name, committed, live) in &disagreements {
+        for (name, committed, live) in &unacknowledged {
             eprintln!("  {name}: committed {committed:?}, live {live:?}");
         }
         ExitCode::FAILURE
