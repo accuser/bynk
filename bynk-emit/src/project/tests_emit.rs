@@ -78,6 +78,9 @@ pub(crate) fn process_tests(
     emitted_barrels: &mut HashSet<PathBuf>,
     // #1883, slice 3: the declared assets, for `svc.GET(asset)` in a case.
     asset_files: &TestAssetFiles,
+    // #1975: each user adapter's binding module, as an extensionless path
+    // from the output root, for a test that builds the binding for real.
+    binding_modules: &HashMap<String, String>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     tys: &Arc<Types>,
@@ -140,6 +143,7 @@ pub(crate) fn process_tests(
                 unit_tables,
                 asset_files,
             ),
+            binding_modules,
             tys,
         );
         if let Some((path, program, source_map, runnable)) = emit_out {
@@ -1921,6 +1925,7 @@ fn emit_test_module(
     hidden: &BTreeMap<String, String>,
     // #1883, slice 3: `asset_harness`'s text, when the target ships assets.
     asset_harness: Option<String>,
+    binding_modules: &HashMap<String, String>,
     tys: &Arc<Types>,
 ) -> Option<(PathBuf, TsProgram, Option<String>, RunnableTest)> {
     // #914: the test-scaffold module's runtime import list is emitted below as a
@@ -2006,6 +2011,9 @@ fn emit_test_module(
     // The deps factory, built here for the units its providers name (#1863),
     // which are imported with the consumed contexts below.
     let uses_send = target_uses_send(target_name, target_kind, unit_tables);
+    // #1975: an adapter suite tests its binding, so its factory builds the
+    // binding for real; a context's `integration` cases get a second factory
+    // that builds each consumed adapter's binding, when that differs.
     let deps = emit_test_deps(
         target_name,
         target_kind,
@@ -2014,13 +2022,45 @@ fn emit_test_module(
         unit_consumes,
         unit_consumes_aliases,
         unit_flattened,
+        (target_kind == UnitKind::Adapter).then_some(binding_modules),
+        "__makeTestDeps",
     );
+    let has_integration_case = indices.iter().any(|&i| {
+        parsed[i].test().is_some_and(|t| {
+            t.cases
+                .iter()
+                .any(|c| super::case_effective_tier(c, t) != bynk_syntax::ast::TestTier::Unit)
+        })
+    });
+    let integration_factory = |name: &str| {
+        emit_test_deps(
+            target_name,
+            target_kind,
+            stubs,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+            Some(binding_modules),
+            name,
+        )
+    };
+    let integration_deps = (target_kind == UnitKind::Context
+        && has_integration_case
+        && bynk_ts::print_stmt(&integration_factory("__makeTestDeps").stmt, 0)
+            != bynk_ts::print_stmt(&deps.stmt, 0))
+    .then(|| integration_factory("__makeIntegrationDeps"));
+    let deps_units: BTreeSet<&String> = deps
+        .units
+        .iter()
+        .chain(integration_deps.iter().flat_map(|d| d.units.iter()))
+        .collect();
 
     // Consumed contexts (for the target context, if any), and any other unit
     // a provider in the deps factory names.
     let mut consumed_imports: Vec<(String, String)> = Vec::new();
     let consumed = unit_consumes.get(target_name).into_iter().flatten();
-    for q in consumed.chain(deps.units.iter()) {
+    for q in consumed.chain(deps_units.iter().copied()) {
         if q == target_name {
             continue;
         }
@@ -2040,6 +2080,20 @@ fn emit_test_module(
             },
             None,
         ));
+    }
+    // #1975: the binding module of each adapter a factory builds for real,
+    // under the alias the composition root gives it.
+    for unit in &deps_units {
+        if let Some(module) = binding_modules.get(*unit) {
+            stmts.push(TsStmt::decl(
+                TsDecl::ImportNamespace {
+                    type_only: false,
+                    alias: format!("{}__binding", unit.replace('.', "_")),
+                    from: format!("../{module}.{ext}"),
+                },
+                None,
+            ));
+        }
     }
 
     // `uses` commons reachable from the test fragments — needed for `Money`,
@@ -2227,18 +2281,35 @@ fn emit_test_module(
     if !stubs.is_empty() {
         stmts.push(TsStmt::raw(STUB_OVERLAY_TS.to_string(), None));
     }
-    for (owner, cap, name) in &deps.doubles {
+    // Both factories may name the same double; define each once. Keyed on the
+    // whole `(owner, capability, name)`, so two owners' same-named doubles
+    // both emit and collide loudly at `tsc` rather than one being dropped.
+    let mut defined: BTreeSet<&(String, String, String)> = BTreeSet::new();
+    for double in deps
+        .doubles
+        .iter()
+        .chain(integration_deps.iter().flat_map(|d| d.doubles.iter()))
+    {
+        let (owner, cap, name) = double;
+        if !defined.insert(double) {
+            continue;
+        }
         if let Some(def) = platform_double(owner, cap, &test_ns(owner), name) {
             stmts.push(TsStmt::raw(def, None));
         }
     }
 
     // Emit the deps factory, built above.
-    let mut deps_stmt = deps.stmt;
+    let mut deps_stmt = deps.stmt.clone();
     if suppress_next_blank {
         deps_stmt.no_blank_before = true;
     }
     stmts.push(deps_stmt);
+    if let Some(integration) = &integration_deps {
+        let mut stmt = integration.stmt.clone();
+        stmt.no_blank_before = true;
+        stmts.push(stmt);
+    }
 
     // #1860: each run's suite ordinal, for a suite-scoped `stub` — `None`
     // when no clause is one, so the runs pass none.
@@ -2281,9 +2352,20 @@ fn emit_test_module(
                 ),
                 None,
             ));
+            let tier = super::case_effective_tier(case, test_decl);
+            let deps_factory =
+                // Every tier above `unit` runs real collaborators. (A `system`
+                // case sits in a `system` suite, emitted through the Worker
+                // harness, whose compose builds the binding itself.)
+                if integration_deps.is_some() && tier != bynk_syntax::ast::TestTier::Unit {
+                    "__makeIntegrationDeps"
+                } else {
+                    "__makeTestDeps"
+                };
             let mut case_stmt = emit_test_case_function(
                 &runner_name,
                 case,
+                deps_factory,
                 target_name,
                 target_kind,
                 stubs,
@@ -3707,6 +3789,7 @@ fn platform_double(owner: &str, cap: &str, ns: &str, name: &str) -> Option<Strin
 /// deps' own entries is that entry, held in a local, not a second copy: in a
 /// test a `stub` overlays the entry, and a copy would escape it (#1864
 /// review).
+#[allow(clippy::too_many_arguments)]
 fn emit_test_deps(
     target_name: &str,
     target_kind: UnitKind,
@@ -3715,14 +3798,34 @@ fn emit_test_deps(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
+    // #1975: the adapters whose binding this factory builds for real, by
+    // binding module (an adapter suite, or the `integration` tier's factory);
+    // `None` keeps every external provider the placeholder.
+    bindings: Option<&HashMap<String, String>>,
+    // The factory's name: `__makeTestDeps`, or `__makeIntegrationDeps`.
+    name: &str,
 ) -> TestDeps {
     let mut units: BTreeSet<String> = BTreeSet::new();
     let mut doubles: Vec<(String, String, String)> = Vec::new();
+    // #1975: a real binding's own `given` that the target does not reach
+    // takes the tier's test double, recorded so the module defines it.
+    let given_doubles: std::cell::RefCell<Vec<(String, String, String)>> =
+        std::cell::RefCell::new(Vec::new());
+    let given_double = |owner: &str, cap: &str| -> Option<TsExpr> {
+        bindings?;
+        platform_double(owner, cap, &test_ns(owner), cap)?;
+        given_doubles
+            .borrow_mut()
+            .push((owner.to_string(), cap.to_string(), cap.to_string()));
+        Some(call(ident(format!("__bynkTest_{cap}")), Vec::new()))
+    };
     // Each top-level entry: its deps key, the `(unit, capability)` it is, and
     // how its value is built.
     let mut tops: Vec<(String, (String, String), TopDep)> = Vec::new();
     let mut surface_entries: Vec<(String, TsExpr)> = Vec::new();
-    if target_kind == UnitKind::Context
+    // #1975: an adapter target's deps are its own capabilities, built from
+    // its binding: the binding is the unit under test.
+    if matches!(target_kind, UnitKind::Context | UnitKind::Adapter)
         && let Some(table) = unit_tables.get(target_name)
     {
         // Sorted so `__makeTestDeps` field order is deterministic across the
@@ -3756,11 +3859,14 @@ fn emit_test_deps(
         let mut flat: Vec<(&String, &String)> = flattened.iter().collect();
         flat.sort_by_key(|(cap, _)| cap.as_str());
         for (cap, owner) in flat {
-            tops.push((
-                cap.clone(),
-                (owner.clone(), cap.clone()),
-                platform_or_placeholder(owner, cap),
-            ));
+            // #1975: an adapter's capability whose binding this factory
+            // builds is its real provider.
+            let how = if bindings.is_some_and(|b| b.contains_key(owner)) {
+                TopDep::Provider
+            } else {
+                platform_or_placeholder(owner, cap)
+            };
+            tops.push((cap.clone(), (owner.clone(), cap.clone()), how));
         }
         // #1863: a capability another context provides, named with that
         // context's prefix (`given Fees.Fees`), as the composition root wires
@@ -3836,6 +3942,8 @@ fn emit_test_deps(
                 ProviderNamespaces::Test {
                     prebuilt: &prebuilt,
                     used: &used,
+                    bindings,
+                    double: &given_double,
                 },
                 None,
                 None,
@@ -3934,9 +4042,10 @@ fn emit_test_deps(
         TsExpr::object(entries)
     };
     body.push(TsStmt::return_stmt(Some(return_value), None));
+    doubles.extend(given_doubles.into_inner());
     let stmt = TsStmt::decl(
         TsDecl::Function {
-            name: "__makeTestDeps".to_string(),
+            name: name.to_string(),
             generics: Vec::new(),
             // #291: the running case's name, when some `stub` is case-scoped,
             // and #1860 the running suite's ordinal, when one is suite-scoped.
@@ -4129,6 +4238,9 @@ fn extend_hidden_destructures(
 #[allow(clippy::too_many_arguments)]
 fn emit_test_scope_setup(
     out: &mut String,
+    // #1975: the deps factory the case calls (`__makeTestDeps`, or the
+    // `integration` tier's `__makeIntegrationDeps`).
+    deps_factory: &str,
     target_name: &str,
     target_kind: UnitKind,
     unit_tables: &HashMap<String, UnitTable>,
@@ -4200,7 +4312,7 @@ fn emit_test_scope_setup(
     } else {
         None
     };
-    if target_kind == UnitKind::Context {
+    if matches!(target_kind, UnitKind::Context | UnitKind::Adapter) {
         if let Some(spec) = obs_spec {
             // P7.2: matches `emitter/lower.rs`'s own `{ args: unknown[] }` reads
             // of this exact shape (`Trace`/`Called`-with-predicate lowering).
@@ -4246,7 +4358,7 @@ fn emit_test_scope_setup(
                 call(
                     ident("__bynkRecordDeps"),
                     vec![
-                        call(ident("__makeTestDeps"), deps_args.clone()),
+                        call(ident(deps_factory), deps_args.clone()),
                         spec,
                         ident("__obs"),
                     ],
@@ -4258,7 +4370,7 @@ fn emit_test_scope_setup(
             let deps_stmt = TsStmt::const_stmt(
                 TsBindingName::Ident("deps".to_string()),
                 None,
-                call(ident("__makeTestDeps"), deps_args.clone()),
+                call(ident(deps_factory), deps_args.clone()),
                 None,
             );
             out.push_str(&bynk_ts::print_stmt(&deps_stmt, 2));
@@ -4511,6 +4623,7 @@ fn async_test_runner_fn(
 fn emit_test_case_function(
     runner_name: &str,
     case: &Case,
+    deps_factory: &str,
     target_name: &str,
     target_kind: UnitKind,
     stubs: &HashMap<String, ResolvedStub>,
@@ -4537,6 +4650,7 @@ fn emit_test_case_function(
     out.push_str("  try {\n");
     emit_test_scope_setup(
         &mut out,
+        deps_factory,
         target_name,
         target_kind,
         unit_tables,
@@ -5646,6 +5760,7 @@ fn emit_test_property_function(
     let mut out = String::new();
     emit_test_scope_setup(
         &mut out,
+        "__makeTestDeps",
         target_name,
         target_kind,
         unit_tables,
@@ -5916,6 +6031,7 @@ fn emit_test_history_property_function(
     let mut out = String::new();
     emit_test_scope_setup(
         &mut out,
+        "__makeTestDeps",
         target_name,
         target_kind,
         unit_tables,
@@ -6183,6 +6299,7 @@ fn emit_contract_attack_function(
     let mut out = String::new();
     emit_test_scope_setup(
         &mut out,
+        "__makeTestDeps",
         target_name,
         target_kind,
         unit_tables,
