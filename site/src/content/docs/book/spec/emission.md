@@ -517,6 +517,26 @@ checked when the record is decoded, failing as a `RefinementViolation` at the
 field's path, and a `Duration` or `Instant` must be a safe integer wherever it
 appears.
 
+### §7.3.4e The published wire format
+
+The request a `/_bynk/call/` dispatch accepts, the order of its checks with
+their statuses and error bodies, the JSON encoding of every boundary type and
+the contract hash's normal form are a published surface with **its own
+version**, apart from the emitted TypeScript: the
+[wire format reference](/book/reference/wire-format/), generated from the
+compiler and guarded against it. A caller states the version it speaks in
+`X-Bynk-Wire` (absent means `1`); the callee accepts a range and refuses any
+other version with `400 UnsupportedWireVersion`.
+
+The dispatch makes its checks in the published order: the method (`POST`, else
+`405` with `Allow: POST`), the call secret (§7.3.4d), the wire version, the
+service (`404`), the contract (§7.3.4c), the body's JSON (read as text and
+parsed, else `400 MalformedJson`), the caller (§7.3.4a, for a handler binding
+`Caller`), then the arguments (§7.3.4b). A record field's inline refinement is
+checked when the record is decoded, failing as a `RefinementViolation` at the
+field's path, and a `Duration` or `Instant` must be a safe integer wherever it
+appears.
+
 ### §7.3.5 Tests
 
 Each test unit emits a per-target test module; an aggregating runner

@@ -2288,6 +2288,26 @@ fn lower_method_call(
             "(async () => {{ __events.push({{ type: \"{event_name}\", payload: {payload}, envelope: {{ eventId: globalThis.crypto.randomUUID(), publisherId: \"{publisher_id}\", emittedAt: globalThis.Date.now(), schemaVersion: {schema_version} }} }}); }})()"
         ));
     }
+    // #1975: a capability call in a test `case` body (`Greeter.hello("ann")`)
+    // reaches the case's own `deps`, built by `__makeTestDeps`: the checker
+    // puts the target's capabilities in scope there, so it records the call
+    // as a capability operation, but a case body is no handler and has no
+    // `given` set for the branch below to read.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx.in_test_case()
+        && matches!(
+            cx.commons().callee(e.id),
+            Some(Callee::Capability { cap, .. }) if *cap == id.name
+        )
+    {
+        let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
+        return pre.finish(format!(
+            "deps.{}.{}({})",
+            id.name,
+            method.name,
+            args_lowered.join(", ")
+        ));
+    }
     // Capability call: receiver is a bare ident naming a declared
     // capability in `given`. Lower to `<deps>.Capability.op(args)`,
     // where `<deps>` is `deps` in a handler body and `this.deps` in a

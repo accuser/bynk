@@ -1,12 +1,6 @@
----
-level: minor
-probes: ts_writes
-changelog: The cross-context call format is published as [wire format version 1](/book/reference/wire-format/), generated from the compiler and versioned on its own, and callers now send `X-Bynk-Wire: 1`. A `/_bynk/call/` request that is not a `POST` gets `405`, malformed JSON gets `400 MalformedJson` instead of a `500`, and an unsupported `X-Bynk-Wire` gets `400 UnsupportedWireVersion`. A record field's inline refinement (`qty: Int where Positive`) is now checked when the record is decoded, at a call boundary or in an HTTP body, and is part of the contract hash; a `Duration` field must be a whole number of milliseconds, and sending a `Duration` or `Instant` outside the safe-integer range now faults in the sender (as an `Int` already did) instead of being passed on. **Breaking for deployed projects:** contracts with an inline field refinement change hash, so redeploy the whole project once. Tightening an inline field refinement later also makes stored records that break it fail to load
----
+# 0483 — The cross-context wire format is a published surface with its own version, amending ADR 0310
 
-## ADR: wire-format-is-a-published-surface
-title: The cross-context wire format is a published surface with its own version, amending ADR 0310
-summary: Wire format v1 (path, method, headers, check order, statuses, error bodies, JSON encoding, contract hash) is generated from the compiler, versioned apart from it, and changes additively within a version
+- **Status:** Accepted (v0.338)
 
 **Context.** A Bynk context's `on call` services are reached as
 `POST /_bynk/call/<service>`, with a JSON body and a few headers. That format
