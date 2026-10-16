@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **503** codes in total.
+There are **504** codes in total.
 
 ## Agents
 
@@ -27,6 +27,7 @@ There are **503** codes in total.
 
 | Code | Summary | Construct | Severity |
 |---|---|---|---|
+| `bynk.boundary.ambiguous_type` | A value's type is declared, with different shapes, by more than one consumed context, so its fields cannot be read. |  | — |
 | `bynk.boundary.structural_mismatch` | Data crossing a context boundary did not match the expected shape. |  | — |
 
 ## Capabilities

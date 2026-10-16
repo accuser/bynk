@@ -1,0 +1,2 @@
+bynk.context.opaque_inspection cannot read field `a` of opaquely-exported type `Box` from outside context `shop.quotes`
+# exact
