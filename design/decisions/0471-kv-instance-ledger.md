@@ -1,11 +1,6 @@
----
-level: patch
-changelog: `bynk deploy` provisions, records and binds a KV namespace per derived capability (`capability Sessions = Kv`, titled `shop-cart-sessions`), and plans a removed or renamed instance as an orphan; `bynk dev --remote` binds every instance. **Breaking (machine output):** in `bynk deploy --format json`, a context's `kv` is now a list of `{binding, action, namespace}` (empty, not `null`, without KV), and each `orphans.kv` entry is `{worker, binding?}` rather than a bare worker name. Ledgers and configs of projects with only the bare `Kv` are unchanged
----
+# 0471 — The deploy ledger keys a derived KV instance by its binding
 
-## ADR: kv-instance-ledger
-title: The deploy ledger keys a derived KV instance by its binding
-summary: `bynk.deploy.lock` records each derived instance's namespace under its Worker and binding (`kv_instances.<worker>.KV_SESSIONS`), titled `<worker>-<capability>` and environment-qualified; the bare `Kv`'s entry and title are untouched
+- **Status:** Accepted (v0.332.2)
 
 **Context.** ADR 0469 (derived capabilities) put the deploy half of D3 in slice S4b (#1967): a
 ledger keyed by (environment, Worker, capability), physical names derived and
