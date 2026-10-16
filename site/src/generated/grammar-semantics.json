@@ -185,7 +185,7 @@
     },
     {
       "code": "bynk.test.actor_identity_required",
-      "summary": "A call-site `by <Actor>` omits the identity an identity-carrying actor requires."
+      "summary": "A test omits the identity an identity-carrying actor requires: a bare call-site `by <Actor>`, or no `by` at all on a handler that binds its `Caller`."
     },
     {
       "code": "bynk.test.actor_no_identity",
@@ -245,7 +245,7 @@
     },
     {
       "code": "bynk.test.untyped_outcome",
-      "summary": "A case calls a method on part of a service call's outcome whose type the case does not know (a value of the handler's result type)."
+      "summary": "A case calls a method on, or compares with `==`/`!=` against a bare `Ok`/`Err`/`None` constructor, part of an http, cron, or queue address's outcome, whose type the case does not know."
     },
     {
       "code": "bynk.test.wire_needs_system",

@@ -1892,7 +1892,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.test.actor_identity_required",
-        "A call-site `by <Actor>` omits the identity an identity-carrying actor requires.",
+        "A test omits the identity an identity-carrying actor requires: a bare call-site `by <Actor>`, or no `by` at all on a handler that binds its `Caller`.",
         &["case"],
     ),
     dg(
@@ -1967,7 +1967,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.test.untyped_outcome",
-        "A case calls a method on part of a service call's outcome whose type the case does not know (a value of the handler's result type).",
+        "A case calls a method on, or compares with `==`/`!=` against a bare `Ok`/`Err`/`None` constructor, part of an http, cron, or queue address's outcome, whose type the case does not know.",
         &["case"],
     ),
     dg(

@@ -33,14 +33,24 @@ A route/schedule the service does not declare is `bynk.test.service_unknown_rout
 `svc.call(...)` on a service with no `on call` handler is
 `bynk.test.service_no_call_handler`.
 
-The outcome (`let r <- api.GET("/x")`) is not typed by the handler's
-return type: the runner recovers its shape at run time. Match or test it,
-and a payload of fixed type binds that type. `Raw(body, contentType)` binds
-`Bytes` and `String`; a message variant (`BadRequest(m)`) or a redirect binds
-`String`. A value of the handler's result type, such as `v` in `Ok(v)`, has
-no type in the case, so calling a method on it, or on a field of it, is
-`bynk.test.untyped_outcome`. Compare it instead, or call the method in a
-source function the case calls.
+A `svc.call(args)` outcome takes the `on call` handler's declared type, so
+the case's uses of it are checked as anywhere else: `expect r == Ok("a")` types
+its `Ok` from `r`.
+
+The outcome of an http, cron, or queue address (`let r <- api.GET("/x")`) is
+not typed by the handler's return type: the runner recovers its shape at run
+time. Match or test it, and a payload of fixed type binds that type.
+`Raw(body, contentType)` binds `Bytes` and `String`; a message variant
+(`BadRequest(m)`) or a redirect binds `String`. A value of the handler's result
+type, such as `v` in `Ok(v)`, has no type in the case, so calling a method on
+it, or on a field of it, is `bynk.test.untyped_outcome`, as is comparing the
+outcome with `==` against a bare constructor (`r == Ok("hi")`): test it with
+`is` (`r is Ok("hi")`) instead. Compare a payload value, or call the method in
+a source function the case calls.
+
+A handler that sends with `~>` runs in a case as on the Worker: the send is
+handed to the execution context's `waitUntil`, and the runner awaits every
+such send after the call returns, so the case's expectations see its effects.
 
 ```bynk,fragment
 suite app.web {
@@ -101,6 +111,10 @@ case "each owner's list is private" {
 - `by Visitor` — a unit-identity actor takes **no** argument
   (`bynk.test.actor_no_identity` if one is given; `bynk.test.actor_identity_required`
   if an identity-carrying actor is written bare).
+- `by Caller("orders")` — an `on call` handler that binds its caller
+  (`by c: Caller`) reads the calling context's name, and a case has no calling
+  context, so it must name one; without it the call is
+  `bynk.test.actor_identity_required`.
 - cron and queue run as their internal actor and need no `by`.
 
 At the `unit` tier the identity is *given*, not verified — the handler runs

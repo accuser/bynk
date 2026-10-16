@@ -2136,6 +2136,9 @@ pub struct TestHandler {
     /// The handler's declared `by <Actor>` clause, if any — the actor a call-site
     /// principal is checked against. `None` inherits the protocol default actor.
     pub by_clause: Option<bynk_syntax::ast::ByClause>,
+    /// #1979: the handler's declared return type — a `svc.call(…)` outcome
+    /// takes it, so the case's uses of it are typed.
+    pub return_type: bynk_syntax::ast::TypeRef,
     pub span: Span,
 }
 
