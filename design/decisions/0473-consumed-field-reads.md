@@ -1,12 +1,6 @@
----
-level: minor
-probes: emit_diagnostics, diagnostic_coverage
-changelog: A field read on a value of a consumed context's type is checked — rejected for an `exports opaque` type (`bynk.context.opaque_inspection`), typed against the providing context's declaration for an unexported one, and rejected as `bynk.boundary.ambiguous_type` where two consumed contexts declare the name differently
----
+# 0473 — Field reads on consumed contexts' values follow what the consumer may inspect
 
-## ADR: consumed-field-reads
-title: Field reads on consumed contexts' values follow what the consumer may inspect
-summary: Opaque exports reject field reads on values; unexported types are read through the consumer's projection
+- **Status:** Accepted (v0.333)
 
 **Context.** A consumer can hold a value whose type it does not name: a
 consumed service's return type that its context does not export, or the
