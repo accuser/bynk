@@ -372,8 +372,21 @@ test("verifyCall: refuses a stale or future timestamp", async () => {
 
 test("verifyCall: refuses a body over the cap with 413, before authentication", async () => {
   const big = "x".repeat(MAX_BODY_BYTES + 1);
-  // Unsigned: the cap is checked before the signature.
-  const declared = new Request("http://internal/_bynk/call/svc", { method: "POST", body: big });
+  // Unsigned: the cap is checked before the signature. A declared length
+  // over the cap is refused before the body is read at all: this body
+  // faults if anything reads it. (Node does not derive `content-length` for
+  // a constructed Request, so the header is set by hand, as a sender would.)
+  const unread = new ReadableStream<Uint8Array>({
+    pull() {
+      throw new Error("the body was read");
+    },
+  });
+  const declared = new Request("http://internal/_bynk/call/svc", {
+    method: "POST",
+    headers: { "content-length": String(MAX_BODY_BYTES + 1) },
+    body: unread,
+    duplex: "half",
+  } as RequestInit);
   let res = await verifyCall(declared, {}, "shop.payment");
   assert.ok(res instanceof Response && res.status === 413, "a declared length");
   // Streamed, with no length to refuse up front.
