@@ -448,6 +448,16 @@ pub fn run(
             )
         })
         .collect();
+    // #2004 review: name the Workers whose answer could not be read, since
+    // the decision below counts them as holding the secret.
+    for (worker, p) in order.iter().zip(&presence) {
+        if *p == Presence::Unknown {
+            eprintln!(
+                "bynk: could not ask Cloudflare whether `{worker}` holds {}; assuming it does. If it does not, it refuses every cross-context call — `bynk deploy --force` sets a fresh one everywhere.",
+                bynk_emit::CALL_SECRET_BINDING
+            );
+        }
+    }
     let call_secret = match decide_call_secret(
         supplied_call_secret(&secret_source),
         &presence,
@@ -528,6 +538,13 @@ pub fn run(
                 // and listing it here again as "not deployed" would double-count
                 // it against the number.
                 eprint!("{}", stopped_report(&order[i + 1..]));
+                // #2004 review: a run that set a new call secret everywhere and
+                // stopped partway leaves two groups that refuse each other.
+                // The next plain run sees the secret present on every Worker
+                // and keeps it, so say how to repair it.
+                if let Some(hint) = interrupted_rotation_hint(&call_secret, &order[..=i]) {
+                    eprint!("{hint}");
+                }
                 // Wrangler's own code, not a flat 1 (slice 0's contract).
                 return ExitCode::from(f.code);
             }
@@ -555,6 +572,33 @@ pub fn run(
         }
     }
     ExitCode::SUCCESS
+}
+
+/// #2004 review: what to tell the user when a run that put a new call secret
+/// on every Worker (`overwrite`) stopped after `reached` (the Workers up to and
+/// including the one that failed). Some of them may hold the new value and the
+/// rest the old one, and the next plain `bynk deploy` keeps both, since every
+/// Worker reports the secret present. `None` when the run set no new value.
+pub(crate) fn interrupted_rotation_hint(
+    call_secret: &CallSecret,
+    reached: &[String],
+) -> Option<String> {
+    let CallSecret::Set {
+        overwrite: true, ..
+    } = call_secret
+    else {
+        return None;
+    };
+    let names = reached
+        .iter()
+        .map(|w| format!("`{w}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "bynk: this run was setting a new {} on every context and stopped partway: {names} may hold the new value, the rest the old one, so calls between them are refused.\n  \
+         Rerun `bynk deploy --force` (the whole project) to set one value everywhere; a plain rerun would keep both.\n",
+        bynk_emit::CALL_SECRET_BINDING
+    ))
 }
 
 /// #1796: the refusal a deploy gets when a context it pushes declares a
@@ -1243,6 +1287,30 @@ pub(crate) mod tests {
             Some(("shop-cart", "KV")),
             "recorded under another environment is unrecorded here"
         );
+    }
+
+    #[test]
+    fn an_interrupted_rotation_says_how_to_repair_it() {
+        let reached = names(&["commerce-payment", "commerce-orders"]);
+        let rotating = CallSecret::Set {
+            value: "minted-value".into(),
+            overwrite: true,
+        };
+        let hint =
+            interrupted_rotation_hint(&rotating, &reached).expect("a rotation was interrupted");
+        assert!(
+            hint.contains("`commerce-payment`, `commerce-orders`"),
+            "{hint}"
+        );
+        assert!(hint.contains("bynk deploy --force"), "{hint}");
+        assert!(!hint.contains("minted-value"), "never the value: {hint}");
+        // Nothing new was set everywhere, so nothing was split.
+        assert_eq!(interrupted_rotation_hint(&CallSecret::Keep, &reached), None);
+        let filling = CallSecret::Set {
+            value: "v".into(),
+            overwrite: false,
+        };
+        assert_eq!(interrupted_rotation_hint(&filling, &reached), None);
     }
 
     #[test]

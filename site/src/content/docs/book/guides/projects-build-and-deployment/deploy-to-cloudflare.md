@@ -260,8 +260,14 @@ hold the same one, and Cloudflare won't give it back, so:
   context lacks it, the deploy stops and asks for a whole-project deploy, or for
   the value in `--secrets-file` or as `BYNK_CALL_SECRET` in the environment.
 
+If a deploy that is setting a new value stops partway, some contexts hold the
+new value and the rest the old one, and a plain rerun keeps both. The deploy
+says so when it stops. Rerun `bynk deploy --force` to set one value everywhere.
+
 To hold the value yourself, put `BYNK_CALL_SECRET` in your `--secrets-file`;
-`bynk deploy` then sets yours instead of minting one. `bynk dev` and `bynk test`
+`bynk deploy` then sets yours instead of minting one. Like any secret, a
+supplied value only fills contexts that lack one, so pass `--force` when you
+change it. `bynk dev` and `bynk test`
 use a fixed local value. A Worker you push with `wrangler deploy` yourself
 needs the secret set too (`wrangler secret put BYNK_CALL_SECRET`).
 

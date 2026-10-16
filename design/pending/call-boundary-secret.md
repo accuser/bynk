@@ -83,7 +83,13 @@ close. A Worker pushed with plain `wrangler deploy` needs the secret set by
 hand. A Worker served by plain `wrangler dev` refuses internal requests until
 it is given one. A rotation leaves a short window in which calls between a
 Worker that already holds the new value and one that does not yet are
-refused; there is no two-key overlap. Already-deployed projects must redeploy
+refused; there is no two-key overlap. A rotation that stops partway (a
+failed `secret put` or push) leaves that split in place, and the next plain
+run keeps it, since every Worker reports the secret present. The deploy prints
+which Workers may hold the new value and says to rerun `bynk deploy --force`.
+We considered a no-value "rotation pending" mark in the ledger, which ADR 0195
+D1 would allow, but left it out of the interim mechanism that per-edge
+signatures replace. Already-deployed projects must redeploy
 the whole project once. `workers_dev = false` for contexts with no public
 surface remains worth doing as defence in depth, but it is left to its own
 change, since deciding "no public surface" means weighing `from http`,
