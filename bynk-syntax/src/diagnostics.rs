@@ -226,6 +226,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Two peers in a multi-actor sum share an authentication scheme.",
     ),
     d(
+        "bynk.actor.foreign_context_name_unkeyable",
+        "A context declaring a `Foreign` actor has a name no call key can be named from.",
+    ),
+    d(
         "bynk.actor.foreign_duplicate_secret",
         "A `Foreign` actor's secret is also another actor's secret in the same context.",
     ),

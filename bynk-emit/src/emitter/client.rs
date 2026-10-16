@@ -172,9 +172,8 @@ pub(crate) fn emit_client(
         roots.extend(s.svc.params.iter().map(|(_, t)| t.clone()));
         roots.push(s.svc.return_type.clone());
     }
-    let (closure, _) = serialisation::collect_codec_closure(&roots, own_types);
+    let (closure, insts) = serialisation::collect_codec_closure(&roots, own_types);
     let mut generic_bases: BTreeSet<String> = BTreeSet::new();
-    let (_, insts) = serialisation::collect_codec_closure(&roots, own_types);
     for i in &insts {
         if let serialisation::GenericInst::RecordInst { name, .. }
         | serialisation::GenericInst::SumInst { name, .. } = i

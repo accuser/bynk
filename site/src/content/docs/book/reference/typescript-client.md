@@ -193,7 +193,7 @@ The client's `CONTRACTS` doc carries these lines, ready to paste, and so does
 `bynk deploy` for a foreign caller with no pin. `bynk deploy` holds each pin
 against the build and **refuses**, before the plan and under `--dry-run` too,
 when a pinned service's hash has changed, the caller may no longer call it, or
-the context no longer declares the caller
+the context no longer declares the caller (or no handler admits it any more)
 (`bynk.deploy.foreign_contract_skew`):
 
 ```text

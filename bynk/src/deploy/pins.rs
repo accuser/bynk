@@ -67,6 +67,16 @@ pub(crate) fn parse_pins(text: &str) -> Result<ForeignPins, String> {
             };
             let mut out = BTreeMap::new();
             for (service, hash) in services {
+                // An unquoted dotted context (`[shop.orders.Legacy]`) is TOML
+                // for nested tables, so the first value met where a hash
+                // belongs is itself a table.
+                if let toml::Value::Table(inner) = &hash {
+                    let (spelled, meant) =
+                        quoted_header(&[context.as_str(), actor.as_str(), service.as_str()], inner);
+                    return Err(format!(
+                        "`[{spelled}]` is read as nested tables, not a context and a caller: quote the dotted context name, as `{meant}`"
+                    ));
+                }
                 let hash = hash.as_str().filter(|h| is_hash(h)).ok_or_else(|| {
                     format!(
                         "`{context}`'s `{actor}` pins `{service}` to something other than a contract hash (16 lowercase hex digits)"
@@ -78,6 +88,22 @@ pub(crate) fn parse_pins(text: &str) -> Result<ForeignPins, String> {
         }
     }
     Ok(pins)
+}
+
+/// The dotted path an unquoted header spelled, down to the table that holds
+/// the hashes, and the header it meant: its last segment the caller, the rest
+/// the context (`["shop.orders".Legacy]`).
+fn quoted_header(prefix: &[&str], mut table: &toml::Table) -> (String, String) {
+    let mut path: Vec<String> = prefix.iter().map(|s| s.to_string()).collect();
+    while table.len() == 1
+        && let Some((key, toml::Value::Table(next))) = table.iter().next()
+    {
+        path.push(key.clone());
+        table = next;
+    }
+    let spelled = path.join(".");
+    let actor = path.pop().unwrap_or_default();
+    (spelled, format!("[\"{}\".{actor}]", path.join(".")))
 }
 
 fn is_hash(s: &str) -> bool {
@@ -104,7 +130,8 @@ pub(crate) enum Built {
     /// The caller may no longer call the service (removed, renamed, or no
     /// longer admitting it).
     NotCallable,
-    /// The context no longer declares the caller.
+    /// The context no longer declares the caller, or no handler admits it
+    /// any more (either way the build records nothing for it).
     Undeclared,
     /// The project has no such context.
     NoContext,
@@ -191,7 +218,12 @@ pub(crate) fn refusal_message(broken: &[BrokenPin]) -> String {
         let what = match &b.built {
             Built::Hash(h) => format!("the build's is {h}"),
             Built::NotCallable => "the caller may no longer call it".to_string(),
-            Built::Undeclared => format!("`{}` no longer declares `{}`", b.context, b.actor),
+            Built::Undeclared => {
+                format!(
+                    "`{}` no longer declares, or admits, `{}`",
+                    b.context, b.actor
+                )
+            }
             Built::NoContext => format!("the project has no context `{}`", b.context),
         };
         out.push_str(&format!(
@@ -286,6 +318,31 @@ mod tests {
                 .contains("service =")
         );
         assert!(parse_pins("not toml [").is_err());
+    }
+
+    #[test]
+    fn an_unquoted_dotted_context_gets_a_hint_to_quote_it() {
+        let e = parse_pins(&format!("[shop.orders.Legacy]\nping = \"{A}\"\n")).unwrap_err();
+        assert!(e.contains("[\"shop.orders\".Legacy]"), "{e}");
+        assert!(e.contains("quote the dotted context name"), "{e}");
+        // A deeper context names the whole path.
+        let e = parse_pins(&format!("[app.shop.orders.Legacy]\nping = \"{A}\"\n")).unwrap_err();
+        assert!(e.contains("[\"app.shop.orders\".Legacy]"), "{e}");
+    }
+
+    #[test]
+    fn a_caller_no_longer_admitted_reads_as_no_longer_admitted() {
+        let pins = map(&[("shop.orders", "Legacy", "ping", A)]);
+        // `Legacy` is still declared but no handler admits it: the build's
+        // `foreign` record has nothing for it.
+        let built = map(&[("shop.orders", "Ledger", "status", B)]);
+        let (broken, _) = check_pins(&pins, &built, &run(&["shop.orders"]), true);
+        assert_eq!(broken[0].built, Built::Undeclared);
+        let message = refusal_message(&broken);
+        assert!(
+            message.contains("`shop.orders` no longer declares, or admits, `Legacy`"),
+            "{message}"
+        );
     }
 
     #[test]

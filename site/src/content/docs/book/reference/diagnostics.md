@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **516** codes in total.
+There are **517** codes in total.
 
 ## Agents
 
@@ -213,6 +213,7 @@ There are **516** codes in total.
 | `bynk.actor.binder_shadows_param` | A `by` actor binder collides with a handler parameter of the same name. |  | — |
 | `bynk.actor.by_on_agent` | A `by` actor clause was placed on an agent `on call` handler, which has no actor. |  | — |
 | `bynk.actor.duplicate_sum_scheme` | Two peers in a multi-actor sum share an authentication scheme. |  | — |
+| `bynk.actor.foreign_context_name_unkeyable` | A context declaring a `Foreign` actor has a name no call key can be named from. |  | — |
 | `bynk.actor.foreign_duplicate_secret` | A `Foreign` actor's secret is also another actor's secret in the same context. |  | — |
 | `bynk.actor.foreign_identity_unsupported` | A `Foreign` actor declares an `identity`. |  | — |
 | `bynk.actor.foreign_missing_secret` | A `Foreign` actor does not name the secret its calls are signed with. |  | — |
