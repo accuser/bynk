@@ -2342,6 +2342,57 @@ service keep {
         assert!(!toml.contains("[[services]]"), "{toml}");
     }
 
+    /// #1961: each handler's `deps.env` names only the context it calls, while
+    /// the Worker's `Env` binds both, so `compose`'s `env` satisfies each.
+    #[test]
+    fn each_handler_env_names_only_the_contexts_it_calls() {
+        let ledger = "context demo.ledger
+
+service note {
+  on call(id: String) -> Effect[Int] {
+    Effect.pure(1)
+  }
+}
+";
+        let hub = "context demo.hub
+
+consumes demo.payment
+consumes demo.ledger
+
+service pay {
+  on call(id: String) -> Effect[Result[Receipt, Int]] {
+    demo.payment.authorise(id)
+  }
+}
+
+service log {
+  on call(id: String) -> Effect[Int] {
+    demo.ledger.note(id)
+  }
+}
+";
+        let out = emit_workers(&[
+            ("demo/payment.bynk", PAYMENT),
+            ("demo/ledger.bynk", ledger),
+            ("demo/hub.bynk", hub),
+        ]);
+        let ts = out.text("workers/demo-hub/compose.ts");
+        assert!(ts.contains("  DEMO_LEDGER: __ServiceBinding;"), "{ts}");
+        assert!(ts.contains("  DEMO_PAYMENT: __ServiceBinding;"), "{ts}");
+        let handlers = out.text("workers/demo-hub/handlers.ts");
+        let env_of = |svc: &str| {
+            let at = handlers
+                .find(&format!("export const {svc} = {{"))
+                .unwrap_or_else(|| panic!("no `{svc}`:\n{handlers}"));
+            let rest = &handlers[at..];
+            let start = rest.find("env: {").expect("an env type");
+            let end = rest[start..].find('}').expect("closed");
+            rest[start..start + end].to_string()
+        };
+        assert!(env_of("pay").contains("DEMO_PAYMENT") && !env_of("pay").contains("DEMO_LEDGER"));
+        assert!(env_of("log").contains("DEMO_LEDGER") && !env_of("log").contains("DEMO_PAYMENT"));
+    }
+
     /// #1944: `Env` declares exactly the bindings `wrangler.toml` does, in
     /// the same order: services, the KV namespace, then the Durable Objects
     /// by class name, the events fan-out (`__EventsFanout`) after an agent.
