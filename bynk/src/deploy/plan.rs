@@ -337,6 +337,15 @@ pub fn run(
         }
     };
 
+    // Review of #1974: namespace titles are account-wide, and a derived
+    // instance's joins two names with the separator Worker names already use,
+    // so two can coincide. Refused before the plan, `--dry-run` included,
+    // rather than met as wrangler's own error partway through a deploy.
+    if let Some(message) = kv_title_collision(&resources, &opts.environment) {
+        eprintln!("bynk: {message}");
+        return ExitCode::FAILURE;
+    }
+
     let plan = derive_plan(
         &order,
         &resources,
@@ -750,6 +759,34 @@ pub(crate) fn derive_plan<'a>(
     }
 }
 
+/// Two of the project's KV namespaces that would share one account-facing
+/// title under `environment` ([`kv_title`]), described for the user: Worker
+/// `shop` with `capability CartSessions` and Worker `shop-cart` with
+/// `capability Sessions` both give `shop-cart-sessions`. `None` when every
+/// title is distinct. Checked across the whole project, not just `--context`'s
+/// selection, since titles are account-wide.
+pub(crate) fn kv_title_collision(
+    resources: &BTreeMap<String, Resources>,
+    environment: &str,
+) -> Option<String> {
+    let mut seen: BTreeMap<String, (&str, &str)> = BTreeMap::new();
+    for (worker, declared) in resources {
+        for binding in kv_bindings(declared) {
+            let title = kv_title(worker, binding, environment);
+            if let Some((first_worker, first_binding)) =
+                seen.insert(title.clone(), (worker.as_str(), binding))
+            {
+                return Some(format!(
+                    "{} and {} would both be titled `{title}` on the account; rename a capability or context so they differ",
+                    kv_namespace_noun(first_worker, first_binding),
+                    kv_namespace_noun(worker, binding)
+                ));
+            }
+        }
+    }
+    None
+}
+
 /// The first KV namespace in `order` with no recorded id, as `(worker,
 /// binding)`: what CI refuses to mint, since an id created there and never
 /// committed is an orphan nobody can find again. Every namespace counts, the
@@ -1086,6 +1123,42 @@ pub(crate) mod tests {
             }
             .dry_run
         );
+    }
+
+    /// Review of #1974: an instance title another Worker's namespace already
+    /// takes is refused, naming both; distinct titles pass.
+    #[test]
+    fn a_kv_title_two_namespaces_would_share_is_refused() {
+        let colliding = project(vec![
+            (
+                "shop",
+                Resources::default().kv_instances(&["KV_CART_SESSIONS"]),
+            ),
+            (
+                "shop-cart",
+                Resources::default().kv_instances(&["KV_SESSIONS"]),
+            ),
+        ]);
+        let message = kv_title_collision(&colliding, "default").expect("a collision");
+        assert!(
+            message.contains("`shop-cart-sessions`")
+                && message.contains("`KV_CART_SESSIONS` for `shop`")
+                && message.contains("`KV_SESSIONS` for `shop-cart`"),
+            "{message}"
+        );
+        // An instance title equal to another Worker's bare namespace title.
+        let bare = project(vec![
+            ("shop", Resources::default().kv_instances(&["KV_CART"])),
+            ("shop-cart", Resources::default().needs_kv()),
+        ]);
+        assert!(kv_title_collision(&bare, "default").is_some());
+        let distinct = project(vec![(
+            "shop-cart",
+            Resources::default()
+                .needs_kv()
+                .kv_instances(&["KV_PRICE_CACHE", "KV_SESSIONS"]),
+        )]);
+        assert_eq!(kv_title_collision(&distinct, "staging"), None);
     }
 
     /// S4b (#1967): CI refuses any unrecorded namespace, including an

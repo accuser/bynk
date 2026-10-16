@@ -29,14 +29,18 @@ would be an emitted-code change, and S4b has none.
 - **D3 — Instance titles.** A derived instance's namespace is titled `<worker>-<capability,
   kebab>`, read off the binding (`KV_PRICE_CACHE` → `shop-cart-price-cache`). It is
   environment-qualified like a queue's name (`shop-cart-sessions-staging`). KV titles are
-  account-scoped, as Worker names are.
+  account-scoped, as Worker names are. The derivation joins two names with the separator Worker
+  names already use, so two of a project's namespaces can coincide (Worker `shop` with
+  `CartSessions`, Worker `shop-cart` with `Sessions`). `bynk deploy` refuses that before the plan,
+  `--dry-run` included, naming both namespaces.
 - **D4 — Per binding everywhere.** Each namespace is planned, created, recorded before the push
   (ADR 0180) and checked against the account's live ids on its own. It is materialised into the
   generated config by binding: each entry whose id is still its own placeholder
   (`<KV_SESSIONS_ID>`) gets its id. The CI refusal to mint an unrecorded id applies to every
   namespace. `bynk dev --remote` binds them all.
 - **D5 — Orphans.** An instance is an orphan with its Worker, or on its own when its still-live
-  Worker no longer declares its binding. A rename is therefore a create plus an orphan. The data
+  Worker no longer declares its binding. The bare namespace likewise, once the live Worker stops
+  using the bare `Kv`. A rename is therefore a create plus an orphan. The data
   is not moved, and nothing is deleted without `--prune`'s own confirmation, which names the
   instance's title, Worker and binding. Pruning the last instance of a Worker removes its table
   from the ledger.

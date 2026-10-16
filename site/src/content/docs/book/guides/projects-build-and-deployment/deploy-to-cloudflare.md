@@ -256,6 +256,11 @@ environment suffix under `--env` (`shop-cart-sessions-staging`). Each id is
 recorded in `bynk.deploy.lock` under its Worker and its binding, and only ever
 written into the generated `wrangler.toml` immediately before the push.
 
+Titles are account-wide, so two of a project's namespaces must not share one:
+Worker `shop` with `capability CartSessions` and Worker `shop-cart` with
+`capability Sessions` would both be `shop-cart-sessions`. `bynk deploy` refuses
+that before planning, `--dry-run` included, and names both namespaces.
+
 ## Multi-context projects
 
 A project with several contexts ships every one of them, in the order their
@@ -412,7 +417,8 @@ deploy commerce-orders
 A removed context with a KV namespace shows up as **two** lines — the
 namespace and the Worker are separate resources, tracked separately, and
 reported separately. A derived instance is an orphan with its context, or on its
-own when its context still deploys but no longer declares it. Renaming
+own when its context still deploys but no longer declares it. So is the bare
+namespace, once a context stops using the bare `Kv` (`orphan kv api`). Renaming
 `capability Carts = Kv` to `Baskets` is a new binding, so the plan creates
 `KV_BASKETS` and reports the old one, naming its binding:
 

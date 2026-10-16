@@ -298,10 +298,12 @@ pub(crate) fn find_orphans(
             })
     });
     Orphans {
+        // The bare namespace likewise: with its Worker, or on its own once
+        // the live Worker stops using the bare `Kv` (review of #1974).
         kv: env
             .kv
             .keys()
-            .filter(|worker| !resources.contains_key(worker.as_str()))
+            .filter(|worker| resources.get(worker.as_str()).is_none_or(|r| !r.needs_kv))
             .map(|worker| OrphanKv {
                 worker: worker.clone(),
                 binding: None,
@@ -1072,6 +1074,24 @@ pub(crate) mod tests {
         );
         lock.forget_kv("default", "shop-cart", "KV_SESSIONS");
         assert_eq!(toml::to_string_pretty(&lock).unwrap(), before);
+    }
+
+    /// Review of #1974: a still-live Worker that stops using the bare `Kv`
+    /// (say, for `capability Sessions = Kv`) no longer declares `KV`, so its
+    /// recorded bare namespace is an orphan, like an instance it dropped.
+    #[test]
+    fn a_bare_namespace_its_live_worker_no_longer_declares_is_an_orphan() {
+        let lock = with_kv(DeployLock::default(), "api");
+        let switched = project(vec![(
+            "api",
+            Resources::default().kv_instances(&["KV_SESSIONS"]),
+        )]);
+        assert_eq!(
+            find_orphans(&lock, "default", &switched).kv,
+            [bare_orphan("api")]
+        );
+        let still_bare = project(vec![("api", Resources::default().needs_kv())]);
+        assert!(find_orphans(&lock, "default", &still_bare).kv.is_empty());
     }
 
     /// S4b (#1967): an instance its still-live Worker no longer declares (a
