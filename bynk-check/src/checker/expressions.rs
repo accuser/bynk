@@ -2458,7 +2458,9 @@ pub(crate) fn check_record_spread(
             ),
         ));
     }
-    let decl = ctx.input.types.get(&record_name)?.clone();
+    // #1948: the base may be a consumed context's type the caller does not
+    // name, whose fields the projection declares.
+    let decl = lookup_type_decl(&record_name, ctx)?;
     let TypeBody::Record(r) = &decl.body else {
         return None;
     };
@@ -3016,7 +3018,37 @@ pub(crate) fn check_field_access(
         ctx.errors.push(err);
         return None;
     };
-    let decl = ctx.input.types.get(name)?;
+    // #1948: a value of a consumed context's type the caller does not name
+    // (an unexported return or field type) is read through the projection,
+    // so its fields are checked like any other record's. `projection` is
+    // kept to resolve the field's own type, which the caller may not name
+    // either.
+    let mut projection = None;
+    let decl = match ctx.input.types.get(name) {
+        Some(decl) => decl.clone(),
+        None => {
+            let (table, ambiguous) = consumer_projection(ctx)?;
+            let Some(decl) = table.get(name).cloned() else {
+                if ambiguous.contains(name) {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.boundary.ambiguous_type",
+                            field.span,
+                            format!("cannot read field `{}` of a `{name}`", field.name),
+                        )
+                        .with_note(format!(
+                            "more than one consumed context declares a type `{name}`, with \
+                             different shapes, so a value of it cannot be traced to one of \
+                             them; rename one"
+                        )),
+                    );
+                }
+                return None;
+            };
+            projection = Some(table);
+            decl
+        }
+    };
     let TypeBody::Record(r) = &decl.body else {
         return None;
     };
@@ -3042,7 +3074,16 @@ pub(crate) fn check_field_access(
     );
     // v0.157 (ADR 0183): resolve the field type at this instantiation —
     // substituting the record's type parameters by the receiver's `args`.
-    instantiate_field_ty(decl, args, &field_decl.type_ref, &ctx.input.types, tys)
+    // #1948: a field type the caller's table does not resolve may still be
+    // one the projection does (a transparent export's unexported field).
+    let field_ref = &field_decl.type_ref;
+    match &projection {
+        Some(table) => instantiate_field_ty(&decl, args, field_ref, table, tys),
+        None => instantiate_field_ty(&decl, args, field_ref, &ctx.input.types, tys).or_else(|| {
+            let (table, _) = consumer_projection(ctx)?;
+            instantiate_field_ty(&decl, args, field_ref, &table, tys)
+        }),
+    }
 }
 
 /// What a `match` ranges over (v0.130, DECISION D). A discriminant is either

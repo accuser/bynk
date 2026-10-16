@@ -4462,6 +4462,10 @@ fn structurally_compatible(
     structurally_compatible_inner(arg, param, arg_types, param_types, tys, &mut HashSet::new())
 }
 
+/// [`projected_types`]' result: the projected table, and the names it leaves
+/// out as ambiguous.
+pub(crate) type Projection = (HashMap<String, Arc<TypeDecl>>, BTreeSet<String>);
+
 /// #1941: the caller's type table, extended with the types a value from a
 /// consumed context can carry here without the caller naming them. A
 /// consumed service may return a type its context does not export (§6.5:
@@ -4480,7 +4484,7 @@ pub(crate) fn projected_types(
     caller_types: &HashMap<String, Arc<TypeDecl>>,
     consumed_types: &HashMap<String, HashMap<String, Arc<TypeDecl>>>,
     tys: &Types,
-) -> (HashMap<String, Arc<TypeDecl>>, BTreeSet<String>) {
+) -> Projection {
     type Table = HashMap<String, Arc<TypeDecl>>;
     let mut candidates: HashMap<&String, Vec<(&Arc<TypeDecl>, &Table)>> = HashMap::new();
     // Consumed contexts in name order, so when several agree on a name the
@@ -4526,6 +4530,26 @@ pub(crate) fn projected_types(
         }
     }
     (projected, ambiguous)
+}
+
+/// #1948: the caller's [`projected_types`], when it consumes a context, for
+/// reading a value of a type the caller does not name: a consumed service's
+/// unexported return type, or an export's unexported field type. `None` for
+/// a unit that consumes nothing, whose own table is all there is. Projecting
+/// clones the caller's table, so call it only once that table has missed.
+pub(crate) fn consumer_projection(ctx: &Ctx) -> Option<Projection> {
+    let consumed = &ctx.input.cross_context.consumed_types;
+    (!consumed.is_empty()).then(|| projected_types(&ctx.input.types, consumed, ctx.tys))
+}
+
+/// #1948: a type's declaration by name: the caller's own, else the one
+/// [`consumer_projection`] resolves. `None` for a name neither binds,
+/// including one the projection leaves ambiguous.
+pub(crate) fn lookup_type_decl(name: &str, ctx: &Ctx) -> Option<Arc<TypeDecl>> {
+    if let Some(decl) = ctx.input.types.get(name) {
+        return Some(decl.clone());
+    }
+    consumer_projection(ctx)?.0.get(name).cloned()
 }
 
 /// #1941: a note for a cross-context argument whose type names one of

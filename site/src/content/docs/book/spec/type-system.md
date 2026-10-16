@@ -295,6 +295,20 @@ opaque handle — inspecting it from outside the owning context is rejected
 its constructors (`.of`, `.unsafe`, a variant), or an opaque one with record
 syntax, from outside (`bynk.context.external_construction`).
 
+**Reading a field of a value from a consumed context** (#1948) follows what the
+consumer may inspect. A field read on a value whose type is an `exports opaque`
+type of another context is an inspection, rejected
+(`bynk.context.opaque_inspection`) however the value was bound: from a call, a
+parameter, or another value's field. A value whose type the providing context
+declares but does not export (a service's unexported return type, or the
+unexported type of an exported record's field) is *transparent but unnamed*:
+the consumer cannot name the type, but its fields are read and typed against the
+providing context's declaration, projected by name as for a returned value
+above. An unknown field is `bynk.types.unknown_field` and a wrongly used one an
+ordinary type error. Where more than one consumed context declares a type of
+that name with different shapes, and the consumer declares none, the read cannot
+be traced to one declaration and is rejected (`bynk.boundary.ambiguous_type`).
+
 **An adapter's binding is a privileged constructor of its boundary types.** The
 binding is host code: it sits outside Bynk's static semantics, and only the
 emitted TypeScript types constrain it. For *transparent* records this is no

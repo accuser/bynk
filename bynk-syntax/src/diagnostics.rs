@@ -432,6 +432,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An `asset` path is empty, absolute, or contains a `..` segment.",
     ),
     d(
+        "bynk.boundary.ambiguous_type",
+        "A value's type is declared, with different shapes, by more than one consumed context, so its fields cannot be read.",
+    ),
+    d(
         "bynk.boundary.structural_mismatch",
         "Data crossing a context boundary did not match the expected shape.",
     ),
