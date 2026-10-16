@@ -2543,6 +2543,7 @@ pub(crate) fn emit_provider(
         let effectful = is_effectful_return(&op.return_type);
         let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
         module.agent_method_givens = ctx.agent_method_givens.clone();
+        module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
         module.target = ctx.target;
         module.in_bynk_unit = ctx.commons_name == "bynk";
@@ -2859,6 +2860,7 @@ pub(crate) fn emit_service(
         let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
         module.in_bynk_unit = ctx.commons_name == "bynk";
         module.agent_method_givens = ctx.agent_method_givens.clone();
+        module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
         module.target = ctx.target;
         let mut cx = LowerCtx::new(
@@ -5115,6 +5117,7 @@ pub(crate) fn emit_agent(
             let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
             module.target = ctx.target;
             module.agent_method_givens = ctx.agent_method_givens.clone();
+            module.agent_called_contexts = ctx.agent_called_contexts.clone();
             module.event_schema_versions = ctx.event_schema_versions.clone();
             let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
             icx.local_agents = ctx.local_agents.clone();
@@ -5977,6 +5980,7 @@ pub(crate) fn emit_agent(
         // type names.
         module.target = ctx.target;
         module.agent_method_givens = ctx.agent_method_givens.clone();
+        module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
         let mut cx = LowerCtx::new(
             module,
@@ -6993,6 +6997,7 @@ fn emit_ws_do_method(
     let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
     module.in_bynk_unit = ctx.commons_name == "bynk";
     module.agent_method_givens = ctx.agent_method_givens.clone();
+    module.agent_called_contexts = ctx.agent_called_contexts.clone();
     module.event_schema_versions = ctx.event_schema_versions.clone();
     module.target = ctx.target;
     let mut cx = LowerCtx::new(

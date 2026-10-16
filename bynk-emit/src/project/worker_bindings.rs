@@ -16,6 +16,7 @@ use super::{
     BuildTarget, ErrorSink, ParsedFile, UnitKind, UnitTable, native_platforms_of_context,
     unit_table_uses_emit,
 };
+use crate::emitter::agent_cross_context_targets;
 use crate::emitter::wrangler::{WorkerBinding, worker_bindings};
 
 /// v0.19 (decision 0025): each context whose in-process closure reaches a
@@ -159,7 +160,16 @@ pub(super) fn all_context_bindings(
             ctx.clone(),
             context_bindings(
                 table,
-                &called_contexts(table, unit_consumes.get(ctx), unit_callees.get(ctx)),
+                &called_contexts(
+                    table,
+                    unit_consumes
+                        .get(ctx)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                    unit_consumes_aliases.get(ctx),
+                    kinds,
+                    unit_callees.get(ctx),
+                ),
                 &own_event_routes(ctx, event_subscribers),
                 needs_kv(&context_native, ctx),
                 unit_table_uses_emit(table, unit_callees.get(ctx)),
@@ -169,20 +179,30 @@ pub(super) fn all_context_bindings(
     bindings
 }
 
-/// The consumed contexts whose services `table`'s bodies call, in name order
-/// — the keys of [`super::called_cross_context_services`].
-fn called_contexts(
+/// The consumed contexts a context's Worker binds for calling, in name order:
+/// those whose services its bodies call (the keys of
+/// [`super::called_cross_context_services`]), plus those its agents call
+/// ([`agent_cross_context_targets`]) — a handler constructing an agent hands
+/// it its own `deps`, whose `env` type names them (#1960, #1961).
+pub(super) fn called_contexts(
     table: &UnitTable,
-    consumes: Option<&Vec<String>>,
+    consumes: &[String],
+    aliases: Option<&HashMap<String, String>>,
+    kinds: &BTreeMap<String, UnitKind>,
     callees: Option<&HashMap<ExprId, Callee>>,
 ) -> Vec<String> {
-    super::called_cross_context_services(
-        table,
-        consumes.map(Vec::as_slice).unwrap_or_default(),
-        callees,
-    )
-    .into_keys()
-    .collect()
+    let mut called: BTreeSet<String> =
+        super::called_cross_context_services(table, consumes, callees)
+            .into_keys()
+            .collect();
+    called.extend(agent_cross_context_targets(table, |chain| {
+        let target = aliases
+            .and_then(|a| a.get(chain))
+            .cloned()
+            .or_else(|| consumes.iter().find(|c| *c == chain).cloned())?;
+        (kinds.get(&target) == Some(&UnitKind::Context)).then_some(target)
+    }));
+    called.into_iter().collect()
 }
 
 /// `bynk.context.duplicate_binding`: on a Workers build, each context's

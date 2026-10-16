@@ -34,7 +34,15 @@ contracts manifest's `expects`. The binding list is still built in one place
 duplicate check and the integration harness all read it. A handler's
 `deps.env` type now names only the contexts that handler calls. That set is
 always a subset of the Worker's bindings, so `compose`'s `env` still satisfies
-it. With this change, a subscriber that only consumes its publisher binds
+it. One addition covers agents ([[0474]]). A handler that constructs an agent
+passes its own `deps` to the agent's methods. Its `deps.env` type, and the
+Worker's bindings, therefore also include the contexts the agents call. That
+set is read from the agent bodies' receivers: a file's `handlers.ts` is
+emitted before the unit's other files are checked, so the full callee map is
+not yet available. The syntactic read over-counts only a local that shadows a
+consumed alias, and the cost of that is an unused binding.
+
+With this change, a subscriber that only consumes its publisher binds
 nothing back, and the deploy order runs subscriber first, then publisher.
 
 (D2) A subscriber that also calls its publisher (directly or through others)

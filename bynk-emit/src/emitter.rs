@@ -317,6 +317,7 @@ fn single_file_ctx() -> EmitProjectCtx {
         agent_given_deps: HashMap::new(),
         extra_import_lines: Vec::new(),
         agent_method_givens: HashMap::new(),
+        agent_called_contexts: Vec::new(),
         actors: HashMap::new(),
         event_schema_versions: HashMap::new(),
         consumed_adapters: HashSet::new(),
@@ -832,6 +833,34 @@ pub(crate) fn walk_unit_table_bodies(table: &UnitTable, f: &mut impl FnMut(&Expr
             walk_block_exprs(&op.body, f);
         }
     }
+}
+
+/// #1961: the consumed contexts an agent handler body calls a service of,
+/// read from the receivers' syntax (`B.svc(…)` / `Alias.svc(…)`) through
+/// `resolve` — `CrossContextInfo::resolve_prefix`, or its equivalent over the
+/// unit's `consumes`. A handler that constructs an agent hands its own `deps`
+/// to the agent's methods (#1960), so its `deps.env` type must name these, and
+/// the Worker must bind them. Syntactic because a file's `handlers.ts` is
+/// emitted before the unit's other files are checked; it over-counts only a
+/// local that shadows a consumed alias, which costs an unused binding.
+pub(crate) fn agent_cross_context_targets(
+    table: &UnitTable,
+    resolve: impl Fn(&str) -> Option<String>,
+) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for agent in table.agents.values() {
+        for h in &agent.handlers {
+            walk_block_exprs(&h.body, &mut |e| {
+                if let ExprKind::MethodCall { receiver, .. } = &e.kind
+                    && let Some(chain) = emit::flatten_emit_ident_chain(receiver)
+                    && let Some(consumed) = resolve(&chain)
+                {
+                    out.insert(consumed);
+                }
+            });
+        }
+    }
+    out
 }
 
 /// P6.32 (design/tracks/the-ir.md §6a): the one built-in wrapper type
@@ -3822,6 +3851,8 @@ pub(crate) struct ModuleCtx<'a> {
     /// call is genuinely first-party before scoping its key, not a same-named
     /// capability some other adapter or context happens to declare.
     in_bynk_unit: bool,
+    /// #1961: [`crate::project::EmitProjectCtx::agent_called_contexts`].
+    agent_called_contexts: Vec<String>,
 }
 
 impl<'a> ModuleCtx<'a> {
@@ -3838,6 +3869,7 @@ impl<'a> ModuleCtx<'a> {
             agent_method_givens: HashMap::new(),
             event_schema_versions: HashMap::new(),
             in_bynk_unit: false,
+            agent_called_contexts: Vec::new(),
         }
     }
 }
@@ -4369,11 +4401,18 @@ impl<'a> LowerCtx<'a> {
             .is_some_and(|h| !h.cross_contexts_called.is_empty())
     }
 
-    /// The consumed contexts this handler calls, in name order (#1961).
+    /// The consumed contexts this handler's `deps.env` must bind, in name
+    /// order (#1961): those it calls, plus — when it constructs an agent, whose
+    /// methods it hands its `deps` — those the context's agents call.
     pub(crate) fn cross_contexts_called(&self) -> Vec<String> {
-        self.handler()
-            .map(|h| h.cross_contexts_called.iter().cloned().collect())
-            .unwrap_or_default()
+        let mut called: std::collections::BTreeSet<String> = self
+            .handler()
+            .map(|h| h.cross_contexts_called.clone())
+            .unwrap_or_default();
+        if self.agents_instantiated() {
+            called.extend(self.module.agent_called_contexts.iter().cloned());
+        }
+        called.into_iter().collect()
     }
 
     /// v0.9.2: true if this body instantiated a local agent.
