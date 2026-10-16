@@ -60,6 +60,20 @@ pub fn received() -> Option<i32> {
     }
 }
 
+/// Undo [`install`] and forget any recorded signal, so a test that installs
+/// the handler leaves nothing behind in the shared test process.
+#[cfg(test)]
+pub(crate) fn reset() {
+    #[cfg(unix)]
+    for sig in [libc::SIGINT, libc::SIGTERM] {
+        // SAFETY: restoring the default disposition.
+        unsafe {
+            libc::signal(sig, libc::SIG_DFL);
+        }
+    }
+    RECEIVED.store(0, Ordering::SeqCst);
+}
+
 /// The exit byte for a session stopped by `sig`, as [`crate::shell::exit_status_byte`]
 /// maps a child's signal death: SIGINT is a clean stop (it is what Ctrl-C
 /// sends), anything else `128 + sig`, the shell convention.

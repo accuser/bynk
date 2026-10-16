@@ -1028,6 +1028,7 @@ mod tests {
         let code = supervise(&mut children, &root, || {
             panic!("a recorded stop must end the session before any rebuild")
         });
+        crate::stop::reset();
         let left = crate::sweep::stragglers(&root);
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(code, 143, "a SIGTERM stop exits 128 + 15");
