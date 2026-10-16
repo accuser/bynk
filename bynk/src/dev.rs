@@ -98,7 +98,7 @@ pub struct StandIn {
 /// so under the real name it would answer other sessions' bindings to that
 /// Worker and, once stopped, could leave a stale entry for `--local-worker` to
 /// connect to. The context's binding is pointed at this name instead
-/// ([`point_at_stand_ins`]).
+/// (`point_at_stand_ins`).
 pub fn stand_in_name(context: &str, worker: &str) -> String {
     format!("bynk-stand-in-{context}-{worker}")
 }

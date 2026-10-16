@@ -878,7 +878,7 @@ fn instance_option_value(
 }
 
 /// Whether `name` is a Cloudflare Worker name ([`instance_option_value`]).
-pub fn is_worker_name(name: &str) -> bool {
+fn is_worker_name(name: &str) -> bool {
     (1..=63).contains(&name.len())
         && name
             .bytes()
