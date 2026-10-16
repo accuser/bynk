@@ -34,6 +34,8 @@ guarded by tests so they cannot drift:
 - [Syntax & grammar](/book/reference/grammar/) — from the `tree-sitter-bynk` grammar.
 - [Keywords](/book/reference/keywords/) — from the lexer's keyword tokens.
 - [Diagnostic index](/book/reference/diagnostics/) — from the diagnostic registry.
+- [Wire format](/book/reference/wire-format/) — the cross-context call format
+  non-Bynk code can speak, from the emitter's own constants and codecs.
 
 The [CLI (`bynkc`)](/docs/cli/) reference is also generated (from the clap command
 tree); it now lives in [Developer Documentation](/docs/).

@@ -417,8 +417,9 @@ hashed. The form is deterministic and order-insensitive where the wire is:
 refinement predicates canonicalise as a *set*, and record fields and sum variants
 sort by name — a JSON object is unordered and a sum carries a `kind`
 discriminant, so their order is not wire-observable and MUST NOT change the hash.
-Field *presence*, field types, parameter names, parameter order, and the return
-type all MUST change it. An **opaque** type contributes its representation but
+Field *presence*, field types (an inline field refinement included, as a
+predicate set), parameter names, parameter order, and the return type all MUST
+change it. An **opaque** type contributes its representation but
 **not** its predicate: a consumer cannot observe that predicate, so it is not
 part of the contract between them.
 
@@ -427,7 +428,7 @@ namespace**, from the callee's own type table. A caller MUST NOT canonicalise a
 consumed type in its own namespace, where rebranding would render the same type
 differently.
 
-The callee compares the header against its own constant **before reading the
+The callee compares the header against its own constant **before parsing the
 request body** — and so before the caller check — and on mismatch answers `409`
 with a `ContractMismatch` body naming the service, the expected hash, and what
 arrived. Once the contracts disagree the body's interpretation is precisely what
@@ -471,6 +472,26 @@ The secret proves that the sender belongs to the deployment. It does not prove
 `bynk deploy` mints and sets the value. `bynk dev` and the generated test
 harnesses use a fixed local value, which is never written into a generated
 `wrangler.toml`.
+
+### §7.3.4e The published wire format
+
+The request a `/_bynk/call/` dispatch accepts, the order of its checks with
+their statuses and error bodies, the JSON encoding of every boundary type and
+the contract hash's normal form are a published surface with **its own
+version**, apart from the emitted TypeScript: the
+[wire format reference](/book/reference/wire-format/), generated from the
+compiler and guarded against it. A caller states the version it speaks in
+`X-Bynk-Wire` (absent means `1`); the callee accepts a range and refuses any
+other version with `400 UnsupportedWireVersion`.
+
+The dispatch makes its checks in the published order: the method (`POST`, else
+`405` with `Allow: POST`), the call secret (§7.3.4d), the wire version, the
+service (`404`), the contract (§7.3.4c), the body's JSON (read as text and
+parsed, else `400 MalformedJson`), the caller (§7.3.4a, for a handler binding
+`Caller`), then the arguments (§7.3.4b). A record field's inline refinement is
+checked when the record is decoded, failing as a `RefinementViolation` at the
+field's path, and a `Duration` or `Instant` must be a safe integer wherever it
+appears.
 
 ### §7.3.5 Tests
 

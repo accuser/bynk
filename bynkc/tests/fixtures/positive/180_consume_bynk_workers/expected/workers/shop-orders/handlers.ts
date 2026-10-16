@@ -24,7 +24,7 @@ export const ordering = {
 export function __serialise_Order(value: Order): __JsonValue {
   return {
     sku: value.sku as __JsonValue,
-    placedAt: value.placedAt as __JsonValue,
+    placedAt: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Instant outside the safe-integer range at boundary"); return v as __JsonValue; })(value.placedAt),
   };
 }
 

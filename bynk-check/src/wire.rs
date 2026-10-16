@@ -212,7 +212,17 @@ pub struct WireField {
     /// (`bynk-emit`), which stays in `bynk-emit` per the module doc: a
     /// default's lowered literal is a rendering, not a boundary fact.
     pub default: Option<(Expr, TypeRef)>,
+    /// #1969: the field's inline refinement (`qty: Int where Positive`), in
+    /// declaration order, checked on decode after the field's own codec. Empty
+    /// for an unrefined field and for every sum-variant payload field (the
+    /// grammar gives those no `where`).
+    pub predicates: Vec<PredKind>,
 }
+
+/// #1969: the JSON key a sum value's variant name travels under (`{"kind":
+/// "Circle", …}`). Part of the published wire format, version 1
+/// ([`crate::wire_format`]); the in-memory discriminant is `tag`.
+pub const WIRE_DISCRIMINANT: &str = "kind";
 
 /// A boundary sum type. The wire and in-memory discriminants are carried
 /// side by side because the codec's whole job is translating between them —
@@ -221,6 +231,7 @@ pub struct WireField {
 /// alone is a one-field change if a reviewer objects.
 #[derive(Debug, Clone)]
 pub struct WireSum {
+    /// Always [`WIRE_DISCRIMINANT`].
     pub wire_discriminant: &'static str,
     pub memory_discriminant: &'static str,
     pub variants: Vec<WireVariant>,
@@ -1058,14 +1069,15 @@ fn walk_generic_inst(
 
 /// The base-type guards a bare **field-position** value (a record field, a
 /// sum-variant payload field, a collection element) is checked against,
-/// mirroring `emit_field_deserialise`'s `TypeRef::Base` arm: `Int`/`Instant`
-/// must be whole, `Float` must be finite. Contrast [`WireScalar::base_guards`]
+/// mirroring `emit_field_deserialise`'s `TypeRef::Base` arm: `Int`/`Duration`/
+/// `Instant` must be whole, `Float` must be finite. #1969: `Duration` joined the
+/// first group; a top-level `Duration` was already guarded, a field was not. Contrast [`WireScalar::base_guards`]
 /// (a **named-type** consumed-inline revalidation), which guards `Int`/`Float`
 /// only — the two positions are not the same check in the code this was
 /// extracted from, and that asymmetry is preserved rather than merged.
-fn field_base_guards(b: BaseType) -> Vec<BaseGuard> {
+pub fn field_base_guards(b: BaseType) -> Vec<BaseGuard> {
     match b {
-        BaseType::Int | BaseType::Instant => vec![BaseGuard::Integral],
+        BaseType::Int | BaseType::Duration | BaseType::Instant => vec![BaseGuard::Integral],
         BaseType::Float => vec![BaseGuard::Finite],
         _ => Vec::new(),
     }
@@ -1183,13 +1195,25 @@ fn wire_fields(fields: &[RecordField], types: &HashMap<String, Arc<TypeDecl>>) -
             shape: wire_ref(&f.type_ref, types),
             path_segment: f.name.name.clone(),
             default: f.init.as_ref().map(|e| (e.clone(), f.type_ref.clone())),
+            predicates: field_predicates(f),
         })
         .collect()
 }
 
+/// #1969: a record field's inline refinement predicates, in declaration order
+/// (`qty: Int where Positive` → `[Positive]`). The decoder checks them after
+/// the field's own codec, so a refined field reads the same from the wire as a
+/// field of a named refined type.
+pub fn field_predicates(f: &RecordField) -> Vec<PredKind> {
+    f.refinement
+        .as_ref()
+        .map(|r| r.predicates.iter().map(|p| p.kind.clone()).collect())
+        .unwrap_or_default()
+}
+
 fn wire_sum(body: &SumBody, types: &HashMap<String, Arc<TypeDecl>>) -> WireSum {
     WireSum {
-        wire_discriminant: "kind",
+        wire_discriminant: WIRE_DISCRIMINANT,
         memory_discriminant: "tag",
         variants: body
             .variants
@@ -1206,6 +1230,7 @@ fn wire_sum(body: &SumBody, types: &HashMap<String, Arc<TypeDecl>>) -> WireSum {
                         // Sum-variant payload fields carry no default in the
                         // surface grammar (`VariantField` has no `init`).
                         default: None,
+                        predicates: Vec::new(),
                     })
                     .collect(),
             })

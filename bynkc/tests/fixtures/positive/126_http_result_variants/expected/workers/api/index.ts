@@ -15,7 +15,10 @@ export default {
     let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
+        if (method !== "POST") return new globalThis.Response(null, { status: 405, headers: { allow: "POST" } });
         if (!(await __verifyCallSecret(request, env))) return new globalThis.Response("Unauthorized", { status: 401 });
+        const __wire = request.headers.get("X-Bynk-Wire");
+        if (__wire !== null && __wire !== "1") return new globalThis.Response(globalThis.JSON.stringify({ kind: "UnsupportedWireVersion", accepted: [1] }), { status: 400, headers: { "content-type": "application/json" } });
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           default:
