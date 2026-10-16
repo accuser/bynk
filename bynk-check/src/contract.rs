@@ -759,6 +759,7 @@ mod tests {
             params: vec![("p".to_string(), param_ty)],
             return_type: TypeRef::Base(bynk_syntax::ast::BaseType::String, sp()),
             span: sp(),
+            foreign_callers: Vec::new(),
         }
     }
 

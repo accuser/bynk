@@ -152,6 +152,13 @@ export function edgeKeyOf(env: unknown, prefix: string, context: string): string
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
+// I3 (#1971): a foreign caller's secret, by its declared name, from `env`.
+function foreignKeyOf(env: unknown, name: string): string | undefined {
+  if (typeof env !== "object" || env === null) return undefined;
+  const value = (env as Record<string, unknown>)[name];
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
 // The fields a signature covers, one per line (`signing_input` in
 // `bynk_check::wire_format`). Every header the callee acts on is here; an
 // absent contract is signed as empty and an absent wire version as `1`.
@@ -252,12 +259,25 @@ const TIMESTAMP_SHAPE = /^[0-9]{1,15}$/;
 // or 401. Fails closed: a caller with no key here (an undeclared or forged
 // one, or any caller when no key is set) is refused. `crypto.subtle.verify`
 // compares in constant time.
-export async function verifyCall(request: Request, env: unknown, callee: string): Promise<string | Response> {
+//
+// I3 (#1971): `foreign` maps each foreign caller the callee admits (a
+// `Foreign` actor's name, which it sends as its caller) to the secret it signs
+// under. Such a name is never a context's (an actor name starts with a capital
+// letter, which `edgeSuffix` refuses), so a foreign caller is checked under
+// its own secret and a Bynk caller under its edge key, and neither can pass
+// for the other. Looked up with `Object.hasOwn`, never plain indexing, so a
+// caller named after an `Object.prototype` member finds nothing.
+export async function verifyCall(
+  request: Request,
+  env: unknown,
+  callee: string,
+  foreign: Record<string, string> = {},
+): Promise<string | Response> {
   const bytes = await readCapped(request);
   if (bytes === undefined) return new Response("Payload Too Large", { status: 413 });
   const refused = new Response("Unauthorized", { status: 401 });
   const caller = request.headers.get(CALLER_HEADER) ?? "";
-  const key = edgeKeyOf(env, EDGE_FROM_PREFIX, caller);
+  const key = Object.hasOwn(foreign, caller) ? foreignKeyOf(env, foreign[caller]) : edgeKeyOf(env, EDGE_FROM_PREFIX, caller);
   if (key === undefined) return refused;
   const timestamp = request.headers.get(TIMESTAMP_HEADER) ?? "";
   if (!TIMESTAMP_SHAPE.test(timestamp)) return refused;

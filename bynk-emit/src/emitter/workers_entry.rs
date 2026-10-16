@@ -268,15 +268,17 @@ fn text_response(text: &str, status: i64) -> TsExpr {
 /// unauthenticated sender learns nothing about which services exist (no 404
 /// against 409), never has a hash echoed, and cannot write the skew log line.
 /// The refusals are bare words, not JSON detail.
-fn verify_gate(context: &str) -> [TsStmt; 2] {
+///
+/// I3 (#1971): a Worker whose `on call` handlers admit foreign callers passes
+/// its table of them (`__FOREIGN_CALLERS`, actor name → secret), so a call
+/// naming one is checked under that actor's secret rather than an edge key.
+fn verify_gate(context: &str, foreign: bool) -> [TsStmt; 2] {
+    let mut args = vec![ident("request"), ident("env"), str_lit(context)];
+    if foreign {
+        args.push(ident(FOREIGN_CALLERS));
+    }
     [
-        const_(
-            "__body",
-            await_expr(call(
-                ident("__verifyCall"),
-                vec![ident("request"), ident("env"), str_lit(context)],
-            )),
-        ),
+        const_("__body", await_expr(call(ident("__verifyCall"), args))),
         if_(
             strict_neq(
                 TsExpr::Unary {
@@ -288,6 +290,92 @@ fn verify_gate(context: &str) -> [TsStmt; 2] {
             return_(Some(ident("__body"))),
         ),
     ]
+}
+
+/// I3 (#1971): the per-Worker table of the foreign callers its `on call`
+/// handlers admit, actor name → the secret their calls verify under.
+const FOREIGN_CALLERS: &str = "__FOREIGN_CALLERS";
+
+/// I3 (#1971): the published admission check for one `on call` handler, made
+/// after the service is found and before its contract is compared: the
+/// caller the signature proved must be one the handler's `by` clause admits.
+/// A Bynk context is admitted by `Caller`, a foreign caller only by its own
+/// actor, never by `Caller`; anyone else gets a bare `403` (authenticated, not
+/// admitted). For a sum it then builds the resolved actor, `__who`.
+fn admission_gate(admission: &bynk_check::actors::CallAdmission) -> Vec<TsStmt> {
+    let from = || ident("__from");
+    let mut admitted: Option<TsExpr> = None;
+    let mut push = |e: TsExpr| {
+        admitted = Some(match admitted.take() {
+            Some(a) => or_expr(a, e),
+            None => e,
+        });
+    };
+    if admission.contexts {
+        push(TsExpr::Unary {
+            op: bynk_ts::TsUnaryOp::Not,
+            expr: Box::new(ident("__foreign")),
+        });
+    }
+    for f in &admission.foreign {
+        push(strict_eq(from(), str_lit(f.actor.clone())));
+    }
+    let admitted = admitted.unwrap_or_else(|| ident("false"));
+    let mut stmts = vec![const_(
+        "__from",
+        as_expr(
+            method_call(
+                member(ident("request"), "headers"),
+                "get",
+                vec![str_lit(wf::CALLER_HEADER)],
+            ),
+            TsType::named("string"),
+        ),
+    )];
+    // Whether the caller is a foreign one, read only where a context is
+    // admitted too.
+    if admission.contexts {
+        stmts.push(const_(
+            "__foreign",
+            call(
+                ident("globalThis.Object.hasOwn"),
+                vec![ident(FOREIGN_CALLERS), from()],
+            ),
+        ));
+    }
+    stmts.push(if_(
+        TsExpr::Unary {
+            op: bynk_ts::TsUnaryOp::Not,
+            expr: Box::new(paren(admitted)),
+        },
+        return_(Some(text_response(
+            CallCheck::NotAdmitted.text_body().unwrap_or_default(),
+            check_status(CallCheck::NotAdmitted),
+        ))),
+    ));
+    if let Some(members) = &admission.sum {
+        // The members in `by` order: a foreign one by its name, `Caller` for
+        // any context. Admission above means one of them matches.
+        let mut who = TsExpr::object(vec![
+            ("tag".to_string(), str_lit("Caller")),
+            ("identity".to_string(), from()),
+        ]);
+        for m in members.iter().rev() {
+            if let bynk_check::actors::CallSumMember::Foreign(f) = m {
+                who = cond_expr(
+                    strict_eq(from(), str_lit(f.actor.clone())),
+                    TsExpr::object(vec![("tag".to_string(), str_lit(f.actor.clone()))]),
+                    who,
+                );
+            }
+        }
+        stmts.push(const_typed(
+            "__who",
+            crate::emitter::emit::call_sum_ts_type(members),
+            who,
+        ));
+    }
+    stmts
 }
 
 /// #1969: a [`CallCheck`]'s published status, as the emitter's `i64`.
@@ -806,6 +894,39 @@ pub(crate) fn emit_worker_entry(
     let mut try_body: Vec<TsStmt> = Vec::new();
 
     // 1. Internal Service Binding dispatch.
+    //
+    // I3 (#1971): the foreign callers any `on call` handler here admits, by
+    // actor name. Empty for a Worker that admits none, whose dispatch then
+    // admits Bynk contexts alone, as before.
+    let mut foreign_callers: Vec<bynk_check::actors::ForeignCaller> = Vec::new();
+    for sname in &service_names {
+        for h in &table.services[*sname].handlers {
+            for f in bynk_check::actors::call_admission_for(h, &table.actors)
+                .map(|a| a.foreign)
+                .unwrap_or_default()
+            {
+                if !foreign_callers.iter().any(|g| g.actor == f.actor) {
+                    foreign_callers.push(f);
+                }
+            }
+        }
+    }
+    let has_foreign = !foreign_callers.is_empty();
+    if has_foreign {
+        fetch_body.push(const_typed(
+            FOREIGN_CALLERS,
+            TsType::named_with_args(
+                "globalThis.Record",
+                vec![TsType::named("string"), TsType::named("string")],
+            ),
+            TsExpr::object(
+                foreign_callers
+                    .iter()
+                    .map(|f| (f.actor.clone(), str_lit(f.secret.clone())))
+                    .collect(),
+            ),
+        ));
+    }
     let mut call_cases: Vec<TsSwitchCase> = Vec::new();
     for sname in &service_names {
         let service = table.services.get(*sname).unwrap();
@@ -820,6 +941,11 @@ pub(crate) fn emit_worker_entry(
 
         // #1825: names the dispatch for the fault log below.
         let mut case_body: Vec<TsStmt> = vec![set_fault_route(format!("call {sname}"))];
+        if has_foreign
+            && let Some(admission) = bynk_check::actors::call_admission_for(h, &table.actors)
+        {
+            case_body.extend(admission_gate(&admission));
+        }
         // v0.177 (#643): the deploy-skew check runs **before the body is read**.
         //
         // The caller stamps a hash of its compiled view of this contract; this
@@ -939,7 +1065,7 @@ pub(crate) fn emit_worker_entry(
         ),
         block(
             std::iter::once(call_method_gate())
-                .chain(verify_gate(context))
+                .chain(verify_gate(context, has_foreign))
                 .chain(wire_version_gate())
                 .chain([
                     const_(
@@ -1026,7 +1152,7 @@ pub(crate) fn emit_worker_entry(
         .copied()
         .collect();
     if !event_services.is_empty() {
-        let mut event_body: Vec<TsStmt> = verify_gate(context).into_iter().collect();
+        let mut event_body: Vec<TsStmt> = verify_gate(context, false).into_iter().collect();
         event_body.extend([
             const_(
                 "servicePath",
@@ -2407,6 +2533,9 @@ fn emit_call_handler_dispatch(
     // caller holds no key here, so the header is present, non-empty and
     // proved: there is no separate missing-caller check.
     let has_caller = bynk_check::actors::caller_binder_for(h, actors).is_some();
+    // I3 (#1971): a `call` sum's resolved actor, built by `admission_gate`.
+    let has_who =
+        bynk_check::actors::call_admission_for(h, actors).is_some_and(|a| a.sum.is_some());
     if has_caller {
         stmts.push(const_(
             "__caller",
@@ -2441,6 +2570,9 @@ fn emit_call_handler_dispatch(
             member(ident(format!("__r_{pname}")), "value"),
         ));
         let mut call_args = Vec::new();
+        if has_who {
+            call_args.push(ident("__who"));
+        }
         if has_caller {
             call_args.push(ident("__caller"));
         }
@@ -2511,6 +2643,9 @@ fn emit_call_handler_dispatch(
         // Prepend the caller (when present) without a dangling comma for the
         // zero-param case.
         let mut call_args: Vec<TsExpr> = Vec::new();
+        if has_who {
+            call_args.push(ident("__who"));
+        }
         if has_caller {
             call_args.push(ident("__caller"));
         }

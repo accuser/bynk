@@ -178,7 +178,7 @@ pub const HEADERS: &[Header] = &[
     Header {
         name: CALLER_HEADER,
         required: "yes",
-        meaning: "The calling context's qualified name (`shop.orders`), which the handler reads as `c.identity`. Selects the key the signature is checked under, so it is proved, not claimed.",
+        meaning: "The calling context's qualified name (`shop.orders`), which the handler reads as `c.identity`, or a foreign caller's actor name (`Legacy`). Selects the key the signature is checked under, so it is proved, not claimed.",
     },
     Header {
         name: TIMESTAMP_HEADER,
@@ -210,6 +210,7 @@ pub enum CallCheck {
     Authentication,
     WireVersion,
     UnknownService,
+    NotAdmitted,
     Contract,
     MalformedJson,
     Arguments,
@@ -221,12 +222,13 @@ pub enum CallCheck {
 /// I2 (#1971): a signature is checked under the key the caller header
 /// selects, so a call without a caller fails [`CallCheck::Authentication`];
 /// there is no separate missing-caller check after it.
-pub const CALL_CHECKS: [CallCheck; 8] = [
+pub const CALL_CHECKS: [CallCheck; 9] = [
     CallCheck::Method,
     CallCheck::BodyTooLarge,
     CallCheck::Authentication,
     CallCheck::WireVersion,
     CallCheck::UnknownService,
+    CallCheck::NotAdmitted,
     CallCheck::Contract,
     CallCheck::MalformedJson,
     CallCheck::Arguments,
@@ -241,6 +243,7 @@ impl CallCheck {
             CallCheck::Authentication => 401,
             CallCheck::WireVersion => 400,
             CallCheck::UnknownService => 404,
+            CallCheck::NotAdmitted => 403,
             CallCheck::Contract => 409,
             CallCheck::MalformedJson => 400,
             CallCheck::Arguments => 400,
@@ -259,6 +262,7 @@ impl CallCheck {
             | CallCheck::BodyTooLarge
             | CallCheck::Authentication
             | CallCheck::UnknownService
+            | CallCheck::NotAdmitted
             | CallCheck::Arguments => None,
         }
     }
@@ -269,6 +273,7 @@ impl CallCheck {
             CallCheck::BodyTooLarge => Some("Payload Too Large"),
             CallCheck::Authentication => Some("Unauthorized"),
             CallCheck::UnknownService => Some("Not found"),
+            CallCheck::NotAdmitted => Some("Forbidden"),
             _ => None,
         }
     }
@@ -288,6 +293,9 @@ impl CallCheck {
             }
             CallCheck::UnknownService => {
                 "The path names a service of the callee's context with an `on call` handler."
+            }
+            CallCheck::NotAdmitted => {
+                "The service's handler admits the caller the signature proved: a Bynk context by `Caller` (the default), a foreign caller only by its own `Foreign` actor."
             }
             CallCheck::Contract => "`X-Bynk-Contract` equals the callee's hash of that service.",
             CallCheck::MalformedJson => "The body parses as JSON.",
@@ -312,6 +320,7 @@ impl CallCheck {
                 );
             }
             CallCheck::UnknownService => "text `Not found`",
+            CallCheck::NotAdmitted => "text `Forbidden`",
             CallCheck::Contract => {
                 r#"`{"kind":"ContractMismatch","service":"…","expected":"…","actual":"…"}`"#
             }
@@ -355,6 +364,19 @@ mod tests {
         }
         for good in ["integration", "shop.orders", "a_b.c2", "x1.y_2_z"] {
             assert!(is_edge_name(good), "{good:?} is an edge name");
+        }
+    }
+
+    /// I3 (#1971): the invariant that keeps foreign callers and contexts apart
+    /// on the wire. A foreign actor's name starts with a capital letter
+    /// (`bynk.actor.foreign_name_is_context_name`), and no name that does is
+    /// an edge name, so no foreign caller's name selects an edge key. The
+    /// runtime's `edgeSuffix` pins the same property.
+    #[test]
+    fn no_capitalised_name_is_an_edge_name() {
+        for name in ["Legacy", "L", "Legacy.orders", "LEGACY", "Ledger_2"] {
+            assert!(!is_edge_name(name), "{name:?}");
+            assert_eq!(edge_key_from(name), None, "{name:?}");
         }
     }
 

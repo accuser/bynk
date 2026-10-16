@@ -1114,7 +1114,18 @@ only on `from http` handlers and, this slice, only as a **single** actor — nev
 sum member (`bynk.actor.oidc_not_in_sum`) and not a refinement base. A declared
 `identity = T` MUST be a context-ownable
 value type, so the verified identity is sealed — minted only inside the owning
-context (`bynk.actor.identity_not_sealed`).
+context (`bynk.actor.identity_not_sealed`). A **`Foreign`** actor (#1971) is a
+caller that is not Bynk, declared by the context it calls. It MUST name the
+secret its calls are signed with (`auth = Foreign(secret = "<ENV>")`,
+`bynk.actor.foreign_missing_secret`) as a string
+(`bynk.actor.foreign_secret_not_string`). No other actor in the context MAY
+name the same secret (`bynk.actor.foreign_duplicate_secret`), and it MUST NOT begin with an edge key's
+prefix, `BYNK_CALL_FROM_` or `BYNK_CALL_TO_` (`bynk.actor.foreign_reserved_secret`);
+it MAY name the foreign Worker (`worker = "<name>"`). Its name MUST NOT be one a
+context could have (`bynk.actor.foreign_name_is_context_name`): it is what the
+caller sends as `X-Bynk-Caller`, so it must never select a context's edge key.
+It takes **no** `identity` (`bynk.actor.foreign_identity_unsupported`), and is
+admissible only on `on call` handlers.
 
 > **Who, not whose.** An actor contract answers *who* is at the boundary — it
 > authenticates a party and seals its identity. It deliberately does **not**
@@ -1142,8 +1153,10 @@ A handler consumes an actor on its `by (<binder>:)? <Actor>` clause. The named
 actor MUST resolve to a declared actor or a prelude actor (`Visitor`,
 `Scheduler`, `Producer`, `Caller`) (`bynk.actor.unknown_actor`), and its scheme
 MUST be admissible on the handler's protocol — HTTP admits `None`, `Bearer`,
-`Signature`, and `Oidc`; the internal protocols (call/cron/queue) admit `Internal`
-(`bynk.actor.scheme_not_admissible`). A `Signature` handler MUST take a `body`
+`Signature`, and `Oidc`; the internal protocols (call/cron/queue) admit `Internal`,
+and `call` admits `Foreign` too (`bynk.actor.scheme_not_admissible`). In a sum,
+`Foreign` peers are exempt from the one-peer-per-scheme rule, since each is told
+apart by name. A `Signature` handler MUST take a `body`
 parameter — the signature is computed over the request body, so a bodyless signed
 request is meaningless (`bynk.actor.signature_requires_body`). A handler that
 omits `by` inherits its protocol's default actor; an **HTTP handler has no safe
@@ -1152,10 +1165,12 @@ default and MUST declare `by`** (`bynk.actor.missing_by_on_http`).
 The `Caller` prelude actor (the `on call` default) yields a **live `CallerId`**
 (v0.54): a cross-context `on call … by c: Caller (…)` handler binds `c.identity`
 to the **calling context's qualified name**, established at the boundary over the
-internal Service Binding before the body runs. The `Internal` scheme trusts the
-channel — verification is static / channel-based, no crypto — but a call that
-does not identify its caller is rejected fail-closed (the internal analogue of a
-401). A binder-less `on call` captures nothing and is unaffected.
+internal Service Binding before the body runs. The name is proved by the call's
+per-edge signature (emission §7.3.4d); a call whose caller holds no key at the
+callee is refused (`401`) before any handler. `Caller` admits Bynk contexts
+only: a call from a foreign caller reaches a handler only if its `by` clause
+names that `Foreign` actor, and is otherwise refused (`403`). A binder-less
+`on call` captures nothing and is unaffected.
 The **binder is optional** (v0.50): with `by <binder>: <Actor>` the verified
 identity binds to `<binder>` and is read as `<binder>.identity` — a sealed value,
 minted at the boundary before the body runs and never re-checked downstream; with
