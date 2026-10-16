@@ -48,6 +48,7 @@ pub mod new;
 pub use bynk_driver::probe;
 pub mod report;
 pub mod shell;
+pub mod stop;
 pub mod sweep;
 pub mod test;
 pub mod workers;

@@ -111,15 +111,16 @@ pub(crate) struct Resources {
     /// is a legitimate handled outcome and a missing value warns rather than
     /// failing.
     pub(crate) read_secrets: Vec<String>,
-    /// False when the context names a secret with a computed expression, so
-    /// `read_secrets` is not everything. The plan must say so rather than
+    /// False when the context reads a secret the compiler cannot name (a
+    /// computed expression, or an adapter binding — #1976), so `read_secrets`
+    /// is not everything. The plan must say so rather than
     /// presenting its list as whole.
     pub(crate) reads_complete: bool,
 }
 
 impl Default for Resources {
     /// Hand-written for one field: `reads_complete` is **true** by vacuity — a
-    /// context that names no secret has not computed one — whereas `bool`'s
+    /// context that names no secret has none out of sight — whereas `bool`'s
     /// default is false, which would say the opposite. A derived `Default` here
     /// would make every resource-less context claim an incomplete list.
     fn default() -> Self {
@@ -149,8 +150,9 @@ struct SecretsManifest {
     /// handled outcome and a missing value warns rather than failing.
     #[serde(default)]
     read: Vec<String>,
-    /// False when the context names at least one secret with a computed
-    /// expression, so `read` is not everything. Defaulted `true` **only**
+    /// False when the context reads at least one secret the compiler cannot
+    /// name (a computed expression, or an adapter binding — #1976), so `read`
+    /// is not everything. Defaulted `true` **only**
     /// because the version guard already refuses a manifest that predates the
     /// field — no v1 file reaches this.
     #[serde(default = "read_complete_default")]
@@ -599,7 +601,7 @@ pub(crate) mod tests {
             self.read_secrets = names(secrets);
             self
         }
-        /// This context names at least one secret with a computed expression.
+        /// This context reads at least one secret the compiler cannot name.
         pub(crate) fn reads_incompletely(mut self) -> Self {
             self.reads_complete = false;
             self

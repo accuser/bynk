@@ -269,7 +269,7 @@ pub(crate) fn prepare_secrets(
     // can tell them (ADR 0196 D2).
     if !declared.reads_complete {
         eprintln!(
-            "bynk: `{worker}` names at least one secret with a computed expression, so the list below is not everything it reads."
+            "bynk: `{worker}` reads at least one secret whose name the compiler cannot see (a computed `Secrets.get` name, or an adapter binding given `Secrets`), so the list below is not everything it reads."
         );
     }
     if wanted.is_empty() {
