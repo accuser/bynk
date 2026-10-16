@@ -3417,10 +3417,20 @@ pub(crate) fn instantiate_provider_ts_expr(
             locale_negotiation,
             referenced_units,
         );
-        if let bynk_ts::TsExpr::New { args, .. } = &mut expr {
-            args.push(bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(
-                inst.binding.clone(),
-            )));
+        // Review of #1968: anything but a construction to append the binding
+        // to would quietly read the default `KV`, so two instances would share
+        // a namespace. The one other shape is a test module's placeholder for
+        // a provider it cannot build, which has no binding to carry.
+        match &mut expr {
+            bynk_ts::TsExpr::New { args, .. } => args.push(bynk_ts::TsExpr::Lit(
+                bynk_ts::TsLit::Str(inst.binding.clone()),
+            )),
+            bynk_ts::TsExpr::As { .. } if matches!(namespaces, ProviderNamespaces::Test { .. }) => {
+            }
+            _ => panic!(
+                "derived capability `{cap}`: base `{}.{}` is not built by a construction, so binding `{}` has nowhere to go",
+                inst.base_unit, inst.base_cap, inst.binding
+            ),
         }
         return expr;
     }

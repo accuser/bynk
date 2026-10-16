@@ -14,7 +14,7 @@
 //! renderer hover uses — so the two never diverge.
 
 use bynk_syntax::ast::{BaseType, CommonsItem, FnName, SourceUnit, TypeBody};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use crate::completion::{BUILTIN_STATICS, for_each_unit};
@@ -208,6 +208,21 @@ fn resolve_qualified(
     doc_text: &str,
     files: Option<&HashMap<PathBuf, String>>,
 ) -> Option<String> {
+    resolve_qualified_from(recv, member, doc_text, files, &mut BTreeSet::new())
+}
+
+/// [`resolve_qualified`], with the derived capabilities already followed
+/// (S4a, #1966). Signature help reads unchecked source, so a derivation cycle
+/// (`capability A = B`, `capability B = A`) can be on screen: each receiver
+/// is followed once.
+fn resolve_qualified_from(
+    recv: &str,
+    member: &str,
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+    followed: &mut BTreeSet<String>,
+) -> Option<String> {
+    followed.insert(recv.to_string());
     let mut out = None;
     // S4a (#1966): a derived capability's (`capability Sessions = Kv`) base,
     // whose operations it has.
@@ -276,7 +291,9 @@ fn resolve_qualified(
         }
     });
     match (out, derived_base) {
-        (None, Some(base)) if base != recv => resolve_qualified(&base, member, doc_text, files),
+        (None, Some(base)) if !followed.contains(&base) => {
+            resolve_qualified_from(&base, member, doc_text, files, followed)
+        }
         (out, _) => out,
     }
 }
@@ -395,6 +412,14 @@ mod tests {
             resolve_label("Sessions.put", DERIVED_DOC, None).as_deref(),
             Some("put(key: String, value: String) -> Effect[()]")
         );
+    }
+
+    /// Review of #1968: a derivation cycle in unchecked source resolves
+    /// nothing rather than recursing without end.
+    #[test]
+    fn a_derivation_cycle_has_no_signature() {
+        let doc = "context a\n\ncapability A = B\ncapability B = A\n";
+        assert_eq!(resolve_label("A.put", doc, None), None);
     }
 
     #[test]

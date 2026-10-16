@@ -437,16 +437,10 @@ fn consumed_binding_name(target: &str) -> String {
 
 /// Durable Object binding identifier for an agent class. We use the
 /// class name in screaming snake case so handlers can grab it by a
-/// predictable name (`OrderEntity` → `ORDER_ENTITY`).
+/// predictable name (`OrderEntity` → `ORDER_ENTITY`), the casing derived
+/// capabilities' bindings share.
 fn agent_binding_name(class_name: &str) -> String {
-    let mut out = String::new();
-    for (i, ch) in class_name.chars().enumerate() {
-        if i > 0 && ch.is_uppercase() {
-            out.push('_');
-        }
-        out.push(ch.to_ascii_uppercase());
-    }
-    out
+    bynk_check::worker_bindings::screaming_snake(class_name)
 }
 
 // ---------------------------------------------------------------------------

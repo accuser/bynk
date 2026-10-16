@@ -1091,6 +1091,20 @@ fn member_candidates(
     doc_text: &str,
     files: Option<&HashMap<PathBuf, String>>,
 ) -> Vec<Completion> {
+    member_candidates_from(receiver, doc_text, files, &mut BTreeSet::new())
+}
+
+/// [`member_candidates`], with the derived capabilities already followed
+/// (S4a, #1966). Completion reads unchecked source, so a derivation cycle
+/// (`capability A = B`, `capability B = A`) can be on screen: each receiver
+/// is followed once.
+fn member_candidates_from(
+    receiver: &str,
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+    followed: &mut BTreeSet<String>,
+) -> Vec<Completion> {
+    followed.insert(receiver.to_string());
     if let Some((_, statics)) = BUILTIN_STATICS.iter().find(|(name, _)| *name == receiver) {
         return statics
             .iter()
@@ -1204,8 +1218,8 @@ fn member_candidates(
             }
         }
     });
-    if let Some(base) = derived_base.filter(|b| b != receiver) {
-        for c in member_candidates(&base, doc_text, files) {
+    if let Some(base) = derived_base.filter(|b| !followed.contains(b)) {
+        for c in member_candidates_from(&base, doc_text, files, followed) {
             if seen.insert(c.label.clone()) {
                 out.push(c);
             }
@@ -2818,6 +2832,14 @@ mod tests {
 
     /// #1888: a field's and a variant's doc ride on their completion items;
     /// an undocumented one has none.
+    /// Review of #1968: completion reads unchecked source, so a derivation
+    /// cycle completes nothing rather than recursing without end.
+    #[test]
+    fn a_derivation_cycle_completes_nothing() {
+        let doc = "context a\n\ncapability A = B\ncapability B = C\ncapability C = A\n";
+        assert!(member_candidates("A", doc, None).is_empty());
+    }
+
     /// S4a (#1966): a derived capability completes its base's operations.
     #[test]
     fn a_derived_capability_completes_its_bases_operations() {
