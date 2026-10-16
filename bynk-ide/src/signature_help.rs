@@ -14,7 +14,7 @@
 //! renderer hover uses — so the two never diverge.
 
 use bynk_syntax::ast::{BaseType, CommonsItem, FnName, SourceUnit, TypeBody};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use crate::completion::{BUILTIN_STATICS, for_each_unit};
@@ -208,7 +208,25 @@ fn resolve_qualified(
     doc_text: &str,
     files: Option<&HashMap<PathBuf, String>>,
 ) -> Option<String> {
+    resolve_qualified_from(recv, member, doc_text, files, &mut BTreeSet::new())
+}
+
+/// [`resolve_qualified`], with the derived capabilities already followed
+/// (S4a, #1966). Signature help reads unchecked source, so a derivation cycle
+/// (`capability A = B`, `capability B = A`) can be on screen: each receiver
+/// is followed once.
+fn resolve_qualified_from(
+    recv: &str,
+    member: &str,
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+    followed: &mut BTreeSet<String>,
+) -> Option<String> {
+    followed.insert(recv.to_string());
     let mut out = None;
+    // S4a (#1966): a derived capability's (`capability Sessions = Kv`) base,
+    // whose operations it has.
+    let mut derived_base: Option<String> = None;
     for_each_unit(doc_text, files, |unit| {
         if out.is_some() {
             return;
@@ -237,6 +255,9 @@ fn resolve_qualified(
                         format!("unsafe(value: {base}) -> {recv}")
                     });
                     return;
+                }
+                CommonsItem::Capability(c) if c.name.name == recv && c.derived.is_some() => {
+                    derived_base = c.derived.as_ref().map(|d| d.base.name.clone());
                 }
                 // `Cap.op` — a capability operation.
                 CommonsItem::Capability(c) if c.name.name == recv => {
@@ -269,7 +290,12 @@ fn resolve_qualified(
             }
         }
     });
-    out
+    match (out, derived_base) {
+        (None, Some(base)) if !followed.contains(&base) => {
+            resolve_qualified_from(&base, member, doc_text, files, followed)
+        }
+        (out, _) => out,
+    }
 }
 
 fn base_name(b: BaseType) -> &'static str {
@@ -375,6 +401,25 @@ mod tests {
         // The whole path: a call context whose prefix opens a string literal.
         let t = "  \"€greet(";
         let _ = call_context(t, t.len());
+    }
+
+    /// S4a (#1966): a derived capability's operation has its base's signature.
+    #[test]
+    fn a_derived_capability_op_has_its_bases_signature() {
+        const DERIVED_DOC: &str =
+            "context a\n\nconsumes bynk.cloudflare { Kv }\n\ncapability Sessions = Kv\n";
+        assert_eq!(
+            resolve_label("Sessions.put", DERIVED_DOC, None).as_deref(),
+            Some("put(key: String, value: String) -> Effect[()]")
+        );
+    }
+
+    /// Review of #1968: a derivation cycle in unchecked source resolves
+    /// nothing rather than recursing without end.
+    #[test]
+    fn a_derivation_cycle_has_no_signature() {
+        let doc = "context a\n\ncapability A = B\ncapability B = A\n";
+        assert_eq!(resolve_label("A.put", doc, None), None);
     }
 
     #[test]

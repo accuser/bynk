@@ -24,6 +24,28 @@ use bynk_syntax::span::Span;
 use crate::firstparty;
 use crate::project_model::ErrorSink;
 
+/// A declaration's name in screaming snake case (`OrderEntity` →
+/// `ORDER_ENTITY`): the casing of an agent's binding and of a derived
+/// capability's. One function, so the two kinds of name the duplicate check
+/// compares cannot drift apart (review of #1968).
+pub fn screaming_snake(name: &str) -> String {
+    let mut out = String::new();
+    for (i, ch) in name.chars().enumerate() {
+        if i > 0 && ch.is_uppercase() {
+            out.push('_');
+        }
+        out.push(ch.to_ascii_uppercase());
+    }
+    out
+}
+
+/// S4a (#1966): the Worker binding name of a derived capability, the kind's
+/// prefix then the capability name in [`screaming_snake`] case (`Sessions` →
+/// `KV_SESSIONS`, `PriceCache` → `KV_PRICE_CACHE`).
+pub fn instance_binding_name(prefix: &str, capability: &str) -> String {
+    format!("{prefix}_{}", screaming_snake(capability))
+}
+
 /// What put a binding into a Worker's `wrangler.toml`: the source a
 /// `bynk.context.duplicate_binding` diagnostic names.
 ///
@@ -40,6 +62,10 @@ pub enum BindingSource {
     /// Never seen by handlers: they reach KV through the `WorkersKv` provider,
     /// which takes the Worker's `env` at compose time.
     Kv,
+    /// S4a (#1966): the `[[kv_namespaces]]` binding of a derived capability
+    /// (`capability Sessions = Kv`), one per instance. Never seen by handlers:
+    /// they reach it through the instance's `WorkersKv`.
+    KvInstance { capability: String },
     /// A `[[durable_objects.bindings]]` entry for one of the context's agents.
     /// A handler that constructs an agent sees every local agent's binding.
     Agent { class_name: String },
@@ -58,6 +84,9 @@ impl BindingSource {
                 "the KV namespace binding of `{}`'s `Kv`",
                 firstparty::CLOUDFLARE_UNIT
             ),
+            Self::KvInstance { capability } => {
+                format!("the KV namespace binding of derived capability `{capability}`")
+            }
             Self::Agent { class_name } => {
                 format!("the Durable Object binding of agent `{class_name}`")
             }
@@ -132,7 +161,7 @@ pub fn phase_duplicate_bindings(
                     ),
                 )
                 .with_note(
-                    "a Worker's bindings share one `env`, so each name must be unique; binding names follow agent and context names, so rename the agent or context behind one of them",
+                    "a Worker's bindings share one `env`, so each name must be unique; binding names follow agent, context and derived capability names, so rename the declaration behind one of them",
                 ),
             );
         }
@@ -167,6 +196,12 @@ fn declared_at(
             }),
             BindingSource::Service { context } => consumed(context),
             BindingSource::Kv => consumed(firstparty::CLOUDFLARE_UNIT),
+            BindingSource::KvInstance { capability } => c.items.iter().find_map(|item| {
+                let CommonsItem::Capability(d) = item else {
+                    return None;
+                };
+                (d.name.name == *capability && d.derived.is_some()).then_some(d.span)
+            }),
             BindingSource::EventsFanout { .. } => None,
         }?;
         Some((parsed[i].identity_path(), span))

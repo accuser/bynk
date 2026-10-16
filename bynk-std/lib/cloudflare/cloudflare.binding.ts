@@ -9,16 +9,22 @@ export class WorkersKv implements Kv {
   // type-stripping, so this de-sugared form keeps the binding strip-removable
   // (the strip-only emission invariant, ADR 0136) — the emitted `.ts` runs
   // directly under Node `--experimental-strip-types` on the `--inspect` path.
+  //
+  // `binding` is the `env` field the namespace is read from: `KV` for the bare
+  // `Kv`, the instance's own name for a derived capability (`capability
+  // Sessions = Kv` reads `KV_SESSIONS`, S4a #1966).
   private env?: unknown;
-  constructor(env?: unknown) {
+  private binding: string;
+  constructor(env?: unknown, binding: string = "KV") {
     this.env = env;
+    this.binding = binding;
   }
 
   private ns(): KVNamespace {
-    const kv = (this.env as { KV?: KVNamespace } | undefined)?.KV;
+    const kv = (this.env as Record<string, KVNamespace | undefined> | undefined)?.[this.binding];
     if (!kv) {
       throw new Error(
-        "bynk.cloudflare.Kv requires a KV namespace binding (env.KV) — deploy with the generated [[kv_namespaces]] wrangler stanza",
+        `bynk.cloudflare.Kv requires a KV namespace binding (env.${this.binding}) — deploy with the generated [[kv_namespaces]] wrangler stanza`,
       );
     }
     return kv;

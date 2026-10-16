@@ -70,7 +70,7 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     ),
     k(
         "capability",
-        "Declare a capability (a dependency interface) in a context.",
+        "Declare a capability (a dependency interface) in a context, or a distinct instance of a platform resource (`capability Sessions = Kv`).",
     ),
     k(
         "case",

@@ -726,6 +726,31 @@ warned (`bynk.given.unknown_capability`, `bynk.given.undeclared_capability`,
 `bynk.given.unused_capability`). Providers MUST NOT form a dependency cycle
 through `given` (`bynk.provider.dependency_cycle`).
 
+**Derived capabilities** (standard-library S4a, #1966). `capability X = K`
+declares a capability `X` whose operations are those of `K`, as a **distinct
+instance** of `K`, not an alias: two derivations of `Kv` are two namespaces,
+just as `type Id = Int` is a distinct type over `Int` (§6.1.2). No `provides`
+is written. `X` is provided by `K`'s platform provider, bound to `X`'s own
+resource. Otherwise `X` is an ordinary capability: `given X`, `X.op(…)`, `stub`
+and `expect` apply to it unchanged. The rules:
+- `K` MUST be a capability the unit selects with `consumes U { K }`
+  (`bynk.capability.unknown_base`).
+- `K` MUST be a platform resource kind with instances. Only `bynk.cloudflare`'s
+  `Kv` has them today (`bynk.capability.base_not_instantiable`).
+- Each `@annotation` MUST be one of `K`'s instance options. `Kv` takes none
+  (`bynk.capability.unknown_option`).
+- `X` MUST be declared in a context (`bynk.capability.derived_outside_context`).
+  An instance belongs to the context that owns its data.
+- `X` MUST NOT be exported (`bynk.exports.derived_capability`). Another context
+  reaches the data through this context's services.
+- `X` shares the unit's capability namespace and its conflict rules.
+- On Workers, `X`'s binding is `K`'s prefix and `X` in screaming snake case
+  (`Sessions` → `KV_SESSIONS`). It MUST NOT clash with another of the Worker's
+  bindings (`bynk.context.duplicate_binding`).
+
+A write to an instance commits as it returns and is not rolled back on a fault,
+like any platform-resource write (ADR 0109 D4).
+
 Calling an **effectful function value** — one whose type's return is
 `Effect[_]` — is an effect operation: it MUST occur in an effectful context
 (`bynk.effect.fn_value_in_pure_context`), exactly as a capability call must.

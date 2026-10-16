@@ -360,6 +360,26 @@ pub(crate) fn emit_worker_compose(
         );
         cross_cap_exprs.push((key.clone(), expr));
     }
+    // S4a (#1966): each derived capability's instance, its base's platform
+    // provider bound to the instance's own Worker binding (which also imports
+    // the binding module).
+    let mut derived_keys: Vec<String> = table.derived.keys().cloned().collect();
+    derived_keys.sort();
+    for cap in &derived_keys {
+        let expr = crate::project::instantiate_provider_ts_expr(
+            context,
+            cap,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+            crate::project::ProviderNamespaces::Workers,
+            Some("env"),
+            locale_negotiation_args.as_ref(),
+            &mut referenced_units,
+        );
+        cross_cap_exprs.push((cap.clone(), expr));
+    }
 
     // v0.47/v0.52: a context with a Bearer handler — or a sum with a Bearer
     // member — imports the JWT verifier; a sum with a Signature member imports
@@ -414,7 +434,7 @@ pub(crate) fn emit_worker_compose(
     // binding list the members come from, so a binding can never be typed
     // by a name this file does not import or define.
     let binds = |kind: fn(&BindingSource) -> bool| bindings.iter().any(|b| kind(&b.source));
-    if binds(|s| matches!(s, BindingSource::Kv)) {
+    if binds(|s| matches!(s, BindingSource::Kv | BindingSource::KvInstance { .. })) {
         runtime_imports.push("type __KVNamespace".to_string());
     }
     runtime_imports.push("type __ServiceBinding".to_string());
@@ -543,6 +563,7 @@ pub(crate) fn emit_worker_compose(
     let mut deps_entries: Vec<TsObjectEntry> = {
         let mut caps: Vec<String> = order.clone();
         caps.extend(cross_keys.iter().map(|k| (*k).clone()));
+        caps.extend(derived_keys.iter().cloned());
         caps.sort();
         caps.into_iter().map(TsObjectEntry::Shorthand).collect()
     };

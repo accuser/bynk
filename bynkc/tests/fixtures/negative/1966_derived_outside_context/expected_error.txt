@@ -1,0 +1,2 @@
+bynk.capability.derived_outside_context
+derived capability `Sessions` is declared outside a context

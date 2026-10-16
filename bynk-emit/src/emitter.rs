@@ -462,6 +462,13 @@ pub(crate) fn emit_project(
     // v0.5: behavioural items follow the type/fn declarations.
     for item in &commons.commons.items {
         match item {
+            CommonsItem::Capability(c) if c.derived.is_some() => {
+                let mut item_stmts = emit_derived_capability(c, ctx);
+                if let Some(first) = item_stmts.first_mut() {
+                    first.span = Some(c.span);
+                }
+                body.extend(item_stmts);
+            }
             CommonsItem::Capability(c) => {
                 // P6.x (#1193, slice 3 of #1187): `emit_capability` reads
                 // each op's resolved types off `ops`, not `c`'s own raw

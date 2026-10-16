@@ -58,7 +58,7 @@ ensures_clause ::= "ensures" identifier ":" expression
 params ::= (self_param | param) ("," param)* ","?
 self_param ::= "self"
 param ::= identifier ":" type_ref
-capability_decl ::= "capability" identifier "{" capability_op* "}"
+capability_decl ::= "capability" identifier ("{" capability_op* "}" | "=" identifier store_annotation*)
 capability_op ::= "fn" identifier ("[" identifier ("," identifier)* "]")? "(" (param ("," param)*)? ","? ")" "->" type_ref
 messages_decl ::= "messages" string_literal store_annotation* "{" message_entry* "}"
 message_entry ::= string_literal "=>" string_literal ","?

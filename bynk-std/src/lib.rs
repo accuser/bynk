@@ -318,6 +318,24 @@ pub struct Unit {
     /// The exported enums that may gain variants in a minor release, so a
     /// `match` covering one needs a wildcard (track §11 Q5).
     pub extensible: &'static [&'static str],
+    /// The capabilities a context may declare named instances of with
+    /// `capability Sessions = Kv` (S4a, #1966): each its own platform resource.
+    /// A capability not listed (Workers AI's single `[ai]` binding, say) has no
+    /// instances.
+    pub instantiable: &'static [Instantiable],
+}
+
+/// A capability a context may declare instances of (S4a, #1966, track D3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Instantiable {
+    /// The capability's name in its unit (`Kv`).
+    pub capability: &'static str,
+    /// The prefix of each instance's Worker binding name: `KV` makes
+    /// `capability Sessions = Kv` bind as `KV_SESSIONS`.
+    pub binding_prefix: &'static str,
+    /// The creation options (`@name(…)`) an instance may carry; any other is
+    /// refused. Empty when the kind takes none yet.
+    pub options: &'static [&'static str],
 }
 
 /// Whether a first-party item is under the 1.0 promise (track D2).
@@ -363,6 +381,7 @@ pub const UNITS: &[Unit] = &[
         stability: Stability::Stable,
         experimental: &[],
         extensible: &["FetchError", "Method"],
+        instantiable: &[],
     },
     Unit {
         name: CLOUDFLARE_UNIT,
@@ -379,6 +398,11 @@ pub const UNITS: &[Unit] = &[
         stability: Stability::Stable,
         experimental: &[],
         extensible: &[],
+        instantiable: &[Instantiable {
+            capability: "Kv",
+            binding_prefix: KV_BINDING_NAME,
+            options: &[],
+        }],
     },
     Unit {
         name: LIST_UNIT,
@@ -392,6 +416,7 @@ pub const UNITS: &[Unit] = &[
         stability: Stability::Stable,
         experimental: &[],
         extensible: &[],
+        instantiable: &[],
     },
     Unit {
         name: MAP_UNIT,
@@ -405,6 +430,7 @@ pub const UNITS: &[Unit] = &[
         stability: Stability::Stable,
         experimental: &[],
         extensible: &[],
+        instantiable: &[],
     },
     Unit {
         name: STRING_UNIT,
@@ -418,6 +444,7 @@ pub const UNITS: &[Unit] = &[
         stability: Stability::Stable,
         experimental: &[],
         extensible: &[],
+        instantiable: &[],
     },
     Unit {
         name: LOCALE_UNIT,
@@ -431,6 +458,7 @@ pub const UNITS: &[Unit] = &[
         stability: Stability::Stable,
         experimental: &[],
         extensible: &[],
+        instantiable: &[],
     },
     Unit {
         name: LOCALE_TYPES_UNIT,
@@ -444,6 +472,7 @@ pub const UNITS: &[Unit] = &[
         stability: Stability::Stable,
         experimental: &[],
         extensible: &[],
+        instantiable: &[],
     },
 ];
 
@@ -543,6 +572,15 @@ pub fn allow_entry_is_live(experimental: &[String], entry: &str) -> bool {
         .any(|item| covers(item, entry) || covers(entry, item))
 }
 
+/// The instance kind `capability` of `unit` is, if a context may declare named
+/// instances of it (S4a, #1966).
+pub fn instantiable(unit: &str, capability: &str) -> Option<&'static Instantiable> {
+    self::unit(unit)?
+        .instantiable
+        .iter()
+        .find(|i| i.capability == capability)
+}
+
 /// Whether `name`, an enum exported by `unit`, is extensible.
 pub fn is_extensible(unit: &str, name: &str) -> bool {
     is_extensible_in(UNITS, unit, name)
@@ -625,6 +663,7 @@ mod tests {
             stability: Stability::Stable,
             experimental: &["Fetch.stream"],
             extensible: &["FetchError"],
+            instantiable: &[],
         },
         Unit {
             name: "bynk.cloudflare",
@@ -638,6 +677,7 @@ mod tests {
             stability: Stability::Stable,
             experimental: &["Ai"],
             extensible: &[],
+            instantiable: &[],
         },
         Unit {
             name: "bynk.cloudflare.d1",
@@ -651,6 +691,7 @@ mod tests {
             stability: Stability::Experimental,
             experimental: &[],
             extensible: &[],
+            instantiable: &[],
         },
         Unit {
             name: "bynk.text",
@@ -664,6 +705,7 @@ mod tests {
             stability: Stability::Stable,
             experimental: &[],
             extensible: &[],
+            instantiable: &[],
         },
     ];
 
@@ -784,6 +826,27 @@ mod tests {
         assert!(!is_extensible_in(SYNTH, "bynk", "Method"));
     }
 
+    /// The shipped instantiable kinds (S4a, #1966): only `bynk.cloudflare`'s
+    /// `Kv`, binding as `KV_<NAME>`, with no creation options yet. Each one is a
+    /// capability its unit exports.
+    #[test]
+    fn the_shipped_instantiable_kinds_are_pinned() {
+        let kinds: Vec<(&str, &str, &str)> = UNITS
+            .iter()
+            .flat_map(|u| {
+                u.instantiable
+                    .iter()
+                    .map(move |i| (u.name, i.capability, i.binding_prefix))
+            })
+            .collect();
+        assert_eq!(kinds, [("bynk.cloudflare", "Kv", "KV")]);
+        let kv = instantiable("bynk.cloudflare", "Kv").expect("Kv is instantiable");
+        assert!(kv.options.is_empty());
+        assert!(exported_names(unit("bynk.cloudflare").unwrap()).contains(&"Kv"));
+        assert_eq!(instantiable("bynk", "Clock"), None);
+        assert_eq!(instantiable("bynk.cloudflare", "Nope"), None);
+    }
+
     /// The shipped registry: every unit is stable with nothing experimental (S3
     /// ships the mechanism, #1963 Decision C), and the `bynk` surface's two
     /// growing enums are extensible. A slice that marks an item experimental
@@ -813,11 +876,13 @@ mod tests {
 
     /// #1958: `WorkersKv` reads the namespace at the name every generated
     /// Worker declares it under (`[[kv_namespaces]] binding`, its `Env`), the
-    /// one TypeScript literal no Rust constructor can supply.
+    /// one TypeScript literal no Rust constructor can supply. Since S4a (#1966)
+    /// the name is a constructor parameter, so a derived capability's instance
+    /// can pass its own; the bare `Kv`'s is the parameter's default.
     ///
     /// Matched as a whole identifier, then by its neighbours, so the test
-    /// ignores formatting (a wrapped cast, a `?? undefined` after the read)
-    /// but not a rename: `KVX` is not `KV` (review of #1962).
+    /// ignores formatting but not a rename: `KVX` is not `KV` (review of
+    /// #1962).
     #[test]
     fn the_cloudflare_binding_reads_kv_binding_name() {
         let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
@@ -827,21 +892,15 @@ mod tests {
             .map(|(at, name)| (&src[..at], &src[at + name.len()..]))
             .filter(|(before, after)| !before.ends_with(ident) && !after.starts_with(ident))
             .collect();
-        let read = |before: &str, after: &str| {
-            uses.iter()
-                .any(|(b, a)| b.trim_end().ends_with(before) && a.trim_start().starts_with(after))
-        };
         assert!(
-            read("", "?:"),
-            "the `env` cast no longer has `{KV_BINDING_NAME}?:`"
+            uses.iter().any(|(b, a)| {
+                b.trim_end().ends_with("binding: string = \"") && a.starts_with('"')
+            }),
+            "the constructor's `binding` no longer defaults to \"{KV_BINDING_NAME}\""
         );
         assert!(
-            read("?.", ""),
-            "the read is no longer `?.{KV_BINDING_NAME}`"
-        );
-        assert!(
-            read("env.", ""),
-            "the error no longer names `env.{KV_BINDING_NAME}`"
+            src.contains("?.[this.binding]"),
+            "the namespace is no longer read at `env[binding]`"
         );
     }
 

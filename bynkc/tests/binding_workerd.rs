@@ -7,7 +7,9 @@
 //! Miniflare KV is the platform's own local implementation, and drives every
 //! `Kv` operation through compiled Bynk handlers: `put`, `putTtl`, `get` (present
 //! and absent), `list` by prefix (in key order), and `delete`. The answers are
-//! the ones the fake gives.
+//! the ones the fake gives. S4a (#1966) adds two derived instances
+//! (`capability Sessions = Kv`, `capability PriceCache = Kv`): each is its own
+//! namespace, so a key written through one is absent through the others.
 //!
 //! The same toolchain skip and `BYNK_REQUIRE_WORKERD` gate as the events smokes;
 //! see `events_ordering_workerd.rs` for why each exists. Teardown is the shared
@@ -28,6 +30,9 @@ const REQUIRE_ENV: &str = "BYNK_REQUIRE_WORKERD";
 const SOURCE: &str = "context kv.smoke
 
 consumes bynk.cloudflare { Kv }
+
+capability Sessions = Kv
+capability PriceCache = Kv
 
 service api from http {
 \ton GET(\"/put/:key/:value\") (key: String, value: String) -> Effect[HttpResult[String]] by Visitor given Kv {
@@ -56,6 +61,27 @@ service api from http {
 \ton GET(\"/list/:prefix\") (prefix: String) -> Effect[HttpResult[List[String]]] by Visitor given Kv {
 \t\tlet keys <- Kv.list(Some(prefix))
 \t\tOk(keys)
+\t}
+
+\ton GET(\"/sessions/put/:key/:value\") (key: String, value: String) -> Effect[HttpResult[String]] by Visitor given Sessions {
+\t\tlet _ <- Sessions.put(key, value)
+\t\tOk(\"put\")
+\t}
+
+\ton GET(\"/sessions/get/:key\") (key: String) -> Effect[HttpResult[String]] by Visitor given Sessions {
+\t\tlet found <- Sessions.get(key)
+\t\tmatch found {
+\t\t\tSome(v) => Ok(v)
+\t\t\tNone => NotFound
+\t\t}
+\t}
+
+\ton GET(\"/prices/get/:key\") (key: String) -> Effect[HttpResult[String]] by Visitor given PriceCache {
+\t\tlet found <- PriceCache.get(key)
+\t\tmatch found {
+\t\t\tSome(v) => Ok(v)
+\t\t\tNone => NotFound
+\t\t}
 \t}
 }
 ";
@@ -196,6 +222,12 @@ fn workers_kv_round_trips_on_workerd() {
         ("/delete/never-there", 200, r#""deleted""#),
         ("/list/user:", 200, r#"["user:2","user:3"]"#),
         ("/list/nothing:", 200, "[]"),
+        // S4a (#1966): three namespaces, not one.
+        ("/sessions/put/user:2/s", 200, r#""put""#),
+        ("/sessions/get/user:2", 200, r#""s""#),
+        ("/get/user:2", 200, r#""b""#),
+        ("/prices/get/user:2", 404, ""),
+        ("/sessions/get/user:3", 404, ""),
     ];
     let mut failures = Vec::new();
     for (path, status, body) in steps {

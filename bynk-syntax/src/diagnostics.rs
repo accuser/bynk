@@ -436,6 +436,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Data crossing a context boundary did not match the expected shape.",
     ),
     dg(
+        "bynk.capability.base_not_instantiable",
+        "A derived capability's base is not a platform resource that can be instantiated.",
+        &["capability_decl"],
+    ),
+    dg(
+        "bynk.capability.derived_outside_context",
+        "A derived capability was declared outside a context.",
+        &["capability_decl"],
+    ),
+    dg(
         "bynk.capability.not_provided",
         "On the Workers target, a capability a context requires has no provider in it.",
         &["given_clause"],
@@ -451,8 +461,18 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["capability_decl"],
     ),
     dg(
+        "bynk.capability.unknown_base",
+        "A derived capability's base is not a capability the context consumes.",
+        &["capability_decl"],
+    ),
+    dg(
         "bynk.capability.unknown_operation",
         "Referenced an operation the capability does not declare.",
+        &["capability_decl"],
+    ),
+    dg(
+        "bynk.capability.unknown_option",
+        "A derived capability carries an option its base does not take.",
         &["capability_decl"],
     ),
     d(
@@ -723,6 +743,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.exports.conflicting_visibility",
         "A type is exported with conflicting visibilities.",
+        &["exports_decl"],
+    ),
+    dg(
+        "bynk.exports.derived_capability",
+        "`exports capability` names a derived capability, whose instance stays with its context.",
         &["exports_decl"],
     ),
     dg(

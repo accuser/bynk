@@ -12,6 +12,7 @@ Effects are explicit and capability-gated: a handler declares what it needs via
 - [Compose a provider from other capabilities](/book/guides/effects-and-capabilities/compose-a-provider/)
 - [Share a capability across contexts](/book/guides/effects-and-capabilities/share-across-contexts/)
 - [Wrap a library as an adapter](/book/guides/effects-and-capabilities/wrap-a-library/)
+- [Use more than one KV namespace](/book/guides/effects-and-capabilities/use-several-kv-namespaces/)
 
 **See also:** [Reference — Capabilities & providers](/book/reference/capabilities/),
 [Adapters](/book/reference/adapters/).

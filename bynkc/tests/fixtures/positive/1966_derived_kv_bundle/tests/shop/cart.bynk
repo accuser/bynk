@@ -1,0 +1,28 @@
+suite shop.cart
+-- #1966: each instance has its own fresh `Kv` double, observable and
+-- stubbable under its own name, at both tiers.
+
+case "an instance is in-memory" {
+	let r <- remember.call("a", "1")
+	expect r == Some("1")
+	expect Sessions.put called once with key == "a"
+}
+
+case "instances are separate" {
+	let _ <- remember.call("a", "1")
+	let r <- peek.call("a")
+	expect r is None
+	expect PriceCache.get called once
+}
+
+case "a stubbed instance answers" {
+	stub PriceCache.get(_) returns Some("9")
+	let r <- price.call("sku")
+	expect r == Some("9")
+}
+
+case "instances are separate at integration" as integration {
+	let _ <- remember.call("a", "1")
+	let r <- peek.call("a")
+	expect r is None
+}

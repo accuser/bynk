@@ -207,8 +207,16 @@ Consuming it **locks the deployment unit to Cloudflare** (it cannot then target
 |---|---|
 | **`Kv`** | `get(key: String) -> Effect[Option[String]]` · `put(key: String, value: String) -> Effect[()]` · `putTtl(key: String, value: String, ttlSeconds: Int) -> Effect[()]` · `delete(key: String) -> Effect[()]` · `list(prefix: Option[String]) -> Effect[List[String]]`. |
 
-`Kv` is backed by a single Worker KV namespace bound as `env.KV`; the
+`Kv` is backed by a Worker KV namespace bound as `env.KV`; the
 `[[kv_namespaces]]` stanza is derived for you.
+
+### Several namespaces: derived capabilities
+
+For more than one namespace, declare each as a derived capability:
+`capability Sessions = Kv` is a distinct instance of `Kv`, with `Kv`'s
+operations and its own namespace, bound as `env.KV_SESSIONS`. A context may use
+the bare `Kv` alongside its instances, and the bare `KV` stanza is emitted only
+when it does. See [Derived capabilities](/book/reference/capabilities/#derived-capabilities-capability-x--k).
 
 > **Note** — *producing* queue messages (`send`/`sendBatch`) is not yet a
 > first-party capability. *Consuming* a queue is a separate entry-point feature:

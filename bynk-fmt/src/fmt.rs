@@ -1748,6 +1748,16 @@ impl<'a> Formatter<'a> {
         if let Some(doc) = &c.documentation {
             self.emit_doc(doc);
         }
+        // S4a (#1966): a derived capability is one line, its options after the
+        // base, space-separated as on a `store` field.
+        if let Some(d) = &c.derived {
+            self.push(&format!("capability {} = {}", c.name.name, d.base.name));
+            for ann in &d.annotations {
+                self.push(&format!(" {}", annotation_to_string(ann)));
+            }
+            self.emit_trailing_comment_or_newline(c.trivia.trailing.as_deref());
+            return;
+        }
         self.push(&format!("capability {} {{", c.name.name));
         self.newline();
         self.indented(|f| {

@@ -625,6 +625,7 @@ mod tests {
                 .collect(),
             flattened_caps: StdHashMap::new(),
             assets: StdHashMap::new(),
+            derived: StdHashMap::new(),
         }
     }
 

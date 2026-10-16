@@ -1,0 +1,2 @@
+bynk.capability.base_not_instantiable
+`bynk.Clock` has no named instances: a derived capability's base must be a platform resource kind

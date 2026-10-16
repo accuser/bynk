@@ -196,6 +196,19 @@ pub(crate) fn emit_wrangler_toml(
                     ),
                 ],
             ),
+            // S4a (#1966): an instance's own placeholder, named for its binding,
+            // so deploy (#1967) can mint and materialise each one apart.
+            BindingSource::KvInstance { .. } => TomlBlock::array_table(
+                "kv_namespaces",
+                vec![
+                    TomlEntry::kv("binding", name),
+                    TomlEntry::with_comment(
+                        "id",
+                        TomlValue::str(kv_instance_id_placeholder(&binding.name)),
+                        "set at deploy time",
+                    ),
+                ],
+            ),
             BindingSource::Agent { class_name } | BindingSource::EventsFanout { class_name } => {
                 class_names.push(class_name);
                 TomlBlock::array_table(
@@ -288,6 +301,9 @@ pub(crate) fn worker_bindings(
     agents: &[String],
     consumes: &[String],
     needs_kv: bool,
+    // S4a (#1966): the context's derived KV instances, `(capability,
+    // binding)`, in capability order.
+    kv_instances: &[(String, String)],
     uses_emit: bool,
 ) -> Vec<WorkerBinding> {
     let mut bindings = Vec::new();
@@ -297,6 +313,16 @@ pub(crate) fn worker_bindings(
     if needs_kv {
         bindings.push(kv_binding());
     }
+    bindings.extend(
+        kv_instances
+            .iter()
+            .map(|(capability, binding)| WorkerBinding {
+                name: binding.clone(),
+                source: BindingSource::KvInstance {
+                    capability: capability.clone(),
+                },
+            }),
+    );
     // Events track, slice 0 (spine #936, ADR 0284): a context whose handlers
     // emit gets its own fan-out DO among the agents' — Cloudflare only cares
     // that `index.ts` (this Worker's `main`) exports a class with this name,
@@ -344,7 +370,7 @@ pub(crate) fn handler_bindings(consumed: &[String], agents: &[String]) -> Vec<Wo
 pub(crate) fn binding_ts_type(source: &BindingSource) -> &'static str {
     match source {
         BindingSource::Service { .. } => "__ServiceBinding",
-        BindingSource::Kv => "__KVNamespace",
+        BindingSource::Kv | BindingSource::KvInstance { .. } => "__KVNamespace",
         BindingSource::Agent { .. } | BindingSource::EventsFanout { .. } => {
             "__DurableObjectNamespace"
         }
@@ -370,6 +396,12 @@ pub(crate) fn service_binding(target: &str) -> WorkerBinding {
 /// The KV namespace binding the cloudflare adapter's `Kv` reads. Private:
 /// nothing outside this file reads it by name. Its one read is the literal in
 /// `bynk-std`'s `cloudflare.binding.ts`, pinned to `KV_BINDING_NAME` by a test.
+/// S4a (#1966): the deploy-time id placeholder of a derived KV instance's
+/// `[[kv_namespaces]]` entry: `KV_SESSIONS` → `<KV_SESSIONS_ID>`.
+pub fn kv_instance_id_placeholder(binding: &str) -> String {
+    format!("<{binding}_ID>")
+}
+
 fn kv_binding() -> WorkerBinding {
     WorkerBinding {
         name: bynk_check::firstparty::KV_BINDING_NAME.to_string(),
@@ -405,16 +437,10 @@ fn consumed_binding_name(target: &str) -> String {
 
 /// Durable Object binding identifier for an agent class. We use the
 /// class name in screaming snake case so handlers can grab it by a
-/// predictable name (`OrderEntity` → `ORDER_ENTITY`).
+/// predictable name (`OrderEntity` → `ORDER_ENTITY`), the casing derived
+/// capabilities' bindings share.
 fn agent_binding_name(class_name: &str) -> String {
-    let mut out = String::new();
-    for (i, ch) in class_name.chars().enumerate() {
-        if i > 0 && ch.is_uppercase() {
-            out.push('_');
-        }
-        out.push(ch.to_ascii_uppercase());
-    }
-    out
+    bynk_check::worker_bindings::screaming_snake(class_name)
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +477,38 @@ fn set_string_preserving_decor(item: &mut toml_edit::Item, s: &str) {
     let mut new_value = toml_edit::Value::from(s);
     *new_value.decor_mut() = decor;
     *item = toml_edit::Item::Value(new_value);
+}
+
+/// S4a (#1966): refuse a generated `wrangler.toml` that declares a derived
+/// capability's KV namespace (`capability Sessions = Kv` → `KV_SESSIONS`).
+/// Provisioning one namespace per instance, and recording each in the deploy
+/// ledger, is #1967; until then `bynk deploy` and `bynk dev --remote` stop
+/// here rather than send Cloudflare an `<KV_SESSIONS_ID>` placeholder, or a
+/// Worker whose instances all read one namespace. Only the bare
+/// [`bynk_check::firstparty::KV_BINDING_NAME`] passes.
+pub fn refuse_kv_instances(text: &str) -> Result<(), String> {
+    let doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e| format!("invalid wrangler.toml: {e}"))?;
+    let instances: Vec<&str> = doc
+        .get("kv_namespaces")
+        .and_then(|i| i.as_array_of_tables())
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t.get("binding")?.as_str())
+        .filter(|b| *b != bynk_check::firstparty::KV_BINDING_NAME)
+        .collect();
+    match instances.as_slice() {
+        [] => Ok(()),
+        names => Err(format!(
+            "this Worker declares a derived capability's KV namespace ({}), which `bynk deploy` cannot provision yet (#1967); deploy it by hand with `wrangler` for now",
+            names
+                .iter()
+                .map(|n| format!("`{n}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
 }
 
 /// Whether a generated `wrangler.toml`'s KV namespace id is still the
@@ -533,7 +591,7 @@ binding = \"PAYMENT\"
 service = \"payment\"
 
 [[kv_namespaces]]
-binding = \"BYNK_KV\"
+binding = \"KV\"
 id = \"<KV_NAMESPACE_ID>\" # set at deploy time
 
 [[durable_objects.bindings]]
@@ -548,6 +606,18 @@ storage = \"sqlite\"
 queue = \"job-intake\"
 max_batch_size = 10
 ";
+
+    /// S4a (#1966): the bare `KV` namespace passes; a derived capability's
+    /// instance is refused, named, until deploy provisions instances (#1967).
+    #[test]
+    fn refuse_kv_instances_passes_only_the_bare_namespace() {
+        assert_eq!(refuse_kv_instances(REPRESENTATIVE), Ok(()));
+        assert_eq!(refuse_kv_instances("name = \"w\"\n"), Ok(()));
+        let instances = "[[kv_namespaces]]\nbinding = \"KV\"\nid = \"<KV_NAMESPACE_ID>\"\n\n[[kv_namespaces]]\nbinding = \"KV_SESSIONS\"\nid = \"<KV_SESSIONS_ID>\"\n";
+        let refused = refuse_kv_instances(instances).unwrap_err();
+        assert!(refused.contains("`KV_SESSIONS`"), "{refused}");
+        assert!(!refused.contains("`KV`"), "{refused}");
+    }
 
     #[test]
     fn materialise_kv_namespace_id_changes_only_the_id() {
@@ -686,6 +756,7 @@ mod binding_tests {
             &[],
             &["shop.payment".to_string(), "audit".to_string()],
             true,
+            &[],
             true,
         );
         assert_eq!(
@@ -704,6 +775,7 @@ mod binding_tests {
             &["OrderEntity".to_string()],
             &["shop.payment".to_string(), "audit".to_string()],
             true,
+            &[],
             true,
         );
         let handler = handler_bindings(&["shop.payment".to_string()], &["OrderEntity".to_string()]);
@@ -717,7 +789,7 @@ mod binding_tests {
     /// later one is paired with the earlier.
     #[test]
     fn a_shared_name_pairs_the_later_binding_with_the_earlier() {
-        let bindings = worker_bindings(&[], &["kv".to_string()], true, false);
+        let bindings = worker_bindings(&[], &["kv".to_string()], true, &[], false);
         let duplicates = duplicate_bindings(&bindings);
         assert_eq!(duplicates.len(), 1);
         let (earlier, later) = duplicates[0];

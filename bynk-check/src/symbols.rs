@@ -352,6 +352,27 @@ pub struct UnitTable {
     /// per-unit answer, recorded by [`record_flattened_caps`] so a test body's
     /// privileged view sees the target's platform seams.
     pub flattened_caps: HashMap<String, String>,
+    /// S4a (#1966): the derived capabilities (`capability Sessions = Kv`)
+    /// this context declares, by name, once resolved to their base by
+    /// [`crate::project_model::phase_resolve_derived`]. Each is also in
+    /// [`UnitTable::capabilities`], with its base's operations, so `given`,
+    /// calls and test views treat it as an ordinary capability.
+    pub derived: HashMap<String, DerivedInstance>,
+}
+
+/// S4a (#1966): a resolved derived capability: a distinct instance of a
+/// platform capability, provided by that platform's own provider bound to this
+/// instance's Worker binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedInstance {
+    /// The unit providing the base capability (`bynk.cloudflare`).
+    pub base_unit: String,
+    /// The base capability (`Kv`).
+    pub base_cap: String,
+    /// The instance's Worker binding name (`KV_SESSIONS`).
+    pub binding: String,
+    /// The `capability … = …` declaration.
+    pub span: bynk_syntax::span::Span,
 }
 
 /// #291: record each unit's flattened capabilities (`consumes U { Cap }`, from

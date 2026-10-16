@@ -156,6 +156,10 @@
           {
             "label": "Wrap a library as an adapter",
             "link": "/book/guides/effects-and-capabilities/wrap-a-library/"
+          },
+          {
+            "label": "Use more than one KV namespace",
+            "link": "/book/guides/effects-and-capabilities/use-several-kv-namespaces/"
           }
         ]
       },
