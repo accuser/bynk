@@ -35,7 +35,8 @@ const KNOWN: &[(&str, &str, &str, &[&str], u32)] = &[];
 /// Minimal projects for open defects no positive fixture exhibits:
 /// `(name, [(path, source)])`, compiled for bundle.
 fn repros() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
-    // #1829's repro became `1829_agent_state_unread_commons_field`.
+    // #1829's repro became `1829_agent_state_unread_commons_field`, #1977's
+    // `1977_map_query_entries_and_branded_keys`.
     Vec::new()
 }
 

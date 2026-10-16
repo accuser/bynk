@@ -5720,6 +5720,20 @@ fn ts_ty_to_ts_type(t: TyId, tys: &Arc<Types>) -> TsType {
              TypeScript type — a checked program should never contain one"
         ),
         Ty::Base(b) => TsType::named(ts_base(*b)),
+        // #1977: the compiler-known `MapEntry[K, V]` (ADR 0184) has no
+        // `TypeDecl`, so no module declares or imports a `MapEntry` type to
+        // name. It renders as its own shape, the `{ key, value }` record the
+        // `.entries` lowering builds. (A user type of the same name, which the
+        // checker prefers for field access, interns to the same `Ty` and so
+        // renders inline too; no program declares one today.)
+        Ty::Named {
+            name,
+            kind: NamedKind::Record,
+            args,
+        } if name == MAP_ENTRY && args.len() == 2 => TsType::Object(vec![
+            bynk_ts::TsTypeMember::readonly_prop("key", ts_ty_to_ts_type(args[0], tys)),
+            bynk_ts::TsTypeMember::readonly_prop("value", ts_ty_to_ts_type(args[1], tys)),
+        ]),
         // v0.157 (ADR 0183): a generic record instantiation renders as the
         // erased TS generic `Name<Arg, …>`; a non-generic named type is bare.
         Ty::Named { name, args, .. } if args.is_empty() => {
@@ -5834,6 +5848,24 @@ mod ts_ty_tests {
             args: vec![arg],
         });
         assert_eq!(ts_ty(generic, &tys), "Paginated<string>");
+    }
+
+    #[test]
+    fn map_entry_renders_its_own_shape() {
+        // #1977: no module declares `MapEntry`, so it is never named.
+        let tys = Arc::new(Types::new());
+        let k = tys.intern(Ty::Base(BaseType::String));
+        let v = tys.intern(Ty::Base(BaseType::Int));
+        let entry = bynk_check::checker::map_entry_ty(k, v, &tys);
+        assert_eq!(
+            ts_ty(entry, &tys),
+            "{ readonly key: string; readonly value: number }"
+        );
+        let list = tys.intern(Ty::List(entry));
+        assert_eq!(
+            ts_ty(list, &tys),
+            "readonly { readonly key: string; readonly value: number }[]"
+        );
     }
 
     #[test]
