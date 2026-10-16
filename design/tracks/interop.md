@@ -1,9 +1,8 @@
 # Interop with existing TypeScript Workers — the wire contract, foreign callers, and calling out
 
-- **Status:** Settling (draft). Opened 2026-10-16. Nothing in this doc is
-  settled yet: every decision in §8 is a *recommendation* argued for
-  line-anchored review, and §11 lists what the maintainer must close before the
-  settling PR is marked ready.
+- **Status:** Settling. Opened 2026-10-16. D1–D4 (§8) and every §11 question
+  were closed with the maintainer on 2026-10-16: the recommended option
+  wherever the draft gave one, and the option its analysis favours elsewhere. §3.3's live defect is being fixed outside the track (§11 Q1).
 - **Realises:** `design/bynk-design-notes.md`'s bounded-context model at the
   edge of a deployment: a context is a Worker, and a team adopting Bynk keeps
   its other Workers. Also ADR 0092's named extension ("signed caller headers
@@ -71,9 +70,9 @@ documented, versioned and guarded.
   the emitted boundary, a new emitted artefact (the client), and a new kind of
   binding. ADR 0023 keeps the platform-capability half (D4) out of any
   increment that touches the language.
-- **Surface not yet settled.** The stability promise for the format, the
-  foreign-caller identity, the client's shape and the outbound binding's
-  syntax are all open (§8, §11).
+- **Surface not yet settled** when the track opened: the stability promise
+  for the format, the foreign-caller identity, the client's shape and the
+  outbound binding's syntax (now settled, §8 and §11).
 - **Security/safety boundary.** D2 is an authentication boundary. The survey
   for this doc found the exposure is wider than #1971 states (§3.3): the
   `/_bynk/call/` prefix is reachable from the public internet whenever the
@@ -207,7 +206,7 @@ entry point dispatches on path alone: a request on any route the Worker
 serves, whose path starts with `/_bynk/call/`, reaches the call dispatcher.
 The generated `wrangler.toml` sets neither `workers_dev` nor `routes`, so a
 deployed context keeps wrangler's default `workers.dev` route (*verify*
-against a real deploy; §11 Q1).
+against a real deploy, which the out-of-track fix does).
 
 So the forgery #1971 describes is reachable two ways:
 
@@ -220,7 +219,7 @@ So the forgery #1971 describes is reachable two ways:
 Case 2 needs no interop at all, so it is a defect in today's boundary rather
 than a feature of this track. It is recorded here because D2's design has to
 close it anyway, and because a supported client (D3) must not ship before it
-is closed (§11 Q1 asks whether to split it out as an urgent fix).
+is closed. §11 Q1 settled it as an urgent fix outside this track.
 
 ### 3.4 Calling out
 
@@ -297,18 +296,21 @@ Every decision below must meet these.
 
 ## 7. Prerequisites before any slicing
 
-- **PR-1 Close or contain §3.3 case 2.** Recommended as an urgent fix outside
-  this track (§11 Q1), or as slice I0, which needs no other slice. No slice
-  and no reference note that advertises the call boundary to outsiders ships
-  first.
+- **PR-1 Contain §3.3 case 2. SETTLED (§11 Q1): an urgent fix outside this
+  track,** in its own PR: D2 (d), a shared per-deployment secret that
+  `bynk deploy` mints and every `/_bynk/call/` request must carry, verified
+  by the callee. I2 later replaces it with per-edge signatures. No slice and
+  no reference note that advertises the call boundary to outsiders ships
+  before it.
 - **PR-2 One binding list.** Already met: ADR 0462/0464/0466 give each Worker
   one list driving `wrangler.toml`, `Env` and the duplicate check. D4 adds a
   kind to it.
 
-## 8. Decisions for settling
+## 8. Settled decisions
 
-None of these is settled. Each gives the options, a recommendation and its
-consequences, for line-anchored review. Load-bearing ones land as front-loaded
+All four were settled with the maintainer on 2026-10-16 on the recommended
+option, together with the §11 answers that refine them. Each
+keeps its options and consequences for the record. Load-bearing ones land as front-loaded
 ADRs with the slice that first depends on them (§10).
 
 ### D1 — The cross-context wire format as a published contract (#1969)
@@ -362,7 +364,9 @@ versions side by side.
     embeds hashes computed by an older compiler. Changing the normal form is
     a wire-version change.
 
-**Recommendation: (c).** It is the floor for D3 and for any non-Bynk caller,
+**SETTLED 2026-10-16: (c).** Versioned independently of the compiler, with
+an `X-Bynk-Wire` version header the callee accepts a range of (§11 Q2). It
+is the floor for D3 and for any non-Bynk caller,
 and it costs the codegen nothing beyond the clean-up list: like ADR 0310's
 emit ABI, it is a small enumerated surface beside a codegen that stays free
 (I-6).
@@ -379,7 +383,7 @@ emit ABI, it is a small enumerated surface beside a codegen that stays free
   increments. Changing the hash normal form forces one redeploy of every
   context (ADR 0200's flag day, once).
 - `spec/runtime-library.md:190` is corrected, and ADR 0092's "rejected
-  before the body" either becomes true (the recommendation) or is corrected.
+  before the body" becomes true (settled with D1's clean-up).
 
 ### D2 — A non-Bynk caller's identity (#1971)
 
@@ -401,12 +405,14 @@ that only refuses requests no Bynk caller sends.
   public route exposes the same. *Cost:* nothing to build. *Consequence:*
   fails I-3, leaves §3.3 case 2 open, and makes D3's client an impersonation
   kit. Acceptable only as an interim note while (b) or (c) is built.
-- **(b) A declared foreign-caller actor.** A context lists the foreign
-  Workers it accepts, for example
-  `foreign caller Legacy` (syntax open, §11 Q3), and the deploy wires a named
-  binding to it. The callee distinguishes "a Bynk context" from "the foreign
-  caller `Legacy`" in the type of `c` (a structured `CallerId`, ADR 0092's
-  named extension). *Weakness:* by itself it is still a header claim; it
+- **(b) A declared foreign-caller actor.** A context declares each foreign
+  Worker it accepts as an actor with a new `call`-protocol scheme, beside
+  `Bearer`, `Signature` and `Internal` (§11 Q3):
+  `actor Legacy { auth = Foreign(secret = "LEGACY_CALL_KEY") }` (spelling
+  fixed in I3's proposal). A handler admits it through the existing `by`
+  sum, `by c: Caller | Legacy`, and the body `match`es the resolved actor,
+  so "a Bynk context" and "the foreign caller `Legacy`" are distinct in the
+  type of `c` without restructuring `CallerId`. *Weakness:* by itself it is still a header claim; it
   needs (c) or a channel proof to stop a foreign Worker from claiming
   `shop.orders`.
 - **(c) A signed caller header.** Every caller signs
@@ -426,8 +432,8 @@ that only refuses requests no Bynk caller sends.
   bearer header. Simpler than (c), but every holder can claim every identity,
   so it closes §3.3 case 2 and nothing else.
 
-**Recommendation: (c) as the mechanism, (b) as the surface, (a) once §3.3
-is contained.**
+**SETTLED 2026-10-16: (c) as the mechanism, (b) as the surface, (a) once
+§3.3 is contained, (d) as the interim containment** (PR-1, §11 Q1).
 
 - Ship (a) as a reference note as soon as PR-1's mitigation has landed, not
   before: a public note should not advertise an open boundary.
@@ -436,14 +442,14 @@ is contained.**
   claimed caller. This closes §3.3 for both cases without new syntax, and
   keeps ADR 0092's `CallerId` value unchanged for Bynk callers.
 - A context that wants foreign callers declares each one (b). Its deploy
-  mints that edge's secret and exposes it to the foreign Worker's operator
-  (a `wrangler secret put` line in the deploy plan's output, §11 Q4). A call
-  signed under a foreign edge's secret carries an identity that is
-  *structurally distinct* from every context name: `c.identity` for it is
-  the foreign-caller variant, and `c` can be matched on.
-- An undeclared foreign caller has no secret, so it cannot call a
-  `by c: Caller` handler at all. A binder-less `on call` stays callable
-  unsigned only if §11 Q5 decides so.
+  mints that edge's secret and prints, in the deploy plan's output, the
+  ready-to-run `wrangler secret put` command for the foreign Worker's
+  operator; `bynk deploy` never writes to a Worker it does not own (§11 Q4).
+  A call signed under a foreign edge's secret resolves to that actor, never
+  to `Caller`, so it is structurally distinct from every context name.
+- An undeclared foreign caller has no secret, so it cannot call any `on call`
+  handler: every `/_bynk/call/` request must carry a valid signature,
+  including one for a binder-less handler that reads no identity (§11 Q5).
 
 **Consequences.**
 
@@ -457,9 +463,11 @@ is contained.**
 - The callee's prologue gains a verify step before the body decode. Bynk-only
   projects see that change (I-4's stated exception) and a new secret per
   edge; `bynk deploy` provisions them, and `bynk dev` uses a fixed local key.
-- `CallerId` gains structure. Whether that is a new sum type or a
-  `String` with a reserved prefix (`foreign:legacy`) is §11 Q3. The structured
-  form is cleaner but touches a Foundations type, so it must be additive.
+- `CallerId` stays `String`, and `Caller` keeps its meaning (a Bynk
+  context), so the Foundations layer is untouched: foreign callers are a new
+  actor scheme, which is additive (§11 Q3). The actor-sum rule "peers are
+  distinguished by scheme (no duplicates)" has to admit several `Foreign`
+  actors in one sum, told apart by their secrets; I3 settles how.
 - **#1970 must not ship before D2's mechanism does.** A supported client
   (D3) would make the forgery a one-line import.
 - Key rotation needs a two-key window (accept old and new). The deploy ledger
@@ -480,8 +488,9 @@ consumer either.
   `on call` services, emit `out/workers/<context>/client.ts` (or a `.d.ts`
   and a small runtime): one function per service, boundary types as TS types,
   the contract hash embedded as a literal type, the codec shared with the
-  Bynk caller, and D2's signing. The client imports its codec helpers from
-  the ADR 0310 ABI package, so it carries no copy of the codegen.
+  Bynk caller, and D2's signing. The client imports its codec and signing
+  helpers from a small runtime package versioned with the wire format (§11
+  Q7), so it carries no copy of the codegen.
   - *Skew in the caller's build:* the client exports
     `CONTRACT = "4517a2cd32354abb" as const` per service, and the caller's
     deploy step can compare it with the callee's published
@@ -506,8 +515,9 @@ consumer either.
 - **(c) Both:** (a) first, (b) later as an alternative entry point emitted
   from the same `WireModel`.
 
-**Recommendation: (a) now, with (b) recorded as a later option, not a
-commitment.** One codec path (ADR 0199) and one dispatcher keep D2's
+**SETTLED 2026-10-16: (a) now, with (b) recorded as a candidate for a future
+track, not a commitment (§11 Q9).** One codec path (ADR 0199) and one
+dispatcher keep D2's
 verification in one place, and the client is a thin wrapper over a format D1
 already documents. (b)'s ergonomic win is real but it is a second boundary
 with its own security review; it becomes worth doing if Bynk-to-Bynk calls
@@ -524,8 +534,9 @@ ADR 0200:
    checked-in file beside `bynk.toml` (the foreign caller has no
    `bynk-contracts.json` of its own to supply them). `bynk deploy` compares
    the pins with the callee's new `provides` and reports a mismatch as it
-   reports `bynk.deploy.contract_skew` for a Bynk consumer. Whether that
-   refuses or warns is §11 Q6.
+   reports `bynk.deploy.contract_skew` for a Bynk consumer, and **refuses**
+   (§11 Q6): updating the pin is the user's explicit acknowledgement that the
+   foreign caller has been regenerated.
 3. **Runtime.** The 409 `ContractMismatch` stands, and the callee logs it
    (#1826).
 
@@ -534,8 +545,8 @@ ADR 0200:
 - A new emitted artefact per context, with its own drift guard: a fixture
   corpus test that the client's embedded hashes equal the callee's constants
   (the `bynkc/tests/contract_hash.rs` pattern).
-- The client's runtime half joins ADR 0310's published ABI, or ships as a
-  second package (§11 Q7).
+- The client's runtime half ships as its own package, versioned with the
+  wire format rather than with ADR 0310's emit ABI (§11 Q7).
 - The callee's contract record learns about non-Bynk consumers. That needs D2's
   declaration to name them.
 
@@ -577,7 +588,7 @@ foreign Worker to expose a public route.
   typed, hash-checked contract; a foreign Worker has none, so the clause
   would mean two different things.
 
-**Recommendation: (a).** It reuses the instance model the stdlib track built
+**SETTLED 2026-10-16: (a).** It reuses the instance model the stdlib track built
 for exactly this kind of named, context-owned platform resource, keeps
 adapters platform-neutral, and keeps the binding list compiler-derived. A
 typed wrapper is ordinary Bynk over an untyped capability, the same layering
@@ -590,10 +601,11 @@ thin in practice; (a) does not foreclose it.
   track's §6.4 is unchanged (service bindings *to Bynk contexts* stay
   language work).
 - `bynk deploy` does not provision the foreign Worker: it is not Bynk's. The
-  deploy plan shows the binding and warns when the named Worker does not
-  exist in the account (*verify* that a listing API exists; §11 Q8).
-- `bynk dev` needs a local stand-in: Miniflare's service-binding-to-named-
-  Worker support, or a test double per instance (the S4a pattern).
+  deploy plan shows the binding and *warns*, never refuses, when the named
+  Worker does not exist in the account (§11 Q8; I5 confirms the listing API).
+- `bynk dev` binds a per-instance test double by default (the S4a pattern),
+  and a locally running Worker of that name where Miniflare supports it
+  (§11 Q8; I5 confirms).
 - `global_fetch_strictly_public` stays: `Fetch` remains public, and `Service`
   is the only private path.
 - A foreign callee called through (a) sees an ordinary request. If it is
@@ -608,14 +620,14 @@ shares an increment with language or emitter work (ADR 0023).
 
 | Slice | What | Needs |
 |---|---|---|
-| I0 | Contain §3.3, if §11 Q1 keeps it in-track rather than as an urgent fix: the D2 (d) shared deployment secret on every `/_bynk/call/` request, minted by `bynk deploy`. I2 later replaces it | — |
+| I0 | *Outside this track* (§11 Q1): the urgent §3.3 fix, the D2 (d) shared per-deployment secret on every `/_bynk/call/` request, minted by `bynk deploy`. Listed for ordering only; I2 later replaces it | — |
 | I1 | **D1, documentation and guard.** The wire-contract reference page generated from `WireModel` plus a drift guard; the wire-format version header; the format's ADR and the Gate 1 note; D2 (a)'s reference note | D1, PR-1 (I0 or the urgent fix) |
 | I2 | **D2 mechanism.** Signed caller headers for every Bynk-to-Bynk edge; per-edge secrets in `bynk deploy` and a fixed key in `bynk dev`; ADR 0092 amendment | D2, I1 |
-| I3 | **D2 surface.** Declared foreign callers, the structured `CallerId`, foreign edges' secrets surfaced by deploy | I2 |
+| I3 | **D2 surface.** The `Foreign` actor scheme on `call`, foreign actors in `by` sums, foreign edges' secrets minted by deploy with a printed `wrangler secret put` line | I2 |
 | I4 | **D3.** The generated TS client, its drift guard, and foreign callers recorded in `bynk-contracts.json` and the deploy ledger | I1, I3 |
 | I5 | **D4.** `bynk.cloudflare { Service }` as a derived capability, binding-list kind, dev stand-in, deploy plan line | Stdlib S4 (done) |
 
-Order: I0 (or the out-of-track fix) → I1 → I2 → I3 → I4, with I5 free to run
+Order: I0 (the out-of-track fix) → I1 → I2 → I3 → I4, with I5 free to run
 in parallel once settled, because it shares nothing with the others. This is
 the D1 docs → D2 → D3 → D4 order with D4 unblocked early.
 
@@ -630,47 +642,63 @@ slice that first depends on it. Numbers are assigned at merge.
    `bynk-1.0-definition.md` Gate 1. Lands with I1.
 2. **Caller identity is proved by a per-edge signature.** D2 mechanism,
    amends ADR 0092's trust paragraph. Lands with I2.
-3. **Foreign callers are declared and structurally distinct.** D2 surface.
+3. **Foreign callers are declared actors with their own `call` scheme.** D2
+   surface; `CallerId` and `Caller` are unchanged.
    Lands with I3.
 4. **A non-Bynk Worker is reached through a `Service` platform capability.**
    D4. Lands with I5.
 
-## 11. Settling-review questions (open)
+## 11. Settling-review questions (all resolved)
 
-For the maintainer. Each must close before this PR is marked ready.
+All nine were closed with the maintainer on 2026-10-16. Where the draft gave a
+recommendation, it was accepted. Q3, Q4, Q6, Q7 and Q8 had none, and each was
+resolved on the option this doc's own analysis favours, as stated.
 
-1. **§3.3 case 2: in-track or urgent fix?** The public reachability of
-   `/_bynk/call/` with a forgeable caller is a live defect independent of
-   interop. Recommended: fix it now outside this track, before this doc
-   merges, with the D2 (d) shared deployment secret (`workers_dev = false`
-   alone does not cover a Worker that has `from http` routes). Or keep it as
-   slice I0. First confirm the `workers.dev` default against a real
-   deploy.
-2. **D1's stability rule.** Is the wire format versioned independently of the
-   compiler, like ADR 0310's ABI (recommended), or tied to the language's 1.x
-   promise? And does an incompatible change bump a version header the callee
-   accepts a range of, or only the contract hash?
-3. **D2 surface syntax.** `foreign caller Legacy` in the context, a new actor
-   scheme, or a `bynk.toml` table? And is the structured `CallerId` a sum type
-   or a reserved string prefix?
-4. **D2 secret hand-off.** How does a foreign Worker's operator get its edge
-   secret: printed by `bynk deploy`, written as a `wrangler secret put` on the
-   foreign Worker (needs its name and the user's permission), or left to the
-   user?
-5. **Binder-less `on call`.** Today a handler without `by c: Caller` reads no
-   header. Should D2 require a valid signature on *every* `/_bynk/call/`
-   request (recommended: the boundary should not be open just because a
-   handler doesn't read the identity), or only where the identity is read?
-6. **D3 lock semantics.** Does the callee's deploy refuse a hash change that
-   breaks a declared foreign caller's pin, as for a Bynk consumer, or only
-   warn, given the callee cannot rebuild the foreign caller?
-7. **D3 packaging.** Does the client runtime join ADR 0310's ABI package or
-   ship separately?
-8. **D4 verification.** Can `bynk deploy` check that a named foreign Worker
-   exists in the account, and does Miniflare bind a service to an arbitrary
-   local Worker for `bynk dev`?
-9. **RPC later?** Record D3 (b) as a candidate for a future track, or reject
-   it outright?
+1. **§3.3 case 2. Resolved: an urgent fix outside this track.** A separate PR
+   contains the public reachability of `/_bynk/call/` with D2 (d), a shared
+   per-deployment secret verified on every call request
+   (`workers_dev = false` alone would not cover a Worker with `from http`
+   routes). It also confirms the `workers.dev` default. PR-1 and I0 point at
+   it; I2 replaces the shared secret with per-edge signatures.
+2. **D1's stability rule. Resolved: versioned independently of the
+   compiler**, like ADR 0310's ABI, with an `X-Bynk-Wire` header (absent
+   means 1). The callee accepts a range of versions, so a version is retired
+   after an overlap window rather than on a flag day. The contract hash keeps
+   detecting signature skew within a version.
+3. **D2 surface. Resolved: a new actor scheme for `call`.** The draft listed
+   three spellings without picking one. The existing actor model decides it:
+   actors already carry schemes, secrets and `by` sums with a `match` on the
+   resolved actor, so a `Foreign` scheme gives a foreign caller a distinct
+   type with no new declaration form. A `bynk.toml` table would put an
+   identity the type checker needs outside the source. `CallerId` stays
+   `String`; neither a sum type nor a reserved prefix is needed, which keeps
+   the Foundations layer untouched (D2's constraint).
+4. **D2 secret hand-off. Resolved: printed by `bynk deploy`.** The deploy
+   mints the edge secret and prints a ready-to-run `wrangler secret put`
+   command for the foreign Worker's operator. Writing to the foreign Worker
+   was rejected because Bynk does not own it (D4 makes the same call for
+   provisioning). Leaving it to the user entirely was rejected because a
+   secret the user invents is weaker than one the deploy mints.
+5. **Binder-less `on call`. Resolved: every request is signed**, as
+   recommended. The boundary is not open because a handler ignores the
+   identity.
+6. **D3 pin semantics. Resolved: refuse.** ADR 0200's model is "refused at
+   deploy", and a warning on a production deploy is easily missed. The
+   callee's user updates the pin to acknowledge that the foreign caller was
+   regenerated; that is the override.
+7. **D3 packaging. Resolved: a separate package, versioned with the wire
+   format.** D1 makes the wire format a surface with its own version, apart
+   from ADR 0310's emit ABI (the in-memory layout). The client runtime
+   renders the wire format, so it follows the wire version; joining the ABI
+   package would tie two independently versioned surfaces together.
+8. **D4 verification. Resolved: warn, and a test double by default.**
+   `bynk deploy` warns, never refuses, when the named Worker is missing from
+   the account. `bynk dev` binds a per-instance test double, and a locally
+   running Worker where Miniflare supports it. I5 confirms both platform
+   facts before it ships, as the stdlib track's P5 does for R2.
+9. **RPC later? Resolved: recorded as a candidate for a future track**, as
+   recommended, not rejected. It becomes worth doing if Bynk-to-Bynk calls
+   move to RPC too.
 
 ## 12. Threat model
 
