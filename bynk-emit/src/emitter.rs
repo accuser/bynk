@@ -4633,6 +4633,11 @@ impl<'a> LowerCtx<'a> {
         }
     }
 
+    /// #1975: whether this is a test `case` body.
+    pub(crate) fn in_test_case(&self) -> bool {
+        matches!(&self.mode, BodyMode::TestCase { .. })
+    }
+
     /// #1994: whether an addressed test-service call settles the `~>` sends
     /// its handler handed `deps.__exec`.
     pub(crate) fn test_settles_sends(&self) -> bool {
