@@ -1,5 +1,5 @@
 ---
 level: minor
-probes: ts_writes, diagnostic_coverage
+probes: diagnostic_coverage
 changelog: A context that declares a foreign caller now gets a typed TypeScript client, `workers/<worker>/bynk-client.ts`, which a Worker that is not Bynk imports to call it: one typed function per service its actor may call (`connect({ caller: "Billing", binding: env.LEDGER, env }).lookup(id)`), the boundary types as TypeScript types, and the contract hashes and wire version embedded, so a signature change, a call the actor is not admitted to, or a runtime package for another wire version fails `tsc` in the caller's build. It signs as the declared foreign caller and encodes and decodes with the codec a Bynk caller uses, through the new runtime package `@bynk/wire-client`, which is bundled from the runtime's own boundary modules and versioned with the wire format. `bynk-contracts.json` records, under `foreign`, the hashes each foreign caller may call the context at, and the deploy record keeps them. A project pins them per caller in `bynk.foreign.toml`, and `bynk deploy` refuses a build that breaks a pin (`bynk.deploy.foreign_contract_skew`) until the pin is updated. See [TypeScript client](/book/reference/typescript-client/) and [Adopt Bynk beside a TypeScript Worker](/book/guides/projects-build-and-deployment/adopt-beside-a-typescript-worker/)
 ---
