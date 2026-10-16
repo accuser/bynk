@@ -421,7 +421,7 @@ pub fn run(
     // Shared across the loop: a queue two contexts consume is one queue, so it
     // wants one create attempt per run, not one per consumer (ADR 0194 D2).
     let mut attempted_queues = BTreeSet::new();
-    // #2003: the deployment's call secret is decided over every Worker in the
+    // #2004: the deployment's call secret is decided over every Worker in the
     // run at once, so each one's `secret list` is asked here, before anything
     // is pushed, and the per-context step reuses the answer. Asked before the
     // KV ids are materialised and any `[env.<name>]` table is synthesised:
@@ -779,7 +779,7 @@ pub(crate) fn derive_plan<'a>(
                         secrets,
                     )
                     .into_iter()
-                    // #2003: every Worker holds the deployment's call secret.
+                    // #2004: every Worker holds the deployment's call secret.
                     .chain(std::iter::once(WantedSecret {
                         name: bynk_emit::CALL_SECRET_BINDING.to_string(),
                         origin: Origin::Managed,

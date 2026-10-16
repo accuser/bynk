@@ -111,7 +111,7 @@ export interface ServiceBinding {
   fetch(request: Request): Promise<Response>;
 }
 
-// #2003 (ADR 0092 amended): the deployment's shared call secret. Every Worker
+// #2004 (ADR 0092 amended): the deployment's shared call secret. Every Worker
 // in a deployment holds the same value under this binding, every internal
 // request (`/_bynk/call/`, `/_bynk/event/`) carries it in this header, and
 // the receiving Worker refuses a request without it before reading anything
@@ -197,7 +197,7 @@ export async function callService<R>(
   // fails closed on mismatch (409), which is what makes a `deploy --context`
   // skew a loud, nameable failure instead of a silent misinterpretation.
   contractHash: string = "",
-  // #2003: the calling Worker's `env`, for the deployment's call secret
+  // #2004: the calling Worker's `env`, for the deployment's call secret
   // ([`CALL_SECRET_BINDING`]), which the callee checks before anything else.
   env: unknown = undefined,
 ): Promise<R> {
@@ -275,7 +275,7 @@ export async function deliverEvent(
   servicePath: string,
   payload: unknown,
   envelope: unknown,
-  // #2003: the fan-out Durable Object's `env`, for the call secret the
+  // #2004: the fan-out Durable Object's `env`, for the call secret the
   // subscriber checks before it reads the body.
   env: unknown = undefined,
 ): Promise<void> {

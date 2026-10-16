@@ -191,7 +191,7 @@ fn http_status(
     http_status_as(method, port, path, body, Some(bynk_emit::LOCAL_CALL_SECRET))
 }
 
-/// [`http_status`] with the call-secret header (#2003) chosen by the caller:
+/// [`http_status`] with the call-secret header (#2004) chosen by the caller:
 /// `None` sends none, as a forged request from outside the deployment would.
 fn http_status_as(
     method: &str,
@@ -355,7 +355,7 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
     // Baseline: nothing has been delivered yet.
     assert_eq!(read_trace(), "", "trace must start empty");
 
-    // (0) #2003: a well-formed event sent from outside the deployment, with
+    // (0) #2004: a well-formed event sent from outside the deployment, with
     // no call secret or a wrong one, is refused with a bare 401 before the
     // body is read, and never reaches the handler. The route is reachable
     // on the Worker's public address, so the path alone admits nothing.

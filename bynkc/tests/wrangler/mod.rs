@@ -23,7 +23,7 @@
 /// The `npx` package spec every workerd smoke provisions.
 pub const SPEC: &str = "wrangler@4";
 
-/// #2003: the `--var` every workerd smoke passes `wrangler dev`, so its Worker
+/// #2004: the `--var` every workerd smoke passes `wrangler dev`, so its Worker
 /// holds the local call secret `bynk dev` gives it and admits internal
 /// (`/_bynk/call/`, `/_bynk/event/`) requests stamped with it.
 #[allow(dead_code)]

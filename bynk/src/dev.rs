@@ -653,7 +653,7 @@ fn passthrough_has(args: &[String], flag: &str) -> bool {
 /// A lone worker without `--base-port` or `--inspect` gets no port flag — the
 /// pre-#552 invocation, so that path keeps its `-- --port N` passthrough.
 ///
-/// #2003: and always the local call secret, as a `--var` rather than a file:
+/// #2004: and always the local call secret, as a `--var` rather than a file:
 /// every Worker refuses an internal request (`/_bynk/call/`, `/_bynk/event/`)
 /// without the deployment's secret, and a lone context still delivers its own
 /// events to itself. The fixed [`bynk_emit::LOCAL_CALL_SECRET`], so two `bynk
@@ -779,7 +779,7 @@ mod tests {
         }
     }
 
-    /// #2003: every `wrangler dev` gets the local call secret first.
+    /// #2004: every `wrangler dev` gets the local call secret first.
     fn with_secret(rest: &[&str]) -> Vec<String> {
         let mut args = names(&["--var", "BYNK_CALL_SECRET:bynk-local-call-secret"]);
         args.extend(names(rest));

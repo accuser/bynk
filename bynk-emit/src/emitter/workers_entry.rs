@@ -252,7 +252,7 @@ fn text_response(text: &str, status: i64) -> TsExpr {
     new_response(vec![str_lit(text), status_obj(status)])
 }
 
-/// #2003: `if (!(await __verifyCallSecret(request, env))) return new
+/// #2004: `if (!(await __verifyCallSecret(request, env))) return new
 /// Response("Unauthorized", { status: 401 });` — the first statement of every
 /// internal dispatch (`/_bynk/call/`, `/_bynk/event/`).
 ///
@@ -570,7 +570,7 @@ pub(crate) fn emit_worker_entry(
         "type __JsonValue".to_string(),
         "type __BoundaryError".to_string(),
         "__boundaryError".to_string(),
-        // #2003: every Worker answers `/_bynk/call/`, so every Worker gates it.
+        // #2004: every Worker answers `/_bynk/call/`, so every Worker gates it.
         "__verifyCallSecret".to_string(),
     ];
     if has_http {

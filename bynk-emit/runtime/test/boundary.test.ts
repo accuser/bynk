@@ -16,7 +16,7 @@ function bindingReturning(body: unknown, init?: ResponseInit): ServiceBinding {
   return { fetch: async () => new Response(JSON.stringify(body), init) };
 }
 
-// #2003: a caller's `env`, holding the deployment's call secret.
+// #2004: a caller's `env`, holding the deployment's call secret.
 const ENV = { BYNK_CALL_SECRET: "s3cret" };
 
 // A deserialiser that expects { ok: T } | { err: E }.
@@ -260,7 +260,7 @@ test("boundaryError: the payload is readable but not enumerable", async () => {
   );
 });
 
-// #2003: the deployment's call secret.
+// #2004: the deployment's call secret.
 
 function internalRequest(headers: Record<string, string> = {}): Request {
   return new Request("http://internal/_bynk/call/svc", { method: "POST", headers, body: "{}" });

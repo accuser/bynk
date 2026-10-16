@@ -347,7 +347,7 @@ fn events_fanout_fetch() -> TsClassMethod {
                                                             )),
                                                             property: "envelope".to_string(),
                                                         },
-                                                        // #2003: the call secret
+                                                        // #2004: the call secret
                                                         // the subscriber checks.
                                                         TsExpr::Member {
                                                             object: Box::new(TsExpr::Ident(

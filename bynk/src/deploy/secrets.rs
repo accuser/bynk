@@ -23,7 +23,7 @@ pub(crate) enum Origin {
     Read,
     /// The user named it. The compiler knows nothing about it either way.
     Supplied,
-    /// #2003: the deployment's call secret, [`bynk_emit::CALL_SECRET_BINDING`].
+    /// #2004: the deployment's call secret, [`bynk_emit::CALL_SECRET_BINDING`].
     /// Every Worker gets it, and `deploy` mints its value unless the user
     /// supplies one ([`decide_call_secret`]).
     Managed,
@@ -177,7 +177,7 @@ pub(crate) fn wanted_secrets(
     for name in declared {
         marks.insert(name.clone(), Origin::Declared);
     }
-    // #2003: the call secret is handled apart (`decide_call_secret`), a value
+    // #2004: the call secret is handled apart (`decide_call_secret`), a value
     // supplied for it included: it is not the user's to spread or skip.
     marks.remove(bynk_emit::CALL_SECRET_BINDING);
     marks
@@ -259,7 +259,7 @@ pub(crate) fn presence_of(
     }
 }
 
-/// What this run does with the deployment's call secret (#2003).
+/// What this run does with the deployment's call secret (#2004).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CallSecret {
     /// Every Worker in the run already holds one: leave it.
@@ -344,9 +344,9 @@ pub(crate) fn supplied_call_secret(source: &SecretSource) -> Option<String> {
 pub(crate) struct Secrets<'a> {
     pub(crate) source: &'a SecretSource,
     pub(crate) force: bool,
-    /// #2003: what [`decide_call_secret`] decided for this run.
+    /// #2004: what [`decide_call_secret`] decided for this run.
     pub(crate) call_secret: &'a CallSecret,
-    /// #2003: each Worker's `secret list` answer, asked once before the loop
+    /// #2004: each Worker's `secret list` answer, asked once before the loop
     /// (the call secret is decided over every Worker at once) and reused here.
     pub(crate) listed: &'a BTreeMap<String, Option<BTreeSet<String>>>,
     /// Values resolved earlier in this run, so two contexts wanting the same
@@ -394,14 +394,14 @@ pub(crate) fn prepare_secrets(
     // be a stale one (ADR 0195 D1/D4). Asked *before* the push on both paths —
     // our own `wrangler deploy` does not change which secrets are set, so one
     // answer serves the whole step, and `secret list` has no draft-Worker path
-    // to trip over on a first deploy. #2003: the run asks once per Worker
+    // to trip over on a first deploy. #2004: the run asks once per Worker
     // before the loop, so this reuses that answer.
     let present = match secrets.listed.get(worker) {
         Some(listed) => listed.clone(),
         None => list_secrets(provenance, worker_dir, environment),
     };
     let mut prepared = Vec::new();
-    // #2003: the call secret first, so a Worker never runs a moment without it
+    // #2004: the call secret first, so a Worker never runs a moment without it
     // that it could have had.
     if let CallSecret::Set { value, overwrite } = secrets.call_secret {
         let name = bynk_emit::CALL_SECRET_BINDING;
@@ -837,7 +837,7 @@ WITH_EQUALS=a=b
         );
     }
 
-    // ---- #2003: the deployment's call secret --------------------------------
+    // ---- #2004: the deployment's call secret --------------------------------
 
     use Presence::{Absent, Present, Unknown};
 

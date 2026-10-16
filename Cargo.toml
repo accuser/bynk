@@ -114,7 +114,7 @@ toml_edit = "0.25"
 # Portable executable lookup (handles PATHEXT/`where` on Windows) — backs the
 # `bynk doctor` detection probe, replacing the Unix-only `which`-shell (v0.46).
 which = "8"
-# #2003: `bynk deploy` mints the deployment's call secret.
+# #2004: `bynk deploy` mints the deployment's call secret.
 getrandom = "0.4"
 tower-lsp = "0.20"
 # #1667: dev-only, for driving `LspService` and reading its `ClientSocket` in

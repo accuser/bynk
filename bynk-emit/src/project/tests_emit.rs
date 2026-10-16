@@ -1420,7 +1420,7 @@ fn emit_integration_harness<'a>(
     for p in participants {
         let ns = test_ns(p);
         let env = format!("env_{ns}");
-        // #2003: every participant admits the others' calls and event
+        // #2004: every participant admits the others' calls and event
         // deliveries under the local call secret, as under `bynk dev`.
         body.push(TsStmt::assign(
             member(ident(env.clone()), crate::CALL_SECRET_BINDING),
@@ -1468,7 +1468,7 @@ fn emit_integration_harness<'a>(
         TsExpr::object(vec![]),
         None,
     ));
-    // #2003: the test cases call in through `rootEnv`, so it holds the
+    // #2004: the test cases call in through `rootEnv`, so it holds the
     // secret their `__callService` stamps.
     body.push(TsStmt::assign(
         member(ident("rootEnv"), crate::CALL_SECRET_BINDING),

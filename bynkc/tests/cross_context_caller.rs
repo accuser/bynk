@@ -3,7 +3,7 @@
 //! Workers (`cross_context_caller_reads_live_id_and_fails_closed`): drives the
 //! callee worker's `/_bynk/call/` dispatch with and without the `X-Bynk-Caller`
 //! header: present → the `by c: Caller` handler reads the live caller name;
-//! absent/empty → fail-closed (401, the `Internal`-channel analogue). #2003: and
+//! absent/empty → fail-closed (401, the `Internal`-channel analogue). #2004: and
 //! with and without the deployment's call secret, which a forged request from
 //! outside the deployment does not carry.
 //!
@@ -157,7 +157,7 @@ function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error("FAIL: " + msg);
 }
 
-// #2003: the deployment's call secret, which every Bynk caller stamps.
+// #2004: the deployment's call secret, which every Bynk caller stamps.
 const SECRET = "s3cret";
 
 function call(headers: Record<string, string>, service = "whoami"): Request {
@@ -218,7 +218,7 @@ assert(res.status === 409, "empty contract header → 409, got " + res.status);
 res = await worker.fetch(call({ "X-Bynk-Contract": "0000000000000000" }), env);
 assert(res.status === 409, "skewed contract outranks a missing caller, got " + res.status);
 
-// #2003: the call secret. `/_bynk/call/` is reachable from the public internet,
+// #2004: the call secret. `/_bynk/call/` is reachable from the public internet,
 // so a request that does not carry the deployment's secret is refused first,
 // with a bare 401 and nothing about the service, its contract or its caller.
 async function refused(req: Request, e: any, what: string): Promise<void> {
@@ -307,7 +307,7 @@ function assert(cond: boolean, msg: string): void {
 }
 
 // app.a's Worker reaches app.b through its APP_B service binding. Both hold
-// the deployment's call secret (#2003): app.a stamps it, app.b checks it.
+// the deployment's call secret (#2004): app.a stamps it, app.b checks it.
 const SECRET = "s3cret";
 const envB: any = { BYNK_CALL_SECRET: SECRET };
 const envA: any = {
@@ -335,7 +335,7 @@ assert(
   "caller-side codec round-trips the record's seat field, got " + JSON.stringify(body),
 );
 
-// #2003: a callee holding a different secret refuses app.a's call, which
+// #2004: a callee holding a different secret refuses app.a's call, which
 // app.a reports as a fault (500) rather than a decoded value.
 const envBad: any = {
   BYNK_CALL_SECRET: SECRET,
