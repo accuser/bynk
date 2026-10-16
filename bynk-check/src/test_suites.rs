@@ -3536,6 +3536,13 @@ service api from http {
             .assert_reports("bynk.types.is_unknown_variant");
         system_case("    let r <- api.POST(\"/cart\", Item { sku: \"w\" }) by Nobody\n    expect r is Rejected(Unauthorized)")
             .assert_clean();
+        // Both at once (the raw no-auth driver) is still an `HttpOutcome`.
+        system_case("    let r <- api.POST(\"/cart\", Wire(\"{}\")) by Nobody\n    expect r is Rejected(Unauthorized)")
+            .assert_clean();
+        system_case(
+            "    let r <- api.POST(\"/cart\", Wire(\"{}\")) by Nobody\n    expect r is Created(_)",
+        )
+        .assert_reports("bynk.types.is_unknown_variant");
         system_case(
             "    let r <- api.DELETE(\"/cart\")\n    expect r is Rejected(MethodNotAllowed)",
         )
