@@ -1,11 +1,6 @@
----
-level: patch
-changelog: An increment acknowledges a gated greenfield-status probe it moves in its pending file's `probes` key, and the merge-time stamp rewrites `design/greenfield-status.md`, so parallel PRs no longer conflict on the table
----
+# 0470 — Gated greenfield probes are acknowledged in the pending file and rewritten by the stamp
 
-## ADR: greenfield-probes-acknowledged-at-stamp
-title: Gated greenfield probes are acknowledged in the pending file and rewritten by the stamp
-summary: A PR names the gated probes it moves (`probes:`); the stamp rewrites the table's gated rows on `main` in merge order
+- **Status:** Accepted (v0.332.1)
 
 **Context.** `design/greenfield-status.md` is a committed, generated table whose
 sixteen gated rows `greenfield_status_table_is_current` diffs against a fresh
