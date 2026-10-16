@@ -2,7 +2,7 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-Repo automation for the [Bynk](https://github.com/accuser/bynk) compiler,
+Repo automation for the [Bynk](https://github.com/bynk-lang/bynk) compiler,
 run as `cargo xtask <command>`.
 
 > **Not a published crate.** `xtask` is `publish = false` — internal repo
@@ -38,5 +38,5 @@ comment for what it checks.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

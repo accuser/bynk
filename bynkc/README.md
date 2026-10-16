@@ -5,7 +5,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 The **Bynk compiler CLI** — the `bynkc` command-line tool (and the library
-behind it). It takes [Bynk](https://github.com/accuser/bynk) source,
+behind it). It takes [Bynk](https://github.com/bynk-lang/bynk) source,
 type-checks it, and emits typed TypeScript targeting Cloudflare Workers.
 
 Bynk is a statically typed, architecture-first language: contexts, services,
@@ -138,9 +138,9 @@ specification in
 [the normative spec](https://bynk-lang.org/book/spec/)
 (rendered in the Bynk Book), kept current per increment. The decisions behind
 the increments are recorded in
-[`design/decisions/`](https://github.com/accuser/bynk/tree/main/design/decisions).
+[`design/decisions/`](https://github.com/bynk-lang/bynk/tree/main/design/decisions).
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

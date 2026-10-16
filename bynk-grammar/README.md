@@ -4,8 +4,8 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk-grammar)](https://docs.rs/bynk-grammar)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-Renders the [`tree-sitter-bynk`](https://github.com/accuser/bynk/tree/main/tree-sitter-bynk)
-grammar to **EBNF** for the [Bynk](https://github.com/accuser/bynk) language
+Renders the [`tree-sitter-bynk`](https://github.com/bynk-lang/bynk/tree/main/tree-sitter-bynk)
+grammar to **EBNF** for the [Bynk](https://github.com/bynk-lang/bynk) language
 reference.
 
 This crate is the single source of the grammar reference. It takes the compiled
@@ -62,5 +62,5 @@ JSON, or an unknown rule name). See the
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

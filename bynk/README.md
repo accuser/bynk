@@ -73,8 +73,8 @@ override and any driver↔compiler skew.
   (`bynk-driver` / `bynk-emit` / `bynk-syntax` / `bynk-render` / `bynk-fmt`) and
   compiles in-process, rather than shelling the `bynkc` binary, so it is
   self-contained
-  ([ADR 0101](https://github.com/accuser/bynk/blob/main/design/decisions/0101-front-end-links-pipeline-binary-topology.md),
-  building on [ADR 0083](https://github.com/accuser/bynk/blob/main/design/decisions/0083-bynk-driver-thin-orchestrator.md)).
+  ([ADR 0101](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0101-front-end-links-pipeline-binary-topology.md),
+  building on [ADR 0083](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0083-bynk-driver-thin-orchestrator.md)).
   A `$BYNK_BYNKC` override is kept as a power-user escape hatch.
 - **Single-concern modules** — one per command (`doctor`, `new`, `dev`,
   `deploy`, `check`, `fmt`, `test`, `explain`), plus `compiler` (locate an
@@ -87,7 +87,7 @@ override and any driver↔compiler skew.
   `new`'s embedded starter template is compile-tested so the scaffold can't rot.
 
 The decisions behind each command are recorded in
-[`design/decisions/`](https://github.com/accuser/bynk/tree/main/design/decisions)
+[`design/decisions/`](https://github.com/bynk-lang/bynk/tree/main/design/decisions)
 (ADRs 0083–0084 for `doctor`, 0096 and 0192 for `dev`, 0097 for `new`, 0179,
 0193, and 0254 among those for `deploy`, 0264 for `explain`).
 
@@ -99,5 +99,5 @@ cargo test -p bynk
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

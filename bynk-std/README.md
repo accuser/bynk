@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk-std)](https://docs.rs/bynk-std)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-The **first-party sources of the [Bynk](https://github.com/accuser/bynk)
+The **first-party sources of the [Bynk](https://github.com/bynk-lang/bynk)
 standard library, as data**: the `.bynk` sources and TypeScript bindings the
 toolchain ships, embedded with `include_str!`, plus the metadata it reads about
 them.
@@ -82,5 +82,5 @@ See the [API docs](https://docs.rs/bynk-std) for the full surface.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

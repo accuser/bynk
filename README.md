@@ -51,7 +51,7 @@ source with a recent Rust toolchain (stable, 2024 edition — see
 [rustup](https://rustup.rs/)).
 
 ```sh
-git clone https://github.com/accuser/bynk.git
+git clone https://github.com/bynk-lang/bynk.git
 cd bynk
 cargo install --path bynkc      # the `bynkc` compiler
 cargo install --path bynk       # the `bynk` driver (doctor / new / dev / deploy, and more)
@@ -60,7 +60,7 @@ cargo install --path bynk-lsp   # optional: the `bynkc-lsp` language server
 
 That builds `main`, which moves on with every merged increment. To build the
 last release instead, check out its tag (the newest `vX.Y.Z` on the
-[releases page](https://github.com/accuser/bynk/releases)) before installing.
+[releases page](https://github.com/bynk-lang/bynk/releases)) before installing.
 Before 1.0, a release is cut when a track of work retires ([release
 discipline](design/bynk-release-discipline.md)).
 

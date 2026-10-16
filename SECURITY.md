@@ -19,7 +19,7 @@ pull requests, or discussions.**
 
 Report privately through GitHub's private vulnerability reporting:
 
-1. Open <https://github.com/accuser/bynk/security/advisories/new> — or go to the
+1. Open <https://github.com/bynk-lang/bynk/security/advisories/new> — or go to the
    repository's **Security** tab and click **Report a vulnerability** (under
    *Advisories*).
 2. Fill in the advisory form with as much detail as you can.

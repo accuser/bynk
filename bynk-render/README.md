@@ -5,7 +5,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 The **shared diagnostic-rendering layer for the
-[Bynk](https://github.com/accuser/bynk) compiler**.
+[Bynk](https://github.com/bynk-lang/bynk) compiler**.
 
 Given a slice of `bynk_syntax::CompileError` plus the source and a filename, it
 produces the human and machine forms of a Bynk diagnostic:
@@ -74,5 +74,5 @@ See the [API docs](https://docs.rs/bynk-render) for the full surface.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

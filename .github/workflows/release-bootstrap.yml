@@ -13,7 +13,7 @@ name: Release (token bootstrap)
 #      `gh workflow run release-bootstrap.yml --ref <ref>`) to first-publish the
 #      new names using the CARGO_REGISTRY_TOKEN / NPM_TOKEN secrets.
 #   2. Configure the Trusted Publishers on crates.io / npmjs.com for the now-
-#      existing names (owner `accuser`, repo `bynk`, workflow `release.yml`).
+#      existing names (owner `bynk-lang`, repo `bynk`, workflow `release.yml`).
 #   3. Switch back to `release.yml` for all subsequent releases, and delete the
 #      bootstrap token secrets.
 #
@@ -137,7 +137,7 @@ jobs:
           dry=""; [ "${{ inputs.dry_run }}" = "true" ] && dry="--dry-run"
           ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
           for crate in bynk-grammar bynk-std bynk-syntax bynk-project bynk-ts bynk-render bynk-fmt bynk-check bynk-ir bynk-lower bynk-emit bynk-strip bynk-ide bynk-driver bynkc bynk bynk-lsp; do
-            if [ -z "$dry" ] && curl -sfL -A "bynk-release (github actions; accuser/bynk)" \
+            if [ -z "$dry" ] && curl -sfL -A "bynk-release (github actions; bynk-lang/bynk)" \
                  "https://crates.io/api/v1/crates/$crate/$ver" -o /dev/null; then
               echo "::notice::$crate@$ver already on crates.io — skipping"
             else

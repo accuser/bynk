@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk-ide)](https://docs.rs/bynk-ide)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-The **IDE/LSP analysis surface for the [Bynk](https://github.com/accuser/bynk)
+The **IDE/LSP analysis surface for the [Bynk](https://github.com/bynk-lang/bynk)
 compiler** — the non-bailing diagnostics a language server consumes.
 
 Where the CLI compile path *bails* on the first failure and emits, this layer
@@ -81,5 +81,5 @@ crate directly. See the [API docs](https://docs.rs/bynk-ide).
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

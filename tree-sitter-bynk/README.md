@@ -3,7 +3,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 The [tree-sitter](https://tree-sitter.github.io/tree-sitter/) grammar for the
-[Bynk](https://github.com/accuser/bynk) language — the source of truth for
+[Bynk](https://github.com/bynk-lang/bynk) language — the source of truth for
 tree-sitter syntax highlighting (`queries/highlights.scm`), the playground's
 editor, and the Book's grammar reference (rendered from `src/grammar.json` by
 [`bynk-grammar`](https://crates.io/crates/bynk-grammar)).
@@ -45,5 +45,5 @@ test's dev-dependency edge is cycle-free.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

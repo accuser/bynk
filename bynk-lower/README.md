@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk-lower)](https://docs.rs/bynk-lower)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-The **AST-analysis helpers the [Bynk](https://github.com/accuser/bynk) emitter
+The **AST-analysis helpers the [Bynk](https://github.com/bynk-lang/bynk) emitter
 reads resolved declaration-level facts through** — handler kinds and `given`
 clauses, service protocols, store-field shapes, capability op and
 attached-method signatures, route cache/limit annotations, event-subscriber
@@ -66,5 +66,5 @@ See the [API docs](https://docs.rs/bynk-lower) for the full surface.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

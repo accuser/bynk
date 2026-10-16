@@ -13,12 +13,12 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/accuser/bynk.git",
+    "url": "git+https://github.com/bynk-lang/bynk.git",
     "directory": "tree-sitter-bynk"
   },
-  "homepage": "https://github.com/accuser/bynk/tree/main/tree-sitter-bynk",
+  "homepage": "https://github.com/bynk-lang/bynk/tree/main/tree-sitter-bynk",
   "bugs": {
-    "url": "https://github.com/accuser/bynk/issues"
+    "url": "https://github.com/bynk-lang/bynk/issues"
   },
   "scripts": {
     "install": "node-gyp-build",
