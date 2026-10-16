@@ -39,7 +39,7 @@ the planning backlogs (`bynk-tooling-proposal-queue.md`,
   standard-library surface — one single-purpose increment at a time.
   Language/stdlib work and platform-adapter work never share an increment
   (decision record 0023 in `design/decisions/`). One possible follow-up to
-  one-line `--|` docs ([#1888](https://github.com/accuser/bynk/issues/1888)) is
+  one-line `--|` docs ([#1888](https://github.com/bynk-lang/bynk/issues/1888)) is
   an end-of-line doc for a member (`repo: Repo, --| The repository.`), if the
   doc-above form proves too tall for short records; today a `--|` after code is
   a comment.
@@ -60,7 +60,7 @@ the planning backlogs (`bynk-tooling-proposal-queue.md`,
   envelope's version. See
   [Understand events](/book/guides/events/understand-events/).
   Range-valued `via schema(...)` patterns (slice 4b,
-  [#990](https://github.com/accuser/bynk/issues/990)) and
+  [#990](https://github.com/bynk-lang/bynk/issues/990)) and
   replay/backfill (split to a separate future track) are the track's only
   remaining open work.
 - **Editor tooling.** Deepening the `bynkc-lsp` experience — completion,

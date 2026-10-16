@@ -1218,7 +1218,7 @@ adapter with two operations, `dedup[T](key: String) -> Effect[Option[T]]` and
 call's key is scoped to the calling handler's qualified name, so two handlers
 never share a key by accident. A subscriber that must not apply one emission
 twice deduplicates on `env.eventId` with this pair: the idiom is a documented
-convention, not syntax ([ADR 0294](https://github.com/accuser/bynk/blob/main/design/decisions/0294-events-idempotency-idiom-is-documented-convention.md)).
+convention, not syntax ([ADR 0294](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0294-events-idempotency-idiom-is-documented-convention.md)).
 
 ## §5.8 Boundaries & cross-context
 
@@ -1555,10 +1555,10 @@ operations**: each runs its
 effectful function value, so calling one in a pure context is
 `bynk.effect.fn_value_in_pure_context`, exactly the function-value confinement of
 [§5.5](#55-effects-capabilities--providers). `forEach(f: T -> Effect[()])`
-(v0.146, [ADR 0170](https://github.com/accuser/bynk/blob/main/design/decisions/0170-do-statement-implicit-unit-and-list-foreach.md))
+(v0.146, [ADR 0170](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0170-do-statement-implicit-unit-and-list-foreach.md))
 is the `Query.forEach` terminal over an eager list — the effect-per-element loop,
 **sequential** (each element awaited in order). `parTraverse(f: T -> Effect[()])`
-(v0.147, [ADR 0171](https://github.com/accuser/bynk/blob/main/design/decisions/0171-list-partraverse.md))
+(v0.147, [ADR 0171](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0171-list-partraverse.md))
 is its **concurrent** sibling — the `Query.parTraverse` fan-out over an eager
 list, issuing every element's effect at once and awaiting them together, so a
 slow element does not head-of-line-block the rest; the order in which side
@@ -1568,7 +1568,7 @@ element does **not** cancel siblings already issued — every element's effect i
 in flight before the first failure surfaces, and each runs to completion.
 
 The **collect-all** pair `traverseAll` / `parTraverseAll` (v0.148,
-[ADR 0172](https://github.com/accuser/bynk/blob/main/design/decisions/0172-list-collect-all-iterators.md))
+[ADR 0172](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0172-list-collect-all-iterators.md))
 take a **`Result`-returning** function `f: T -> Effect[Result[U, E]]` and return
 `Effect[List[Result[U, E]]]` — every element's outcome, `Ok` or `Err`, gathered
 into the result list in input order. Because a `Result` `Err` is a **value**, not
@@ -1580,13 +1580,13 @@ They are the fault-gathering counterpart to `traverse` (the short-circuiting
 sequential collect); the collecting **short-circuit** `parTraverse` overload and
 `traverse`'s `Result` overload remain a later slice. Like `forEach`/`parTraverse`,
 both also apply over a lazy `Query[T]` and a lifted `store Map[K, V]` (v0.149,
-[ADR 0173](https://github.com/accuser/bynk/blob/main/design/decisions/0173-map-values-and-broadcast-collect-all.md)),
+[ADR 0173](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0173-map-values-and-broadcast-collect-all.md)),
 so the fan-out reaches a held `Map[K, Connection]` — each connection is
 **borrowed** into the closure (`send` allowed, `close`/transfer rejected as
 `bynk.held.consume_on_borrow`) and the map keeps ownership.
 
 The **short-circuit** pair `traverseTry` / `parTraverseTry` (v0.150,
-[ADR 0174](https://github.com/accuser/bynk/blob/main/design/decisions/0174-short-circuit-collect-iterators.md))
+[ADR 0174](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0174-short-circuit-collect-iterators.md))
 take the same `f: T -> Effect[Result[U, E]]` but **stop at the first `Err`**,
 returning `Effect[Result[List[U], E]]` — `Ok` of the collected values, or the
 first `Err` encountered. `traverseTry` awaits each element in order and bails on
@@ -1596,9 +1596,9 @@ cancelled). They are the fault-**propagating** counterpart to the fault-gatherin
 `traverseAll`/`parTraverseAll`, and likewise apply over the `Query`/`Map`
 broadcast.
 
-*(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
+*(v0.88, [ADR 0116](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
 The builder/terminal rows above are the **eager in-memory half** of the query
-algebra ([design notes §11](https://github.com/accuser/bynk/blob/main/design/bynk-design-notes.md)) —
+algebra ([design notes §11](https://github.com/bynk-lang/bynk/blob/main/design/bynk-design-notes.md)) —
 the same combinator names a lazy storage `Query[T]` will carry. **Ordering keys**
 (`sortBy`/`min`/`max`) are drawn from the closed orderable base set — `Int`,
 `Float`, `String`, `Duration`, `Instant` (refined types widening; an opaque key
@@ -1613,7 +1613,7 @@ empty); `sum` returns the zero, `count` returns `0`. The aggregate terminals tak
 a **projection** `T -> K`, uniform with the storage half where a record field is
 the common key.
 
-*(v0.94, [ADR 0120](https://github.com/accuser/bynk/blob/main/design/decisions/0120-join-group-combiner-form.md))*
+*(v0.94, [ADR 0120](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0120-join-group-combiner-form.md))*
 **Joins & grouping take a combiner** — bynk has no pair type, so the join row
 exists only inside `into`, which names the result. `joinOn`/`leftJoin` are
 equi-joins hashing on a **value-keyable** key (the `Map`-key rule); the left and
@@ -1627,7 +1627,7 @@ carry to a storage `Query` (the builders return `Query[V]`, still lazy). Argumen
 are **positional** in v1 (labelled call arguments are a named deferral). The
 cross-shape `Map × Log` join lands with the storage `Log` slice.
 
-*(v0.92, [ADR 0115](https://github.com/accuser/bynk/blob/main/design/decisions/0115-query-model-lazy-eager-dispatch.md)/[0119](https://github.com/accuser/bynk/blob/main/design/decisions/0119-durable-object-query-lowering.md))*
+*(v0.92, [ADR 0115](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0115-query-model-lazy-eager-dispatch.md)/[0119](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0119-durable-object-query-lowering.md))*
 The same combinator names form a **lazy** query over a `store` `Map[K, V]` field —
 dispatched by **receiver provenance** (ADR 0110, generalised from op-set to
 evaluation strategy). A chain rooted in a store map is lazy: a builder lifts the
@@ -1644,7 +1644,7 @@ the owning agent's storage) and reads **staged** state (read-your-writes); it
 lowers to a scan over the in-memory `Record` of the wholesale-persisted map, or
 to an **index lookup** when an `@indexed` field routes it (below).
 
-*(v0.93, [ADR 0118](https://github.com/accuser/bynk/blob/main/design/decisions/0118-indexed-indexing-model.md))*
+*(v0.93, [ADR 0118](https://github.com/bynk-lang/bynk/blob/main/design/decisions/0118-indexed-indexing-model.md))*
 A `store Map[K, V]` field may carry `@indexed(by: f, …)` to maintain a **secondary
 index** on one or more of its value type's fields. Each `by:` target MUST name a
 **value-keyable field** of `V` (the `Map`-key rule — `String`/`Int`, incl.

@@ -17,7 +17,7 @@ by **building from source** with a recent Rust toolchain.
 Clone the repository and install the `bynkc` binary with `cargo`:
 
 ```sh
-git clone https://github.com/accuser/bynk.git
+git clone https://github.com/bynk-lang/bynk.git
 cd bynk
 cargo install --path bynkc
 ```

@@ -116,7 +116,7 @@ const html = `<!doctype html>
       <ul>
 ${cards}
       </ul>
-      <footer>Generated from the workspace at build time · <a href="https://github.com/accuser/bynk">github.com/accuser/bynk</a></footer>
+      <footer>Generated from the workspace at build time · <a href="https://github.com/bynk-lang/bynk">github.com/bynk-lang/bynk</a></footer>
     </main>
   </body>
 </html>
