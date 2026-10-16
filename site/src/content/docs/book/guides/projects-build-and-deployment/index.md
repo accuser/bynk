@@ -13,6 +13,7 @@ Workers.
 - [Run your project locally](/book/guides/projects-build-and-deployment/run-locally/)
 - [Deploy to Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
 - [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/)
+- [Adopt Bynk beside a TypeScript Worker](/book/guides/projects-build-and-deployment/adopt-beside-a-typescript-worker/)
 
 **See also:** [Reference — `bynk.toml` manifest](/docs/manifest/),
 [CLI (`bynkc`)](/docs/cli/), [CLI (`bynk`

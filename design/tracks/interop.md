@@ -639,7 +639,7 @@ shares an increment with language or emitter work (ADR 0023).
 | I1 | **D1, documentation and guard.** The wire-contract reference page generated from `WireModel` plus a drift guard; the wire-format version header; the format's ADR and the Gate 1 note; D2 (a)'s reference note | D1, PR-1 (I0 or the urgent fix) |
 | I2 | **D2 mechanism.** Signed caller headers for every Bynk-to-Bynk edge; per-edge secrets in `bynk deploy` and a fixed key in `bynk dev`; ADR 0092 amendment | D2, I1 |
 | I3 | **D2 surface.** The `Foreign` actor scheme on `call`, foreign actors in `by` sums, foreign edges' secrets minted by deploy with a printed `wrangler secret put` line | I2 |
-| I4 | **D3.** The generated TS client, its drift guard, and foreign callers recorded in `bynk-contracts.json` and the deploy ledger | I1, I3 |
+| I4 | **D3.** The generated TS client, its drift guard, and foreign callers recorded in `bynk-contracts.json` and the deploy ledger. **Done** (#1970): the client is `workers/<worker>/bynk-client.ts`, emitted only for a context that declares a foreign caller; its runtime is `@bynk/wire-client` (`bynk-emit/wire-client`, bundled from the runtime's boundary modules); the pin is `bynk.foreign.toml` | I1, I3 |
 | I5 | **D4.** `bynk.cloudflare { Service }` as a derived capability, binding-list kind, dev stand-in, deploy plan line. **Done** (#1972): the option is spelled `@worker("…")`, since `service` is a keyword; platform facts recorded in its ADR | Stdlib S4 (done) |
 
 Order: I0 (the out-of-track fix) → I1 → I2 → I3 → I4, with I5 free to run

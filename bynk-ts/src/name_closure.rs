@@ -58,6 +58,9 @@ const GLOBAL_TYPES: &[&str] = &[
     "this",
     "true",
     "false",
+    // `x as const`: the const assertion names no type (I4's generated client,
+    // #1970, asserts its `CONTRACTS` literal this way).
+    "const",
     // ECMAScript / lib.dom globals the emitter names.
     "Array",
     "ReadonlyArray",

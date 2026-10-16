@@ -406,3 +406,8 @@ A verified caller still has to be one the service's handler admits. A Bynk
 context is admitted by `Caller` (the default, with no `by`), a foreign caller
 only by its own actor; `by who: Caller | Legacy` admits both and tells them
 apart. Anyone else gets a bare `403`.
+
+A TypeScript Worker need not speak any of this by hand. For each context with
+a foreign caller the build emits a typed client, `bynk-client.ts`, which
+signs, stamps the contract hash and encodes exactly as this page describes;
+see [TypeScript client](/book/reference/typescript-client/).

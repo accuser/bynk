@@ -278,7 +278,8 @@ const TSCONFIG_JSON: &str = r#"{
     "rootDir": ".",
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "**/bynk-client.ts"]
 }
 "#;
 

@@ -51,6 +51,13 @@ use std::sync::Arc;
 
 use bynk_syntax::ast::*;
 
+/// I4 (#1970): the declaration shapes this module's public API is
+/// parameterised by ([`collect_codec_closure`] walks `TypeRef` roots over a
+/// `TypeDecl` table, whose `body` is a `TypeBody`), re-exported so a renderer
+/// over that API (`bynk-emit`'s TypeScript client) names them from here — the
+/// P6.27 / P6.49 precedent `project_model`'s `TypeDecl` re-export follows.
+pub use bynk_syntax::ast::{TypeBody, TypeRef};
+
 // ---------------------------------------------------------------------
 // Core vocabulary
 // ---------------------------------------------------------------------

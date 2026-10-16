@@ -636,6 +636,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A worker was compiled against a contract its live dependencies no longer provide, so `bynk deploy` refuses to ship it.",
     ),
     d(
+        "bynk.deploy.foreign_contract_skew",
+        "A build breaks the contract a declared foreign caller's client was generated at, as pinned in `bynk.foreign.toml`, so `bynk deploy` refuses to ship it.",
+    ),
+    d(
         "bynk.duration.literal_overflow",
         "A `Duration` literal (`<int>.<unit>`) exceeds the representable millisecond range.",
     ),

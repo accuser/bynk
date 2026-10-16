@@ -102,6 +102,15 @@ The runtime check stays regardless — it is the backstop for a `wrangler` push
 that bypassed the driver, or a deploy record that has drifted. But in normal use
 you should meet this at the command line, not in your logs.
 
+## A caller that isn't Bynk
+
+A Worker written in TypeScript has no `bynk-contracts.json` of its own, so
+nothing above can see what it expects. It calls through a generated client
+that embeds the hashes it was generated at, and the context's project pins
+them in `bynk.foreign.toml`. `bynk deploy` refuses a build that breaks a pin
+(`bynk.deploy.foreign_contract_skew`); regenerate that Worker's client, then
+update the pin. See [TypeScript client](/book/reference/typescript-client/#skew).
+
 ## What to do when you hit it
 
 **Deploy the whole project.** `bynk deploy` (no `--context`) pushes everything in

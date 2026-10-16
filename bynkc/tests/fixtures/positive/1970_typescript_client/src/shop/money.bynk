@@ -1,0 +1,8 @@
+commons shop.money
+
+type Currency = String where Matches("[A-Z]{3}")
+
+type Money = {
+  cents: Int where NonNegative,
+  currency: Currency,
+}

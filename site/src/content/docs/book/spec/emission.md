@@ -441,7 +441,11 @@ call surface is typed `CallError = BoundaryError | ContractMismatch`
 
 Each Worker also emits `bynk-contracts.json` beside its `wrangler.toml`, carrying
 what the context **provides** per service and what it **expects** of each
-dependency. This is a driver artifact, not part of the wire.
+dependency. This is a driver artifact, not part of the wire. A context that declares a foreign caller also records, under **`foreign`**, the
+hash each such caller may call each service at, and gets a typed TypeScript
+client beside it, `bynk-client.ts`, for that caller's build
+([TypeScript client](/book/reference/typescript-client/)). The client imports
+`@bynk/wire-client` and is excluded from the emitted `tsconfig.json`.
 
 ### §7.3.4d The request signature
 

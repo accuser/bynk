@@ -16,6 +16,8 @@
 //!   deploy-time contract-skew check.
 //! - `ledger.rs` — the committed `bynk.deploy.lock`: what this project has
 //!   provisioned, the orphan diff against it, and `--prune`.
+//! - `pins.rs` — a declared foreign caller's pin (`bynk.foreign.toml`) and the
+//!   gate that refuses a build breaking it (I4, #1970).
 //! - `provisioning.rs` — every call out to the `wrangler` CLI.
 //! - `secrets.rs` — which secrets a run sets, and where each value comes from.
 //! - `plan.rs` — the plan/apply flow that drives all of the above.
@@ -46,6 +48,7 @@ use bynk_emit::emitter::wrangler::KV_NAMESPACE_ID_PLACEHOLDER;
 mod config;
 mod graph;
 mod ledger;
+mod pins;
 mod plan;
 mod provisioning;
 mod secrets;
@@ -53,6 +56,7 @@ mod secrets;
 use config::*;
 use graph::*;
 use ledger::*;
+use pins::*;
 use plan::*;
 use provisioning::*;
 use secrets::*;

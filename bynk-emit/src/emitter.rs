@@ -47,6 +47,7 @@ use bynk_syntax::ast::{
     Statement, TypeBody, TypeDecl, TypeRef, expr_children,
 };
 
+pub mod client;
 pub mod contracts;
 pub(crate) mod events_fanout;
 pub mod secrets;
@@ -123,6 +124,12 @@ pub(crate) const EVENTS_WIRE_EVENT_TS_TYPE: &str = "{ type: string; payload: unk
 /// Emit the contents of `out/tsconfig.json`. The CLI uses `tsc -p` against
 /// this when running `bynkc test`; users can also drive `tsc` against it
 /// directly to produce JS for deployment.
+///
+/// I4 (#1970): a context's generated TypeScript client (`bynk-client.ts`) is
+/// excluded. It is for a foreign Worker's build, where `@bynk/wire-client`
+/// resolves; the Bynk build neither imports it nor has that package.
+/// Excluding a file drops the default `node_modules` exclusion, so it is
+/// restated.
 pub fn emit_tsconfig() -> String {
     TSCONFIG_JSON.to_string()
 }
@@ -154,7 +161,8 @@ const TSCONFIG_JSON: &str = r#"{
     "outDir": "../out-js",
     "rootDir": "."
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "**/bynk-client.ts"]
 }
 "#;
 
@@ -1966,7 +1974,7 @@ fn hidden_subst(hidden: &std::collections::BTreeMap<String, String>) -> HashMap<
 }
 
 /// #1846: `decl` with every type it names, and its own name, renamed by `subst`.
-fn rename_in_decl(decl: &TypeDecl, subst: &HashMap<String, String>) -> TypeDecl {
+pub(crate) fn rename_in_decl(decl: &TypeDecl, subst: &HashMap<String, String>) -> TypeDecl {
     let mut out = decl.clone();
     if let Some(to) = subst.get(&decl.name.name) {
         out.name.name = to.clone();

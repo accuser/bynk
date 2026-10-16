@@ -203,6 +203,10 @@ A context with services emits four files plus its Worker config:
 | `compose.ts` | wiring — how handlers, agents, and bindings are assembled |
 | `wrangler.toml` | the Cloudflare Worker configuration |
 
+A context that declares a foreign caller also emits `bynk-client.ts`, the typed
+client a Worker that isn't Bynk calls it through. It is for that Worker's build,
+not this one: see [TypeScript client](/book/reference/typescript-client/).
+
 `commons` (types and functions) lowers to plain TypeScript and is identical on both
 targets; only services, agents, and the boundary differ.
 

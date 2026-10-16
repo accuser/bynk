@@ -324,6 +324,20 @@ deploy then sets yours and prints nothing. Only your end is yours to set, so
 as the [wire format](/book/reference/wire-format/#foreign-callers) describes.
 `bynk dev` gives the secret a fixed local value.
 
+A TypeScript Worker calls through the typed client the build generates for the
+context, `bynk-client.ts` ([TypeScript client](/book/reference/typescript-client/)).
+Pin the contract that client was generated at in `bynk.foreign.toml`, beside
+`bynk.toml`, and the deploy refuses a build that would break it
+(`bynk.deploy.foreign_contract_skew`) until you regenerate the client and update
+the pin. A foreign caller with no pin is reported, with the lines to add:
+
+```
+bynk: 1 foreign caller has no pin in bynk.foreign.toml, so a contract change that breaks its client would not be refused. To pin, add:
+
+  ["shop.orders".Ledger]
+  status = "226b9939f85e69ea"
+```
+
 #### Upgrading from the shared call secret
 
 A project deployed before edge keys used one secret, `BYNK_CALL_SECRET`, on
