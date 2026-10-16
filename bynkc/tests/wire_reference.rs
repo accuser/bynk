@@ -160,7 +160,9 @@ fn the_emitted_dispatch_makes_the_published_checks_in_order() {
 /// The runtime's caller sends what the page publishes.
 #[test]
 fn the_runtime_caller_sends_the_published_request() {
-    let boundary = fs::read_to_string(repo("bynk-emit/runtime/src/boundary.ts")).unwrap();
+    // The bundled runtime the emitter embeds, not the module it is bundled
+    // from, so a stale bundle fails here too.
+    let boundary = fs::read_to_string(repo("bynk-emit/src/emitter/runtime.ts")).unwrap();
     for needle in [
         format!(
             "export const WIRE_VERSION_HEADER = \"{}\";",
@@ -180,7 +182,7 @@ fn the_runtime_caller_sends_the_published_request() {
     ] {
         assert!(
             boundary.contains(&needle),
-            "bynk-emit/runtime/src/boundary.ts no longer contains `{needle}`"
+            "bynk-emit/src/emitter/runtime.ts no longer contains `{needle}`"
         );
     }
     assert!(

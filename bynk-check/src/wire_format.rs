@@ -181,11 +181,18 @@ impl CallCheck {
     }
 
     /// The response a failure gives, for the reference.
-    pub fn response(self) -> &'static str {
-        match self {
+    pub fn response(self) -> String {
+        let text = match self {
             CallCheck::Method => "empty body, `Allow: POST`",
             CallCheck::Authentication => "text `Unauthorized`",
-            CallCheck::WireVersion => r#"`{"kind":"UnsupportedWireVersion","accepted":[1]}`"#,
+            CallCheck::WireVersion => {
+                let accepted: Vec<String> =
+                    ACCEPTED_WIRE_VERSIONS.iter().map(u32::to_string).collect();
+                return format!(
+                    "`{{\"kind\":\"UnsupportedWireVersion\",\"accepted\":[{}]}}`",
+                    accepted.join(",")
+                );
+            }
             CallCheck::UnknownService => "text `Not found`",
             CallCheck::Contract => {
                 r#"`{"kind":"ContractMismatch","service":"…","expected":"…","actual":"…"}`"#
@@ -197,6 +204,7 @@ impl CallCheck {
                 r#"`{"kind":"Unauthorized","details":"missing caller identity"}`"#
             }
             CallCheck::Arguments => "a `StructuralMismatch` or `RefinementViolation` body",
-        }
+        };
+        text.to_string()
     }
 }

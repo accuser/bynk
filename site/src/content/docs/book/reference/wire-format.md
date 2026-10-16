@@ -173,6 +173,7 @@ type Line = {
   sku: String,
   qty: Int where Positive,
   wait: Duration,
+  delay: Option[Duration],
   at: Instant,
   blob: Bytes,
   note: Option[String],
@@ -196,12 +197,13 @@ service ping {
 
 | Type | JSON sent | Outcome | Note |
 |---|---|---|---|
-| `Line` | `{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"aGk=","note":{"kind":"Some","value":"gift"},"tags":["new"],"stock":[["lon",3]],"rush":false}` | accepted; encodes back the same | Every field present. A record is an object keyed by field name. |
-| `Line` | `{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","tags":[],"stock":[],"rush":true,"extra":1}` | accepted; encodes back as `{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","note":{"kind":"None"},"tags":[],"stock":[],"rush":true}` | An absent `Option` field is `None`. An unknown key is ignored. |
-| `Line` | `{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","note":"gift","tags":[],"stock":[],"rush":true}` | accepted; encodes back as `{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","note":{"kind":"Some","value":"gift"},"tags":[],"stock":[],"rush":true}` | A bare value where an `Option` is expected is `Some`. |
+| `Line` | `{"sku":"A-1","qty":2,"wait":1500,"delay":{"kind":"Some","value":250},"at":1767225600000,"blob":"aGk=","note":{"kind":"Some","value":"gift"},"tags":["new"],"stock":[["lon",3]],"rush":false}` | accepted; encodes back the same | Every field present. A record is an object keyed by field name. |
+| `Line` | `{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","tags":[],"stock":[],"rush":true,"extra":1}` | accepted; encodes back as `{"sku":"A-1","qty":2,"wait":1500,"delay":{"kind":"None"},"at":1767225600000,"blob":"","note":{"kind":"None"},"tags":[],"stock":[],"rush":true}` | An absent `Option` field is `None`. An unknown key is ignored. |
+| `Line` | `{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","note":"gift","tags":[],"stock":[],"rush":true}` | accepted; encodes back as `{"sku":"A-1","qty":2,"wait":1500,"delay":{"kind":"None"},"at":1767225600000,"blob":"","note":{"kind":"Some","value":"gift"},"tags":[],"stock":[],"rush":true}` | A bare value where an `Option` is expected is `Some`. |
 | `Line` | `{"sku":"A-1","qty":0,"wait":1500,"at":1767225600000,"blob":"","tags":[],"stock":[],"rush":true}` | `RefinementViolation` at `$.qty` | An inline field refinement (`qty: Int where Positive`) is checked. |
 | `Line` | `{"sku":"A-1","qty":1.5,"wait":1500,"at":1767225600000,"blob":"","tags":[],"stock":[],"rush":true}` | `StructuralMismatch` at `$.qty` | An `Int` is a whole number. |
 | `Line` | `{"sku":"A-1","qty":2,"wait":1.5,"at":1767225600000,"blob":"","tags":[],"stock":[],"rush":true}` | `StructuralMismatch` at `$.wait` | A `Duration` is whole milliseconds. |
+| `Line` | `{"sku":"A-1","qty":2,"wait":1500,"delay":{"kind":"Some","value":0.5},"at":1767225600000,"blob":"","tags":[],"stock":[],"rush":true}` | `StructuralMismatch` at `$.delay.value` | So is a `Duration` inside an `Option`, a `List` or a variant. |
 | `Line` | `{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"%%","tags":[],"stock":[],"rush":true}` | `StructuralMismatch` at `$.blob` | `Bytes` is padded base64. |
 | `Line` | `{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","tags":[],"stock":{"lon":3},"rush":true}` | `StructuralMismatch` at `$.stock` | A `Map` is an array of pairs, never an object. |
 | `Qty` | `-1` | `RefinementViolation` at `$` | A named refined type is its base value, checked against its predicates. |
@@ -260,10 +262,10 @@ written as 16 lowercase hex digits.
 For `wire.sample` above, each service's normal form, byte for byte, and its
 hash:
 
-`quote`, hash `e6b21871790fbcdb`:
+`quote`, hash `54b28ccfad0afd17`:
 
 ```text
-quote(line: Line{at: Instant, blob: Bytes, note: Option[String], qty: Int where Positive, rush: Bool, sku: String, stock: Map[String, Int], tags: List[String], wait: Duration}, size: QtyInt where NonNegative) -> Result[Shape|Circle(Float)|Dot, String]
+quote(line: Line{at: Instant, blob: Bytes, delay: Option[Duration], note: Option[String], qty: Int where Positive, rush: Bool, sku: String, stock: Map[String, Int], tags: List[String], wait: Duration}, size: QtyInt where NonNegative) -> Result[Shape|Circle(Float)|Dot, String]
 ```
 
 `ping`, hash `619a25c88aaf9af8`:

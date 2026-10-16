@@ -18,8 +18,8 @@ use std::sync::Arc;
 use bynk_syntax::ast::{BaseType, CommonsItem, SourceUnit, TypeDecl};
 
 use super::{
-    ACCEPTED_WIRE_VERSIONS, CALL_CHECKS, CALL_METHOD, CALL_PATH_PREFIX, CallCheck, HEADERS,
-    WIRE_HEADER, WIRE_VERSION,
+    ACCEPTED_WIRE_VERSIONS, CALL_CHECKS, CALL_METHOD, CALL_PATH_PREFIX, HEADERS, WIRE_HEADER,
+    WIRE_VERSION,
 };
 use crate::contract::{FNV1A64_OFFSET, FNV1A64_PRIME, contract_hash, service_normal_form};
 use crate::resolver::cross_context_service_for;
@@ -38,6 +38,7 @@ type Line = {
   sku: String,
   qty: Int where Positive,
   wait: Duration,
+  delay: Option[Duration],
   at: Instant,
   blob: Bytes,
   note: Option[String],
@@ -81,7 +82,7 @@ pub struct Example {
     pub note: &'static str,
 }
 
-const LINE: &str = r#"{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"aGk=","note":{"kind":"Some","value":"gift"},"tags":["new"],"stock":[["lon",3]],"rush":false}"#;
+const LINE: &str = r#"{"sku":"A-1","qty":2,"wait":1500,"delay":{"kind":"Some","value":250},"at":1767225600000,"blob":"aGk=","note":{"kind":"Some","value":"gift"},"tags":["new"],"stock":[["lon",3]],"rush":false}"#;
 
 /// The page's examples, each run through the generated codecs by
 /// `bynkc/tests/wire_reference.rs`.
@@ -98,7 +99,7 @@ pub const EXAMPLES: &[Example] = &[
         codec: "Line",
         json: r#"{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","tags":[],"stock":[],"rush":true,"extra":1}"#,
         outcome: Outcome::Accepted {
-            encodes_as: r#"{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","note":{"kind":"None"},"tags":[],"stock":[],"rush":true}"#,
+            encodes_as: r#"{"sku":"A-1","qty":2,"wait":1500,"delay":{"kind":"None"},"at":1767225600000,"blob":"","note":{"kind":"None"},"tags":[],"stock":[],"rush":true}"#,
         },
         note: "An absent `Option` field is `None`. An unknown key is ignored.",
     },
@@ -107,7 +108,7 @@ pub const EXAMPLES: &[Example] = &[
         codec: "Line",
         json: r#"{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","note":"gift","tags":[],"stock":[],"rush":true}"#,
         outcome: Outcome::Accepted {
-            encodes_as: r#"{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","note":{"kind":"Some","value":"gift"},"tags":[],"stock":[],"rush":true}"#,
+            encodes_as: r#"{"sku":"A-1","qty":2,"wait":1500,"delay":{"kind":"None"},"at":1767225600000,"blob":"","note":{"kind":"Some","value":"gift"},"tags":[],"stock":[],"rush":true}"#,
         },
         note: "A bare value where an `Option` is expected is `Some`.",
     },
@@ -140,6 +141,16 @@ pub const EXAMPLES: &[Example] = &[
             path: "$.wait",
         },
         note: "A `Duration` is whole milliseconds.",
+    },
+    Example {
+        ty: "Line",
+        codec: "Line",
+        json: r#"{"sku":"A-1","qty":2,"wait":1500,"delay":{"kind":"Some","value":0.5},"at":1767225600000,"blob":"","tags":[],"stock":[],"rush":true}"#,
+        outcome: Outcome::Rejected {
+            kind: "StructuralMismatch",
+            path: "$.delay.value",
+        },
+        note: "So is a `Duration` inside an `Option`, a `List` or a variant.",
     },
     Example {
         ty: "Line",
@@ -322,18 +333,7 @@ fn base_type_rows(out: &mut String) {
 
 fn status_rows(out: &mut String) {
     for (i, check) in CALL_CHECKS.iter().enumerate() {
-        let response = match check {
-            CallCheck::WireVersion => format!(
-                "`{{\"kind\":\"{}\",\"accepted\":[{}]}}`",
-                check.kind().unwrap_or_default(),
-                ACCEPTED_WIRE_VERSIONS
-                    .iter()
-                    .map(u32::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-            _ => check.response().to_string(),
-        };
+        let response = check.response();
         let _ = writeln!(
             out,
             "| {} | {} | `{}` | {response} |",

@@ -272,7 +272,10 @@ fn call_secret_gate() -> TsStmt {
                 vec![ident("request"), ident("env")],
             )))),
         },
-        return_(Some(text_response("Unauthorized", 401))),
+        return_(Some(text_response(
+            CallCheck::Authentication.text_body().unwrap_or_default(),
+            check_status(CallCheck::Authentication),
+        ))),
     )
 }
 
