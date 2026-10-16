@@ -59,6 +59,14 @@ Bynk edge.
   arguments. The separate missing-caller `401` goes: a signature is checked
   under the key the caller selects, so a call without one never gets past
   authentication.
+- **Wire format v1 is amended in place, once.** Adding the body cap's `413`,
+  dropping the missing-caller `401` and making `X-Bynk-Caller` required would
+  each be a new wire version under ADR 0483's stability rule. They are made
+  within version 1 because ADR 0483 left authentication explicitly open until
+  this slice, version 1 has only just shipped, and no client outside a
+  deployment could have held the shared secret it replaces. This is the last
+  in-place change to version 1: from here on, the signature, its headers and
+  the check order are frozen with the version like everything else.
 - **Every request, every handler.** A binder-less `on call` and every event
   subscriber verify too (track §11 Q5). An undeclared caller has no key, so it
   cannot reach any internal route.
