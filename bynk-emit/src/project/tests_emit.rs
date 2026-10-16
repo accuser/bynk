@@ -567,9 +567,16 @@ fn emit_integration_module(
         stmts.push(TsStmt::raw(text.clone(), None));
     }
 
+    // #1994: a participant whose handlers send with `~>` is driven with a
+    // collecting execution context, settled before its response returns.
+    let sends = |p: &String| target_uses_send(p, UnitKind::Context, unit_tables);
+    if harness_participants.iter().any(sends) {
+        stmts.push(TsStmt::raw(send_runtime_helpers(), None));
+    }
+
     // The env-graph harness: stand each participant up as an in-process Worker
     // and wire its Service Bindings to its siblings; the root env binds to all.
-    let mut harness_stmt = emit_integration_harness(harness_participants, &bindings_of);
+    let mut harness_stmt = emit_integration_harness(harness_participants, &bindings_of, &sends);
     harness_stmt.no_blank_before = true;
     stmts.push(harness_stmt);
 
@@ -1346,14 +1353,22 @@ fn strip_effect_httpresult(t: &bynk_syntax::ast::TypeRef) -> Option<&bynk_syntax
 /// expression — the identical shape both the per-participant and root-env
 /// binding wiring in [`emit_integration_harness`] build, differing only in
 /// which worker/env pair they close over.
-fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
-    TsExpr::As {
-        expr: Box::new(TsExpr::object(vec![(
-            "fetch".to_string(),
-            TsExpr::Arrow {
+fn service_binding_forward(worker_ident: &str, env_ident: &str, sends: bool) -> TsExpr {
+    let req_param = TsParam {
+        name: "req".to_string(),
+        ty: Some(TsType::named("globalThis.Request")),
+        optional: false,
+    };
+    // #1994: a Worker whose handlers send with `~>` takes the execution
+    // context as `fetch`'s third argument; the harness hands it a collecting
+    // double and settles the sends before the response reaches the case.
+    let forward = if sends {
+        call(
+            ident("__bynkFetchSettled"),
+            vec![TsExpr::Arrow {
                 params: vec![TsParam {
-                    name: "req".to_string(),
-                    ty: Some(TsType::named("globalThis.Request")),
+                    name: "exec".to_string(),
+                    ty: None,
                     optional: false,
                 }],
                 is_async: false,
@@ -1362,8 +1377,26 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str) -> TsExpr {
                 body: Box::new(TsArrowBody::Expr(Box::new(method_call(
                     ident(worker_ident),
                     "fetch",
-                    vec![ident("req"), ident(env_ident)],
+                    vec![ident("req"), ident(env_ident), ident("exec")],
                 )))),
+            }],
+        )
+    } else {
+        method_call(
+            ident(worker_ident),
+            "fetch",
+            vec![ident("req"), ident(env_ident)],
+        )
+    };
+    TsExpr::As {
+        expr: Box::new(TsExpr::object(vec![(
+            "fetch".to_string(),
+            TsExpr::Arrow {
+                params: vec![req_param],
+                is_async: false,
+                generics: Vec::new(),
+                return_type: None,
+                body: Box::new(TsArrowBody::Expr(Box::new(forward))),
             },
         )])),
         ty: TsType::named("__ServiceBinding"),
@@ -1396,6 +1429,7 @@ fn fanout_alias(ns: &str) -> String {
 fn emit_integration_harness<'a>(
     participants: &[String],
     bindings_of: &dyn Fn(&String) -> &'a Vec<WorkerBinding>,
+    sends: &dyn Fn(&String) -> bool,
 ) -> TsStmt {
     let mut body = Vec::new();
     // Declare every participant env first so sibling references resolve.
@@ -1435,7 +1469,11 @@ fn emit_integration_harness<'a>(
                         continue;
                     }
                     let dns = test_ns(context);
-                    service_binding_forward(&format!("worker_{dns}"), &format!("env_{dns}"))
+                    service_binding_forward(
+                        &format!("worker_{dns}"),
+                        &format!("env_{dns}"),
+                        sends(context),
+                    )
                 }
                 // S4a (#1966): each instance its own fresh namespace.
                 BindingSource::Kv | BindingSource::KvInstance { .. } => {
@@ -1480,7 +1518,7 @@ fn emit_integration_harness<'a>(
         let binding = crate::emitter::wrangler::service_binding(p).name;
         body.push(TsStmt::assign(
             member(ident("rootEnv"), binding),
-            service_binding_forward(&format!("worker_{ns}"), &format!("env_{ns}")),
+            service_binding_forward(&format!("worker_{ns}"), &format!("env_{ns}"), sends(p)),
             None,
         ));
     }
@@ -1925,6 +1963,7 @@ fn emit_test_module(
 
     // The deps factory, built here for the units its providers name (#1863),
     // which are imported with the consumed contexts below.
+    let uses_send = target_uses_send(target_name, target_kind, unit_tables);
     let deps = emit_test_deps(
         target_name,
         target_kind,
@@ -2009,6 +2048,12 @@ fn emit_test_module(
     // fetch in a case.
     if let Some(text) = &asset_harness {
         stmts.push(TsStmt::raw(text.clone(), None));
+    }
+    // #1994: a target whose handlers use `~>` gets the execution-context
+    // double its deps carry as `__exec`, and the settle helper that awaits
+    // the collected `waitUntil` promises after each addressed call.
+    if uses_send {
+        stmts.push(TsStmt::raw(send_runtime_helpers(), None));
     }
     let mut suppress_next_blank = true;
 
@@ -2810,6 +2855,32 @@ fn relative_import_for_test(target_dir: &Path) -> String {
 /// (slice 2, ADR 0104). The explicit form is equivalent and strip-clean.
 fn expectation_runtime_helpers() -> String {
     include_str!("../emitter/test_runtime/expectation.ts").to_string()
+}
+
+/// #1994: the test double for the Worker's `ExecutionContext` — a `waitUntil`
+/// that collects the promises a `~>` send hands it — and `__bynkSettle`, which
+/// awaits them after an addressed handler call, so a case's expectations see
+/// the sends' effects. Source lives at `emitter/test_runtime/send.ts`.
+fn send_runtime_helpers() -> String {
+    include_str!("../emitter/test_runtime/send.ts").to_string()
+}
+
+/// #1994: whether a context target has a handler that sends with `~>`, so its
+/// handlers' `deps` require `__exec` — the same gate the Worker entry and
+/// `compose` thread the request's execution context on.
+fn target_uses_send(
+    target_name: &str,
+    target_kind: UnitKind,
+    unit_tables: &HashMap<String, UnitTable>,
+) -> bool {
+    target_kind == UnitKind::Context
+        && unit_tables.get(target_name).is_some_and(|t| {
+            t.services.values().any(|s| {
+                s.handlers
+                    .iter()
+                    .any(|h| crate::emitter::block_uses_send(&h.body))
+            })
+        })
 }
 
 /// #1485: the test-only HS256 JWT signer `emit_system_http_support`'s own
@@ -3792,6 +3863,10 @@ fn emit_test_deps(
     if !surface_entries.is_empty() {
         entries.push(("surface".to_string(), TsExpr::object(surface_entries)));
     }
+    // #1994: the execution context a `~>`-sending handler hands its promise to.
+    if target_uses_send(target_name, target_kind, unit_tables) {
+        entries.push(("__exec".to_string(), call(ident("__bynkExec"), Vec::new())));
+    }
     // The same `"{  }"` double-space quirk `workers.rs`/`project.rs`/
     // `emit.rs`/`gen_ts_for_ty` (this file, Arc C slice 31) already carry as
     // opaque text: the pre-conversion `format!("  return {{ {} }};\n",
@@ -4484,6 +4559,7 @@ fn emit_test_case_function(
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
+        target_uses_send(target_name, target_kind, unit_tables),
         source,
         rel_path,
         runtime_use,
@@ -5717,6 +5793,7 @@ fn emit_test_property_function(
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
+        target_uses_send(target_name, target_kind, unit_tables),
         source,
         rel_path,
         runtime_use,
@@ -5936,6 +6013,7 @@ fn emit_test_history_property_function(
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
+        target_uses_send(target_name, target_kind, unit_tables),
         source,
         rel_path,
         runtime_use,

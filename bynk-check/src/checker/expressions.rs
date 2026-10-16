@@ -852,6 +852,39 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
     // `literal_violates` error), a new rejection this does not intend (review
     // of #1696).
     let eq = matches!(op, BinOp::Eq | BinOp::NotEq);
+    // #1979: a test-service outcome bound loose (an http/cron/queue address,
+    // ADR 0203) has no type to give a bare `Ok(…)`/`None`/… on the other
+    // side, which would otherwise fall back to the case's own return type
+    // and report a mismatch against it. Nothing else can type it either: an
+    // http outcome's `Ok` is `HttpResult.Ok`, a call's is `Result.Ok`, and the
+    // case cannot tell which it holds. Say so, and point at `is`, which
+    // matches the outcome's shape.
+    if eq {
+        let loose_side = if ctx.reads_loose(lhs) && needs_expected_type(rhs) {
+            Some((lhs, rhs))
+        } else if ctx.reads_loose(rhs) && needs_expected_type(lhs) {
+            Some((rhs, lhs))
+        } else {
+            None
+        };
+        if let Some((loose, other)) = loose_side
+            && type_of(loose, None, ctx).is_none_or(|t| matches!(&*tys.get(t), Ty::Error))
+        {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.untyped_outcome",
+                    lhs.span.merge(rhs.span),
+                    format!(
+                        "this service outcome is untyped in a test, so `{}` cannot compare it with a bare constructor",
+                        op.name()
+                    ),
+                )
+                .with_label(other.span, "nothing gives this constructor a type")
+                .with_note("match the outcome's shape with `is` instead, e.g. `expect r is Ok(\"hi\")`"),
+            );
+            return None;
+        }
+    }
     let (lt, rt) = if eq && needs_expected_type(lhs) && !needs_expected_type(rhs) {
         let rt = type_of(rhs, None, ctx);
         let lt = type_of(lhs, rt, ctx);

@@ -241,7 +241,7 @@ async function test_the_clock_reads_the_epoch() {
     type Response = __ns_bynk.Response;
     type Uuid = __ns_bynk.Uuid;
     const t = await clock.call(deps);
-    if (!(__bynkEq(t, 0))) { throw __bynkExpectFailure("tests/demo/plat.bynk:8:10", 238, 244, "expect t == 0\n  expected: t == 0\n  actual:   " + __bynkShow((t)) + " == " + __bynkShow((0))); }
+    if (!(t === 0)) { throw __bynkExpectFailure("tests/demo/plat.bynk:8:10", 238, 244, "expect t == 0\n  expected: t == 0\n  actual:   " + __bynkShow((t)) + " == " + __bynkShow((0))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -349,7 +349,7 @@ async function test_the_locale_is_en() {
     type Response = __ns_bynk.Response;
     type Uuid = __ns_bynk.Uuid;
     const l = await locale.call(deps);
-    if (!(__bynkEq(l, "en"))) { throw __bynkExpectFailure("tests/demo/plat.bynk:28:10", 645, 654, "expect l == \"en\"\n  expected: l == \"en\"\n  actual:   " + __bynkShow((l)) + " == " + __bynkShow(("en"))); }
+    if (!(l === "en")) { throw __bynkExpectFailure("tests/demo/plat.bynk:28:10", 645, 654, "expect l == \"en\"\n  expected: l == \"en\"\n  actual:   " + __bynkShow((l)) + " == " + __bynkShow(("en"))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -406,8 +406,8 @@ async function test_idempotency_remembers_within_a_case() {
     type Uuid = __ns_bynk.Uuid;
     const first = await once.call("k", deps);
     const second = await once.call("k", deps);
-    if (!(__bynkEq(first, true))) { throw __bynkExpectFailure("tests/demo/plat.bynk:40:10", 942, 955, "expect first == true\n  expected: first == true\n  actual:   " + __bynkShow((first)) + " == " + __bynkShow((true))); }
-    if (!(__bynkEq(second, false))) { throw __bynkExpectFailure("tests/demo/plat.bynk:41:10", 965, 980, "expect second == false\n  expected: second == false\n  actual:   " + __bynkShow((second)) + " == " + __bynkShow((false))); }
+    if (!(first === true)) { throw __bynkExpectFailure("tests/demo/plat.bynk:40:10", 942, 955, "expect first == true\n  expected: first == true\n  actual:   " + __bynkShow((first)) + " == " + __bynkShow((true))); }
+    if (!(second === false)) { throw __bynkExpectFailure("tests/demo/plat.bynk:41:10", 965, 980, "expect second == false\n  expected: second == false\n  actual:   " + __bynkShow((second)) + " == " + __bynkShow((false))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -434,7 +434,7 @@ async function test_idempotency_is_fresh_per_case() {
     type Response = __ns_bynk.Response;
     type Uuid = __ns_bynk.Uuid;
     const first = await once.call("k", deps);
-    if (!(__bynkEq(first, true))) { throw __bynkExpectFailure("tests/demo/plat.bynk:46:10", 1062, 1075, "expect first == true\n  expected: first == true\n  actual:   " + __bynkShow((first)) + " == " + __bynkShow((true))); }
+    if (!(first === true)) { throw __bynkExpectFailure("tests/demo/plat.bynk:46:10", 1062, 1075, "expect first == true\n  expected: first == true\n  actual:   " + __bynkShow((first)) + " == " + __bynkShow((true))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -547,7 +547,7 @@ async function test_a_stubbed_fetch_answers_for_the_network() {
     type Response = __ns_bynk.Response;
     type Uuid = __ns_bynk.Uuid;
     const s = await relay.call("https://example.test", deps);
-    if (!(__bynkEq(s, 204))) { throw __bynkExpectFailure("tests/demo/plat.bynk:72:10", 1825, 1833, "expect s == 204\n  expected: s == 204\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((204))); }
+    if (!(s === 204)) { throw __bynkExpectFailure("tests/demo/plat.bynk:72:10", 1825, 1833, "expect s == 204\n  expected: s == 204\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((204))); }
     if (!((((__obs.log["Fetch.send"] ?? []).filter((__c: { args: unknown[] }) => { const { req } = { req: __c.args[0] } as __Fetch_send_Call; return (req.url === "https://example.test"); }).length) === (1)))) { throw __bynkExpectFailure("tests/demo/plat.bynk:73:10", 1843, 1904, "expect Fetch.send called once with req.url == \"https://example.test\""); }
     return { pass: true };
   } catch (e) {
@@ -576,7 +576,7 @@ async function test_a_fetch_double_sees_the_request_s_headers() {
     type Response = __ns_bynk.Response;
     type Uuid = __ns_bynk.Uuid;
     const s = await relay.call("https://example.test", deps);
-    if (!(__bynkEq(s, 200))) { throw __bynkExpectFailure("tests/demo/plat.bynk:80:10", 2184, 2192, "expect s == 200\n  expected: s == 200\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((200))); }
+    if (!(s === 200)) { throw __bynkExpectFailure("tests/demo/plat.bynk:80:10", 2184, 2192, "expect s == 200\n  expected: s == 200\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((200))); }
     if (!((((__obs.log["Fetch.send"] ?? []).filter((__c: { args: unknown[] }) => { const { req } = { req: __c.args[0] } as __Fetch_send_Call; return (__bynkEq(((__m: ReadonlyMap<string, string>, __k: string) => __m.has(__k) ? Some(__m.get(__k) as string) : None)(req.headers, "user-agent"), Some("bynk-demo/1.0"))); }).length) === (1)))) { throw __bynkExpectFailure("tests/demo/plat.bynk:81:10", 2202, 2284, "expect Fetch.send called once with req.headers.get(\"user-agent\") == Some(\"bynk-demo/1.0\")"); }
     return { pass: true };
   } catch (e) {
@@ -604,7 +604,7 @@ async function test_an_unstubbed_fetch_faults_rather_than_reach_the_network() {
     type Response = __ns_bynk.Response;
     type Uuid = __ns_bynk.Uuid;
     const s = await relay.call("https://example.test", deps);
-    if (!(__bynkEq(s, 0))) { throw __bynkExpectFailure("tests/demo/plat.bynk:86:10", 2408, 2414, "expect s == 0\n  expected: s == 0\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((0))); }
+    if (!(s === 0)) { throw __bynkExpectFailure("tests/demo/plat.bynk:86:10", 2408, 2414, "expect s == 0\n  expected: s == 0\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow((0))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -632,7 +632,7 @@ async function test_the_doubles_hold_at_the_integration_tier() {
     type Uuid = __ns_bynk.Uuid;
     const t = await clock.call(deps);
     const s = await secret.call("API_KEY", deps);
-    if (!(__bynkEq(t, 0))) { throw __bynkExpectFailure("tests/demo/plat.bynk:92:10", 2550, 2556, "expect t == 0\n  expected: t == 0\n  actual:   " + __bynkShow((t)) + " == " + __bynkShow((0))); }
+    if (!(t === 0)) { throw __bynkExpectFailure("tests/demo/plat.bynk:92:10", 2550, 2556, "expect t == 0\n  expected: t == 0\n  actual:   " + __bynkShow((t)) + " == " + __bynkShow((0))); }
     if (!(s.tag === "None")) { throw __bynkExpectFailure("tests/demo/plat.bynk:93:10", 2566, 2575, "expect s is None"); }
     return { pass: true };
   } catch (e) {
