@@ -76,5 +76,5 @@ jobs:
           # denied — the action does not auto-publish; Claude must post it.
           claude_args: >-
             --max-turns 20
-            --model claude-sonnet-5
+            --model claude-sonnet-5-5
             --allowedTools "Bash(gh issue comment:*),Bash(gh issue view:*),Read,Grep,Glob"
