@@ -4106,6 +4106,9 @@ pub(crate) enum BodyMode {
         /// (P6.24a's own pure, unconditional mirror), not the raw AST
         /// `HandlerKind` this field used to store.
         test_service_handlers: HashMap<String, Vec<bynk_ir::IrHandlerKind>>,
+        /// I3 (#1971): the test services whose `on call` handler binds an
+        /// actor sum, whose `deps.who` a call-site principal builds.
+        call_sum_services: HashSet<String>,
         /// #1994: the target has a handler that sends with `~>`, so `deps`
         /// carries the `__exec` double and each addressed service call is
         /// wrapped in `__bynkSettle(deps, …)`.
@@ -4222,6 +4225,9 @@ pub(crate) struct LowerCtx<'a> {
     /// address-call lowering reads it to build the handler's `deps.identity`.
     /// `None` for a unit-identity actor or a non-principal statement.
     pub call_site_identity: Option<String>,
+    /// I3 (#1971): the call-site principal's actor name, beside
+    /// [`Self::call_site_identity`], for a `call` sum's `deps.who`.
+    pub call_site_actor: Option<String>,
     /// #706: the call-site principal is `by Nobody` — drive the route with no
     /// `Authorization` header so the real auth seam rejects it (`401` →
     /// `Rejected(Unauthorized)`). Routes a `system` http address to the no-auth
@@ -4302,6 +4308,7 @@ impl<'a> LowerCtx<'a> {
             unnarrowed_is_tests: HashSet::new(),
             local_agent_vars: HashMap::new(),
             call_site_identity: None,
+            call_site_actor: None,
             call_site_no_credential: false,
             source_map: None,
             emitted_await: false,
@@ -4629,6 +4636,17 @@ impl<'a> LowerCtx<'a> {
     pub(crate) fn is_test_service(&self, name: &str) -> bool {
         match &self.mode {
             BodyMode::TestCase { test_services, .. } => test_services.contains(name),
+            _ => false,
+        }
+    }
+
+    /// I3 (#1971): whether the test service `name`'s `on call` handler binds
+    /// an actor sum.
+    pub(crate) fn is_call_sum_service(&self, name: &str) -> bool {
+        match &self.mode {
+            BodyMode::TestCase {
+                call_sum_services, ..
+            } => call_sum_services.contains(name),
             _ => false,
         }
     }

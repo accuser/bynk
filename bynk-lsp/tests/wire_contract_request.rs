@@ -328,6 +328,7 @@ fn two_context_call_contract_form_and_hash() {
             span: bynk_syntax::span::Span::new(0, 0),
         }),
         span: bynk_syntax::span::Span::new(0, 0),
+        foreign_callers: Vec::new(),
     };
     let independent_form = bynk_check::contract::service_normal_form(&svc, &info.types);
     assert_eq!(contract.normal_form, independent_form);

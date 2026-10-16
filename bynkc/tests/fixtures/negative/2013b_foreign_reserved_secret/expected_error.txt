@@ -1,0 +1,2 @@
+bynk.actor.foreign_reserved_secret
+may not use a `BYNK_CALL_` edge key

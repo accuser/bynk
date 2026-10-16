@@ -1039,6 +1039,11 @@ pub fn lower_actor_seam_ir(handler: &Handler, actors: &HashMap<String, ActorDecl
     if let Some(members) = bynk_check::actors::sum_members_for(handler, actors) {
         return ActorSeamIr::Sum(members);
     }
+    if let Some(members) =
+        bynk_check::actors::call_admission_for(handler, actors).and_then(|a| a.sum)
+    {
+        return ActorSeamIr::CallSum(members);
+    }
     if let Some(seam) = bynk_check::actors::bearer_seam_for(handler, actors) {
         return ActorSeamIr::Bearer(seam);
     }

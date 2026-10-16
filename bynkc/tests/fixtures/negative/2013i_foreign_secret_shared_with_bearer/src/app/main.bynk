@@ -1,0 +1,18 @@
+context app.main
+
+type UserId = String where NonEmpty
+
+actor User { auth = Bearer(secret = "AUTH_KEY"), identity = UserId }
+actor Legacy { auth = Foreign(secret = "AUTH_KEY") }
+
+service api from http {
+  on GET("/me") () -> Effect[HttpResult[String]] by u: User {
+    Ok(u.identity)
+  }
+}
+
+service ping {
+  on call(n: Int) -> Effect[Int] by Legacy {
+    n
+  }
+}

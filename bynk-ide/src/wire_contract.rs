@@ -373,6 +373,7 @@ fn contract_form(
             .collect(),
         return_type: handler.return_type.clone(),
         span: handler.span,
+        foreign_callers: Vec::new(),
     };
     let normal_form = contract::service_normal_form(&svc, types);
     let hash = contract::contract_hash(&normal_form);
@@ -1017,6 +1018,7 @@ service checkout {
                 span: Span::new(0, 0),
             }),
             span: Span::new(0, 0),
+            foreign_callers: Vec::new(),
         };
         let independent_form = contract::service_normal_form(&svc, &info.types);
         assert_eq!(contract.normal_form, independent_form);
