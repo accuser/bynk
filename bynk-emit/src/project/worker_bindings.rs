@@ -13,9 +13,10 @@ use bynk_check::checker::{Callee, ExprId};
 use bynk_check::firstparty::{self, Platform};
 
 use super::{
-    AdapterBinding, BuildTarget, ErrorSink, ParsedFile, UnitKind, UnitTable,
-    native_platforms_of_context, unit_table_uses_emit,
+    BuildTarget, ErrorSink, ParsedFile, UnitKind, UnitTable, native_platforms_of_context,
+    unit_table_uses_emit,
 };
+use crate::emitter::agent_cross_context_targets;
 use crate::emitter::wrangler::{WorkerBinding, worker_bindings};
 
 /// v0.19 (decision 0025): each context whose in-process closure reaches a
@@ -59,22 +60,24 @@ pub(super) fn needs_kv(
         .is_some_and(|n| n.values().any(|u| u == firstparty::CLOUDFLARE_UNIT))
 }
 
-/// The contexts a Worker holds a Service Binding to: those it consumes,
-/// less adapters (not Workers, so no binding), plus every context subscribing
-/// to an event it publishes (Events track, slice 0, spine #936, ADR 0284). A
-/// subscriber `consumes` the publisher for the event *type*; nothing upstream
-/// gives the publisher a binding back to the subscriber, so its Worker needs
-/// one added here: the reverse direction of an ordinary `consumes` edge.
-fn service_consumes(
-    consumes_targets: &[String],
-    adapter_bindings: &HashMap<String, AdapterBinding>,
+/// The contexts a Worker holds a Service Binding to: those whose services it
+/// calls, plus every context subscribing to an event it publishes (Events
+/// track, slice 0, spine #936, ADR 0284). A subscriber `consumes` the
+/// publisher for the event *type*; nothing upstream gives the publisher a
+/// binding back to the subscriber, so its Worker needs one added here: the
+/// reverse direction of an ordinary `consumes` edge.
+///
+/// #1961: a consumed context is bound only when called, never merely for
+/// being consumed. A subscriber consumes its publisher for the event type
+/// alone, and binding that `consumes` edge as well made the two Workers bind
+/// each other — a cycle no upload order satisfies, since Cloudflare refuses a
+/// Worker whose bound target does not exist yet. An adapter is never called
+/// (it may not declare a `service`), so it never appears here.
+fn service_targets(
+    called: &[String],
     own_event_routes: &BTreeMap<String, Vec<(String, String)>>,
 ) -> Vec<String> {
-    let mut targets: BTreeSet<String> = consumes_targets
-        .iter()
-        .filter(|t| !adapter_bindings.contains_key(*t))
-        .cloned()
-        .collect();
+    let mut targets: BTreeSet<String> = called.iter().cloned().collect();
     targets.extend(
         own_event_routes
             .values()
@@ -99,17 +102,17 @@ pub(super) fn own_event_routes(
 
 /// Every binding the context's Worker declares
 /// ([`worker_bindings`]), from the inputs the build and the duplicate check
-/// both use: the consumes less adapters plus event subscribers, whether the
-/// closure reaches the KV namespace, and whether its handlers emit.
+/// both use: the called contexts ([`super::called_cross_context_services`]'s
+/// keys) plus event subscribers, whether the closure reaches the KV namespace,
+/// and whether its handlers emit.
 pub(super) fn context_bindings(
     table: &UnitTable,
-    consumes_targets: &[String],
-    adapter_bindings: &HashMap<String, AdapterBinding>,
+    called: &[String],
     own_event_routes: &BTreeMap<String, Vec<(String, String)>>,
     needs_kv: bool,
     uses_emit: bool,
 ) -> Vec<WorkerBinding> {
-    let consumes = service_consumes(consumes_targets, adapter_bindings, own_event_routes);
+    let consumes = service_targets(called, own_event_routes);
     let agents: Vec<String> = table.agents.keys().cloned().collect();
     let mut kv_instances: Vec<(String, String)> = table
         .derived
@@ -133,7 +136,6 @@ pub(super) fn all_context_bindings(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
     unit_callees: &HashMap<String, HashMap<ExprId, Callee>>,
-    adapter_bindings: &HashMap<String, AdapterBinding>,
     // `bynk_check::symbols::discover_event_subscribers`' table.
     event_subscribers: &BTreeMap<(String, String), Vec<(String, String)>>,
 ) -> BTreeMap<String, Vec<WorkerBinding>> {
@@ -158,11 +160,16 @@ pub(super) fn all_context_bindings(
             ctx.clone(),
             context_bindings(
                 table,
-                unit_consumes
-                    .get(ctx)
-                    .map(Vec::as_slice)
-                    .unwrap_or_default(),
-                adapter_bindings,
+                &called_contexts(
+                    table,
+                    unit_consumes
+                        .get(ctx)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                    unit_consumes_aliases.get(ctx),
+                    kinds,
+                    unit_callees.get(ctx),
+                ),
                 &own_event_routes(ctx, event_subscribers),
                 needs_kv(&context_native, ctx),
                 unit_table_uses_emit(table, unit_callees.get(ctx)),
@@ -170,6 +177,32 @@ pub(super) fn all_context_bindings(
         );
     }
     bindings
+}
+
+/// The consumed contexts a context's Worker binds for calling, in name order:
+/// those whose services its bodies call (the keys of
+/// [`super::called_cross_context_services`]), plus those its agents call
+/// ([`agent_cross_context_targets`]) — a handler constructing an agent hands
+/// it its own `deps`, whose `env` type names them (#1960, #1961).
+pub(super) fn called_contexts(
+    table: &UnitTable,
+    consumes: &[String],
+    aliases: Option<&HashMap<String, String>>,
+    kinds: &BTreeMap<String, UnitKind>,
+    callees: Option<&HashMap<ExprId, Callee>>,
+) -> Vec<String> {
+    let mut called: BTreeSet<String> =
+        super::called_cross_context_services(table, consumes, callees)
+            .into_keys()
+            .collect();
+    called.extend(agent_cross_context_targets(table, |chain| {
+        let target = aliases
+            .and_then(|a| a.get(chain))
+            .cloned()
+            .or_else(|| consumes.iter().find(|c| *c == chain).cloned())?;
+        (kinds.get(&target) == Some(&UnitKind::Context)).then_some(target)
+    }));
+    called.into_iter().collect()
 }
 
 /// `bynk.context.duplicate_binding`: on a Workers build, each context's

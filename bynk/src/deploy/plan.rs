@@ -335,6 +335,36 @@ pub fn run(
             .collect::<Vec<_>>(),
         Err(e) => {
             eprintln!("bynk: {e}");
+            let OrderError::Cycle(path) = &e;
+            let publishers = cycle_publishers(path, &resources);
+            if !publishers.is_empty() {
+                eprintln!(
+                    "  The cycle runs through event delivery: {} {} events, so {} to each subscriber, and a subscriber on this cycle also calls back into {} services.",
+                    publishers
+                        .iter()
+                        .map(|p| format!("`{p}`"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    if publishers.len() == 1 {
+                        "publishes"
+                    } else {
+                        "publish"
+                    },
+                    if publishers.len() == 1 {
+                        "it binds"
+                    } else {
+                        "each binds"
+                    },
+                    if publishers.len() == 1 {
+                        "its"
+                    } else {
+                        "their"
+                    },
+                );
+                eprintln!(
+                    "  A subscriber that calls its publisher cannot be deployed yet; move the services it calls out of the publishing context."
+                );
+            }
             return ExitCode::FAILURE;
         }
     };

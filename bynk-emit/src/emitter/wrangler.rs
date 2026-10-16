@@ -76,7 +76,7 @@ pub const WRANGLER_MIN: &str = "4.107.0";
 /// `expected identifier after \`agent\`, found \`_\``), so an agent
 /// coincidentally named the same as this synthetic class is structurally
 /// impossible, not merely unlikely.
-pub(crate) const EVENTS_FANOUT_CLASS_NAME: &str = "__EventsFanout";
+pub const EVENTS_FANOUT_CLASS_NAME: &str = "__EventsFanout";
 
 /// Deploy-time sentinel in generated Worker configuration. The driver replaces
 /// this with the persistent Cloudflare KV namespace id immediately before a
@@ -349,13 +349,14 @@ pub(crate) fn worker_bindings(
 /// #1950: the bindings a handler's `deps.env` type exposes on Workers — the
 /// projection of [`worker_bindings`] handlers reach directly, which
 /// `BindingSource`'s variant docs state per kind. `consumed` is the consumed
-/// contexts with services, `agents` every local agent when the handler
-/// constructs one (else empty); order as in [`worker_bindings`].
+/// contexts the handler calls (#1961), `agents` every local agent when the
+/// handler constructs one (else empty); order as in [`worker_bindings`].
 ///
 /// Built by the same constructors, so each name and source is the Worker's
-/// own: a consumed context with services is never an adapter (an adapter may
-/// not declare a `service`, `bynk.adapter.disallowed_item`), so it has a
-/// Service Binding, and every local agent has a Durable Object binding. The
+/// own: a called context is never an adapter (an adapter may not declare a
+/// `service`, `bynk.adapter.disallowed_item`), and the Worker binds every
+/// context any of its bodies calls, so it has a Service Binding; every local
+/// agent has a Durable Object binding. The
 /// KV namespace, the events fan-out and subscribers' Service Bindings never
 /// reach handlers.
 pub(crate) fn handler_bindings(consumed: &[String], agents: &[String]) -> Vec<WorkerBinding> {

@@ -1,0 +1,28 @@
+context ev.listener
+
+consumes ev.emitter
+
+agent Tally {
+  key id: String
+
+  store seen: Cell[Int]
+
+  on call bump() -> Effect[()] {
+    let _ <- seen.update((v) => v + 1)
+  }
+
+  on call read() -> Effect[Int] { seen }
+}
+
+service OnPing from Events(Pinged) {
+  on event(e: Pinged) -> Effect[()] {
+    Tally("main").bump()
+  }
+}
+
+service api from http {
+  on GET("/seen") () -> Effect[HttpResult[Int]] by Visitor {
+    let n <- Tally("main").read()
+    Ok(n)
+  }
+}
