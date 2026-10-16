@@ -18,7 +18,7 @@ export const LocalLedger = {
 export const log = {
   async call(amount: number, deps: { env: { SHOP_LEDGER: __ServiceBinding } }): globalThis.Promise<Result<number, string>> {
     const Ledger = { balance: 0 };
-    const r = await __callService(deps.env.SHOP_LEDGER, "authorise", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(amount), __deserialise_Result_Int_String, "shop.audit", "3042f1b7519e621d");
+    const r = await __callService(deps.env.SHOP_LEDGER, "authorise", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(amount), __deserialise_Result_Int_String, "shop.audit", "3042f1b7519e621d", deps.env);
     return r;
   },
 };

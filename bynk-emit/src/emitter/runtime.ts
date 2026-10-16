@@ -451,6 +451,70 @@ export interface ServiceBinding {
   fetch(request: Request): Promise<Response>;
 }
 
+// #2003 (ADR 0092 amended): the deployment's shared call secret. Every Worker
+// in a deployment holds the same value under this binding, every internal
+// request (`/_bynk/call/`, `/_bynk/event/`) carries it in this header, and
+// the receiving Worker refuses a request without it before reading anything
+// else. The path prefixes are reachable from the public internet on any route
+// the Worker serves, so the prefix alone proves nothing about the sender.
+export const CALL_SECRET_BINDING = "BYNK_CALL_SECRET";
+export const CALL_SECRET_HEADER = "X-Bynk-Call-Secret";
+
+// The secret from a Worker's `env`, or `undefined` when it is unset or not a
+// non-empty string. `env` is `unknown` because the binding is a secret, not a
+// declared binding, so no generated `Env` interface names it (the actor auth
+// secrets read theirs the same way).
+export function callSecretOf(env: unknown): string | undefined {
+  if (typeof env !== "object" || env === null) return undefined;
+  const value = (env as Record<string, unknown>)[CALL_SECRET_BINDING];
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+// Logged once per isolate, not once per request: an unset secret refuses
+// every internal request, and anyone can send those.
+let callSecretUnsetLogged = false;
+
+// Does `request` carry this Worker's call secret? Fails closed: an unset
+// secret on the receiving side refuses everything. The comparison runs over
+// SHA-256 digests of both values, so it takes the same time whatever the
+// header holds, its length included; `crypto.subtle.timingSafeEqual` would
+// do, but it is workerd-only and the generated test harness runs on Node.
+export async function verifyCallSecret(request: Request, env: unknown): Promise<boolean> {
+  const expected = callSecretOf(env);
+  if (expected === undefined) {
+    if (!callSecretUnsetLogged) {
+      callSecretUnsetLogged = true;
+      globalThis.console.error(
+        `${CALL_SECRET_BINDING} is not set: refusing every internal call to this Worker. \`bynk deploy\` sets it; \`bynk dev\` passes a local one.`,
+      );
+    }
+    return false;
+  }
+  const given = request.headers.get(CALL_SECRET_HEADER) ?? "";
+  const encoder = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(given)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+  ]);
+  const x = new Uint8Array(a);
+  const y = new Uint8Array(b);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+  return diff === 0;
+}
+
+// The sending side: the secret to stamp, or a thrown error naming the unset
+// binding. Sending without it would only come back as an opaque 401.
+function requireCallSecret(env: unknown, what: string): string {
+  const secret = callSecretOf(env);
+  if (secret === undefined) {
+    throw new Error(
+      `${CALL_SECRET_BINDING} is not set, so ${what} cannot be sent: \`bynk deploy\` sets it on every Worker, and \`bynk dev\` passes a local one.`,
+    );
+  }
+  return secret;
+}
+
 export async function callService<R>(
   binding: ServiceBinding,
   servicePath: string,
@@ -473,13 +537,18 @@ export async function callService<R>(
   // fails closed on mismatch (409), which is what makes a `deploy --context`
   // skew a loud, nameable failure instead of a silent misinterpretation.
   contractHash: string = "",
+  // #2003: the calling Worker's `env`, for the deployment's call secret
+  // ([`CALL_SECRET_BINDING`]), which the callee checks before anything else.
+  env: unknown = undefined,
 ): Promise<R> {
+  const secret = requireCallSecret(env, `the call to ${servicePath}`);
   const request = new Request(`http://internal/_bynk/call/${servicePath}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "X-Bynk-Caller": callerContext,
       "X-Bynk-Contract": contractHash,
+      [CALL_SECRET_HEADER]: secret,
     },
     body: JSON.stringify(argsJson),
   });
@@ -546,10 +615,14 @@ export async function deliverEvent(
   servicePath: string,
   payload: unknown,
   envelope: unknown,
+  // #2003: the fan-out Durable Object's `env`, for the call secret the
+  // subscriber checks before it reads the body.
+  env: unknown = undefined,
 ): Promise<void> {
+  const secret = requireCallSecret(env, `the event delivery to ${servicePath}`);
   const request = new Request(`http://internal/_bynk/event/${servicePath}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", [CALL_SECRET_HEADER]: secret },
     body: JSON.stringify({ payload, envelope }),
   });
   const response = await binding.fetch(request);
@@ -2141,6 +2214,7 @@ export {
   selectPluralArm as __selectPluralArm,
   serialiseAgentKey as __serialiseAgentKey,
   verifyBearerJwtHs256 as __verifyBearerJwtHs256,
+  verifyCallSecret as __verifyCallSecret,
   verifyOidcJwt as __verifyOidcJwt,
   verifySignatureHmacSha256 as __verifySignatureHmacSha256,
   webSocketUpgradeResponse as __webSocketUpgradeResponse,

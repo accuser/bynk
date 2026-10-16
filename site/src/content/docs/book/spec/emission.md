@@ -356,9 +356,10 @@ calling context's qualified name — a compile-time constant — into a reserved
 `/_bynk/call/<service>` dispatch reads the header, rejects fail-closed if it is
 absent or empty (the internal analogue of 401), and threads the name into the
 handler's `deps` as the `CallerId` identity, so `<binder>.identity` lowers to
-`deps.identity` (replacing the `undefined` placeholder). Verification is
-channel-based — no crypto — and a binder-less `on call` reads no header and is
-byte-unchanged.
+`deps.identity` (replacing the `undefined` placeholder). A binder-less `on call`
+reads no `X-Bynk-Caller` header. The name is not verified. What admits the
+request at all is the deployment's call secret
+([§7.3.4d](#734d-the-call-secret-2003)), which every holder shares.
 
 ### §7.3.4b The cross-context boundary codec (v0.176)
 
@@ -440,6 +441,36 @@ call surface is typed `CallError = BoundaryError | ContractMismatch`
 Each Worker also emits `bynk-contracts.json` beside its `wrangler.toml`, carrying
 what the context **provides** per service and what it **expects** of each
 dependency. This is a driver artifact, not part of the wire.
+
+### §7.3.4d The call secret (#2003)
+
+`/_bynk/call/` and `/_bynk/event/` are paths on the Worker's single `fetch`
+entry, so they answer on every route the Worker serves, its `workers.dev`
+address included. The prefix does not prove that a Bynk Worker sent the
+request, so every internal request carries the deployment's **call secret**.
+
+Every Worker in a deployment holds the same value as the secret
+`BYNK_CALL_SECRET`. `callService` and the events fan-out's `deliverEvent` read
+it from the sending Worker's `env` and stamp it in a reserved
+`X-Bynk-Call-Secret` header. They refuse to send without it, naming the unset
+binding. The receiving Worker checks the header as the **first** statement of
+each internal dispatch. The check runs before the service is looked up, before
+the §7.3.4c contract check, and before the body is read. It applies to every
+`on call` and every event subscriber, whether or not the handler binds a
+`Caller`. A request without the secret, or with a wrong one, gets `401` with
+the body `Unauthorized` and no detail. So a sender without the secret cannot
+tell services apart (no `404` against `409`), never has a contract hash echoed
+back, and cannot write the skew log line.
+
+The comparison is constant-time over SHA-256 digests of both values. A Worker
+whose own `BYNK_CALL_SECRET` is unset or empty refuses every internal request
+(fail closed), and logs that once per isolate.
+
+The secret proves that the sender belongs to the deployment. It does not prove
+*which* context sent the request: any holder can claim any `X-Bynk-Caller`.
+`bynk deploy` mints and sets the value. `bynk dev` and the generated test
+harnesses use a fixed local value, which is never written into a generated
+`wrangler.toml`.
 
 ### §7.3.5 Tests
 

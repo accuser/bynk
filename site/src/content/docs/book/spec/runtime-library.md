@@ -187,7 +187,8 @@ export type BoundaryError =
 | Export | Role |
 |---|---|
 | `ServiceBinding` | the `fetch`-shaped binding a consumer calls |
-| `callService(binding, servicePath, argsJson, deserialiseResult, callerContext)` | issues the call to `/_bynk/call/<servicePath>`, decodes the response, and raises a `BoundaryError` on transport or shape failure. v0.54: `callerContext` (the calling context's qualified name) is stamped into the `X-Bynk-Caller` header so the callee's `by c: Caller` handler reads a live `CallerId`; the args body is unchanged |
+| `callService(binding, servicePath, argsJson, deserialiseResult, callerContext, contractHash, env)` | issues the call to `/_bynk/call/<servicePath>`, decodes the response, and raises a `BoundaryError` on transport or shape failure. v0.54: `callerContext` (the calling context's qualified name) is stamped into the `X-Bynk-Caller` header so the callee's `by c: Caller` handler reads a live `CallerId`; the args body is unchanged. v0.177: `contractHash` is stamped into `X-Bynk-Contract`. #2003: the call secret `BYNK_CALL_SECRET`, read from the calling Worker's `env`, is stamped into `X-Bynk-Call-Secret`; with it unset the call throws before it is sent |
+| `verifyCallSecret(request, env)` | #2003: whether `request` carries the receiving Worker's `BYNK_CALL_SECRET` in `X-Bynk-Call-Secret`, compared in constant time. `false` when the Worker's own secret is unset (fail closed). The first check of every `/_bynk/call/` and `/_bynk/event/` dispatch |
 | `boundaryError(error)` | wraps a `BoundaryError` as a throwable `Error` |
 
 ## §7.4.6 Non-exports: brands and `Effect`

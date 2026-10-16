@@ -421,6 +421,43 @@ pub fn run(
     // Shared across the loop: a queue two contexts consume is one queue, so it
     // wants one create attempt per run, not one per consumer (ADR 0194 D2).
     let mut attempted_queues = BTreeSet::new();
+    // #2003: the deployment's call secret is decided over every Worker in the
+    // run at once, so each one's `secret list` is asked here, before anything
+    // is pushed, and the per-context step reuses the answer.
+    let listed: BTreeMap<String, Option<BTreeSet<String>>> = order
+        .iter()
+        .map(|worker| {
+            let answer = list_secrets(
+                &probe.provenance,
+                &workers_dir.join(worker),
+                &opts.environment,
+            );
+            (worker.clone(), answer)
+        })
+        .collect();
+    let presence: Vec<Presence> = order
+        .iter()
+        .map(|worker| {
+            presence_of(
+                bynk_emit::CALL_SECRET_BINDING,
+                listed[worker].as_ref(),
+                !lock.is_deployed(&opts.environment, worker),
+            )
+        })
+        .collect();
+    let call_secret = match decide_call_secret(
+        supplied_call_secret(&secret_source),
+        &presence,
+        opts.context.is_none(),
+        opts.force,
+        mint_call_secret,
+    ) {
+        Ok(decision) => decision,
+        Err(e) => {
+            eprintln!("bynk: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     // Shared across the loop so two contexts wanting the same secret prompt
     // once. Dropped with the run — nothing here is ever written (ADR 0195 D1).
     let mut resolved_secrets = BTreeMap::new();
@@ -440,6 +477,8 @@ pub fn run(
             &mut Secrets {
                 source: &secret_source,
                 force: opts.force,
+                call_secret: &call_secret,
+                listed: &listed,
                 resolved: &mut resolved_secrets,
             },
             &opts.wrangler_args,
@@ -737,6 +776,11 @@ pub(crate) fn derive_plan<'a>(
                         secrets,
                     )
                     .into_iter()
+                    // #2003: every Worker holds the deployment's call secret.
+                    .chain(std::iter::once(WantedSecret {
+                        name: bynk_emit::CALL_SECRET_BINDING.to_string(),
+                        origin: Origin::Managed,
+                    }))
                     .map(|want| PlanSecret {
                         name: want.name,
                         origin: want.origin,

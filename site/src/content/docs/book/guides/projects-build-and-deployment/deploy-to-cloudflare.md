@@ -236,6 +236,35 @@ One consequence worth knowing: `--dry-run` never authenticates, which is what
 lets you plan offline — so a plan says `set` for everything, and the skip shows
 up when you actually run.
 
+### The call secret
+
+Every Worker in a deployment also gets one secret you never write:
+`BYNK_CALL_SECRET`. Your contexts send it with every cross-context call and
+event delivery, and a Worker refuses those requests without it. Their paths
+(`/_bynk/call/…`, `/_bynk/event/…`) answer on the Worker's public address too,
+so without the secret anyone could call your `on call` services, claiming any
+context as the caller. The plan lists it on every context:
+
+```
+secret set BYNK_CALL_SECRET (managed)
+```
+
+`bynk deploy` mints it and never shows or stores the value. Every Worker must
+hold the same one, and Cloudflare won't give it back, so:
+
+- A first deploy, or one where any Worker lacks it, mints a fresh value and sets
+  it on **every** context. Cross-context calls can fail for the moment between
+  one Worker taking the new value and the next.
+- A redeploy where every Worker has it leaves it alone. `--force` rotates it.
+- `--context NAME` can't mint, since the others would keep the old value. If the
+  context lacks it, the deploy stops and asks for a whole-project deploy, or for
+  the value in `--secrets-file` or as `BYNK_CALL_SECRET` in the environment.
+
+To hold the value yourself, put `BYNK_CALL_SECRET` in your `--secrets-file`;
+`bynk deploy` then sets yours instead of minting one. `bynk dev` and `bynk test`
+use a fixed local value. A Worker you push with `wrangler deploy` yourself
+needs the secret set too (`wrangler secret put BYNK_CALL_SECRET`).
+
 ### Several KV namespaces
 
 Each [derived capability](/book/reference/capabilities/#derived-capabilities-capability-x--k)

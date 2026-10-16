@@ -252,6 +252,29 @@ fn text_response(text: &str, status: i64) -> TsExpr {
     new_response(vec![str_lit(text), status_obj(status)])
 }
 
+/// #2003: `if (!(await __verifyCallSecret(request, env))) return new
+/// Response("Unauthorized", { status: 401 });` — the first statement of every
+/// internal dispatch (`/_bynk/call/`, `/_bynk/event/`).
+///
+/// The prefixes are reachable from the public internet on any route the Worker
+/// serves (ADR 0092's "not externally routable" premise does not hold), so a
+/// request is refused here, before the service is looked up, the contract
+/// compared or the body read: an unauthenticated sender learns nothing about
+/// which services exist (no 404 against 409), never has a hash echoed, and
+/// cannot write the skew log line. The body is a fixed word, not JSON detail.
+fn call_secret_gate() -> TsStmt {
+    if_(
+        TsExpr::Unary {
+            op: bynk_ts::TsUnaryOp::Not,
+            expr: Box::new(paren(await_expr(call(
+                ident("__verifyCallSecret"),
+                vec![ident("request"), ident("env")],
+            )))),
+        },
+        return_(Some(text_response("Unauthorized", 401))),
+    )
+}
+
 fn null_response(status: i64) -> TsExpr {
     new_response(vec![null_lit(), status_obj(status)])
 }
@@ -547,6 +570,8 @@ pub(crate) fn emit_worker_entry(
         "type __JsonValue".to_string(),
         "type __BoundaryError".to_string(),
         "__boundaryError".to_string(),
+        // #2003: every Worker answers `/_bynk/call/`, so every Worker gates it.
+        "__verifyCallSecret".to_string(),
     ];
     if has_http {
         imports.push("__matchPath".to_string());
@@ -794,6 +819,7 @@ pub(crate) fn emit_worker_entry(
     try_body.push(if_(
         method_call(ident("path"), "startsWith", vec![str_lit("/_bynk/call/")]),
         block(vec![
+            call_secret_gate(),
             const_(
                 "servicePath",
                 method_call(
@@ -877,6 +903,7 @@ pub(crate) fn emit_worker_entry(
         .collect();
     if !event_services.is_empty() {
         let mut event_body: Vec<TsStmt> = vec![
+            call_secret_gate(),
             const_(
                 "servicePath",
                 method_call(

@@ -3,7 +3,9 @@
 //! Workers (`cross_context_caller_reads_live_id_and_fails_closed`): drives the
 //! callee worker's `/_bynk/call/` dispatch with and without the `X-Bynk-Caller`
 //! header: present → the `by c: Caller` handler reads the live caller name;
-//! absent/empty → fail-closed (401, the `Internal`-channel analogue).
+//! absent/empty → fail-closed (401, the `Internal`-channel analogue). #2003: and
+//! with and without the deployment's call secret, which a forged request from
+//! outside the deployment does not carry.
 //!
 //! Bundle (`bundle_cross_context_caller_reads_the_consuming_context_name`,
 //! v0.54 / #655): the same handler on the bundle target, where a cross-context
@@ -155,17 +157,25 @@ function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error("FAIL: " + msg);
 }
 
-function call(headers: Record<string, string>): Request {
-  return new Request("http://internal/_bynk/call/whoami", {
+// #2003: the deployment's call secret, which every Bynk caller stamps.
+const SECRET = "s3cret";
+
+function call(headers: Record<string, string>, service = "whoami"): Request {
+  return new Request("http://internal/_bynk/call/" + service, {
     method: "POST",
-    // A well-formed Bynk call stamps the contract hash; individual cases
-    // override it to drive the skew paths.
-    headers: { "content-type": "application/json", "X-Bynk-Contract": CONTRACT, ...headers },
+    // A well-formed Bynk call stamps the contract hash and the call secret;
+    // individual cases override them to drive the skew and forgery paths.
+    headers: {
+      "content-type": "application/json",
+      "X-Bynk-Contract": CONTRACT,
+      "X-Bynk-Call-Secret": SECRET,
+      ...headers,
+    },
     body: JSON.stringify("hello"),
   });
 }
 
-const env: any = {};
+const env: any = { BYNK_CALL_SECRET: SECRET };
 
 // 1. With the caller header → the body reads the live caller name.
 let res = await worker.fetch(call({ "X-Bynk-Caller": "app.a" }), env);
@@ -207,6 +217,38 @@ assert(res.status === 409, "empty contract header → 409, got " + res.status);
 //    nothing about the request is trustworthy, including the identity.
 res = await worker.fetch(call({ "X-Bynk-Contract": "0000000000000000" }), env);
 assert(res.status === 409, "skewed contract outranks a missing caller, got " + res.status);
+
+// #2003: the call secret. `/_bynk/call/` is reachable from the public internet,
+// so a request that does not carry the deployment's secret is refused first,
+// with a bare 401 and nothing about the service, its contract or its caller.
+async function refused(req: Request, e: any, what: string): Promise<void> {
+  const r = await worker.fetch(req, e);
+  assert(r.status === 401, what + " → 401, got " + r.status);
+  const text = await r.text();
+  assert(text === "Unauthorized", what + " → no detail, got " + JSON.stringify(text));
+}
+
+// 7. A forged call: right caller, right contract, no secret.
+await refused(call({ "X-Bynk-Caller": "app.a", "X-Bynk-Call-Secret": "" }), env, "missing secret");
+
+// 8. A wrong secret, and one that only shares a prefix with the right one.
+await refused(call({ "X-Bynk-Caller": "app.a", "X-Bynk-Call-Secret": "s3creT" }), env, "wrong secret");
+await refused(call({ "X-Bynk-Caller": "app.a", "X-Bynk-Call-Secret": SECRET + "x" }), env, "longer secret");
+
+// 9. Checked before the contract: a forger gets no 409 echoing the hash.
+await refused(
+  call({ "X-Bynk-Caller": "app.a", "X-Bynk-Contract": "0000000000000000", "X-Bynk-Call-Secret": "" }),
+  env,
+  "missing secret with a skewed contract",
+);
+
+// 10. And before the service lookup: no 404 to tell services apart.
+await refused(call({ "X-Bynk-Call-Secret": "" }, "nosuch"), env, "missing secret, unknown service");
+
+// 11. Fail closed: a Worker with no secret of its own refuses every call,
+//     including one carrying a header (empty or not).
+await refused(call({ "X-Bynk-Caller": "app.a" }), {}, "callee with no secret");
+await refused(call({ "X-Bynk-Caller": "app.a", "X-Bynk-Call-Secret": "" }), {}, "callee with no secret, empty header");
 
 console.log("ALL OK");
 "#;
@@ -264,8 +306,14 @@ function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error("FAIL: " + msg);
 }
 
-// app.a's Worker reaches app.b through its APP_B service binding.
-const envA: any = { APP_B: { fetch: (req: Request) => workerB.fetch(req, {} as any) } };
+// app.a's Worker reaches app.b through its APP_B service binding. Both hold
+// the deployment's call secret (#2003): app.a stamps it, app.b checks it.
+const SECRET = "s3cret";
+const envB: any = { BYNK_CALL_SECRET: SECRET };
+const envA: any = {
+  BYNK_CALL_SECRET: SECRET,
+  APP_B: { fetch: (req: Request) => workerB.fetch(req, envB) },
+};
 
 const res = await workerA.fetch(
   new Request("http://internal/_bynk/call/forward", {
@@ -274,6 +322,7 @@ const res = await workerA.fetch(
       "content-type": "application/json",
       "X-Bynk-Caller": "driver",
       "X-Bynk-Contract": CONTRACT,
+      "X-Bynk-Call-Secret": SECRET,
     },
     body: JSON.stringify(42),
   }),
@@ -285,6 +334,27 @@ assert(
   body.kind === "Ok" && body.value === 42,
   "caller-side codec round-trips the record's seat field, got " + JSON.stringify(body),
 );
+
+// #2003: a callee holding a different secret refuses app.a's call, which
+// app.a reports as a fault (500) rather than a decoded value.
+const envBad: any = {
+  BYNK_CALL_SECRET: SECRET,
+  APP_B: { fetch: (req: Request) => workerB.fetch(req, { BYNK_CALL_SECRET: "other" } as any) },
+};
+const refused = await workerA.fetch(
+  new Request("http://internal/_bynk/call/forward", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Bynk-Caller": "driver",
+      "X-Bynk-Contract": CONTRACT,
+      "X-Bynk-Call-Secret": SECRET,
+    },
+    body: JSON.stringify(42),
+  }),
+  envBad,
+);
+assert(refused.status === 500, "a callee on another secret refuses the call, got " + refused.status);
 
 console.log("ALL OK");
 "#;
