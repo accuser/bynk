@@ -51,38 +51,47 @@ pub(crate) const MANIFEST_VERSION: u32 = 1;
 /// a file into every worker directory for a feature it does not use — and "no
 /// file" is the same answer as "empty" to a driver that must tolerate a build
 /// tree from a compiler predating this file anyway.
+///
+/// I4 (#1970): `foreign` is the third half, **what each declared foreign
+/// caller's generated client embeds** — actor → service → hash, the services
+/// that actor may call. A foreign caller has no `bynk-contracts.json` of its
+/// own to state its `expects`, so `deploy` holds this against the pin the
+/// callee's project records for it (`bynk.foreign.toml`) and refuses a build
+/// that would break it (`design/tracks/interop.md` §8 D3, §11 Q6). Additive
+/// within version 1, and absent when empty, so every manifest of a context
+/// with no foreign caller is byte-identical to before.
 pub(crate) fn emit_contracts_manifest(
     provides: &BTreeMap<String, String>,
     expects: &BTreeMap<String, BTreeMap<String, String>>,
+    foreign: &BTreeMap<String, BTreeMap<String, String>>,
 ) -> Option<String> {
     if provides.is_empty() && expects.is_empty() {
         return None;
     }
     // Hand-rendered rather than via serde: this crate does not depend on
     // serde_json, and the shape is three fields.
-    let expects_body: Vec<String> = expects
-        .iter()
-        .map(|(ctx, svcs)| {
-            let inner: Vec<String> = svcs
-                .iter()
-                .map(|(svc, h)| format!("      {}: {}", json_string(svc), json_string(h)))
-                .collect();
-            format!(
-                "    {}: {{\n{}\n    }}",
-                json_string(ctx),
-                inner.join(",\n")
-            )
-        })
-        .collect();
+    let foreign_part = if foreign.is_empty() {
+        String::new()
+    } else {
+        [",\n  \"foreign\": ", &nested_map(foreign)].concat()
+    };
     Some(format!(
-        "{{\n  \"version\": {MANIFEST_VERSION},\n  \"provides\": {},\n  \"expects\": {}\n}}\n",
+        "{{\n  \"version\": {MANIFEST_VERSION},\n  \"provides\": {},\n  \"expects\": {}{foreign_part}\n}}\n",
         json_map(provides, 2),
-        if expects_body.is_empty() {
-            "{}".to_string()
-        } else {
-            format!("{{\n{}\n  }}", expects_body.join(",\n"))
-        }
+        nested_map(expects),
     ))
+}
+
+/// A two-level map at the manifest's top level, `{}` when empty.
+fn nested_map(m: &BTreeMap<String, BTreeMap<String, String>>) -> String {
+    if m.is_empty() {
+        return "{}".to_string();
+    }
+    let body: Vec<String> = m
+        .iter()
+        .map(|(outer, inner)| ["    ", &json_string(outer), ": ", &json_map(inner, 4)].concat())
+        .collect();
+    ["{\n", &body.join(",\n"), "\n  }"].concat()
 }
 
 fn json_map(m: &BTreeMap<String, String>, indent: usize) -> String {
@@ -105,7 +114,7 @@ mod tests {
     #[test]
     fn absent_when_a_context_neither_provides_nor_consumes() {
         assert_eq!(
-            emit_contracts_manifest(&BTreeMap::new(), &BTreeMap::new()),
+            emit_contracts_manifest(&BTreeMap::new(), &BTreeMap::new(), &BTreeMap::new()),
             None
         );
     }
@@ -115,7 +124,7 @@ mod tests {
         let mut h = BTreeMap::new();
         h.insert("whoami".to_string(), "317bdd3de84d2176".to_string());
         h.insert("ask".to_string(), "0011223344556677".to_string());
-        let out = emit_contracts_manifest(&h, &BTreeMap::new()).unwrap();
+        let out = emit_contracts_manifest(&h, &BTreeMap::new(), &BTreeMap::new()).unwrap();
         assert!(out.contains("\"version\": 1"));
         // BTreeMap ordering: the file is byte-stable across builds, which the
         // golden fixtures depend on.
@@ -125,12 +134,29 @@ mod tests {
     }
 
     #[test]
+    fn foreign_callers_are_recorded_only_when_declared() {
+        let mut provides = BTreeMap::new();
+        provides.insert("status".to_string(), "226b9939f85e69ea".to_string());
+        let none = emit_contracts_manifest(&provides, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        assert!(!none.contains("foreign"), "{none}");
+        let mut legacy = BTreeMap::new();
+        legacy.insert("status".to_string(), "226b9939f85e69ea".to_string());
+        let mut foreign = BTreeMap::new();
+        foreign.insert("Legacy".to_string(), legacy);
+        let out = emit_contracts_manifest(&provides, &BTreeMap::new(), &foreign).unwrap();
+        assert!(
+            out.contains("\"foreign\": {\n    \"Legacy\": {\n      \"status\": \"226b9939f85e69ea\"\n    }\n  }"),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn a_consumer_records_what_it_expects_of_each_dependency() {
         let mut inner = BTreeMap::new();
         inner.insert("whoami".to_string(), "317bdd3de84d2176".to_string());
         let mut expects = BTreeMap::new();
         expects.insert("app.b".to_string(), inner);
-        let out = emit_contracts_manifest(&BTreeMap::new(), &expects).unwrap();
+        let out = emit_contracts_manifest(&BTreeMap::new(), &expects, &BTreeMap::new()).unwrap();
         assert!(out.contains("\"app.b\""), "{out}");
         assert!(out.contains("\"whoami\": \"317bdd3de84d2176\""), "{out}");
         assert!(out.contains("\"provides\": {}"), "{out}");

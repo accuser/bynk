@@ -355,6 +355,12 @@ pub(crate) struct ContractsManifest {
     /// stamps at each call site, keyed by the dependency's qualified name.
     #[serde(default)]
     pub(crate) expects: BTreeMap<String, BTreeMap<String, String>>,
+    /// I4 (#1970): what each declared foreign caller's generated client
+    /// embeds — actor → service → hash. Additive within version 1: absent for
+    /// a context with no foreign caller, and for a build from an older
+    /// compiler.
+    #[serde(default)]
+    pub(crate) foreign: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 const CONTRACTS_MANIFEST_VERSION: u32 = 1;

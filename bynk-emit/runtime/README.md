@@ -30,6 +30,15 @@ imports, preserves every comment, and writes the single
 `../src/emitter/runtime.ts`. That file is committed and is a build output:
 **edit the modules in `src/`, never the bundled file.**
 
+## The second artifact: `@bynk/wire-client`
+
+`scripts/bundle.mjs` also writes `../wire-client/index.ts`, the runtime half of
+the TypeScript client bynkc generates for a context's foreign callers (I4,
+#1970). It is the `result`, `bytes`, `errors` and `boundary` modules plus that
+package's own `src/surface.ts`, concatenated the same way, so a non-Bynk caller
+runs the boundary code a Bynk caller runs. It is versioned with the wire
+format, not with this runtime; `npm run check` guards both artifacts.
+
 ## Modules
 
 `result` · `bytes` · `errors` · `storage` · `boundary` · `http` · `queue` ·

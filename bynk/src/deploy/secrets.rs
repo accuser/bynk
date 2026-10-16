@@ -295,7 +295,7 @@ impl Edge {
     pub(crate) fn ends(&self) -> Result<[(&str, String); 2], String> {
         let unnamed = |worker: &str| {
             format!(
-                "context `{}` cannot sign or verify cross-context calls: an edge key is named from the context's name, which must be lowercase letters and digits in dot-separated segments, each starting with a letter, with single underscores between runs",
+                "context `{}` cannot sign or verify cross-context calls: an edge key is named from the context's name, which must be lowercase letters and digits in dot-separated segments, each starting with a letter, with single underscores between runs (no `__`, no trailing `_`)",
                 context_of(worker)
             )
         };

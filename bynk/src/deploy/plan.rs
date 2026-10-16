@@ -382,6 +382,43 @@ pub fn run(
         }
     };
 
+    // I4 (#1970, track §11 Q6): a declared foreign caller's pin. Refused
+    // before the plan, `--dry-run` included, as a Bynk caller's skew is: the
+    // foreign caller's client would be refused on every call.
+    let pins = match read_pins(project_root) {
+        Ok(pins) => pins,
+        Err(e) => {
+            eprintln!("bynk: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut built_foreign: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>> =
+        BTreeMap::new();
+    for worker in &order {
+        match read_contracts_manifest(&workers_dir.join(worker)) {
+            Ok(m) if !m.foreign.is_empty() => {
+                built_foreign.insert(context_of(worker), m.foreign);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!(
+                    "bynk: could not read `{worker}`'s {}: {e}",
+                    bynk_emit::emitter::contracts::CONTRACTS_MANIFEST
+                );
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let in_run: BTreeSet<String> = order.iter().map(|w| context_of(w)).collect();
+    let (broken, unpinned) = check_pins(&pins, &built_foreign, &in_run, opts.context.is_none());
+    if !broken.is_empty() {
+        eprint!("{}", refusal_message(&broken));
+        return ExitCode::FAILURE;
+    }
+    if !unpinned.is_empty() {
+        eprint!("{}", unpinned_message(&unpinned));
+    }
+
     // Review of #1974: namespace titles are account-wide, and a derived
     // instance's joins two names with the separator Worker names already use,
     // so two can coincide. Refused before the plan, `--dry-run` included,
@@ -617,6 +654,16 @@ pub fn run(
                     .map(|m| Some(m.provides))
                     .unwrap_or(None);
                 lock.record_deployed(&opts.environment, worker, provided);
+                // I4 (#1970): and what its declared foreign callers may call
+                // it at, so the ledger knows the consumers no manifest of
+                // their own records.
+                lock.record_foreign(
+                    &opts.environment,
+                    worker,
+                    read_contracts_manifest(&workers_dir.join(worker))
+                        .map(|m| m.foreign)
+                        .unwrap_or_default(),
+                );
                 // I3 (#1971): the secrets just minted for this context's
                 // foreign callers, handed to their operators.
                 for caller in &resources[worker].foreign_callers {

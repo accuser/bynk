@@ -226,6 +226,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Two peers in a multi-actor sum share an authentication scheme.",
     ),
     d(
+        "bynk.actor.foreign_context_name_unkeyable",
+        "A context declaring a `Foreign` actor has a name no call key can be named from.",
+    ),
+    d(
         "bynk.actor.foreign_duplicate_secret",
         "A `Foreign` actor's secret is also another actor's secret in the same context.",
     ),
@@ -634,6 +638,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.deploy.contract_skew",
         "A worker was compiled against a contract its live dependencies no longer provide, so `bynk deploy` refuses to ship it.",
+    ),
+    d(
+        "bynk.deploy.foreign_contract_skew",
+        "A build breaks the contract a declared foreign caller's client was generated at, as pinned in `bynk.foreign.toml`, so `bynk deploy` refuses to ship it.",
     ),
     d(
         "bynk.duration.literal_overflow",

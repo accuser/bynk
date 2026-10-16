@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "provides": {
+    "audit": "4e12802a5993f13a",
+    "lookup": "586b853a77dcb029",
+    "post": "27debbca3698ad27",
+    "recent": "b8c0680d223be288"
+  },
+  "expects": {},
+  "foreign": {
+    "Billing": {
+      "lookup": "586b853a77dcb029",
+      "post": "27debbca3698ad27",
+      "recent": "b8c0680d223be288"
+    }
+  }
+}

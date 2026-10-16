@@ -339,6 +339,10 @@
           {
             "label": "Target Cloudflare Workers",
             "link": "/book/guides/projects-build-and-deployment/cloudflare-workers/"
+          },
+          {
+            "label": "Adopt Bynk beside a TypeScript Worker",
+            "link": "/book/guides/projects-build-and-deployment/adopt-beside-a-typescript-worker/"
           }
         ]
       }
@@ -435,6 +439,10 @@
       {
         "label": "Wire format",
         "link": "/book/reference/wire-format/"
+      },
+      {
+        "label": "TypeScript client",
+        "link": "/book/reference/typescript-client/"
       },
       {
         "label": "Diagnostic index",

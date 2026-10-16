@@ -1706,6 +1706,29 @@ fn check_actor_contracts(
                         ),
                     );
                 }
+                // I4 (#1970): a foreign caller signs under the key its Worker
+                // holds as `BYNK_CALL_TO_<CONTEXT>`, named from this context's
+                // name, so the name must be one a key can be derived from (the
+                // domain `bynk deploy` refuses outside of, at a deploy rather
+                // than here, for Bynk-to-Bynk edges).
+                let context = resolved.commons.name.joined();
+                if !crate::wire_format::is_edge_name(&context) {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.actor.foreign_context_name_unkeyable",
+                            auth.span,
+                            format!(
+                                "context `{context}` cannot admit foreign caller `{}`: no call key can be named from the context's name",
+                                actor.name.name
+                            ),
+                        )
+                        .with_note(
+                            "an edge key is named from the context's name, which must be lowercase \
+                             letters and digits in dot-separated segments, each starting with a \
+                             letter, with single underscores between runs (no `__`, no trailing `_`)",
+                        ),
+                    );
+                }
                 if let Some(id) = &actor.identity {
                     errors.push(
                         CompileError::new(
