@@ -1,0 +1,2 @@
+bynk.actor.scheme_not_admissible
+a `Foreign` actor is not admissible on a `from cron` handler

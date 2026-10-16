@@ -548,6 +548,35 @@ pub fn run(
             }
         }
     }
+    // I3 (#1971): each foreign caller's secret, on the context in the run that
+    // admits it. Only that end is ours, so a `--context` run decides it too.
+    let foreign_secrets: BTreeSet<String> = resources
+        .values()
+        .flat_map(|r| r.foreign_callers.iter().map(|f| f.binding.clone()))
+        .collect();
+    let mut foreign_keys: BTreeMap<(String, String), ForeignKey> = BTreeMap::new();
+    for worker in &order {
+        for caller in &resources[worker].foreign_callers {
+            let presence = presence_of(
+                &caller.binding,
+                listed[worker].as_ref(),
+                !lock.is_deployed(&opts.environment, worker),
+            );
+            let supplied = value_from_source(&caller.binding, &secret_source);
+            match decide_foreign_key(supplied, presence, opts.force, &mut mint_edge_key) {
+                Ok(decision) => {
+                    foreign_keys.insert((worker.clone(), caller.binding.clone()), decision);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "bynk: `{}` (the foreign caller `{}` of `{worker}`): {e}",
+                        caller.binding, caller.actor
+                    );
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+    }
     // Shared across the loop so two contexts wanting the same secret prompt
     // once. Dropped with the run — nothing here is ever written (ADR 0195 D1).
     let mut resolved_secrets = BTreeMap::new();
@@ -568,6 +597,8 @@ pub fn run(
                 source: &secret_source,
                 force: opts.force,
                 edge_keys: &edge_keys,
+                foreign_keys: &foreign_keys,
+                foreign_secrets: &foreign_secrets,
                 listed: &listed,
                 resolved: &mut resolved_secrets,
             },
@@ -586,6 +617,17 @@ pub fn run(
                     .map(|m| Some(m.provides))
                     .unwrap_or(None);
                 lock.record_deployed(&opts.environment, worker, provided);
+                // I3 (#1971): the secrets just minted for this context's
+                // foreign callers, handed to their operators.
+                for caller in &resources[worker].foreign_callers {
+                    if let Some(ForeignKey::Set {
+                        value,
+                        minted: true,
+                    }) = foreign_keys.get(&(worker.clone(), caller.binding.clone()))
+                    {
+                        eprint!("{}", foreign_hand_off(worker, caller, value));
+                    }
+                }
                 // #1883, slice 1b: and the static files it now serves.
                 lock.record_assets(
                     &opts.environment,
@@ -621,6 +663,22 @@ pub fn run(
                 // repair it.
                 if let Some(hint) = interrupted_rotation_hint(&edge_keys, &order[..i]) {
                     eprint!("{hint}");
+                }
+                // I3 (#1971): a secret minted for this context's foreign
+                // caller may already be set, and the next run would keep it
+                // without ever showing it, so hand it off now.
+                for caller in &resources[worker].foreign_callers {
+                    if let Some(ForeignKey::Set {
+                        value,
+                        minted: true,
+                    }) = foreign_keys.get(&(worker.clone(), caller.binding.clone()))
+                    {
+                        eprintln!(
+                            "bynk: `{worker}` may already hold the {} minted for its foreign caller `{}`. If `wrangler secret list` shows it, hand this off; if not, the next deploy mints another.",
+                            caller.binding, caller.actor
+                        );
+                        eprint!("{}", foreign_hand_off(worker, caller, value));
+                    }
                 }
                 // Wrangler's own code, not a flat 1 (slice 0's contract).
                 return ExitCode::from(f.code);
@@ -900,6 +958,10 @@ pub(crate) fn derive_plan<'a>(
     environment: &'a str,
 ) -> Plan<'a> {
     let edges = project_edges(resources);
+    let foreign_secrets: BTreeSet<String> = resources
+        .values()
+        .flat_map(|r| r.foreign_callers.iter().map(|f| f.binding.clone()))
+        .collect();
     Plan {
         environment,
         orphans: find_orphans(lock, environment, resources),
@@ -950,6 +1012,8 @@ pub(crate) fn derive_plan<'a>(
                         secrets,
                     )
                     .into_iter()
+                    // I3 (#1971): a foreign caller's secret is never spread.
+                    .filter(|w| !foreign_secrets.contains(&w.name))
                     // I2 (#1971): the key for each edge this Worker is on.
                     .chain(
                         edge_keys_of(worker, &edges)
@@ -959,6 +1023,12 @@ pub(crate) fn derive_plan<'a>(
                                 origin: Origin::Managed,
                             }),
                     )
+                    // I3 (#1971): and the secret of each foreign caller it
+                    // admits, which `deploy` mints and hands off.
+                    .chain(declared.foreign_callers.iter().map(|f| WantedSecret {
+                        name: f.binding.clone(),
+                        origin: Origin::Managed,
+                    }))
                     .map(|want| PlanSecret {
                         name: want.name,
                         origin: want.origin,

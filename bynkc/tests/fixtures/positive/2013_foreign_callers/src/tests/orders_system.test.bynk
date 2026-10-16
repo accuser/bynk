@@ -1,0 +1,14 @@
+suite shop.orders as system {
+  case "a context reaches the sum as Caller" {
+    let r <- shop.orders.status("a")
+    expect r is Ok("a for integration")
+  }
+  case "legacy reaches the sum as itself" {
+    let r <- shop.orders.status("a") by Legacy
+    expect r is Ok("a for legacy")
+  }
+  case "legacy reaches ping" {
+    let r <- shop.orders.ping(4) by Legacy
+    expect r == 4
+  }
+}

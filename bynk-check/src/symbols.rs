@@ -1171,7 +1171,13 @@ pub fn build_cross_context_info(
         consumed_event_names.insert(t.clone(), other_table.events.keys().cloned().collect());
         let mut svcs: HashMap<String, resolver::CrossContextService> = HashMap::new();
         for (sname, sdecl) in &other_table.services {
-            if let Some(svc) = resolver::cross_context_service_for(sname, sdecl) {
+            if let Some(mut svc) = resolver::cross_context_service_for(sname, sdecl) {
+                svc.foreign_callers = sdecl
+                    .handlers
+                    .iter()
+                    .find_map(|h| crate::actors::call_admission_for(h, &other_table.actors))
+                    .map(|a| a.foreign.into_iter().map(|f| f.actor).collect())
+                    .unwrap_or_default();
                 svcs.insert(sname.clone(), svc);
             }
         }
