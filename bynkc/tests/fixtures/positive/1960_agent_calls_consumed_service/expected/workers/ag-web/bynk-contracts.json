@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "provides": {
+    "add": "ebb9d45e16f83e66",
+    "calls": "10cef9e38f3c2b1d"
+  },
+  "expects": {
+    "ag.doubler": {
+      "double": "ba9949c18d7d9b5a"
+    }
+  }
+}
