@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0480](0480-foreign-worker-service-capability.md) | **A non-Bynk Worker is reached through a `Service` platform capability** (v0.335.1) — `bynk.cloudflare`'s experimental `Service`, used only through instances that name their Worker with `@worker`, sends `Fetch`'s `Request` over a Service Binding; the binding is compiler-derived, deploy warns and never provisions, dev and tests stand in for the Worker | Accepted (v0.335.1) |
 | [0479](0479-deployment-call-secret.md) | **A shared per-deployment secret admits every internal request, amending ADR 0092** (v0.335) — `BYNK_CALL_SECRET` is minted by `bynk deploy` and checked first on every `/_bynk/call/` and `/_bynk/event/` request | Accepted (v0.335) |
 | [0478](0478-test-harness-settles-sends.md) | **The test harness supplies an execution context and settles `~>` sends** (v0.334) — A collecting `waitUntil` per case, awaited after each addressed call, at the unit, integration and system tiers | Accepted (v0.334) |
 | [0477](0477-caller-handler-needs-a-named-caller-in-tests.md) | **A test calling a `by c: Caller` handler names the calling context** (v0.334) — No default caller; the call is rejected at check without `by Caller("…")` | Accepted (v0.334) |

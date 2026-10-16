@@ -1,12 +1,6 @@
----
-level: patch
-changelog: Experimental `bynk.cloudflare` `Service` calls a Worker outside the project over a Service Binding, `capability Billing = Service @worker("legacy-billing")` (bound as `SERVICE_BILLING`); `bynk deploy` binds it without provisioning and warns when the Worker is missing from the account, and `bynk dev` binds a local stand-in unless `--local-worker legacy-billing` names it. `bynk deploy --format json` gains a per-context `foreign_services` list (additive)
-probes: emit_diagnostics, ts_writes, diagnostic_coverage
----
+# 0480 — A non-Bynk Worker is reached through a `Service` platform capability
 
-## ADR: foreign-worker-service-capability
-title: A non-Bynk Worker is reached through a `Service` platform capability
-summary: `bynk.cloudflare`'s experimental `Service`, used only through instances that name their Worker with `@worker`, sends `Fetch`'s `Request` over a Service Binding; the binding is compiler-derived, deploy warns and never provisions, dev and tests stand in for the Worker
+- **Status:** Accepted (v0.335.1)
 
 **Context.** A Bynk context could reach a Worker that is not part of its project only through
 `Fetch`, over the public internet: every generated `wrangler.toml` sets
