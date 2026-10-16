@@ -5,6 +5,8 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, ty
 
 import { type Pinged } from "../ev-emitter/handlers.js";
 
+import type * as ev_emitter from "../ev-emitter/handlers.js";
+
 export interface TallyState {
   readonly seen: number;
 }

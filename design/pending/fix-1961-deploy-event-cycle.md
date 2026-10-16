@@ -63,3 +63,11 @@ is harmless because nothing read it. `bynk dev` builds from the same binding
 list. It never needed the dropped bindings, so its behaviour is unchanged.
 [[0193]] D2's premise is amended: the compiler can produce a binding cycle,
 but only through event delivery, and `deploy` refuses it by name.
+
+Narrowing the bindings exposed two emit gaps that the unconditional binding
+had been hiding. Both are fixed here. First, a call whose receiver is a local
+shadowing a consumed-context alias was lowered over the wire, even though the
+checker resolves it locally. The lowering now defers to the checker's `Callee`.
+Second, a subscriber whose publisher has no callable service never imported
+the publisher's type namespace, which its event codec needs. On workers, the
+owner of each subscribed event is now imported.

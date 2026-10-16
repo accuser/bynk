@@ -2951,6 +2951,37 @@ fn emit_cross_context_namespace_imports(
         .map(|(q, _)| q.clone())
         .collect();
     needed.extend(cross_context_cap_namespaces(commons, ctx));
+    // #1961: on workers, the owner of each event this context subscribes to.
+    // Its payload codec (`emit_consumed_context_helpers`) names the event
+    // through this alias, and a publisher with no callable service (only
+    // `http` ones) was otherwise never imported: `TS2304` on the subscriber.
+    if matches!(ctx.target, BuildTarget::Workers) {
+        let subscribed: HashSet<String> = commons
+            .commons
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CommonsItem::Service(s) => {
+                    let bynk_ir::ProtocolIr::Events { event, .. } =
+                        bynk_lower::lower_protocol_ir_from_commons(&s.protocol, commons)
+                    else {
+                        return None;
+                    };
+                    match &*commons.tys().get(event) {
+                        Ty::Named { name, .. } => Some(name.clone()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+        needed.extend(
+            info.consumed_event_names
+                .iter()
+                .filter(|(_, names)| names.iter().any(|n| subscribed.contains(n)))
+                .map(|(c, _)| c.clone()),
+        );
+    }
     if needed.is_empty() {
         return Vec::new();
     }
