@@ -91,6 +91,12 @@ pub enum Command {
         /// `--remote`. Omit for today's single, unqualified default.
         #[arg(long, default_value = "default", value_name = "NAME")]
         env: String,
+        /// A Worker outside the project, named by a `Service` instance
+        /// (`@worker("NAME")`), to reach in your own locally running
+        /// `wrangler dev` of it rather than in the stand-in `dev` binds by
+        /// default. Repeatable.
+        #[arg(long = "local-worker", value_name = "NAME")]
+        local_workers: Vec<String>,
         /// Arguments after `--`, forwarded to `wrangler dev` (e.g. `-- --remote`).
         /// Ports are the driver's to allocate: use `--base-port` / `--inspect-port`.
         #[arg(last = true)]

@@ -599,6 +599,10 @@ foreign Worker to expose a public route.
   typed, hash-checked contract; a foreign Worker has none, so the clause
   would mean two different things.
 
+(I5 shipped this as `capability Billing = Service @worker("legacy-billing")`:
+`service` is a keyword, so `@service(…)` does not parse, and widening the
+annotation grammar would be language work.)
+
 **SETTLED 2026-10-16: (a).** It reuses the instance model the stdlib track built
 for exactly this kind of named, context-owned platform resource, keeps
 adapters platform-neutral, and keeps the binding list compiler-derived. A
@@ -636,7 +640,7 @@ shares an increment with language or emitter work (ADR 0023).
 | I2 | **D2 mechanism.** Signed caller headers for every Bynk-to-Bynk edge; per-edge secrets in `bynk deploy` and a fixed key in `bynk dev`; ADR 0092 amendment | D2, I1 |
 | I3 | **D2 surface.** The `Foreign` actor scheme on `call`, foreign actors in `by` sums, foreign edges' secrets minted by deploy with a printed `wrangler secret put` line | I2 |
 | I4 | **D3.** The generated TS client, its drift guard, and foreign callers recorded in `bynk-contracts.json` and the deploy ledger | I1, I3 |
-| I5 | **D4.** `bynk.cloudflare { Service }` as a derived capability, binding-list kind, dev stand-in, deploy plan line | Stdlib S4 (done) |
+| I5 | **D4.** `bynk.cloudflare { Service }` as a derived capability, binding-list kind, dev stand-in, deploy plan line. **Done** (#1972): the option is spelled `@worker("…")`, since `service` is a keyword; platform facts recorded in its ADR | Stdlib S4 (done) |
 
 Order: I0 (the out-of-track fix) → I1 → I2 → I3 → I4, with I5 free to run
 in parallel once settled, because it shares nothing with the others. This is
