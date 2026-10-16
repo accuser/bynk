@@ -442,6 +442,24 @@ mod tests {
             DeployFormat::Short,
         ));
 
+        // Interop I5 (#1972): Service Bindings to Workers outside the
+        // project, bound and never provisioned or ordered against.
+        out.push_str("\n# interop I5: a foreign Worker beside a project context\n");
+        let foreign = project(vec![
+            (
+                "shop-checkout",
+                Resources::default()
+                    .binds(&["shop-payment"])
+                    .foreign(&[("SERVICE_BILLING", "legacy-billing")]),
+            ),
+            ("shop-payment", Resources::default()),
+        ]);
+        let order = names(&["shop-payment", "shop-checkout"]);
+        out.push_str(&plan_report(
+            &plan_of(&order, &foreign, &DeployLock::default()),
+            DeployFormat::Short,
+        ));
+
         bless_or_assert("deploy-plan.txt", &out);
     }
 

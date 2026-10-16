@@ -370,11 +370,35 @@ export async function responseToHttpResult<T>(
 // handler, or `Handled(httpResult)` when it ran. The rejection `detail` carries a
 // `tag` mirroring the router's `BoundaryError.kind` (`RefinementViolation`,
 // `MalformedJson`, `StructuralMismatch`), so `expect r is Rejected(
-// RefinementViolation(_))` lowers to a plain `.tag` test — the value is decoded
-// here; the checker keeps the outcome loose (the runner recovers the shape).
+// RefinementViolation(_))` lowers to a plain `.tag` test. #1934: the checker
+// types it as `HttpOutcome[T]`, and every rejection carries `detail`: for a body
+// or path rejection the router's description of what it refused, which
+// `RefinementViolation(d)` binds (`BOUNDARY_REJECTIONS` in
+// `bynk-check/src/checker.rs`), and `""` for the seam's and router's refusals.
 export type HttpOutcome<T> =
-  | { readonly tag: "Rejected"; readonly value: { readonly tag: string; readonly [k: string]: unknown } }
+  | {
+      readonly tag: "Rejected";
+      readonly value: { readonly tag: string; readonly detail: string; readonly [k: string]: unknown };
+    }
   | { readonly tag: "Handled"; readonly value: HttpResult<T> };
+
+// #1934: the one-line description a `Rejected` body or path rejection carries
+// as `detail`, from the router's `BoundaryError` body.
+function rejectionDetail(body: Record<string, unknown>): string {
+  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+  switch (body.kind) {
+    case "MalformedJson":
+      return str(body.details);
+    case "StructuralMismatch":
+      return `${str(body.path)}: expected ${str(body.expected)}, got ${str(body.actual)}`;
+    case "RefinementViolation": {
+      const violation = body.violation as { message?: unknown } | undefined;
+      return `${str(body.path)}: ${str(violation?.message)}`;
+    }
+    default:
+      return "";
+  }
+}
 
 // The `BoundaryError.kind`s the router emits when it refuses input *before* the
 // handler — the only shapes that make an outcome `Rejected`. Kept in sync with
@@ -399,9 +423,10 @@ export async function responseToHttpOutcome<T>(
       body = null;
     }
     if (body && typeof body.kind === "string" && BOUNDARY_REJECTION_KINDS.has(body.kind)) {
+      const fields = body as Record<string, unknown>;
       return {
         tag: "Rejected",
-        value: { ...(body as Record<string, unknown>), tag: body.kind },
+        value: { ...fields, tag: body.kind, detail: rejectionDetail(fields) },
       };
     }
     // No boundary `kind` → the handler produced this `400`; fall through.
@@ -414,7 +439,7 @@ export async function responseToHttpOutcome<T>(
   // — the handler produced it, so it stays `Handled`. Same shape-vs-status care
   // as the `400` (`kind` body) path.
   if (response.status === 405 && response.headers.has("allow")) {
-    return { tag: "Rejected", value: { tag: "MethodNotAllowed" } };
+    return { tag: "Rejected", value: { tag: "MethodNotAllowed", detail: "" } };
   }
   const handled = await responseToHttpResult(response, deserialiseValue);
   return { tag: "Handled", value: handled };
@@ -433,7 +458,7 @@ export async function responseToUnauthOutcome<T>(
   deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
 ): Promise<HttpOutcome<T>> {
   if (response.status === 401) {
-    return { tag: "Rejected", value: { tag: "Unauthorized" } };
+    return { tag: "Rejected", value: { tag: "Unauthorized", detail: "" } };
   }
   return responseToHttpOutcome(response, deserialiseValue);
 }

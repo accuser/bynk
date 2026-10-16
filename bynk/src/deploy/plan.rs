@@ -91,6 +91,19 @@ struct ContextPlan<'a> {
     action: &'static str,
     /// The workers this one binds to, in the emitted config.
     binds_to: Vec<&'a str>,
+    /// Interop I5 (#1972): its Service Bindings to Workers outside the
+    /// project, in binding order. Bound, never provisioned.
+    foreign_services: Vec<PlanForeignService<'a>>,
+}
+
+/// Interop I5 (#1972): one Service Binding to a foreign Worker. No action:
+/// `bynk deploy` neither creates nor changes the Worker. Whether it exists is
+/// asked of the account after authenticating, so `--dry-run` stays offline
+/// and the plan never claims it.
+#[derive(Debug, Serialize)]
+struct PlanForeignService<'a> {
+    binding: &'a str,
+    worker: &'a str,
 }
 
 #[derive(Debug, Serialize)]
@@ -426,6 +439,15 @@ pub fn run(
         );
         return ExitCode::FAILURE;
     }
+    // Interop I5 (#1972, track §11 Q8): a foreign Worker a Service Binding
+    // names is not Bynk's to create, so a missing one is a warning, never a
+    // refusal from the driver. Asked once per Worker, before the
+    // confirmation, so the user decides with it in view.
+    for warning in foreign_worker_warnings(&order, &resources, |name| {
+        worker_presence(&probe.provenance, name, project_root)
+    }) {
+        eprintln!("{warning}");
+    }
     if !confirm(opts.yes) {
         return ExitCode::FAILURE;
     }
@@ -687,6 +709,44 @@ pub fn run(
     ExitCode::SUCCESS
 }
 
+/// Interop I5 (#1972): a warning for each foreign Worker that the pushed
+/// contexts bind to and `presence` does not find, each Worker asked once,
+/// in name order. Cloudflare resolves a Service Binding at upload, so a push
+/// binding a missing Worker is rejected there: the warning says so ahead of
+/// it, and the driver itself refuses nothing (a Worker created between now
+/// and the push is fine).
+pub(crate) fn foreign_worker_warnings(
+    order: &[String],
+    resources: &BTreeMap<String, Resources>,
+    mut presence: impl FnMut(&str) -> WorkerPresence,
+) -> Vec<String> {
+    let mut bound: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for worker in order {
+        for f in &resources[worker].foreign_services {
+            bound.entry(f.worker.as_str()).or_default().push(worker);
+        }
+    }
+    let mut out = Vec::new();
+    for (name, by) in bound {
+        let by = by
+            .iter()
+            .map(|w| format!("`{w}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        match presence(name) {
+            WorkerPresence::Present => {}
+            WorkerPresence::Missing => out.push(format!(
+                "bynk: warning: {by} binds to Worker `{name}`, which this account does not have — \
+                 Cloudflare rejects a Service Binding to a missing Worker at upload, so deploy `{name}` first."
+            )),
+            WorkerPresence::Unknown(said) => out.push(format!(
+                "bynk: warning: could not check that Worker `{name}` (bound by {by}) exists: {said}"
+            )),
+        }
+    }
+    out
+}
+
 /// #2004 review, I2 (#1971): what to tell the user when a run that re-keyed
 /// edges stopped before every end of them was deployed. `completed` is the
 /// Workers that finished (not the one that failed, which may or may not hold
@@ -816,6 +876,14 @@ pub(crate) fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
                 }
                 for queue in &context.queues {
                     out.push_str(&format!("queue {} {}\n", queue.action, queue.queue));
+                }
+                // Interop I5 (#1972): bound, not provisioned — the Worker is
+                // not Bynk's, so the line says so rather than an action.
+                for service in &context.foreign_services {
+                    out.push_str(&format!(
+                        "service {} {} (foreign Worker; not provisioned)\n",
+                        service.binding, service.worker
+                    ));
                 }
                 // Between the provisioning lines and the push, because that is
                 // where it happens: the `exports` declaration rides the config
@@ -977,6 +1045,14 @@ pub(crate) fn derive_plan<'a>(
                         "deploy"
                     },
                     binds_to: declared.binds_to.iter().map(String::as_str).collect(),
+                    foreign_services: declared
+                        .foreign_services
+                        .iter()
+                        .map(|f| PlanForeignService {
+                            binding: &f.binding,
+                            worker: &f.worker,
+                        })
+                        .collect(),
                 }
             })
             .collect(),
@@ -1078,6 +1154,99 @@ pub(crate) mod tests {
             false,
             "default",
         )
+    }
+
+    // ---- interop I5 (#1972): Service Bindings to foreign Workers ----
+
+    #[test]
+    fn a_foreign_service_is_a_plan_line_with_no_action() {
+        let resources = project(vec![(
+            "shop-billing",
+            Resources::default().foreign(&[("SERVICE_BILLING", "legacy-billing")]),
+        )]);
+        let order = names(&["shop-billing"]);
+        let plan = plan_of(&order, &resources, &DeployLock::default());
+        assert_eq!(
+            plan_report(&plan, DeployFormat::Short),
+            // I2 (#1971): a binding to a foreign Worker is no edge, so it
+            // carries no edge key: the foreign Worker is not Bynk's and
+            // never receives one.
+            "service SERVICE_BILLING legacy-billing (foreign Worker; not provisioned)\ndeploy shop-billing\n"
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&plan_report(&plan, DeployFormat::Json)).unwrap();
+        assert_eq!(
+            json["contexts"][0]["foreign_services"],
+            serde_json::json!([{ "binding": "SERVICE_BILLING", "worker": "legacy-billing" }])
+        );
+        assert_eq!(json["contexts"][0]["binds_to"], serde_json::json!([]));
+    }
+
+    /// Track §11 Q8: warn, never refuse. Each Worker is asked once however
+    /// many contexts bind it; a present one says nothing, a missing one says
+    /// Cloudflare will reject the upload, and an unreadable answer is a
+    /// warning of its own rather than a guess either way.
+    #[test]
+    fn foreign_worker_warnings_ask_once_and_never_refuse() {
+        let resources = project(vec![
+            (
+                "a",
+                Resources::default().foreign(&[("SERVICE_BILLING", "legacy-billing")]),
+            ),
+            (
+                "b",
+                Resources::default().foreign(&[
+                    ("SERVICE_BILLING", "legacy-billing"),
+                    ("SERVICE_LEDGER", "ledger"),
+                    ("SERVICE_TAX", "tax"),
+                ]),
+            ),
+        ]);
+        let order = names(&["a", "b"]);
+        let mut asked = Vec::new();
+        let warnings = foreign_worker_warnings(&order, &resources, |name| {
+            asked.push(name.to_string());
+            match name {
+                "legacy-billing" => WorkerPresence::Missing,
+                "ledger" => WorkerPresence::Present,
+                _ => WorkerPresence::Unknown("Authentication error [code: 10000]".into()),
+            }
+        });
+        assert_eq!(asked, ["ledger", "legacy-billing", "tax"]);
+        assert_eq!(warnings.len(), 2);
+        assert!(
+            warnings[0].contains("`a`, `b` binds to Worker `legacy-billing`")
+                && warnings[0].contains("rejects a Service Binding to a missing Worker at upload"),
+            "{}",
+            warnings[0]
+        );
+        assert!(
+            warnings[1].contains("could not check that Worker `tax`")
+                && warnings[1].contains("[code: 10000]"),
+            "{}",
+            warnings[1]
+        );
+    }
+
+    /// Only Cloudflare's "Worker not found" codes read as missing.
+    #[test]
+    fn classify_worker_listing_reads_only_not_found_as_missing() {
+        assert_eq!(classify_worker_listing(true, ""), WorkerPresence::Present);
+        assert_eq!(
+            classify_worker_listing(
+                false,
+                "A request to the Cloudflare API (/accounts/x/workers/scripts/legacy-billing/deployments) failed.\n  This Worker does not exist on your account. [code: 10007]"
+            ),
+            WorkerPresence::Missing
+        );
+        assert_eq!(
+            classify_worker_listing(false, "… [code: 10090]"),
+            WorkerPresence::Missing
+        );
+        assert!(matches!(
+            classify_worker_listing(false, "fetch failed"),
+            WorkerPresence::Unknown(_)
+        ));
     }
 
     // ---- v0.177 (#643): the deploy-time contract-skew gate ----

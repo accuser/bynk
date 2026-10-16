@@ -371,8 +371,29 @@ pub struct DerivedInstance {
     pub base_cap: String,
     /// The instance's Worker binding name (`KV_SESSIONS`).
     pub binding: String,
+    /// Its creation options, each with its literal value, as written
+    /// (`[("worker", "legacy-billing")]`, interop I5 #1972).
+    pub options: Vec<(String, String)>,
     /// The `capability … = …` declaration.
     pub span: bynk_syntax::span::Span,
+}
+
+impl DerivedInstance {
+    /// The value of option `name`, if the instance carries it.
+    pub fn option(&self, name: &str) -> Option<&str> {
+        self.options
+            .iter()
+            .find(|(o, _)| o == name)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// The Worker a `Service` instance reaches (interop I5, #1972), or `None`
+    /// for any other kind.
+    pub fn worker(&self) -> Option<&str> {
+        (self.base_unit == crate::firstparty::CLOUDFLARE_UNIT && self.base_cap == "Service")
+            .then(|| self.option(crate::firstparty::SERVICE_WORKER_OPTION))
+            .flatten()
+    }
 }
 
 /// #291: record each unit's flattened capabilities (`consumes U { Cap }`, from
@@ -1360,6 +1381,30 @@ pub fn resolve_given_cap_ref(
         match capability_info_map.get(cap_ref.key()) {
             Some(info) => {
                 record_capability_clause_ref(&cap_ref.name, cross_context, refs);
+                // Interop I5 (#1972): a kind every use of which needs an
+                // option (a `Service` names its Worker) is reached only
+                // through a named instance. Still resolved, so the handler's
+                // calls are not refused a second time as undeclared.
+                if let Some(unit) = cross_context.flattened_caps.get(cap_ref.key())
+                    && let Some(kind) = crate::firstparty::instantiable(unit, cap_ref.key())
+                    && !kind.bare
+                {
+                    let required = kind.required.first().copied().unwrap_or("…");
+                    errors.push(
+                        CompileError::new(
+                            "bynk.capability.instance_only",
+                            cap_ref.span,
+                            format!(
+                                "`{unit}.{}` is used only through a named instance",
+                                cap_ref.key()
+                            ),
+                        )
+                        .with_note(format!(
+                            "declare one and use it instead: `capability Billing = {} @{required}(\"legacy-billing\")`",
+                            cap_ref.key()
+                        )),
+                    );
+                }
                 return Some(info.clone());
             }
             None => {

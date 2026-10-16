@@ -1,8 +1,0 @@
-suite demo {
-  -- #1979: an http address's outcome is untyped, so `==` has nothing to type
-  -- the `Ok` with; the case's own return type must not stand in for it.
-  case "x" {
-    let r <- api.GET("/")
-    expect r == Ok("hi")
-  }
-}

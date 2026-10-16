@@ -1,0 +1,2 @@
+bynk.context.duplicate_binding
+the Worker for `demo` would declare two bindings named `SERVICE_BILLING`

@@ -206,6 +206,7 @@ Consuming it **locks the deployment unit to Cloudflare** (it cannot then target
 | Capability | Operations |
 |---|---|
 | **`Kv`** | `get(key: String) -> Effect[Option[String]]` · `put(key: String, value: String) -> Effect[()]` · `putTtl(key: String, value: String, ttlSeconds: Int) -> Effect[()]` · `delete(key: String) -> Effect[()]` · `list(prefix: Option[String]) -> Effect[List[String]]`. |
+| **`Service`** *(experimental)* | `send(req: Request) -> Effect[Result[Response, FetchError]]`. Used only through a named instance; see below. |
 
 `Kv` is backed by a Worker KV namespace bound as `env.KV`; the
 `[[kv_namespaces]]` stanza is derived for you.
@@ -217,6 +218,27 @@ For more than one namespace, declare each as a derived capability:
 operations and its own namespace, bound as `env.KV_SESSIONS`. A context may use
 the bare `Kv` alongside its instances, and the bare `KV` stanza is emitted only
 when it does. See [Derived capabilities](/book/reference/capabilities/#derived-capabilities-capability-x--k).
+
+### Calling a Worker outside the project: `Service`
+
+`Service` calls a Worker that is not part of the Bynk project over a Service
+Binding: Cloudflare's private channel, not the public internet that `Fetch`
+uses. Each Worker is a named instance that names it, and a bare
+`given Service` is refused (`bynk.capability.instance_only`):
+
+```bynk,fragment
+consumes bynk
+consumes bynk.cloudflare { Service }
+
+capability Billing = Service @worker("legacy-billing")
+```
+
+`Billing` binds as `env.SERVICE_BILLING`, a `[[services]]` entry with
+`service = "legacy-billing"`. `send` has `Fetch.send`'s shape: the same
+`Request`, `Response` and `FetchError`, and the same header rules. The call is
+untyped; a typed client is ordinary Bynk over it. `Service` is experimental, so
+list `"bynk.cloudflare.Service"` under `[unstable] allow`. See
+[Call a Worker outside the project](/book/guides/effects-and-capabilities/call-a-foreign-worker/).
 
 > **Note** — *producing* queue messages (`send`/`sendBatch`) is not yet a
 > first-party capability. *Consuming* a queue is a separate entry-point feature:
@@ -263,8 +285,8 @@ operation, is **stable** or **experimental**.
 - An **experimental** item carries no promise. To use one, list it under
   [`[unstable] allow`](/docs/manifest/#unstable) in `bynk.toml`.
 
-No shipped item is experimental today. New platform capabilities may arrive
-experimental first.
+The one experimental item today is `bynk.cloudflare`'s `Service`. New
+platform capabilities may arrive experimental first.
 
 ### Extensible enums
 
