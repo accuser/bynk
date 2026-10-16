@@ -390,11 +390,16 @@ mod tests {
         );
     }
 
+    /// The shipped policy blocks only the experimental items: today
+    /// `bynk.cloudflare`'s `Service` (interop I5, #1972), and its operations
+    /// with it.
     #[test]
-    fn the_shipped_policy_blocks_nothing() {
+    fn the_shipped_policy_blocks_only_the_experimental_items() {
         let p = StabilityPolicy::for_project(None, &HashMap::new());
-        assert!(p.experimental.is_empty());
+        assert_eq!(p.experimental, ["bynk.cloudflare.Service"]);
         assert!(!p.blocks("bynk.cloudflare.Kv.list"));
+        assert!(p.blocks("bynk.cloudflare.Service"));
+        assert!(p.blocks("bynk.cloudflare.Service.send"));
         assert!(p.manifest_diagnostics().is_empty());
     }
 }

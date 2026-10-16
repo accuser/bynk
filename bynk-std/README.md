@@ -16,7 +16,8 @@ It holds:
   Cloudflare, Node and the browser;
 - the Bynk-written commons: `bynk.list`, `bynk.map`, `bynk.string`,
   `bynk.locale` and `bynk.locale.types`;
-- the `bynk.cloudflare` platform adapter (`Kv`) and its binding;
+- the `bynk.cloudflare` platform adapter (`Kv`, and the experimental `Service`)
+  and its binding;
 - `UNITS`, the registry of first-party units: each one's name, kind, source,
   binding, permanent id block, platform nativity and `env`-taking providers.
   `bynk-check` injects from it, so adding a unit is an entry plus its files;
@@ -66,7 +67,7 @@ directly.
 
 ```toml
 [dependencies]
-bynk-std = "0.335"
+bynk-std = "0.336"
 ```
 
 ```rust

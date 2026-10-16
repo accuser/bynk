@@ -1,0 +1,30 @@
+context app.web
+
+type Item = { sku: String }
+
+service api from http {
+  on GET("/name") () -> Effect[HttpResult[String]] by Visitor {
+    Ok("bynk")
+  }
+  on GET("/item") () -> Effect[HttpResult[Item]] by Visitor {
+    Ok(Item { sku: "widget" })
+  }
+}
+
+service calc {
+  on call(n: Int) -> Effect[Int] {
+    n * 2
+  }
+}
+
+service sweeper from cron {
+  on schedule("0 0 * * *") () -> Effect[Result[(), String]] {
+    Err("nothing to sweep")
+  }
+}
+
+service intake from queue("orders") {
+  on message(item: Item) -> Effect[QueueResult] {
+    if item.sku == "" { Retry("empty sku") } else { Ack }
+  }
+}

@@ -1,0 +1,14 @@
+context shop.billing
+
+consumes bynk
+consumes bynk.cloudflare { Service }
+
+-- #1972 review: `shop-billing` is this context's own Worker. A Bynk context
+-- is reached with `consumes`, never as a foreign Worker.
+capability Billing = Service @worker("shop-billing")
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(0)
+  }
+}

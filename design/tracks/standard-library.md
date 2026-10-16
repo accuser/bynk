@@ -336,7 +336,7 @@ the resource-instance model (PR-2).
 |---|---|---|---|---|
 | Assets | S (language: `asset` declarations, #1883) | n/a | | |
 | Durable Objects | S (language: `agent`) | n/a | | DO alarms are language, §6.4 |
-| Service bindings | S (language: `consumes context`) | n/a | | Binding to a *non-Bynk* Worker is A |
+| Service bindings | S (language: `consumes context`) | n/a | | Binding to a *non-Bynk* Worker: P, experimental `bynk.cloudflare` `Service` (interop track D4, I5 #1972) |
 | Secrets | S (`bynk.Secrets`) | L2 | | |
 | KV | P (`get`/`put`/`putTtl`/`delete`/`list`; String values; **one fixed `KV` binding**) | L3 | **yes** | Missing: `Bytes` values, metadata, `cacheTtl`, list cursors/limits, multiple namespaces |
 | Environment variables | A | L2 | | §6.1 Config |

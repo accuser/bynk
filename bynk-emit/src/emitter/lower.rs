@@ -1098,6 +1098,7 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
                 cx.commons().expr_ty(e.id).as_deref(),
                 Some(Ty::HttpResult(_))
             ) {
+                cx.note_http_result();
                 format!("HttpResult.Ok({s})")
             } else {
                 format!("Ok({s})")
@@ -2020,6 +2021,7 @@ fn lower_method_call(
             Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
         )
     {
+        cx.note_http_result();
         let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
         return pre.finish(format!(
             "HttpResult.{}({})",
@@ -2811,11 +2813,11 @@ fn lower_method_call(
     }
     // Instance call: UFCS lowering with the receiver as first arg. The
     // namespace comes from the receiver's checked type. Every method call the
-    // checker accepts has one: a call on an untyped value (part of a
-    // test-service call's outcome) is `bynk.test.untyped_outcome` (#1931),
-    // where it used to reach this placeholder and fail only at `tsc`. The
-    // placeholder stays reachable for a program that failed checking, which
-    // is still lowered and whose output is discarded, so it is not a panic.
+    // checker accepts has one: a test-service call's outcome is typed by its
+    // handler (#1934), where it once reached this placeholder and failed only
+    // at `tsc` (#1931). The placeholder stays reachable for a program that
+    // failed checking, which is still lowered and whose output is discarded,
+    // so it is not a panic.
     let ns = cx
         .receiver_namespace(receiver)
         .unwrap_or_else(|| "/* unknown */".to_string());
@@ -4886,6 +4888,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
         cx.commons().callee(e.id),
         Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
     ) {
+        cx.note_http_result();
         return format!("HttpResult.{}", id.name);
     }
     // v0.44: a nullary QueueResult variant (`Ack`) constructs `QueueResult.Ack`.
@@ -4939,6 +4942,7 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
         cx.commons().callee(e.id),
         Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
     ) {
+        cx.note_http_result();
         return pre.finish(format!(
             "HttpResult.{}({})",
             name.name,
@@ -5320,7 +5324,9 @@ fn equality_lowering(ty: TyId, tys: &Types) -> EqualityLowering {
         | Ty::List(_)
         | Ty::Map(..)
         | Ty::HttpResult(_)
+        | Ty::HttpOutcome(_)
         | Ty::QueueResult
+        | Ty::BoundaryRejection
         | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
@@ -5422,6 +5428,7 @@ fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCt
             Some(Callee::Intrinsic { ns, .. }) if *ns == HTTP_RESULT
         )
     {
+        cx.note_http_result();
         return pre.finish(format!("HttpResult.{}", field.name));
     }
     // Agent-handler `self.<key>` rewrite.

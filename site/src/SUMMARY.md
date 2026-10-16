@@ -43,6 +43,7 @@
     - [Share a capability across contexts](guides/effects-and-capabilities/share-across-contexts.md)
     - [Wrap a library as an adapter](guides/effects-and-capabilities/wrap-a-library.md)
     - [Use more than one KV namespace](guides/effects-and-capabilities/use-several-kv-namespaces.md)
+    - [Call a Worker outside the project](guides/effects-and-capabilities/call-a-foreign-worker.md)
   - [Agents & state](guides/agents-and-state/index.md)
     - [The agent model](guides/agents-and-state/the-agent-model.md)
     - [Build a stateful agent](guides/agents-and-state/stateful-agent.md)

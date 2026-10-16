@@ -671,6 +671,15 @@ native-free programs emit the parameterless signature unchanged. Consuming a
 platform adapter locks the deployment unit to its platform
 ([§5.8](/book/spec/static-semantics/#58-boundaries--cross-context)).
 
+*(interop I5, #1972)* A derived `Service` instance (`capability Billing =
+Service @worker("legacy-billing")`) emits a `[[services]]` entry with
+`binding = "SERVICE_BILLING"` and `service = "legacy-billing"`, the Worker named
+as declared, and an `Env` member of the Service Binding type. Its provider,
+`WorkersService`, reads `env.SERVICE_BILLING` per call, sends through the
+binding's `fetch` with `Fetch.send`'s header and response rules, and throws a
+clear error when the binding is absent. Neither instance kind adds the bare
+`KV` binding.
+
 ### §7.3.7 Collections
 
 *(v0.20b)* The collection types lower to immutable TypeScript shapes:
