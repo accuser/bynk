@@ -128,11 +128,16 @@ bynk dev [PATH] [--context NAME]... [--base-port N] [--inspect] [--inspect-port 
    first-run installs do not race in npm's cache.
 6. Watch the `.bynk` sources; a save rebuilds in place and the affected workers
    hot-reload. Any worker exiting stops the rest — a survivor's bindings would
-   point at a context that is gone.
+   point at a context that is gone. So does a SIGINT or SIGTERM sent to `bynk
+   dev` itself (on Linux and macOS): it stops every `wrangler` and the `workerd`
+   processes they started before it exits, so a CI step or test harness that
+   stops it with `kill` leaves no server holding a port. A second Ctrl-C while
+   they are stopping exits at once.
 
 **Exit code** — On a successful hand-off, `bynk dev` exits with the exit code of
-the first `wrangler` to stop (a clean Ctrl-C stop is a `0`). A pre-flight or
-build failure exits non-zero before serving.
+the first `wrangler` to stop (a clean Ctrl-C stop is a `0`). Stopped by a
+SIGTERM, it exits `143`. A pre-flight or build failure exits non-zero before
+serving.
 
 **Notes**
 
