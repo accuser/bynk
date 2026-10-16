@@ -1,4 +1,5 @@
 bynk.send.in_agent_handler the `~>` send cannot be used in an agent handler
 bynk.send.in_agent_handler the `~>` send cannot be used in an agent handler
 bynk.send.in_agent_handler the `~>` send cannot be used in an agent handler
+bynk.send.in_agent_handler the `~>` send cannot be used in an agent handler
 # exact

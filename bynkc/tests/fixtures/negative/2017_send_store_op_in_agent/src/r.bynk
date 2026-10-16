@@ -7,5 +7,6 @@ agent Counter {
 
 	on call bump() -> Effect[()] {
 		~> count.update((n) => n + 1)
+		let _ <- [1, 2].forEach((i) => { ~> count.update((n) => n + 1) })
 	}
 }
