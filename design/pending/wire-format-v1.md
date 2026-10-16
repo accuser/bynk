@@ -1,7 +1,7 @@
 ---
 level: minor
 probes: ts_writes
-changelog: The cross-context call format is published as [wire format version 1](/book/reference/wire-format/), generated from the compiler and versioned on its own, and callers now send `X-Bynk-Wire: 1`. A `/_bynk/call/` request that is not a `POST` gets `405`, malformed JSON gets `400 MalformedJson` instead of a `500`, and an unsupported `X-Bynk-Wire` gets `400 UnsupportedWireVersion`. A record field's inline refinement (`qty: Int where Positive`) is now checked when the record is decoded, at a call boundary or in an HTTP body, and is part of the contract hash; a `Duration` field must be a whole number of milliseconds. **Breaking for deployed projects:** contracts with an inline field refinement change hash, so redeploy the whole project once
+changelog: The cross-context call format is published as [wire format version 1](/book/reference/wire-format/), generated from the compiler and versioned on its own, and callers now send `X-Bynk-Wire: 1`. A `/_bynk/call/` request that is not a `POST` gets `405`, malformed JSON gets `400 MalformedJson` instead of a `500`, and an unsupported `X-Bynk-Wire` gets `400 UnsupportedWireVersion`. A record field's inline refinement (`qty: Int where Positive`) is now checked when the record is decoded, at a call boundary or in an HTTP body, and is part of the contract hash; a `Duration` field must be a whole number of milliseconds. **Breaking for deployed projects:** contracts with an inline field refinement change hash, so redeploy the whole project once. Tightening an inline field refinement later also makes stored records that break it fail to load
 ---
 
 ## ADR: wire-format-is-a-published-surface
@@ -80,7 +80,10 @@ changes for Bynk-to-Bynk calls too: a wrong method or malformed body is now a
 `4xx` rather than a `500`, and a value breaking an inline field refinement is
 refused rather than admitted. Every contract with an inline field refinement
 changes hash, so a deployed project redeploys once (ADR 0200's flag day, for
-this change only). **Not done here:** a body-size limit (`413`), which D1
+this change only). The record codec also rehydrates stored values, so a later
+deploy that tightens an inline field refinement makes stored records that
+break it fail to load, as tightening a named refined type already does.
+**Not done here:** a body-size limit (`413`), which D1
 places between the method and authentication. Adding it later is additive
 within version 1. The `/_bynk/event/` path is not part of the call wire format
 and is unchanged.

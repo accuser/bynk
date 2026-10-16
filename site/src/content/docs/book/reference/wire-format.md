@@ -188,6 +188,17 @@ service quote {
   }
 }
 
+type Tagged[T] = {
+  n: Int where Positive,
+  v: T,
+}
+
+service who {
+  on call(t: Tagged[String]) -> Effect[Result[String, String]] by c: Caller {
+    Ok(c.identity)
+  }
+}
+
 service ping {
   on call() -> Effect[Result[(), String]] {
     Ok(())
@@ -207,6 +218,7 @@ service ping {
 | `Line` | `{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"%%","tags":[],"stock":[],"rush":true}` | `StructuralMismatch` at `$.blob` | `Bytes` is padded base64. |
 | `Line` | `{"sku":"A-1","qty":2,"wait":1500,"at":1767225600000,"blob":"","tags":[],"stock":{"lon":3},"rush":true}` | `StructuralMismatch` at `$.stock` | A `Map` is an array of pairs, never an object. |
 | `Qty` | `-1` | `RefinementViolation` at `$` | A named refined type is its base value, checked against its predicates. |
+| `Tagged[String]` | `{"n":0,"v":"x"}` | `RefinementViolation` at `$.n` | A generic record's inline refinements are checked in every instantiation. |
 | `Shape` | `{"kind":"Circle","radius":0.5}` | accepted; encodes back the same | A variant's payload fields sit beside `kind`. |
 | `Shape` | `{"kind":"Circle","radius":1e999}` | `StructuralMismatch` at `$.radius` | A `Float` is finite; `1e999` parses as infinity. |
 | `Shape` | `{"kind":"Square"}` | `StructuralMismatch` at `$` | An unknown variant is refused. |
@@ -266,6 +278,12 @@ hash:
 
 ```text
 quote(line: Line{at: Instant, blob: Bytes, delay: Option[Duration], note: Option[String], qty: Int where Positive, rush: Bool, sku: String, stock: Map[String, Int], tags: List[String], wait: Duration}, size: QtyInt where NonNegative) -> Result[Shape|Circle(Float)|Dot, String]
+```
+
+`who`, hash `7741a7d724fd9ed7`:
+
+```text
+who(t: Tagged{n: Int where Positive, v: String}[String]) -> Result[String, String]
 ```
 
 `ping`, hash `619a25c88aaf9af8`:

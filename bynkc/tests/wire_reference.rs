@@ -91,7 +91,11 @@ fn the_pages_example_hashes_are_the_emitted_constants() {
     compile_example(&tmp);
     let index = fs::read_to_string(tmp.join("run/workers/wire-sample/index.ts")).unwrap();
     let contracts = example_contracts();
-    assert_eq!(contracts.len(), 2, "the example has two `on call` services");
+    assert_eq!(
+        contracts.len(),
+        3,
+        "the example has three `on call` services"
+    );
     for (name, form, hash) in &contracts {
         let needle =
             format!("kind: \"ContractMismatch\", service: \"{name}\", expected: \"{hash}\"");
@@ -372,6 +376,19 @@ for (const bad of ["{", "", "{\"line\": }"]) {
   assert(body.kind === "MalformedJson" && body.details === "Invalid request body", "MalformedJson body, got " + JSON.stringify(body));
 }
 
+// 7. Missing caller, for a handler that binds `by c: Caller`.
+const WHO = "__WHO_HASH__";
+for (const caller of [null, ""]) {
+  const headers: Record<string, string> = { "X-Bynk-Contract": WHO };
+  if (caller !== null) headers["X-Bynk-Caller"] = caller;
+  res = await expectStatus(call({ service: "who", headers, body: JSON.stringify({ n: 1, v: "x" }) }), 401, "caller " + JSON.stringify(caller));
+  body = await res.json();
+  assert(body.kind === "Unauthorized" && body.details === "missing caller identity", "the 401 body, got " + JSON.stringify(body));
+}
+res = await expectStatus(call({ service: "who", headers: { "X-Bynk-Contract": WHO, "X-Bynk-Caller": "shop.orders" }, body: JSON.stringify({ n: 1, v: "x" }) }), 200, "with a caller");
+body = await res.json();
+assert(body.kind === "Ok" && body.value === "shop.orders", "the handler reads the caller, got " + JSON.stringify(body));
+
 // 8. Arguments: an inline field refinement, through the dispatch's path.
 res = await expectStatus(call({ body: JSON.stringify({ line: { ...LINE, qty: 0 }, size: 3 }) }), 400, "qty 0");
 body = await res.json();
@@ -412,6 +429,11 @@ fn the_pages_examples_and_checks_hold_on_the_generated_code() {
         .find(|(name, _, _)| name == "quote")
         .expect("the example's `quote` service")
         .2;
+    let who = example_contracts()
+        .into_iter()
+        .find(|(name, _, _)| name == "who")
+        .expect("the example's `who` service")
+        .2;
     let line = match &EXAMPLES[0].outcome {
         Outcome::Accepted { .. } => EXAMPLES[0].json,
         Outcome::Rejected { .. } => panic!("the first example is a whole, accepted `Line`"),
@@ -419,6 +441,7 @@ fn the_pages_examples_and_checks_hold_on_the_generated_code() {
     let driver = DRIVER_TS
         .replace("__EXAMPLES__", &examples_ts())
         .replace("__QUOTE_HASH__", &quote)
+        .replace("__WHO_HASH__", &who)
         .replace("__LINE__", &ts_str(line));
     fs::write(run_dir.join("driver.ts"), driver).unwrap();
     fs::write(run_dir.join("tsconfig.json"), TSCONFIG_JSON).unwrap();

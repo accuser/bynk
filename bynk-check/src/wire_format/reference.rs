@@ -53,6 +53,17 @@ service quote {
   }
 }
 
+type Tagged[T] = {
+  n: Int where Positive,
+  v: T,
+}
+
+service who {
+  on call(t: Tagged[String]) -> Effect[Result[String, String]] by c: Caller {
+    Ok(c.identity)
+  }
+}
+
 service ping {
   on call() -> Effect[Result[(), String]] {
     Ok(())
@@ -181,6 +192,16 @@ pub const EXAMPLES: &[Example] = &[
             path: "$",
         },
         note: "A named refined type is its base value, checked against its predicates.",
+    },
+    Example {
+        ty: "Tagged[String]",
+        codec: "Tagged_String",
+        json: r#"{"n":0,"v":"x"}"#,
+        outcome: Outcome::Rejected {
+            kind: "RefinementViolation",
+            path: "$.n",
+        },
+        note: "A generic record's inline refinements are checked in every instantiation.",
     },
     Example {
         ty: "Shape",
