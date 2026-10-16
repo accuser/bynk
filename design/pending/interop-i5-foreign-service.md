@@ -1,6 +1,6 @@
 ---
 level: patch
-changelog: Experimental `bynk.cloudflare` `Service` calls a Worker outside the project over a Service Binding, `capability Billing = Service @worker("legacy-billing")` (bound as `SERVICE_BILLING`); `bynk deploy` binds it without provisioning and warns when the Worker is missing from the account, and `bynk dev` binds a local stand-in unless `--local-worker legacy-billing` names it
+changelog: Experimental `bynk.cloudflare` `Service` calls a Worker outside the project over a Service Binding, `capability Billing = Service @worker("legacy-billing")` (bound as `SERVICE_BILLING`); `bynk deploy` binds it without provisioning and warns when the Worker is missing from the account, and `bynk dev` binds a local stand-in unless `--local-worker legacy-billing` names it. `bynk deploy --format json` gains a per-context `foreign_services` list (additive)
 probes: emit_diagnostics, ts_writes, diagnostic_coverage
 ---
 
