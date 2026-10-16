@@ -200,6 +200,7 @@ dependencies = [
  "bynk-testkit",
  "clap",
  "getrandom",
+ "libc",
  "serde",
  "serde_json",
  "toml",

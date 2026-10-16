@@ -40,6 +40,12 @@ getrandom.workspace = true
 # stops the whole `cmd.exe` → `npx` → wrangler → `workerd` tree. No new crate
 # in the shipped binary: clap already builds `windows-sys` on Windows (through
 # anstream), so this only turns on the job-object features.
+# #1955: `bynk dev` records SIGINT/SIGTERM so it can stop its wranglers before
+# exiting. No new crate in the shipped binary: `which` already builds `libc` on
+# Unix.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

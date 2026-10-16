@@ -1,0 +1,11 @@
+adapter relay
+
+binding "./relay.binding.ts"
+consumes greet { Greeter }
+exports capability { Relay }
+
+capability Relay {
+	fn hello(name: String) -> Effect[String]
+}
+
+provides Relay = GreetRelay given Greeter
