@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A Worker binds only the contexts it calls, so an event subscriber that `consumes` its publisher for the event type no longer forms a Service Binding cycle that `bynk deploy` refuses; a subscriber that also calls its publisher is still refused, now with the cause named
----
+# 0475 — A consumed context gets a Service Binding only when it is called
 
-## ADR: service-binding-only-when-called
-title: A consumed context gets a Service Binding only when it is called
-summary: Bind what a Worker calls, not what it consumes; a subscriber that calls its publisher stays a refused cycle, not a two-phase deploy
+- **Status:** Accepted (v0.333.4)
 
 **Context.** [[0193]] D2 held that `bynk deploy` never meets a Service Binding
 cycle: a cycle needs a `consumes` cycle, which `bynk.context.consumes_cycle`

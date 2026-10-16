@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0475](0475-service-binding-only-when-called.md) | **A consumed context gets a Service Binding only when it is called** (v0.333.4) — Bind what a Worker calls, not what it consumes; a subscriber that calls its publisher stays a refused cycle, not a two-phase deploy | Accepted (v0.333.4) |
 | [0474](0474-agent-reaches-consumed-services-through-its-own-env.md) | **An agent reaches consumed services and other agents through its Durable Object's own env** (v0.333.1) — Agent handlers lower for the build target and rebuild `deps.env` in the DO, as `given` deps are | Accepted (v0.333.1) |
 | [0473](0473-consumed-field-reads.md) | **Field reads on consumed contexts' values follow what the consumer may inspect** (v0.333) — Opaque exports reject field reads on values; unexported types are read through the consumer's projection | Accepted (v0.333) |
 | [0472](0472-firstparty-file-ids.md) | **First-party units carry reserved `FileId`s and their labels render against their own source** (v0.332.3) — Injected `bynk.*` units stamp `FIRSTPARTY_FILE_ID_BASE + id_block` on their spans; a label into one is `LabelFile::FirstParty` and renders against the unit's source | Accepted (v0.332.3) |
