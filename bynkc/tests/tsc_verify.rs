@@ -176,6 +176,32 @@ fn write_outputs(out: &bynkc::ProjectOutput, root: &Path) -> std::io::Result<()>
     Ok(())
 }
 
+/// The heap ceiling for the single-pass `tsc`, in MiB.
+///
+/// The single pass type-checks every staged fixture (507 at the time of
+/// writing) in one process, and its working set grows with the corpus. On
+/// 15 October 2026 it crossed Node's default old-space limit (~2 GiB) on the
+/// `macos-latest` runner: `FATAL ERROR: Ineffective mark-compacts near heap
+/// limit`, reported as an unattributable tsc failure, failing every push to
+/// `main` from then on. (Linux and Windows still fitted, and PRs don't run
+/// macOS, so it first showed up post-merge.) 4 GiB leaves headroom on the
+/// 7 GB macOS runner alongside nextest's other test processes.
+const TSC_MAX_OLD_SPACE_MIB: u32 = 4096;
+
+/// `NODE_OPTIONS` for the `tsc` child: the caller's own options, plus
+/// [`TSC_MAX_OLD_SPACE_MIB`] unless the caller already set a heap limit (an
+/// explicit local choice wins).
+fn tsc_node_options() -> String {
+    let existing = std::env::var("NODE_OPTIONS").unwrap_or_default();
+    if existing.contains("--max-old-space-size") {
+        existing
+    } else {
+        format!("{existing} --max-old-space-size={TSC_MAX_OLD_SPACE_MIB}")
+            .trim()
+            .to_string()
+    }
+}
+
 fn run_tsc_in(runner: &TscRunner, project_dir: &Path) -> (bool, String) {
     run_tsc_with_config(runner, &project_dir.join("tsconfig.json"))
 }
@@ -186,6 +212,7 @@ fn run_tsc_with_config(runner: &TscRunner, tsconfig: &Path) -> (bool, String) {
         cmd.arg(a);
     }
     cmd.arg("--strict").arg("--noEmit").arg("-p").arg(tsconfig);
+    cmd.env("NODE_OPTIONS", tsc_node_options());
     let output = match cmd.output() {
         Ok(o) => o,
         Err(e) => return (false, format!("could not launch tsc: {e}")),
