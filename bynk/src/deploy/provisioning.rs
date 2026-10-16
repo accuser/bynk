@@ -167,14 +167,22 @@ pub(crate) fn deploy_one(
                 "could not read `{worker}`'s generated configuration: {e}"
             ))
         })?;
-        let synthesised =
-            synthesise_environment_block(&config_text, environment, &kv_ids).map_err(
-                |e| {
-                    DeployFailure::driver(format!(
-                        "could not synthesise the `[env.{environment}]` configuration for `{worker}`: {e}"
-                    ))
-                },
-            )?;
+        let foreign: BTreeSet<String> = declared
+            .foreign_services
+            .iter()
+            .map(|f| f.binding.clone())
+            .collect();
+        let synthesised = synthesise_environment_block(
+            &config_text,
+            environment,
+            &kv_ids,
+            &foreign,
+        )
+        .map_err(|e| {
+            DeployFailure::driver(format!(
+                "could not synthesise the `[env.{environment}]` configuration for `{worker}`: {e}"
+            ))
+        })?;
         std::fs::write(&config, synthesised).map_err(|e| {
             DeployFailure::driver(format!(
                 "could not write `{worker}`'s `[env.{environment}]` configuration: {e}"
@@ -257,6 +265,54 @@ pub(crate) fn whoami(provenance: &Provenance) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+/// Interop I5 (#1972): what the account says about a foreign Worker a Service
+/// Binding names.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum WorkerPresence {
+    Present,
+    /// Cloudflare's "Worker not found" (code 10007, or 10090 for a legacy
+    /// environment), as wrangler 4.149.0 reads it (`isWorkerNotFoundError`).
+    Missing,
+    /// The listing failed for another reason (network, permissions): what
+    /// wrangler said.
+    Unknown(String),
+}
+
+/// Interop I5 (#1972): ask the account whether Worker `name` exists, with
+/// `wrangler deployments list --name <name> --json` (a read of
+/// `/accounts/<id>/workers/scripts/<name>/deployments`). Run from the project
+/// root, like the other account reads, so no generated config is loaded.
+pub(crate) fn worker_presence(
+    provenance: &Provenance,
+    name: &str,
+    project_root: &Path,
+) -> WorkerPresence {
+    let Some(mut command) = workers::wrangler_command(provenance, "deployments") else {
+        return WorkerPresence::Unknown("wrangler not found".into());
+    };
+    match command
+        .args(["list", "--name", name, "--json"])
+        .current_dir(project_root)
+        .output()
+    {
+        Ok(output) => classify_worker_listing(output.status.success(), &wrangler_said(&output)),
+        Err(e) => WorkerPresence::Unknown(e.to_string()),
+    }
+}
+
+/// [`worker_presence`]'s reading of one listing: success is presence, and a
+/// failure names a missing Worker only by Cloudflare's own code, so an auth
+/// or network failure is never mistaken for one.
+pub(crate) fn classify_worker_listing(success: bool, said: &str) -> WorkerPresence {
+    if success {
+        WorkerPresence::Present
+    } else if said.contains("[code: 10007]") || said.contains("[code: 10090]") {
+        WorkerPresence::Missing
+    } else {
+        WorkerPresence::Unknown(said.to_string())
+    }
 }
 
 /// How a message names one of `worker`'s KV namespaces: `KV namespace for

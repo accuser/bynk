@@ -160,6 +160,10 @@
           {
             "label": "Use more than one KV namespace",
             "link": "/book/guides/effects-and-capabilities/use-several-kv-namespaces/"
+          },
+          {
+            "label": "Call a Worker outside the project",
+            "link": "/book/guides/effects-and-capabilities/call-a-foreign-worker/"
           }
         ]
       },

@@ -2,9 +2,12 @@
 //!
 //! A Worker's bindings come from derivations that know nothing of each other:
 //! the KV namespace's fixed [`crate::firstparty::KV_BINDING_NAME`], a consumed
-//! context's name (`a.b` → `A_B`) and an agent's class name (`OrderEntity` →
-//! `ORDER_ENTITY`). Two of them can meet: an agent `Kv` in a context that
-//! consumes `bynk.cloudflare { Kv }` is `KV` twice. Wrangler takes such a
+//! context's name (`a.b` → `A_B`), an agent's class name (`OrderEntity` →
+//! `ORDER_ENTITY`) and a derived capability's (`Billing` →
+//! `SERVICE_BILLING`). Two of them can meet: an agent `Kv` in a context that
+//! consumes `bynk.cloudflare { Kv }` is `KV` twice, and an agent
+//! `ServiceBilling` and a `capability Billing = Service` are both
+//! `SERVICE_BILLING`. Wrangler takes such a
 //! config without complaint and one binding hides the other, so the clash is
 //! a compile error. The names themselves are never adjusted to avoid it,
 //! because deployed Workers depend on them.
@@ -66,6 +69,11 @@ pub enum BindingSource {
     /// (`capability Sessions = Kv`), one per instance. Never seen by handlers:
     /// they reach it through the instance's `WorkersKv`.
     KvInstance { capability: String },
+    /// Interop I5 (#1972): the `[[services]]` binding of a `Service`
+    /// instance (`capability Billing = Service @worker("legacy-billing")`), a
+    /// Service Binding to a Worker outside the project. Never seen by
+    /// handlers: they reach it through the instance's `WorkersService`.
+    ForeignService { capability: String, worker: String },
     /// A `[[durable_objects.bindings]]` entry for one of the context's agents.
     /// A handler that constructs an agent sees every local agent's binding.
     Agent { class_name: String },
@@ -87,6 +95,9 @@ impl BindingSource {
             Self::KvInstance { capability } => {
                 format!("the KV namespace binding of derived capability `{capability}`")
             }
+            Self::ForeignService { capability, worker } => format!(
+                "the Service Binding of derived capability `{capability}` (to Worker `{worker}`)"
+            ),
             Self::Agent { class_name } => {
                 format!("the Durable Object binding of agent `{class_name}`")
             }
@@ -196,7 +207,8 @@ fn declared_at(
             }),
             BindingSource::Service { context } => consumed(context),
             BindingSource::Kv => consumed(firstparty::CLOUDFLARE_UNIT),
-            BindingSource::KvInstance { capability } => c.items.iter().find_map(|item| {
+            BindingSource::KvInstance { capability }
+            | BindingSource::ForeignService { capability, .. } => c.items.iter().find_map(|item| {
                 let CommonsItem::Capability(d) = item else {
                     return None;
                 };

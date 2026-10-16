@@ -1,0 +1,78 @@
+context shop.billing
+
+-- #1972: a Service Binding to a Worker outside the project, through a named
+-- instance of `bynk.cloudflare`'s `Service`. `consumes bynk` names its
+-- `Request`/`Response`.
+
+consumes bynk
+consumes bynk.cloudflare { Service }
+
+---
+The billing system that predates this project.
+---
+capability Billing = Service @worker("legacy-billing")
+
+capability Ledger = Service @worker("ledger")
+
+service charge {
+	on call(id: String) -> Effect[Int] given Billing {
+		let req = Request {
+			method: Post,
+			url: "https://legacy-billing/charge",
+			contentType: Some("text/plain"),
+			authorization: None,
+			headers: Map.empty(),
+			body: Some(id),
+		}
+		let res <- Billing.send(req)
+		match res {
+			Ok(r) => r.status,
+			Err(_) => 0,
+		}
+	}
+}
+
+service audit {
+	on call() -> Effect[String] given Ledger {
+		let req = Request {
+			method: Get,
+			url: "https://ledger/entries",
+			contentType: None,
+			authorization: None,
+			headers: Map.empty(),
+			body: None,
+		}
+		let res <- Ledger.send(req)
+		match res {
+			Ok(r) => r.body,
+			Err(_) => "unreachable",
+		}
+	}
+}
+
+-- The instance inside an agent's Durable Object, whose deps are rebuilt there.
+agent Account {
+	key id: String
+
+	store charges: Cell[Int]
+
+	on call settle() -> Effect[Int] given Billing {
+		let req = Request {
+			method: Post,
+			url: "https://legacy-billing/settle",
+			contentType: None,
+			authorization: None,
+			headers: Map.empty(),
+			body: None,
+		}
+		let res <- Billing.send(req)
+		match res {
+			Ok(r) => r.status,
+			Err(_) => 0,
+		}
+	}
+}
+
+service settle {
+	on call(id: String) -> Effect[Int] { Account(id).settle() }
+}

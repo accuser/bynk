@@ -266,6 +266,26 @@ Worker `shop` with `capability CartSessions` and Worker `shop-cart` with
 `capability Sessions` would both be `shop-cart-sessions`. `bynk deploy` refuses
 that before planning, `--dry-run` included, and names both namespaces.
 
+### Workers outside the project
+
+A [`Service` instance](/book/guides/effects-and-capabilities/call-a-foreign-worker/)
+(`capability Billing = Service @worker("legacy-billing")`) binds a Worker that
+is not Bynk's. Deploy never creates or changes it, so the plan shows the binding
+with no action:
+
+```
+service SERVICE_BILLING legacy-billing (foreign Worker; not provisioned)
+deploy shop-checkout
+```
+
+After authenticating, and before asking to confirm, `bynk deploy` asks the
+account whether each such Worker exists (`wrangler deployments list --name`)
+and warns, never refuses, when one does not. Cloudflare rejects an upload whose
+Service Binding names a missing Worker, so deploy that Worker first.
+`--dry-run` stays offline and does not ask. The Worker is not ordered against
+the project's own, and under `--env` its name is used as declared, without an
+environment suffix.
+
 ## Multi-context projects
 
 A project with several contexts ships every one of them, in the order their

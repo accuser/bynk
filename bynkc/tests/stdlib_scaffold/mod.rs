@@ -12,7 +12,7 @@
 
 #![allow(dead_code)]
 
-use bynk_check::firstparty::{Platform, UNITS, Unit, UnitKind};
+use bynk_check::firstparty::{Platform, UNITS, Unit, UnitKind, experimental_items};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -83,9 +83,16 @@ pub fn compile(platform: Platform, dir: &Path, js: bool) -> PathBuf {
     let project = dir.join(format!("scaffold-{}", platform.as_str()));
     let _ = fs::remove_dir_all(&project);
     fs::create_dir_all(project.join("src/stdlib")).unwrap();
+    // Every experimental item allowed, so the scaffold consumes the whole
+    // library, the experimental parts included (`bynk.cloudflare.Service`).
+    let allow = experimental_items()
+        .iter()
+        .map(|item| format!("{item:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     fs::write(
         project.join("bynk.toml"),
-        "[project]\nname = \"stdlib-scaffold\"\nversion = \"0.1.0\"\n",
+        format!("[project]\nname = \"stdlib-scaffold\"\nversion = \"0.1.0\"\n\n[unstable]\nallow = [{allow}]\n"),
     )
     .unwrap();
     fs::write(project.join("src/stdlib/scaffold.bynk"), source(platform)).unwrap();

@@ -16,7 +16,7 @@ use super::{
     AdapterBinding, BuildTarget, ErrorSink, ParsedFile, UnitKind, UnitTable,
     native_platforms_of_context, unit_table_uses_emit,
 };
-use crate::emitter::wrangler::{WorkerBinding, worker_bindings};
+use crate::emitter::wrangler::{BindingSource, WorkerBinding, worker_bindings};
 
 /// v0.19 (decision 0025): each context whose in-process closure reaches a
 /// platform-native unit, with those platforms. Drives env threading (bundle)
@@ -111,13 +111,31 @@ pub(super) fn context_bindings(
 ) -> Vec<WorkerBinding> {
     let consumes = service_consumes(consumes_targets, adapter_bindings, own_event_routes);
     let agents: Vec<String> = table.agents.keys().cloned().collect();
-    let mut kv_instances: Vec<(String, String)> = table
+    let mut instances: Vec<(&String, WorkerBinding)> = table
         .derived
         .iter()
-        .map(|(cap, d)| (cap.clone(), d.binding.clone()))
+        .map(|(cap, d)| {
+            let source = match d.worker() {
+                Some(worker) => BindingSource::ForeignService {
+                    capability: cap.clone(),
+                    worker: worker.to_string(),
+                },
+                None => BindingSource::KvInstance {
+                    capability: cap.clone(),
+                },
+            };
+            (
+                cap,
+                WorkerBinding {
+                    name: d.binding.clone(),
+                    source,
+                },
+            )
+        })
         .collect();
-    kv_instances.sort();
-    worker_bindings(&agents, &consumes, needs_kv, &kv_instances, uses_emit)
+    instances.sort_by(|a, b| a.0.cmp(b.0));
+    let instances: Vec<WorkerBinding> = instances.into_iter().map(|(_, b)| b).collect();
+    worker_bindings(&agents, &consumes, needs_kv, &instances, uses_emit)
 }
 
 /// Every context's bindings ([`context_bindings`]), as its `wrangler.toml`

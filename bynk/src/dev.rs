@@ -73,8 +73,176 @@ pub struct DevOptions {
     /// deployed only under a non-default `--env` previously read as
     /// "never provisioned" here, because this always looked at `"default"`).
     pub environment: String,
+    /// `--local-worker NAME`, repeatable (interop I5, #1972): a foreign
+    /// Worker a `Service` instance names that `wrangler dev` should reach in
+    /// the user's own locally running `wrangler dev` of it, through the dev
+    /// registry, rather than in the stand-in `dev` binds by default.
+    pub local_workers: Vec<String>,
     /// Everything after `--`, forwarded to `wrangler dev` verbatim (D5).
     pub wrangler_args: Vec<String>,
+}
+
+/// Interop I5 (#1972): one stand-in `bynk dev` runs for a foreign Worker that
+/// a served context binds: the Worker's name, and the context's bindings to
+/// it. It runs inside that context's own `wrangler dev`, as a second `-c`
+/// config, under a name of its own ([`stand_in_name`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandIn {
+    pub worker: String,
+    pub bindings: Vec<String>,
+}
+
+/// The Worker name `context`'s stand-in for `worker` runs under. Not the
+/// foreign Worker's own: a `-c` config's Worker also registers in wrangler's
+/// dev registry, which every local `wrangler dev` shares (verified on 4.149.0),
+/// so under the real name it would answer other sessions' bindings to that
+/// Worker and, once stopped, could leave a stale entry for `--local-worker` to
+/// connect to. The context's binding is pointed at this name instead
+/// ([`point_at_stand_ins`]).
+pub fn stand_in_name(context: &str, worker: &str) -> String {
+    format!("bynk-stand-in-{context}-{worker}")
+}
+
+/// Point each served context's bindings to foreign Workers at their stand-ins,
+/// in the dev build's `wrangler.toml`. Run after every build, since a rebuild
+/// rewrites the file with the Workers' real names.
+fn point_at_stand_ins(workers_dir: &Path, plans: &[(String, Vec<StandIn>)]) -> Result<(), String> {
+    for (context, stand_ins) in plans {
+        let targets: std::collections::BTreeMap<String, String> = stand_ins
+            .iter()
+            .flat_map(|s| {
+                let name = stand_in_name(context, &s.worker);
+                s.bindings.iter().map(move |b| (b.clone(), name.clone()))
+            })
+            .collect();
+        let path = workers_dir.join(context).join("wrangler.toml");
+        let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let out = bynk_emit::emitter::wrangler::retarget_services(&text, &targets)?;
+        if out != text {
+            std::fs::write(&path, out).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Interop I5 (#1972): the Service Bindings in a generated `wrangler.toml`
+/// whose target is none of `project_workers`, as `(binding, worker)` in
+/// binding order: the bindings to foreign Workers, by the rule `bynk deploy`
+/// uses. An unreadable config has none; the serve step reports it.
+pub fn foreign_services(config_text: &str, project_workers: &[String]) -> Vec<(String, String)> {
+    let Ok(doc) = config_text.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = doc
+        .get("services")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|s| {
+            let binding = s.get("binding")?.as_str()?;
+            let worker = s.get("service")?.as_str()?;
+            (!project_workers.iter().any(|w| w == worker))
+                .then(|| (binding.to_string(), worker.to_string()))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Interop I5 (#1972, track §11 Q8): the stand-ins one context's `wrangler
+/// dev` runs, one per foreign Worker it binds, in Worker order, less those
+/// `local` names. Verified on wrangler 4.149.0: a second `-c` config's Worker
+/// answers its primary's binding to it, and without one a binding to a Worker
+/// that is not running answers 503 ("Worker … not found").
+pub fn stand_ins(foreign: &[(String, String)], local: &[String]) -> Vec<StandIn> {
+    let mut by_worker: std::collections::BTreeMap<&str, Vec<String>> = Default::default();
+    for (binding, worker) in foreign {
+        if !local.iter().any(|l| l == worker) {
+            by_worker.entry(worker).or_default().push(binding.clone());
+        }
+    }
+    by_worker
+        .into_iter()
+        .map(|(worker, bindings)| StandIn {
+            worker: worker.to_string(),
+            bindings,
+        })
+        .collect()
+}
+
+/// The stand-in's `wrangler.toml` and `index.js`. It answers every request
+/// with [`bynk_emit::emitter::wrangler::FOREIGN_SERVICE_DOUBLE_STATUS`] and a
+/// body saying what it is and how to reach the real Worker, as the
+/// integration test harness's stand-in does.
+pub fn stand_in_files(context: &str, stand_in: &StandIn) -> (String, String) {
+    let config = format!(
+        "# Generated by bynk dev — `{context}`'s local stand-in for Worker `{w}`.\nname = {name}\nmain = \"index.js\"\ncompatibility_date = \"{date}\"\n",
+        w = stand_in.worker,
+        name = toml::Value::String(stand_in_name(context, &stand_in.worker)),
+        date = bynk_emit::emitter::wrangler::COMPATIBILITY_DATE,
+    );
+    let body = format!(
+        "{} Run that Worker locally with `wrangler dev` and pass `--local-worker {}` to `bynk dev` to call it instead.",
+        bynk_emit::emitter::wrangler::foreign_service_double_body(
+            &stand_in.bindings.join("`, `"),
+            &stand_in.worker
+        ),
+        stand_in.worker
+    );
+    let script = format!(
+        "// Generated by bynk dev — a local stand-in for Worker `{w}`.\nexport default {{\n  async fetch() {{\n    return new Response({body}, {{\n      status: {status},\n      headers: {{ \"content-type\": \"text/plain; charset=utf-8\", \"x-bynk-stand-in\": {name} }},\n    }});\n  }},\n}};\n",
+        w = stand_in.worker,
+        body = serde_json::Value::String(body),
+        status = bynk_emit::emitter::wrangler::FOREIGN_SERVICE_DOUBLE_STATUS,
+        name = serde_json::Value::String(stand_in.worker.clone()),
+    );
+    (config, script)
+}
+
+/// Write each served context's stand-ins under `<build>/stand-ins/<context
+/// worker>/<foreign worker>/`, returning their config paths by context. The
+/// directory is rebuilt each session, like `workers/`.
+fn write_stand_ins(
+    build_dir: &Path,
+    plans: &[(String, Vec<StandIn>)],
+) -> std::io::Result<std::collections::BTreeMap<String, Vec<PathBuf>>> {
+    let root = build_dir.join("stand-ins");
+    match std::fs::remove_dir_all(&root) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let mut configs = std::collections::BTreeMap::new();
+    for (context, stand_ins) in plans {
+        for stand_in in stand_ins {
+            let dir = root.join(context).join(&stand_in.worker);
+            std::fs::create_dir_all(&dir)?;
+            let (config, script) = stand_in_files(context, stand_in);
+            std::fs::write(dir.join("wrangler.toml"), config)?;
+            std::fs::write(dir.join("index.js"), script)?;
+            configs
+                .entry(context.clone())
+                .or_insert_with(Vec::new)
+                .push(dir.join("wrangler.toml"));
+        }
+    }
+    Ok(configs)
+}
+
+/// The start-up lines naming each stand-in, so a 503 from one is never a
+/// mystery. Empty when there are none.
+pub fn stand_in_report(plans: &[(String, Vec<StandIn>)]) -> String {
+    let mut out = String::new();
+    for (context, stand_ins) in plans {
+        for s in stand_ins {
+            out.push_str(&format!(
+                "bynk dev: `{context}` binds Worker `{w}` ({}) to a local stand-in that answers 503; pass `--local-worker {w}` to reach a `wrangler dev` of it instead.\n",
+                s.bindings.join(", "),
+                w = s.worker,
+            ));
+        }
+    }
+    out
 }
 
 /// Wrangler's own default dev port — the base of the per-context allocation
@@ -224,6 +392,52 @@ pub fn run(
         }
     }
 
+    // Interop I5 (#1972, track §11 Q8): each context's Service Bindings to
+    // foreign Workers get a stand-in in its own `wrangler dev`, unless
+    // `--local-worker` names the Worker (the dev registry then reaches the
+    // user's own `wrangler dev` of it). Under `--remote` the bindings are the
+    // account's, so there is nothing to stand in for.
+    let remote = opts.wrangler_args.iter().any(|arg| arg == "--remote");
+    let mut stand_in_plans: Vec<(String, Vec<StandIn>)> = Vec::new();
+    let mut bound_foreign: Vec<String> = Vec::new();
+    for s in &serving {
+        let config = std::fs::read_to_string(workers_dir.join(&s.worker).join("wrangler.toml"))
+            .unwrap_or_default();
+        let foreign = foreign_services(&config, &available);
+        bound_foreign.extend(foreign.iter().map(|(_, w)| w.clone()));
+        let planned = stand_ins(&foreign, &opts.local_workers);
+        if !remote && !planned.is_empty() {
+            stand_in_plans.push((s.worker.clone(), planned));
+        }
+    }
+    for local in &opts.local_workers {
+        if !bound_foreign.contains(local) {
+            eprintln!(
+                "bynk: warning: `--local-worker {local}` names no Worker the served contexts bind with a `Service` instance."
+            );
+        }
+    }
+    if !stand_in_plans.is_empty()
+        && (passthrough_has(&opts.wrangler_args, "-c")
+            || passthrough_has(&opts.wrangler_args, "--config"))
+    {
+        eprintln!(
+            "bynk: `-c`/`--config` is the driver's when it runs stand-ins for foreign Workers — pass `--local-worker NAME` instead of a config after `--`."
+        );
+        return ExitCode::FAILURE;
+    }
+    let stand_in_configs = match write_stand_ins(&build_dir, &stand_in_plans) {
+        Ok(configs) => configs,
+        Err(e) => {
+            eprintln!("bynk: could not write the stand-ins for foreign Workers: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = point_at_stand_ins(&workers_dir, &stand_in_plans) {
+        eprintln!("bynk: could not bind the stand-ins for foreign Workers: {e}");
+        return ExitCode::FAILURE;
+    }
+
     // 4. Serve — one `wrangler dev` per context, each from inside its own worker
     //    dir (the emitted `index.ts` imports `../../runtime.js`, so cwd must be
     //    the worker dir, exactly the manual recipe's `cd`). The processes find
@@ -295,6 +509,14 @@ pub fn run(
             return ExitCode::FAILURE;
         };
         cmd.current_dir(workers_dir.join(&s.worker));
+        // Interop I5 (#1972): the context's own config first (wrangler's
+        // primary Worker, the one served on the port), then its stand-ins.
+        if let Some(configs) = stand_in_configs.get(&s.worker) {
+            cmd.args(["-c", "wrangler.toml"]);
+            for config in configs {
+                cmd.arg("-c").arg(config);
+            }
+        }
         for arg in serve_args(s) {
             cmd.arg(arg);
         }
@@ -311,6 +533,7 @@ pub fn run(
         }
     }
     eprint!("{}", serving_report(&serving));
+    eprint!("{}", stand_in_report(&stand_in_plans));
 
     // 5. Watch — #524: `bynk dev` is the edit loop, so watch the project's
     // `.bynk` sources (the full `[paths]` layout plus `bynk.toml`) and rebuild
@@ -328,6 +551,12 @@ pub fn run(
             fingerprint = now;
             eprintln!("bynk dev: change detected — rebuilding…");
             if compile_once(compiler, project_root, &build_dir, true) {
+                // Interop I5 (#1972): the rebuild wrote the foreign Workers'
+                // real names back. A binding added since start has no
+                // stand-in until `bynk dev` restarts.
+                if let Err(e) = point_at_stand_ins(&workers_dir, &stand_in_plans) {
+                    eprintln!("bynk: could not bind the stand-ins for foreign Workers: {e}");
+                }
                 eprintln!("bynk dev: rebuilt");
             }
             // On failure the diagnostics are already rendered; keep serving
@@ -1086,5 +1315,101 @@ mod tests {
         ));
         assert!(report.contains("serving 1 context."), "{report}");
         assert!(!report.contains("bindings"), "{report}");
+    }
+
+    // ---- interop I5 (#1972): stand-ins for foreign Workers ----
+
+    const BILLING_CONFIG: &str = "name = \"shop-billing\"\n\n[[services]]\nbinding = \"SHOP_FRONT\"\nservice = \"shop-front\"\n\n[[services]]\nbinding = \"SERVICE_LEDGER\"\nservice = \"ledger\"\n\n[[services]]\nbinding = \"SERVICE_BILLING\"\nservice = \"legacy-billing\"\n\n[[services]]\nbinding = \"SERVICE_INVOICES\"\nservice = \"legacy-billing\"\n";
+
+    fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn foreign_services_are_the_bindings_to_workers_outside_the_build() {
+        assert_eq!(
+            foreign_services(BILLING_CONFIG, &names(&["shop-billing", "shop-front"])),
+            pairs(&[
+                ("SERVICE_BILLING", "legacy-billing"),
+                ("SERVICE_INVOICES", "legacy-billing"),
+                ("SERVICE_LEDGER", "ledger"),
+            ])
+        );
+        assert!(foreign_services("not toml [", &[]).is_empty());
+    }
+
+    /// One stand-in per foreign Worker, carrying every binding to it, less
+    /// the Workers `--local-worker` names.
+    #[test]
+    fn stand_ins_are_one_per_foreign_worker_less_the_local_ones() {
+        let foreign = foreign_services(BILLING_CONFIG, &names(&["shop-front"]));
+        assert_eq!(
+            stand_ins(&foreign, &[]),
+            [
+                StandIn {
+                    worker: "ledger".into(),
+                    bindings: names(&["SERVICE_LEDGER"]),
+                },
+                StandIn {
+                    worker: "legacy-billing".into(),
+                    bindings: names(&["SERVICE_BILLING", "SERVICE_INVOICES"]),
+                },
+            ]
+        );
+        assert_eq!(
+            stand_ins(&foreign, &names(&["legacy-billing"])),
+            [StandIn {
+                worker: "ledger".into(),
+                bindings: names(&["SERVICE_LEDGER"]),
+            }]
+        );
+    }
+
+    /// The stand-in runs under a name of its own, never the foreign Worker's
+    /// (which wrangler's shared dev registry would hand to other sessions), and
+    /// says what it is.
+    #[test]
+    fn a_stand_in_is_named_for_its_worker_and_answers_503() {
+        let (config, script) = stand_in_files(
+            "shop-billing",
+            &StandIn {
+                worker: "legacy-billing".into(),
+                bindings: names(&["SERVICE_BILLING"]),
+            },
+        );
+        let doc: toml::Table = config.parse().expect("valid TOML");
+        assert_eq!(
+            doc["name"].as_str(),
+            Some("bynk-stand-in-shop-billing-legacy-billing")
+        );
+        assert_eq!(doc["main"].as_str(), Some("index.js"));
+        assert_eq!(
+            doc["compatibility_date"].as_str(),
+            Some(bynk_emit::emitter::wrangler::COMPATIBILITY_DATE)
+        );
+        assert!(script.contains("status: 503"), "{script}");
+        assert!(
+            script.contains("`--local-worker legacy-billing`"),
+            "{script}"
+        );
+        assert!(script.contains("`SERVICE_BILLING`"), "{script}");
+    }
+
+    #[test]
+    fn the_stand_in_report_names_each_and_the_way_out() {
+        assert_eq!(stand_in_report(&[]), "");
+        let report = stand_in_report(&[(
+            "shop-billing".into(),
+            vec![StandIn {
+                worker: "legacy-billing".into(),
+                bindings: names(&["SERVICE_BILLING"]),
+            }],
+        )]);
+        assert_eq!(
+            report,
+            "bynk dev: `shop-billing` binds Worker `legacy-billing` (SERVICE_BILLING) to a local stand-in that answers 503; pass `--local-worker legacy-billing` to reach a `wrangler dev` of it instead.\n"
+        );
     }
 }

@@ -77,7 +77,8 @@ deploy api
       "secrets": [],
       "secrets_complete": true,
       "action": "deploy",
-      "binds_to": []
+      "binds_to": [],
+      "foreign_services": []
     },
     {
       "worker": "commerce-orders",
@@ -89,7 +90,8 @@ deploy api
       "action": "deploy",
       "binds_to": [
         "commerce-payment"
-      ]
+      ],
+      "foreign_services": []
     }
   ]
 }
@@ -120,7 +122,8 @@ deploy api
       ],
       "secrets_complete": false,
       "action": "deploy",
-      "binds_to": []
+      "binds_to": [],
+      "foreign_services": []
     }
   ]
 }
@@ -166,7 +169,8 @@ deploy api
       ],
       "secrets_complete": true,
       "action": "deploy",
-      "binds_to": []
+      "binds_to": [],
+      "foreign_services": []
     }
   ]
 }
@@ -202,7 +206,8 @@ deploy api
       "secrets": [],
       "secrets_complete": true,
       "action": "deploy",
-      "binds_to": []
+      "binds_to": [],
+      "foreign_services": []
     }
   ]
 }
@@ -261,7 +266,8 @@ redeploy shop-cart
       "secrets": [],
       "secrets_complete": true,
       "action": "redeploy",
-      "binds_to": []
+      "binds_to": [],
+      "foreign_services": []
     }
   ]
 }
@@ -270,3 +276,9 @@ redeploy shop-cart
 orphan kv gone
 orphan kv gone KV_SESSIONS
 deploy api
+
+# interop I5: a foreign Worker beside a project context
+deploy shop-payment
+service SERVICE_BILLING legacy-billing (foreign Worker; not provisioned)
+deploy shop-checkout
+order shop-payment → shop-checkout

@@ -715,7 +715,26 @@ pub fn phase_resolve_derived(
                     );
                     continue;
                 };
+                // Interop I5 (#1972): each option's value, once valid.
+                let mut options: Vec<(String, String)> = Vec::new();
                 for ann in &d.annotations {
+                    if kind.options.contains(&ann.name.name.as_str()) {
+                        if options.iter().any(|(o, _)| *o == ann.name.name) {
+                            errors.push_for(
+                                Some(&path),
+                                CompileError::new(
+                                    "bynk.capability.invalid_option",
+                                    ann.span,
+                                    format!("`@{}` is given twice", ann.name.name),
+                                )
+                                .with_note("an instance takes each option once"),
+                            );
+                        } else if let Some(value) =
+                            instance_option_value(ann, &d.base.name, &path, errors)
+                        {
+                            options.push((ann.name.name.clone(), value));
+                        }
+                    }
                     if !kind.options.contains(&ann.name.name.as_str()) {
                         let allowed = if kind.options.is_empty() {
                             format!("`{}` instances take no options", d.base.name)
@@ -741,6 +760,25 @@ pub fn phase_resolve_derived(
                                 ),
                             )
                             .with_note(allowed),
+                        );
+                    }
+                }
+                for required in kind.required {
+                    if !d.annotations.iter().any(|a| a.name.name == *required) {
+                        errors.push_for(
+                            Some(&path),
+                            CompileError::new(
+                                "bynk.capability.missing_option",
+                                c.span,
+                                format!(
+                                    "a `{}` instance needs `@{required}(…)`",
+                                    d.base.name
+                                ),
+                            )
+                            .with_note(format!(
+                                "name the Worker it reaches: `capability {} = {} @{required}(\"legacy-billing\")`",
+                                c.name.name, d.base.name
+                            )),
                         );
                     }
                 }
@@ -774,12 +812,79 @@ pub fn phase_resolve_derived(
                         base_unit: owner,
                         base_cap: d.base.name.clone(),
                         binding,
+                        options,
                         span: c.span,
                     },
                 );
             }
         }
     }
+}
+
+/// Interop I5 (#1972): the value of one instance option, `@worker("name")`:
+/// one positional string literal. `@worker`'s names a Worker, so it must be a
+/// Worker name as Cloudflare takes one: lowercase letters, digits, `-` and
+/// `_`, at most 63 characters, not starting or ending with `-`. `None`, with
+/// the error pushed, when it is not.
+fn instance_option_value(
+    ann: &bynk_syntax::ast::Annotation,
+    base: &str,
+    path: &std::path::Path,
+    errors: &mut ErrorSink,
+) -> Option<String> {
+    let option = ann.name.name.as_str();
+    let invalid = |span, message: String| {
+        CompileError::new("bynk.capability.invalid_option", span, message).with_note(format!(
+            "write `@{option}(\"legacy-billing\")`, for example"
+        ))
+    };
+    let value = match ann.args.as_slice() {
+        [arg] if arg.label.is_none() => match &arg.value.kind {
+            ExprKind::StrLit(value) => value.clone(),
+            _ => {
+                errors.push_for(
+                    Some(path),
+                    invalid(arg.span, format!("`@{option}` takes a string literal")),
+                );
+                return None;
+            }
+        },
+        _ => {
+            errors.push_for(
+                Some(path),
+                invalid(
+                    ann.span,
+                    format!("`@{option}` takes one positional argument"),
+                ),
+            );
+            return None;
+        }
+    };
+    if option == crate::firstparty::SERVICE_WORKER_OPTION && !is_worker_name(&value) {
+        errors.push_for(
+            Some(path),
+            CompileError::new(
+                "bynk.capability.invalid_option",
+                ann.span,
+                format!("`{value}` is not a Worker name a `{base}` can reach"),
+            )
+            .with_note(
+                "a Worker name is 1 to 63 lowercase letters, digits, `-` or `_`, and does not start or end with `-`",
+            ),
+        );
+        return None;
+    }
+    Some(value)
+}
+
+/// Whether `name` is a Cloudflare Worker name ([`instance_option_value`]).
+pub fn is_worker_name(name: &str) -> bool {
+    (1..=63).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+        && !name.starts_with('-')
+        && !name.ends_with('-')
 }
 
 /// #1710: for each unit with a file the strict parse rejected, the names of
@@ -5197,6 +5302,10 @@ mod firstparty_injection_tests {
                 out.insert(name);
             }
         };
+        // Interop I5 (#1972): `bynk.cloudflare` consumes `bynk` for
+        // `Service`'s `Request`/`Response`, so it brings `bynk` (and so its
+        // `bynk.locale.types`) with it.
+        let bynk = bynk || cloudflare;
         add(bynk, "bynk");
         add(cloudflare, "bynk.cloudflare");
         add(map, "bynk.map");

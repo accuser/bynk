@@ -1,0 +1,25 @@
+suite shop.billing
+-- #1972: each `Service` instance has its own double, faulting until stubbed,
+-- at both tiers. A system suite binds the Worker's stand-in instead
+-- (`1972_system_foreign_service`).
+
+case "a stubbed instance answers" {
+	stub Billing.send(_) returns Ok(Response { status: 201, headers: Map.empty(), body: "" })
+	let r <- charge.call("a")
+	expect r == 201
+	expect Billing.send called once
+	expect Ledger.send never called
+}
+
+case "a failing call is the instance's error" {
+	stub Billing.send(_) returns Err(Network)
+	let r <- charge.call("a")
+	expect r == 0
+}
+
+case "an instance is stubbed under its own name at integration" as integration {
+	stub Ledger.send(_) returns Ok(Response { status: 200, headers: Map.empty(), body: "e1" })
+	let r <- audit.call()
+	expect r == "e1"
+	expect Billing.send never called
+}
