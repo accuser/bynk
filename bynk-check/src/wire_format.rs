@@ -8,7 +8,7 @@
 //!
 //! This module is the single source for the parts that are constants. The
 //! emitter builds the `/_bynk/call/` dispatch from [`CallCheck`] and the header
-//! names below, and [`reference`] renders `reference/wire-format.md` from the
+//! names below, and [`mod@reference`] renders `reference/wire-format.md` from the
 //! same values plus [`crate::wire`]'s encoding model and [`crate::contract`]'s
 //! hash. `bynkc/tests/wire_reference.rs` holds the page, the emitted dispatch,
 //! the runtime's `callService` and the generated codecs to it.
