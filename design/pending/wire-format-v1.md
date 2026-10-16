@@ -1,5 +1,6 @@
 ---
 level: minor
+probes: ts_writes
 changelog: The cross-context call format is published as [wire format version 1](/book/reference/wire-format/), generated from the compiler and versioned on its own, and callers now send `X-Bynk-Wire: 1`. A `/_bynk/call/` request that is not a `POST` gets `405`, malformed JSON gets `400 MalformedJson` instead of a `500`, and an unsupported `X-Bynk-Wire` gets `400 UnsupportedWireVersion`. A record field's inline refinement (`qty: Int where Positive`) is now checked when the record is decoded, at a call boundary or in an HTTP body, and is part of the contract hash; a `Duration` field must be a whole number of milliseconds. **Breaking for deployed projects:** contracts with an inline field refinement change hash, so redeploy the whole project once
 ---
 
