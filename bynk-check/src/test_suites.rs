@@ -2326,6 +2326,18 @@ fn history_pred_matches(body: &Expr, s: &str, decl: &Expr, mode: HistoryRestate)
         (ExprKind::UnaryOp(o1, x), ExprKind::UnaryOp(o2, y)) => {
             o1 == o2 && history_pred_matches(x, s, y, mode)
         }
+        // #2018: `x is Variant` — a transition over an enum state (`old.status is
+        // Closed implies new.status is Closed`) is written with `is`.
+        (
+            ExprKind::Is {
+                value: v1,
+                pattern: p1,
+            },
+            ExprKind::Is {
+                value: v2,
+                pattern: p2,
+            },
+        ) => history_pattern_matches(p1, p2) && history_pred_matches(v1, s, v2, mode),
         (ExprKind::BinOp(o1, l1, r1), ExprKind::BinOp(o2, l2, r2)) => {
             o1 == o2
                 && history_pred_matches(l1, s, l2, mode)
@@ -2377,6 +2389,36 @@ fn history_pred_matches(body: &Expr, s: &str, decl: &Expr, mode: HistoryRestate)
                     .iter()
                     .zip(a2)
                     .all(|(x, y)| history_pred_matches(x, s, y, mode))
+        }
+        _ => false,
+    }
+}
+
+/// #2018: span-insensitive equality of the pattern in an `is` test, for
+/// [`history_pred_matches`]. Conservative like the rest of the restate check: only
+/// a literal or a payload-free variant (same name, same optional `Type.`
+/// qualifier) is compared; any other pattern shape compares unequal.
+fn history_pattern_matches(a: &Pattern, b: &Pattern) -> bool {
+    match (a, b) {
+        (Pattern::Literal { value: x, .. }, Pattern::Literal { value: y, .. }) => x == y,
+        (
+            Pattern::Variant {
+                type_name: t1,
+                variant: v1,
+                bindings: b1,
+                ..
+            },
+            Pattern::Variant {
+                type_name: t2,
+                variant: v2,
+                bindings: b2,
+                ..
+            },
+        ) => {
+            b1.is_empty()
+                && b2.is_empty()
+                && v1.name == v2.name
+                && t1.as_ref().map(|t| &t.name) == t2.as_ref().map(|t| &t.name)
         }
         _ => false,
     }
@@ -3646,5 +3688,105 @@ mod participant_tests {
             infer_harness_participants("ops.hub", &consumes, &kinds, &BTreeMap::new()),
             infer_participants("ops.hub", &consumes, &kinds)
         );
+    }
+}
+
+/// #2018: the `is`-pattern comparison the history restate check uses. It is
+/// conservative: only literals and payload-free variants (same name, same
+/// optional qualifier) are equal; anything else compares unequal.
+#[cfg(test)]
+mod history_pattern_tests {
+    use super::*;
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            name: name.to_string(),
+            span: Span::default(),
+        }
+    }
+
+    fn variant(type_name: Option<&str>, name: &str) -> Pattern {
+        Pattern::Variant {
+            type_name: type_name.map(ident),
+            variant: ident(name),
+            bindings: Vec::new(),
+            span: Span::default(),
+        }
+    }
+
+    fn payload_variant(name: &str) -> Pattern {
+        Pattern::Variant {
+            type_name: None,
+            variant: ident(name),
+            bindings: vec![PatternBinding {
+                kind: PatternBindingKind::Positional {
+                    pattern: Pattern::Wildcard(Span::default()),
+                },
+                span: Span::default(),
+            }],
+            span: Span::default(),
+        }
+    }
+
+    fn int(n: i64) -> Pattern {
+        Pattern::Literal {
+            value: LiteralValue::Int(n),
+            span: Span::default(),
+        }
+    }
+
+    #[test]
+    fn same_payload_free_variant_matches() {
+        assert!(history_pattern_matches(
+            &variant(None, "Closed"),
+            &variant(None, "Closed")
+        ));
+        assert!(history_pattern_matches(
+            &variant(Some("Status"), "Closed"),
+            &variant(Some("Status"), "Closed")
+        ));
+    }
+
+    #[test]
+    fn different_variant_names_do_not_match() {
+        assert!(!history_pattern_matches(
+            &variant(None, "Open"),
+            &variant(None, "Closed")
+        ));
+    }
+
+    #[test]
+    fn qualifier_present_vs_absent_does_not_match() {
+        assert!(!history_pattern_matches(
+            &variant(Some("Status"), "Closed"),
+            &variant(None, "Closed")
+        ));
+        assert!(!history_pattern_matches(
+            &variant(None, "Closed"),
+            &variant(Some("Status"), "Closed")
+        ));
+        assert!(!history_pattern_matches(
+            &variant(Some("Status"), "Closed"),
+            &variant(Some("Other"), "Closed")
+        ));
+    }
+
+    #[test]
+    fn literals_match_by_value() {
+        assert!(history_pattern_matches(&int(3), &int(3)));
+        assert!(!history_pattern_matches(&int(3), &int(4)));
+        assert!(!history_pattern_matches(&int(3), &variant(None, "Closed")));
+    }
+
+    #[test]
+    fn payload_variant_never_matches() {
+        assert!(!history_pattern_matches(
+            &payload_variant("Some"),
+            &payload_variant("Some")
+        ));
+        assert!(!history_pattern_matches(
+            &payload_variant("Some"),
+            &variant(None, "Some")
+        ));
     }
 }
