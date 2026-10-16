@@ -194,6 +194,18 @@ pub fn run(
         }
     }
 
+    // Now that inspectors are allocated without `--inspect` too (#1954), an
+    // overlap with the HTTP range is reachable from plain flags (`--base-port
+    // 9229` over two contexts). Name it here rather than leave wrangler to die
+    // with `Address already in use`.
+    if let Some(port) = port_clash(&serving) {
+        eprintln!(
+            "bynk: port {port} is allocated both to a context's server and to an inspector — \
+             move `--base-port` or `--inspect-port` so the two ranges do not overlap."
+        );
+        return ExitCode::FAILURE;
+    }
+
     // Remote dev reads the real Cloudflare KV id, unlike Miniflare's local
     // mode. Resolve it from the deploy ledger immediately before Wrangler
     // runs; a never-deployed project gets an actionable error instead of
@@ -608,6 +620,15 @@ pub fn allocate(workers: &[String], base_port: Option<u16>, opts: &DevOptions) -
         .collect()
 }
 
+/// A port the allocation hands out twice: one context's HTTP port that is also
+/// some context's inspector port.
+fn port_clash(serving: &[Serving]) -> Option<u16> {
+    serving
+        .iter()
+        .filter_map(|s| s.port)
+        .find(|p| serving.iter().any(|s| s.inspector_port == Some(*p)))
+}
+
 /// #1957: whether to install wrangler once before spawning the contexts. Only
 /// an npx resolution installs on first use, and only several spawns at once
 /// race each other in npm's `_npx` cache; a lone context installs alone.
@@ -896,6 +917,20 @@ mod tests {
             &DevOptions::default(),
         ));
         assert!(!report.contains("inspector"), "{report}");
+    }
+
+    #[test]
+    fn overlapping_http_and_inspector_ranges_are_caught() {
+        let opts = DevOptions {
+            inspect_port: 9229,
+            ..Default::default()
+        };
+        let two = names(&["api", "worker"]);
+        // HTTP 9228/9229 against inspectors 9229/9230.
+        assert_eq!(port_clash(&allocate(&two, Some(9228), &opts)), Some(9229));
+        assert_eq!(port_clash(&allocate(&two, None, &opts)), None);
+        // A lone worker has neither, so nothing can clash.
+        assert_eq!(port_clash(&allocate(&names(&["links"]), None, &opts)), None);
     }
 
     #[test]
