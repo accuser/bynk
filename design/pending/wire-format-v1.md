@@ -82,7 +82,7 @@ refused rather than admitted. Every contract with an inline field refinement
 changes hash, so a deployed project redeploys once (ADR 0200's flag day, for
 this change only). The record codec also rehydrates stored values, so a later
 deploy that tightens an inline field refinement makes stored records that
-break it fail to load, as tightening a named refined type already does.
+break it fail to load.
 **Not done here:** a body-size limit (`413`), which D1
 places between the method and authentication. Adding it later is additive
 within version 1. The `/_bynk/event/` path is not part of the call wire format
