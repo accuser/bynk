@@ -59,8 +59,10 @@ pub struct DevOptions {
     /// JavaScript debugger can attach; breakpoints in `.bynk` resolve through the
     /// emitted source maps composed into the worker bundle.
     pub inspect: bool,
-    /// Base inspector port for `--inspect` (default 9229); allocated per context
-    /// exactly as `base_port` is.
+    /// Base inspector port (default 9229); allocated per context exactly as
+    /// `base_port` is. Used under `--inspect`, and whenever several contexts
+    /// are served: wrangler's inspector is always on, so N wranglers left on
+    /// its default would all race for 9229 (#1954).
     pub inspect_port: u16,
     /// `--env NAME` (default `"default"`) — which `bynk.deploy.lock` section
     /// `--remote` reads the KV id from. `dev` never provisions and never
@@ -81,12 +83,15 @@ pub struct DevOptions {
 const DEFAULT_BASE_PORT: u16 = 8787;
 
 /// One worker to serve: its dasherised context dir, its HTTP port (`None` = let
-/// wrangler choose, the lone-worker default), and its inspector port.
+/// wrangler choose, the lone-worker default), its inspector port, and whether
+/// the inspector was asked for (`--inspect`) rather than only allocated so the
+/// contexts' default inspectors do not collide (#1954).
 #[derive(Debug, PartialEq, Eq)]
 pub struct Serving {
     pub worker: String,
     pub port: Option<u16>,
     pub inspector_port: Option<u16>,
+    pub inspect: bool,
 }
 
 /// Orchestrate a local dev session: pre-flight, compile, select the worker, and
@@ -235,6 +240,27 @@ pub fn run(
         // The pre-flight gate should have caught this; defensive only.
         eprintln!("bynk: wrangler not found (run `bynk doctor --only deploy`)");
         return ExitCode::FAILURE;
+    }
+
+    // #1957: N parallel first-run `npx wrangler dev`s race to install into the
+    // same `_npx` cache entry, and the loser dies at boot (ENOTEMPTY). Install
+    // it once, up front, so every spawn below finds it already there. Stdout
+    // is dropped (the version line is noise); stderr stays, because npm's
+    // progress is the only sign a slow first download is not a hang.
+    if needs_wrangler_warmup(&probe.provenance, serving.len()) {
+        eprintln!("bynk dev: installing wrangler via npx once before starting the contexts…");
+        let warmed = wrangler_command(&probe.provenance, "--version").map(|mut cmd| {
+            cmd.stdout(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        });
+        if warmed != Some(true) {
+            // Spawning anyway would re-run the very race this avoids.
+            eprintln!(
+                "bynk: `npx --yes wrangler@4 --version` failed — wrangler could not be installed via npx."
+            );
+            return ExitCode::FAILURE;
+        }
     }
 
     // Inherited stdio (the default) keeps every session interactive. The driver
@@ -559,20 +585,34 @@ pub fn preflight_failure_message(report: &Report) -> String {
 /// lands on wrangler's own default and `-- --port N` still works. Injecting
 /// unconditionally would break that, because a repeated `--port` is a hard
 /// wrangler error, not last-wins.
+///
+/// Inspector ports follow the same shape, from `--inspect-port`. They are
+/// allocated under `--inspect`, and also whenever more than one worker is
+/// served (#1954): `wrangler dev` always starts its inspector, on 9229 unless
+/// told otherwise, so N wranglers started together all bind 9229 and every one
+/// but the first dies with `Address already in use`. A lone worker without
+/// `--inspect` gets none, keeping its invocation byte-for-byte as before.
 pub fn allocate(workers: &[String], base_port: Option<u16>, opts: &DevOptions) -> Vec<Serving> {
     let lone = workers.len() == 1 && base_port.is_none();
     let base = base_port.unwrap_or(DEFAULT_BASE_PORT);
+    let inspectors = opts.inspect || workers.len() > 1;
     workers
         .iter()
         .enumerate()
         .map(|(i, worker)| Serving {
             worker: worker.clone(),
             port: (!lone).then(|| base.saturating_add(i as u16)),
-            inspector_port: opts
-                .inspect
-                .then(|| opts.inspect_port.saturating_add(i as u16)),
+            inspector_port: inspectors.then(|| opts.inspect_port.saturating_add(i as u16)),
+            inspect: opts.inspect,
         })
         .collect()
+}
+
+/// #1957: whether to install wrangler once before spawning the contexts. Only
+/// an npx resolution installs on first use, and only several spawns at once
+/// race each other in npm's `_npx` cache; a lone context installs alone.
+pub fn needs_wrangler_warmup(provenance: &Provenance, contexts: usize) -> bool {
+    matches!(provenance, Provenance::Npx) && contexts > 1
 }
 
 /// Whether the `--` passthrough carries `flag`, which the driver also injects.
@@ -634,9 +674,12 @@ pub fn serving_report(serving: &[Serving]) -> String {
             ));
         }
     }
+    // Only `--inspect` announces the inspector. Without it a multi-context
+    // session still allocates inspector ports (#1954), but only so they do not
+    // collide; that is wrangler's default inspector, moved, not a debug session.
     let inspected = serving
         .iter()
-        .filter(|s| s.inspector_port.is_some())
+        .filter(|s| s.inspect && s.inspector_port.is_some())
         .count();
     if inspected > 0 {
         out.push_str(&match inspected {
@@ -645,7 +688,7 @@ pub fn serving_report(serving: &[Serving]) -> String {
                 .to_string(),
         });
         for s in serving {
-            let Some(port) = s.inspector_port else {
+            let (true, Some(port)) = (s.inspect, s.inspector_port) else {
                 continue;
             };
             out.push_str(&format!(
@@ -811,6 +854,57 @@ mod tests {
         // …but an explicit --base-port is honoured even for one context.
         let pinned = allocate(&names(&["links"]), Some(8900), &DevOptions::default());
         assert_eq!(pinned[0].port, Some(8900));
+    }
+
+    #[test]
+    fn several_contexts_get_distinct_inspector_ports_without_inspect() {
+        // #1954: wrangler's inspector is always on, so two wranglers left on
+        // its default both bind 9229 and the second dies at boot.
+        let plain = DevOptions {
+            inspect_port: 9229, // the CLI default
+            ..Default::default()
+        };
+        let serving = allocate(&names(&["api", "worker"]), None, &plain);
+        assert_eq!(
+            serving.iter().map(|s| s.inspector_port).collect::<Vec<_>>(),
+            vec![Some(9229), Some(9230)]
+        );
+        assert_eq!(
+            serve_args(&serving[1]),
+            names(&["--port", "8788", "--inspector-port", "9230"])
+        );
+        // `--inspect-port` moves that allocation even without `--inspect`…
+        let moved = DevOptions {
+            inspect_port: 9300,
+            ..Default::default()
+        };
+        let serving = allocate(&names(&["api", "worker"]), None, &moved);
+        assert_eq!(
+            serving.iter().map(|s| s.inspector_port).collect::<Vec<_>>(),
+            vec![Some(9300), Some(9301)]
+        );
+        // …and a lone worker without `--inspect` still gets none.
+        let lone = allocate(&names(&["links"]), Some(8900), &DevOptions::default());
+        assert_eq!(lone[0].inspector_port, None);
+    }
+
+    #[test]
+    fn an_allocated_inspector_is_announced_only_under_inspect() {
+        let report = serving_report(&allocate(
+            &names(&["api", "worker"]),
+            None,
+            &DevOptions::default(),
+        ));
+        assert!(!report.contains("inspector"), "{report}");
+    }
+
+    #[test]
+    fn npx_is_warmed_up_only_for_several_contexts() {
+        // #1957: parallel first-run `npx` installs race in npm's cache.
+        assert!(needs_wrangler_warmup(&Provenance::Npx, 2));
+        assert!(!needs_wrangler_warmup(&Provenance::Npx, 1));
+        let installed = Provenance::Path(PathBuf::from("/usr/bin/wrangler"));
+        assert!(!needs_wrangler_warmup(&installed, 2));
     }
 
     #[test]
