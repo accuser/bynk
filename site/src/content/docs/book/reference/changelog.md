@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.340**.
+written against **v0.341**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.341.0** | A context can admit `on call` callers that are not Bynk by declaring each as an actor with the new `Foreign` scheme, `actor Ledger { auth = Foreign(secret = "LEDGER_CALL_KEY", worker = "ledger-svc") }`, and naming it in a handler's `by` clause, alone or in a sum such as `by who: Caller | Ledger`. A foreign caller signs its calls as the actor under that secret, and is admitted only where its actor is named; `Caller` admits Bynk contexts only, and a caller a handler does not admit gets `403`. `bynk deploy` mints each foreign caller's secret, sets it on the context, and prints the `wrangler secret put` for the foreign Worker's operator. `bynk dev` and `bynk test` use a fixed local value, and a system test can call `by Ledger`. See the [wire format](/book/reference/wire-format/#foreign-callers) |
 | **v0.340.1** | The language server colours a local's definition as a declaration, and find-references and rename no longer count a shadowing `let` as a use of the binding it shadows |
 | **v0.340.0** | Every cross-context call and event delivery is now signed with HMAC-SHA256 under a key one caller shares with one callee (`BYNK_CALL_TO_<CALLEE>` on the caller, `BYNK_CALL_FROM_<CALLER>` on the callee), replacing the shared `BYNK_CALL_SECRET`. A Worker refuses an internal request whose signature does not verify for the caller it names (`401`), or whose body is over 1 MiB (`413`), before anything else, so a context can claim only its own name. `bynk deploy` mints one key per edge and sets it on both ends; `bynk dev` and `bynk test` use a fixed local key. The [wire format](/book/reference/wire-format/#authentication) documents the signing input. **Breaking for deployed projects:** redeploy the whole project once (`bynk deploy`, not `--context`); `BYNK_CALL_SECRET` is no longer read and can be deleted |
 | **v0.339.0** | `let <pattern> = value else { … }` (and `<-` for an effect's result) binds a pattern's names for the rest of the block, and yields the `else` block, or the arms of `else match { … }`, when the value does not match, so a chain of fallible steps reads top to bottom with each failure handled beside its step |

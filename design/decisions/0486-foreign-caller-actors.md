@@ -1,12 +1,6 @@
----
-level: minor
-probes: emit_diagnostics, diagnostic_coverage, ts_writes
-changelog: A context can admit `on call` callers that are not Bynk by declaring each as an actor with the new `Foreign` scheme, `actor Ledger { auth = Foreign(secret = "LEDGER_CALL_KEY", worker = "ledger-svc") }`, and naming it in a handler's `by` clause, alone or in a sum such as `by who: Caller | Ledger`. A foreign caller signs its calls as the actor under that secret, and is admitted only where its actor is named; `Caller` admits Bynk contexts only, and a caller a handler does not admit gets `403`. `bynk deploy` mints each foreign caller's secret, sets it on the context, and prints the `wrangler secret put` for the foreign Worker's operator. `bynk dev` and `bynk test` use a fixed local value, and a system test can call `by Ledger`. See the [wire format](/book/reference/wire-format/#foreign-callers)
----
+# 0486 — Foreign callers are declared actors with their own `call` scheme
 
-## ADR: foreign-caller-actors
-title: Foreign callers are declared actors with their own `call` scheme
-summary: A non-Bynk caller is a `Foreign` actor the callee declares; it signs as the actor under a deploy-minted secret, resolves to that actor and never to `Caller`, and `bynk deploy` prints the hand-off
+- **Status:** Accepted (v0.341)
 
 **Context.** The interop track's D2 (`design/tracks/interop.md` §8, §11 Q3,
 Q4, Q5) settled how code that is not Bynk calls a context. ADR 0485
