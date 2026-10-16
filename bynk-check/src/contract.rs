@@ -194,21 +194,16 @@ fn canon_named_in(
         // Record fields sort by name: a JSON object is unordered, so field
         // *order* is not wire-observable and must not perturb the hash — while
         // field *presence* and type are exactly what the hash exists to pin.
-        //
-        // #1969: an inline refinement is part of the field's type, so it is
-        // part of the form (`qty: Int where Positive`), canonicalised as a
-        // sorted set exactly like a named refined type's. The decoder checks
-        // it, so a callee that tightens it rejects values its callers send.
         TypeBody::Record(r) => {
             let mut fields: Vec<String> = r
                 .fields
                 .iter()
                 .map(|f| {
-                    let ty = canon_type_in(&f.type_ref, types, seen, subst);
-                    match &f.refinement {
-                        Some(r) => format!("{}: {ty} {}", f.name.name, canon_refinement(Some(r))),
-                        None => format!("{}: {ty}", f.name.name),
-                    }
+                    format!(
+                        "{}: {}",
+                        f.name.name,
+                        canon_type_in(&f.type_ref, types, seen, subst)
+                    )
                 })
                 .collect();
             fields.sort();
@@ -333,20 +328,17 @@ pub fn contract_hash(normal_form: &str) -> String {
     fnv1a64_hex(normal_form.as_bytes())
 }
 
-/// FNV-1a 64-bit offset basis. Published in the wire-format reference (#1969).
-pub const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-/// FNV-1a 64-bit prime. Published in the wire-format reference (#1969).
-pub const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
-
 /// FNV-1a (64-bit) over `bytes`, as 16 lowercase hex chars — [`contract_hash`]'s
 /// algorithm over raw bytes. #1883, slice 1b also uses it for an asset's
 /// content hash (`assets::served_path`), where the same reasoning holds: it
 /// only has to tell one project's own files apart, reproducibly.
 pub fn fnv1a64_hex(bytes: &[u8]) -> String {
-    let mut h = FNV1A64_OFFSET;
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut h = OFFSET;
     for b in bytes {
         h ^= *b as u64;
-        h = h.wrapping_mul(FNV1A64_PRIME);
+        h = h.wrapping_mul(PRIME);
     }
     format!("{h:016x}")
 }
@@ -800,31 +792,6 @@ mod tests {
             h,
             service_contract_hash(&svc(named("P")), &retyped),
             "retype"
-        );
-    }
-
-    /// #1969: an inline field refinement is part of the field's type, and the
-    /// decoder checks it, so adding, changing or dropping one changes the
-    /// hash. Its predicates canonicalise as a set, like a named refined type's.
-    #[test]
-    fn an_inline_field_refinement_changes_the_hash_as_a_set() {
-        let plain = types_of("commons x\n\ntype P = { qty: Int }\n");
-        let refined = types_of("commons x\n\ntype P = { qty: Int where Positive }\n");
-        let both =
-            types_of("commons x\n\ntype P = { name: String where NonEmpty && MaxLength(4) }\n");
-        let swapped =
-            types_of("commons x\n\ntype P = { name: String where MaxLength(4) && NonEmpty }\n");
-        assert_ne!(
-            service_contract_hash(&svc(named("P")), &plain),
-            service_contract_hash(&svc(named("P")), &refined),
-        );
-        assert_eq!(
-            service_normal_form(&svc(named("P")), &refined),
-            "probe(p: P{qty: Int where Positive}) -> String"
-        );
-        assert_eq!(
-            service_contract_hash(&svc(named("P")), &both),
-            service_contract_hash(&svc(named("P")), &swapped),
         );
     }
 

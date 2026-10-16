@@ -222,7 +222,7 @@ export function __serialise_EventEnvelope(value: EventEnvelope): __JsonValue {
   return {
     eventId: value.eventId as __JsonValue,
     publisherId: value.publisherId as __JsonValue,
-    emittedAt: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Instant outside the safe-integer range at boundary"); return v as __JsonValue; })(value.emittedAt),
+    emittedAt: value.emittedAt as __JsonValue,
     schemaVersion: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.schemaVersion),
   };
 }

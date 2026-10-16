@@ -101,9 +101,6 @@ export function __deserialise_StockItem(json: __JsonValue, path: string = "$"): 
     return Err({ kind: "StructuralMismatch", path: `${path}.quantity`, expected: "safe integer", actual: String(obj["quantity"]) });
   }
   const __quantity = obj["quantity"];
-  if (!(__quantity >= 0)) {
-    return Err({ kind: "RefinementViolation", path: `${path}.quantity`, violation: { field: "quantity", message: "must be non-negative", value: __quantity } });
-  }
   return Ok({ sku: __sku, quantity: __quantity } as StockItem);
 }
 

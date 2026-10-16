@@ -1,11 +1,11 @@
 {
   "version": 1,
   "provides": {
-    "placement": "1b983202a4ee2e66"
+    "placement": "76925704cff4e061"
   },
   "expects": {
     "commerce.payment": {
-      "authorise": "d7dff23f6fd4c9e4"
+      "authorise": "938adff5c562387b"
     }
   }
 }

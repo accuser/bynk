@@ -17,7 +17,6 @@ use crate::project::UnitTable;
 use bynk_syntax::ast::{BaseType, Handler, LimitsPolicy, ServiceProtocol, TypeRef};
 
 use crate::emitter::RuntimeUse;
-use bynk_check::wire_format::{self as wf, CallCheck};
 use bynk_ts::{
     TsBindingName, TsDecl, TsExpr, TsLit, TsObjectEntry, TsParam, TsProgram, TsStmt, TsSwitchCase,
     TsType, TsTypeMember,
@@ -272,90 +271,8 @@ fn call_secret_gate() -> TsStmt {
                 vec![ident("request"), ident("env")],
             )))),
         },
-        return_(Some(text_response(
-            CallCheck::Authentication.text_body().unwrap_or_default(),
-            check_status(CallCheck::Authentication),
-        ))),
+        return_(Some(text_response("Unauthorized", 401))),
     )
-}
-
-/// #1969: a [`CallCheck`]'s published status, as the emitter's `i64`.
-fn check_status(check: CallCheck) -> i64 {
-    i64::from(check.status())
-}
-
-/// #1969: a [`CallCheck`]'s published error `kind`. Only called for the checks
-/// that answer with a JSON error body.
-fn check_kind(check: CallCheck) -> &'static str {
-    check
-        .kind()
-        .expect("only a check with a JSON error body names a kind")
-}
-
-/// #1969 (wire format v1): `if (method !== "POST") return new Response(null,
-/// { status: 405, headers: { allow: "POST" } });`, the first statement of the
-/// `/_bynk/call/` dispatch. A call is only ever a `POST`; before this, a `GET`
-/// reached the body read and failed there as a `500`.
-fn call_method_gate() -> TsStmt {
-    if_(
-        strict_neq(ident("method"), str_lit(wf::CALL_METHOD)),
-        return_(Some(new_response(vec![
-            null_lit(),
-            TsExpr::object(vec![
-                (
-                    "status".to_string(),
-                    num_lit(check_status(CallCheck::Method).to_string()),
-                ),
-                (
-                    "headers".to_string(),
-                    TsExpr::object(vec![("allow".to_string(), str_lit(wf::CALL_METHOD))]),
-                ),
-            ]),
-        ]))),
-    )
-}
-
-/// #1969 (wire format v1): `const __wire = request.headers.get("X-Bynk-Wire");
-/// if (__wire !== null && __wire !== "1") return <400 UnsupportedWireVersion>;`.
-///
-/// After the call secret, so an unauthenticated sender cannot probe which
-/// versions a callee speaks; before the service lookup, because the version
-/// decides how everything after it reads. An absent header is version 1. The
-/// refusal names the versions this callee accepts, which is how a caller
-/// learns them.
-fn wire_version_gate() -> Vec<TsStmt> {
-    let mut refused = strict_neq(ident("__wire"), null_lit());
-    for v in wf::ACCEPTED_WIRE_VERSIONS {
-        refused = and_expr(refused, strict_neq(ident("__wire"), str_lit(v.to_string())));
-    }
-    vec![
-        const_(
-            "__wire",
-            method_call(
-                member(ident("request"), "headers"),
-                "get",
-                vec![str_lit(wf::WIRE_HEADER)],
-            ),
-        ),
-        if_(
-            refused,
-            return_(Some(json_response(
-                json_error_kind(
-                    check_kind(CallCheck::WireVersion),
-                    vec![(
-                        "accepted".to_string(),
-                        TsExpr::array(
-                            wf::ACCEPTED_WIRE_VERSIONS
-                                .iter()
-                                .map(|v| num_lit(v.to_string()))
-                                .collect(),
-                        ),
-                    )],
-                ),
-                check_status(CallCheck::WireVersion),
-            ))),
-        ),
-    ]
 }
 
 fn null_response(status: i64) -> TsExpr {
@@ -839,7 +756,7 @@ pub(crate) fn emit_worker_entry(
                 method_call(
                     member(ident("request"), "headers"),
                     "get",
-                    vec![str_lit(wf::CONTRACT_HEADER)],
+                    vec![str_lit("X-Bynk-Contract")],
                 ),
             ));
             // #1826: the callee decides, so it logs the skew, by name and with
@@ -874,38 +791,18 @@ pub(crate) fn emit_worker_entry(
                         ],
                     )),
                     return_(Some(json_response(
-                        json_error_kind(check_kind(CallCheck::Contract), skew(ident("__contract"))),
-                        check_status(CallCheck::Contract),
+                        json_error_kind("ContractMismatch", skew(ident("__contract"))),
+                        409,
                     ))),
                 ]),
             ));
         }
-        // #1969 (wire format v1): the body is read as text and parsed here, so
-        // malformed JSON is the caller's fault (`400 MalformedJson`), not a
-        // fault in this Worker (`500`). Reading the raw bytes first is also
-        // what a body signature (the interop track's I2) will verify.
-        case_body.push(let_typed("args", TsType::named("__JsonValue")));
-        case_body.push(try_catch_stmt(
-            vec![TsStmt::assign(
-                ident("args"),
-                as_expr(
-                    method_call(
-                        ident("globalThis.JSON"),
-                        "parse",
-                        vec![await_expr(method_call(ident("request"), "text", vec![]))],
-                    ),
-                    TsType::named("__JsonValue"),
-                ),
-                None,
-            )],
-            None,
-            vec![return_(Some(json_response(
-                json_error_kind(
-                    check_kind(CallCheck::MalformedJson),
-                    vec![("details".to_string(), str_lit(wf::MALFORMED_JSON_DETAILS))],
-                ),
-                check_status(CallCheck::MalformedJson),
-            )))],
+        case_body.push(const_(
+            "args",
+            as_expr(
+                await_expr(method_call(ident("request"), "json", vec![])),
+                TsType::named("__JsonValue"),
+            ),
         ));
         case_body.extend(emit_call_handler_dispatch(
             sname,
@@ -916,36 +813,23 @@ pub(crate) fn emit_worker_entry(
         call_cases.push(case_(str_lit(sname.to_string()), case_body));
     }
     call_cases.push(default_case(vec![return_(Some(text_response(
-        CallCheck::UnknownService.text_body().unwrap_or_default(),
-        check_status(CallCheck::UnknownService),
+        "Not found",
+        404,
     )))]));
-    // #1969: the call dispatch makes the published wire format's checks
-    // (`bynk_check::wire_format::CALL_CHECKS`) in their published order:
-    // method, call secret, wire version, then (per service, above) the
-    // service, its contract, the body's JSON, the caller and the arguments.
     try_body.push(if_(
-        method_call(
-            ident("path"),
-            "startsWith",
-            vec![str_lit(wf::CALL_PATH_PREFIX)],
-        ),
-        block(
-            [call_method_gate(), call_secret_gate()]
-                .into_iter()
-                .chain(wire_version_gate())
-                .chain([
-                    const_(
-                        "servicePath",
-                        method_call(
-                            ident("path"),
-                            "slice",
-                            vec![member(str_lit(wf::CALL_PATH_PREFIX), "length")],
-                        ),
-                    ),
-                    switch_stmt(ident("servicePath"), call_cases),
-                ])
-                .collect(),
-        ),
+        method_call(ident("path"), "startsWith", vec![str_lit("/_bynk/call/")]),
+        block(vec![
+            call_secret_gate(),
+            const_(
+                "servicePath",
+                method_call(
+                    ident("path"),
+                    "slice",
+                    vec![member(str_lit("/_bynk/call/"), "length")],
+                ),
+            ),
+            switch_stmt(ident("servicePath"), call_cases),
+        ]),
     ));
     try_body.push(TsStmt::blank(None));
 
@@ -2409,7 +2293,7 @@ fn emit_call_handler_dispatch(
             method_call(
                 member(ident("request"), "headers"),
                 "get",
-                vec![str_lit(wf::CALLER_HEADER)],
+                vec![str_lit("X-Bynk-Caller")],
             ),
         ));
         stmts.push(if_(
@@ -2419,10 +2303,10 @@ fn emit_call_handler_dispatch(
             ),
             return_(Some(json_response(
                 json_error_kind(
-                    check_kind(CallCheck::MissingCaller),
+                    "Unauthorized",
                     vec![("details".to_string(), str_lit("missing caller identity"))],
                 ),
-                check_status(CallCheck::MissingCaller),
+                401,
             ))),
         ));
     }

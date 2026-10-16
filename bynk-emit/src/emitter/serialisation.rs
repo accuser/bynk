@@ -1078,48 +1078,6 @@ fn emit_inline_refinement_checks(
     stmts
 }
 
-/// #1969: a record field's inline refinement, checked on the decoded field
-/// (`__<field>`, which a refined field's codec leaves as its erased base
-/// value). One `if (!…) return Err(RefinementViolation)` per predicate, in the
-/// same check order and with the same messages as a named refined type's, at
-/// the field's own path (`path_expr`, a template literal).
-fn emit_field_refinement_checks(
-    fname: &str,
-    predicates: &[PredKind],
-    path_expr: &str,
-) -> Vec<TsStmt> {
-    let value = format!("__{fname}");
-    let violation = |msg: &str| -> TsStmt {
-        return_(call(
-            ident("Err"),
-            vec![TsExpr::object(vec![
-                ("kind".to_string(), str_lit("RefinementViolation")),
-                ("path".to_string(), ident(path_expr)),
-                (
-                    "violation".to_string(),
-                    TsExpr::object(vec![
-                        ("field".to_string(), str_lit(fname)),
-                        (
-                            "message".to_string(),
-                            TsExpr::Lit(TsLit::Raw(format!("\"{msg}\""))),
-                        ),
-                        ("value".to_string(), ident(value.clone())),
-                    ]),
-                ),
-            ])],
-        ))
-    };
-    let mut stmts = Vec::new();
-    for pred in bynk_syntax::ast::in_check_order(predicates, |p| p) {
-        let (cond, msg) = super::pred_condition_and_message(pred, &value);
-        stmts.push(if_(
-            not_expr(TsExpr::Paren(Box::new(cond))),
-            block(vec![violation(&msg)]),
-        ));
-    }
-    stmts
-}
-
 /// #661 (Decision D): one refinement predicate as an inline `if (!…) return
 /// Err(…)`, over the local `json` binding. The messages match
 /// `emit::emit_pred_check` so a consumer-side rejection reads identically to an
@@ -1385,15 +1343,6 @@ fn emit_record_codec(
             &access,
             &sub_path,
             ru,
-        ));
-        // #1969: an inline field refinement (`qty: Int where Positive`) is
-        // checked on the decoded value, after the field's own codec, and fails
-        // as a `RefinementViolation` at the field's path — the same envelope a
-        // named refined type's decode gives.
-        body.extend(emit_field_refinement_checks(
-            fname,
-            &field.predicates,
-            &sub_path,
         ));
     }
     // Review of #1444: a *zero-field* record — `type X = {}`, parse-legal
@@ -1740,7 +1689,6 @@ mod emit_sum_codec_tests {
                             },
                             path_segment: "tracking".to_string(),
                             default: None,
-                            predicates: Vec::new(),
                         },
                         WireField {
                             name: "weight".to_string(),
@@ -1752,7 +1700,6 @@ mod emit_sum_codec_tests {
                             },
                             path_segment: "weight".to_string(),
                             default: None,
-                            predicates: Vec::new(),
                         },
                     ],
                 },
@@ -2229,18 +2176,6 @@ fn serialise_field_expr_wire(wire: &WireRef, value: &str, ns: &str, ru: &Runtime
             value,
             "isSafeInteger",
             "Int outside the safe-integer range at boundary",
-        ),
-        // #1969: a `Duration` or `Instant` is whole milliseconds in the `Int`
-        // domain, and the receiver rejects anything else (`field_base_guards`),
-        // so a fractional or unsafe one faults here, as an `Int` does, rather
-        // than reaching the other side as a 400.
-        WireRef::Base {
-            base: b @ (BaseType::Duration | BaseType::Instant),
-            ..
-        } => guarded_number(
-            value,
-            "isSafeInteger",
-            &format!("{} outside the safe-integer range at boundary", b.name()),
         ),
         // v0.110 (ADR 0142 D5): a `Bytes` is base64-encoded on the wire — the
         // one base type whose serialise is an encode, not a bare cast.
@@ -3203,28 +3138,13 @@ pub(crate) fn emit_generic_helpers_qualified(
                 // straight from `record_inst_fields`' resolved `TypeRef`s via
                 // `wire_ref_of`, mirroring what `wire_type`/`wire_fields`
                 // would derive for a non-generic declaration's own fields.
-                //
-                // #1969: the instantiation keeps each field's inline
-                // refinement, read off the declaration (`record_inst_fields`
-                // returns its fields in declaration order).
-                let declared: Vec<Vec<bynk_syntax::ast::PredKind>> =
-                    match types.get(name.as_str()).map(|d| &d.body) {
-                        Some(bynk_syntax::ast::TypeBody::Record(r)) => r
-                            .fields
-                            .iter()
-                            .map(bynk_check::wire::field_predicates)
-                            .collect(),
-                        _ => Vec::new(),
-                    };
                 let fields: Vec<WireField> = fields
                     .into_iter()
-                    .enumerate()
-                    .map(|(i, (n, t))| WireField {
+                    .map(|(n, t)| WireField {
                         shape: wire_ref_of(&t),
                         path_segment: n.clone(),
                         name: n,
                         default: None,
-                        predicates: declared.get(i).cloned().unwrap_or_default(),
                     })
                     .collect();
                 // #1443 (Arc E slice 5): `emit_record_codec` itself now
@@ -3262,7 +3182,7 @@ pub(crate) fn emit_generic_helpers_qualified(
                 // declaration's own variants. The wire/memory discriminants
                 // are the same fixed `"kind"`/`"tag"` pair `wire_sum` uses.
                 let sum = WireSum {
-                    wire_discriminant: bynk_check::wire::WIRE_DISCRIMINANT,
+                    wire_discriminant: "kind",
                     memory_discriminant: "tag",
                     variants: variants
                         .into_iter()
@@ -3275,7 +3195,6 @@ pub(crate) fn emit_generic_helpers_qualified(
                                     path_segment: fname.clone(),
                                     name: fname,
                                     default: None,
-                                    predicates: Vec::new(),
                                 })
                                 .collect(),
                         })
