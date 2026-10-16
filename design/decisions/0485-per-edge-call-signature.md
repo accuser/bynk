@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Every cross-context call and event delivery is now signed with HMAC-SHA256 under a key one caller shares with one callee (`BYNK_CALL_TO_<CALLEE>` on the caller, `BYNK_CALL_FROM_<CALLER>` on the callee), replacing the shared `BYNK_CALL_SECRET`. A Worker refuses an internal request whose signature does not verify for the caller it names (`401`), or whose body is over 1 MiB (`413`), before anything else, so a context can claim only its own name. `bynk deploy` mints one key per edge and sets it on both ends; `bynk dev` and `bynk test` use a fixed local key. The [wire format](/book/reference/wire-format/#authentication) documents the signing input. **Breaking for deployed projects:** redeploy the whole project once (`bynk deploy`, not `--context`); `BYNK_CALL_SECRET` is no longer read and can be deleted
----
+# 0485 — Caller identity is proved by a per-edge signature, amending ADR 0092 and superseding ADR 0479
 
-## ADR: per-edge-call-signature
-title: Caller identity is proved by a per-edge signature, amending ADR 0092 and superseding ADR 0479
-summary: Every internal request is HMAC-signed under a key one sender shares with one receiver; the callee picks the key by the claimed caller and refuses what does not verify
+- **Status:** Accepted (v0.340)
 
 **Context.** ADR 0092 mints a `by c: Caller` handler's `CallerId` from the
 `X-Bynk-Caller` header and trusts it because "every context in a deployment is

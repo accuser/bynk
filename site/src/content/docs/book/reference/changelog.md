@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.339**.
+written against **v0.340**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.340.0** | Every cross-context call and event delivery is now signed with HMAC-SHA256 under a key one caller shares with one callee (`BYNK_CALL_TO_<CALLEE>` on the caller, `BYNK_CALL_FROM_<CALLER>` on the callee), replacing the shared `BYNK_CALL_SECRET`. A Worker refuses an internal request whose signature does not verify for the caller it names (`401`), or whose body is over 1 MiB (`413`), before anything else, so a context can claim only its own name. `bynk deploy` mints one key per edge and sets it on both ends; `bynk dev` and `bynk test` use a fixed local key. The [wire format](/book/reference/wire-format/#authentication) documents the signing input. **Breaking for deployed projects:** redeploy the whole project once (`bynk deploy`, not `--context`); `BYNK_CALL_SECRET` is no longer read and can be deleted |
 | **v0.339.0** | `let <pattern> = value else { … }` (and `<-` for an effect's result) binds a pattern's names for the rest of the block, and yields the `else` block, or the arms of `else match { … }`, when the value does not match, so a chain of fallible steps reads top to bottom with each failure handled beside its step |
 | **v0.338.0** | The cross-context call format is published as [wire format version 1](/book/reference/wire-format/), generated from the compiler and versioned on its own, and callers now send `X-Bynk-Wire: 1`. A `/_bynk/call/` request that is not a `POST` gets `405`, malformed JSON gets `400 MalformedJson` instead of a `500`, and an unsupported `X-Bynk-Wire` gets `400 UnsupportedWireVersion`. A record field's inline refinement (`qty: Int where Positive`) is now checked when the record is decoded, at a call boundary or in an HTTP body, and is part of the contract hash; a `Duration` field must be a whole number of milliseconds, and sending a `Duration` or `Instant` outside the safe-integer range now faults in the sender (as an `Int` already did) instead of being passed on. **Breaking for deployed projects:** contracts with an inline field refinement change hash, so redeploy the whole project once. Tightening an inline field refinement later also makes stored records that break it fail to load |
 | **v0.337.0** | An `as integration` case runs a consumed adapter's real binding, its own `given` capabilities taking the tier's doubles and stubs; a `suite` on an adapter runs the binding at every tier; and a case can call a capability it reaches directly (`let s <- Greeter.hello("ann")`) |

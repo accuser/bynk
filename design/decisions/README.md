@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0485](0485-per-edge-call-signature.md) | **Caller identity is proved by a per-edge signature, amending ADR 0092 and superseding ADR 0479** (v0.340) — Every internal request is HMAC-signed under a key one sender shares with one receiver; the callee picks the key by the claimed caller and refuses what does not verify | Accepted (v0.340) |
 | [0484](0484-let-else-is-a-block-scoped-match.md) | **`let <pattern> … else …` is the `match` it stands for, scoped to its block** (v0.339) — `let P <- e else E` followed by the rest of the block means `match` on `e` with `P => { rest }` and `_ => E`; the parser builds that `match`, so it adds no control flow, and the `else` has the enclosing block's type | Accepted (v0.339) |
 | [0483](0483-wire-format-is-a-published-surface.md) | **The cross-context wire format is a published surface with its own version, amending ADR 0310** (v0.338) — Wire format v1 (path, method, headers, check order, statuses, error bodies, JSON encoding, contract hash) is generated from the compiler, versioned apart from it, and changes additively within a version | Accepted (v0.338) |
 | [0482](0482-adapter-binding-runs-in-tests.md) | **An adapter's binding runs in an integration case and in a suite on the adapter** (v0.337) — Integration cases build consumed adapters' bindings; adapter suites test the binding; a case's capability call reaches its deps | Accepted (v0.337) |
