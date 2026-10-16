@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **515** codes in total.
+There are **517** codes in total.
 
 ## Agents
 
@@ -310,9 +310,11 @@ There are **515** codes in total.
 | `bynk.query.sum_needs_numeric` | A `sum`/`average` key function does not return a numeric type (`Int`, `Float`, or `Duration`). |  | — |
 | `bynk.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. | [`binding_decl`](/book/reference/grammar/#rule-binding_decl) | — |
 | `bynk.secrets.computed_name` | A `bynk.Secrets` read names its secret with a computed expression rather than a literal, so `bynk deploy` cannot plan it (warning). |  | Warning |
+| `bynk.send.in_agent_handler` | A `~>` send was used in an agent handler, which has no execution context to keep a fire-and-forget send alive. | [`effect_send_stmt`](/book/reference/grammar/#rule-effect_send_stmt) | — |
 | `bynk.send.in_pure_context` | A `~>` send was used in a pure (non-effectful) context. | [`effect_send_stmt`](/book/reference/grammar/#rule-effect_send_stmt) | — |
 | `bynk.send.non_effect` | A `~>` send was applied to a non-`Effect` value. | [`effect_send_stmt`](/book/reference/grammar/#rule-effect_send_stmt) | — |
 | `bynk.send.requires_unit` | A `~>` send targets an operation whose reply is not `Effect[()]`. | [`effect_send_stmt`](/book/reference/grammar/#rule-effect_send_stmt) | — |
+| `bynk.send.store_op` | A `~>` send targets an agent store operation, which is part of the handler's atomic commit and cannot be sent without waiting. | [`effect_send_stmt`](/book/reference/grammar/#rule-effect_send_stmt) | — |
 | `bynk.store.annotation_kind_mismatch` | A storage annotation is used on a kind it does not apply to (e.g. `@ttl` on a `Map`). |  | — |
 | `bynk.store.annotation_unsupported` | A known storage annotation (`@ttl`/`@retain`/`@indexed`/`@bounded`) is used before the slice that supports it. |  | — |
 | `bynk.store.cache_needs_clock` | A handler performs a `Cache` operation (TTL expiry reads the clock) without declaring `given Clock`. |  | — |

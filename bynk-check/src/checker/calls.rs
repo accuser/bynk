@@ -161,6 +161,7 @@ pub(crate) fn check_fn(
         test_actors: HashMap::new(),
         type_vars: vars.clone(),
         store_fields: HashMap::new(),
+        in_agent_handler: false,
     };
     let Some(body_ty) = type_of_block(&f.body, Some(return_ty), &mut ctx) else {
         return;
@@ -263,6 +264,7 @@ fn check_static_initialiser(
             test_actors: HashMap::new(),
             type_vars: HashSet::new(),
             store_fields: HashMap::new(),
+            in_agent_handler: false,
         };
         type_of(init, Some(field_ty), &mut ctx)
     };
