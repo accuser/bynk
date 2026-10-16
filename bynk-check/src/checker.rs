@@ -2138,8 +2138,8 @@ pub struct TestHandler {
     /// The handler's declared `by <Actor>` clause, if any — the actor a call-site
     /// principal is checked against. `None` inherits the protocol default actor.
     pub by_clause: Option<bynk_syntax::ast::ByClause>,
-    /// The handler's declared return type — what a case's call to it yields
-    /// (#1934).
+    /// #1979, #1934: the handler's declared return type — what a case's
+    /// call to it yields.
     pub return_type: bynk_syntax::ast::TypeRef,
     pub span: Span,
 }
@@ -2371,7 +2371,6 @@ impl<'a> Ctx<'a> {
     pub fn bind(&mut self, name: String, ty: TyId) {
         self.scopes.last_mut().unwrap().insert(name, ty);
     }
-
 }
 
 // ==== Type-system core (resolution, unification, compatibility, inference) ====
@@ -3221,7 +3220,9 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                 // #1934: a test-service address driven `by Nobody` observes the
                 // auth seam, so it yields an `HttpOutcome`. The principal is on
                 // the statement, so the call alone cannot say so.
-                if l.principal.as_ref().is_some_and(|p| p.actor.name == "Nobody")
+                if l.principal
+                    .as_ref()
+                    .is_some_and(|p| p.actor.name == "Nobody")
                     && let Some(t) = rhs_ty
                 {
                     let t = calls::nobody_outcome(&l.value, t, ctx);
@@ -4309,7 +4310,9 @@ fn rebrand_return_type(
         Ty::Option(t) => tys.intern(Ty::Option(rebrand_return_type(*t, caller_types, tys))),
         Ty::Effect(t) => tys.intern(Ty::Effect(rebrand_return_type(*t, caller_types, tys))),
         Ty::HttpResult(t) => tys.intern(Ty::HttpResult(rebrand_return_type(*t, caller_types, tys))),
-        Ty::HttpOutcome(t) => tys.intern(Ty::HttpOutcome(rebrand_return_type(*t, caller_types, tys))),
+        Ty::HttpOutcome(t) => {
+            tys.intern(Ty::HttpOutcome(rebrand_return_type(*t, caller_types, tys)))
+        }
         Ty::List(t) => tys.intern(Ty::List(rebrand_return_type(*t, caller_types, tys))),
         Ty::Query(t) => tys.intern(Ty::Query(rebrand_return_type(*t, caller_types, tys))),
         Ty::Stream(t) => tys.intern(Ty::Stream(rebrand_return_type(*t, caller_types, tys))),

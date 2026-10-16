@@ -5,13 +5,21 @@ changelog: 'A test case''s service call is typed by its handler''s return type, 
 
 ## ADR: case-outcome-typed-by-handler
 title: A case's service call is typed by its handler, and a call past the handler's types by the wire
-summary: Settles ADR 0203's re-openable point. A test-service address has its handler's return type; `Wire`, `by Nobody` and a wrong method yield `HttpOutcome[T]`
+summary: Settles ADR 0203's re-openable point, extending ADR 0476 to every address. A test-service address has its handler's return type; `Wire`, `by Nobody` and a wrong method yield `HttpOutcome[T]`
+
+- **Relates:** [[0203]] (the loose outcome, re-openable), [[0476]] (`svc.call` typed by its handler, http/cron/queue left open), #1931 (fixed payloads typed), #1934.
 
 **Context.** ADR 0203 resolved a test body's `svc.call(args)` against the
 service's `on call` handler, but left the outcome's *type* loose: "the runner
 recovers `Result`/`Effect` at runtime". It marked typing it as re-openable.
 Later slices added the http, cron and queue address forms (`svc.GET("/x")`,
 `svc.schedule("…")`, `svc.message(m)`) and kept the outcome loose.
+
+ADR 0476 (#1979) typed `svc.call(…)` by its handler and left the other
+addresses loose, "its outcome's shape differs by tier and by `Wire`, so a
+single static type would be wrong somewhere". It gave
+`bynk.test.untyped_outcome` a second use: comparing such an outcome with `==`
+against a bare constructor.
 
 A loose outcome cost more than it saved. A method on a value drawn from it had
 no receiver type to lower, so it emitted `/* unknown */` and failed `tsc`
@@ -33,7 +41,8 @@ and the wrong-method driver decode an `HttpOutcome` (`Rejected(…)` or
 
 **Decision.** A test-service address has the type of what it yields.
 
-- **A resolved handler yields its declared return type.** `svc.call(…)`, a
+- **A resolved handler yields its declared return type.** As ADR 0476 decided
+  for `svc.call(…)`, so for every address: `svc.call(…)`, a
   matched `svc.<VERB>("/path", …)`, `svc.schedule("…")` and `svc.message(m)`
   have the handler's return type, an `Effect[T]` (a service handler must return
   one, `bynk.service.return_not_effect`), so `let r <-` binds `T`. This holds at
@@ -81,7 +90,9 @@ and the wrong-method driver decode an `HttpOutcome` (`Rejected(…)` or
   String)`) wherever a value of it is scrutinised. It was construct-only, so
   `expect r is Ack` had worked only because the outcome was loose.
 - **`bynk.test.untyped_outcome` is retired.** No address leaves its outcome
-  untyped, so nothing remains for it to report. #1931's loose-binding machinery
+  untyped, so neither of its uses (a method on part of an outcome, ADR 0476's
+  `==` against a bare constructor) remains: `expect r == Ok("hi")` on an http
+  address now types the `Ok` from `r`. #1931's loose-binding machinery
   (loose bindings, per-`is`-test adoption, loose match arms) is removed with it.
   The emitter's `/* unknown */` receiver placeholder stays reachable only for a
   program that failed checking, as before.
@@ -95,8 +106,9 @@ and the wrong-method driver decode an `HttpOutcome` (`Rejected(…)` or
   wrong arity is a compile error, not a case that silently fails.
 - Typed values lower by their types. A primitive-typed binding compared with
   `==` lowers to host `===` instead of the structural `__bynkEq` walker, as it
-  does everywhere else. This moved 23 positive fixtures' test modules, each
-  reviewed, and no target module.
+  does everywhere else. For `svc.call` outcomes ADR 0476 already moved those
+  goldens; the http, cron and queue fixtures on `main` compare no primitive
+  outcome, so this increment moves no other test module.
 - The runtime's `Rejected` value gains `detail`, a string field. A case that
   never binds it is unaffected.
 - A wrong-method call at the unit or integration tier types, but its lowering

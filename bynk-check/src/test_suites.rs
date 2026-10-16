@@ -3435,10 +3435,16 @@ service intake from queue(\"orders\") {
             .assert_clean();
         case(&format!("{get}    match r {{\n      Ok(v) => expect v.nosuch() == 3\n      _ => expect false\n    }}"))
             .assert_reports("bynk.types.method_not_found");
-        case(&format!("{get}    expect r is Ok(v) && v.startsWith(\"a\")")).assert_clean();
+        case(&format!(
+            "{get}    expect r is Ok(v) && v.startsWith(\"a\")"
+        ))
+        .assert_clean();
         case(&format!("{get}    expect r == Ok(\"ada\")")).assert_clean();
         let item = "    let r <- api.GET(\"/item\") by Visitor\n";
-        case(&format!("{item}    expect r is Ok(i) && i.sku.length() == 1")).assert_clean();
+        case(&format!(
+            "{item}    expect r is Ok(i) && i.sku.length() == 1"
+        ))
+        .assert_clean();
         case(&format!("{item}    expect r is Ok(i) && i.nosuch == 1"))
             .assert_reports("bynk.types.unknown_field");
     }
@@ -3454,7 +3460,8 @@ service intake from queue(\"orders\") {
             .assert_reports("bynk.resolve.unknown_name");
         case(&format!("{get}    match r {{\n      BadRequest(m) | NotFound => expect m.length() == 9\n      _ => expect false\n    }}"))
             .assert_reports("bynk.types.or_pattern_binding_mismatch");
-        case(&format!("{get}    expect r is Bogus(_)")).assert_reports("bynk.types.is_unknown_variant");
+        case(&format!("{get}    expect r is Bogus(_)"))
+            .assert_reports("bynk.types.is_unknown_variant");
     }
 
     /// An `on call` handler's return type is what the case binds.
@@ -3471,7 +3478,8 @@ service intake from queue(\"orders\") {
     fn cron_and_queue_outcomes_are_typed() {
         case("    let r <- sweeper.schedule(\"0 0 * * *\")\n    match r {\n      Ok(_) => expect true\n      Err(e) => expect e.length() > 0\n    }")
             .assert_clean();
-        case("    let r <- intake.message(Item { sku: \"x\" })\n    expect r is Ack").assert_clean();
+        case("    let r <- intake.message(Item { sku: \"x\" })\n    expect r is Ack")
+            .assert_clean();
         case("    let r <- intake.message(Item { sku: \"x\" })\n    match r {\n      Retry(why) => expect why.length() > 0\n      Ack => expect true\n    }")
             .assert_clean();
         case("    let r <- intake.message(Item { sku: \"x\" })\n    expect r is Ok(_)")
@@ -3528,8 +3536,10 @@ service api from http {
             .assert_reports("bynk.types.is_unknown_variant");
         system_case("    let r <- api.POST(\"/cart\", Item { sku: \"w\" }) by Nobody\n    expect r is Rejected(Unauthorized)")
             .assert_clean();
-        system_case("    let r <- api.DELETE(\"/cart\")\n    expect r is Rejected(MethodNotAllowed)")
-            .assert_clean();
+        system_case(
+            "    let r <- api.DELETE(\"/cart\")\n    expect r is Rejected(MethodNotAllowed)",
+        )
+        .assert_clean();
         system_case("    let r <- api.DELETE(\"/cart\")\n    expect r is NotFound")
             .assert_reports("bynk.types.is_unknown_variant");
     }

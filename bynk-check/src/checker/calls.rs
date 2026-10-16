@@ -3746,9 +3746,73 @@ pub(crate) fn check_effect_let_principal(
                 .with_note("append a call-site actor, e.g. `... by User(\"alice\")`"),
             ),
         },
+        // #1978: an `on call` handler that binds its caller (`by c: Caller`)
+        // reads `deps.identity`, the calling context's name. A test has no
+        // calling context, so the case must name one with `by Caller("…")`;
+        // without it the emitted call carries no identity and fails `tsc`.
+        (Some(ActorIdentity::CallerString), principal) if handler_binds_caller(&handler, ctx) => {
+            match principal {
+                None => ctx.errors.push(
+                    CompileError::new(
+                        "bynk.test.actor_identity_required",
+                        value.span,
+                        "this handler binds its caller's identity (`by <binder>: Caller`), so the case must name the calling context with `by Caller(\"...\")`",
+                    )
+                    .with_note("append a call-site actor, e.g. `... by Caller(\"orders\")`"),
+                ),
+                Some(p) => match resolve_actor_identity(&p.actor.name, ctx) {
+                    ActorIdentity::CallerString if p.identity.is_none() => {
+                        ctx.errors.push(CompileError::new(
+                            "bynk.test.actor_identity_required",
+                            p.span,
+                            format!(
+                                "this handler binds its caller's identity, so write `by {}(\"...\")` naming the calling context",
+                                p.actor.name
+                            ),
+                        ))
+                    }
+                    ActorIdentity::Unit => {
+                        ctx.errors.push(CompileError::new(
+                            "bynk.test.principal_identity_mismatch",
+                            p.span,
+                            format!(
+                                "this handler binds its caller's identity, but `by {}` supplies none — write `by Caller(\"...\")`",
+                                p.actor.name
+                            ),
+                        ));
+                        if let Some(idv) = &p.identity {
+                            let _ = type_of(idv, None, ctx);
+                        }
+                    }
+                    _ => report_principal_actor(p, ctx),
+                },
+            }
+        }
         (_, Some(p)) => report_principal_actor(p, ctx),
         (_, None) => {}
     }
+}
+
+/// #1978: whether an `on call` handler binds the prelude `Caller`'s identity
+/// (`by c: Caller`), so its emitted `deps` requires `identity`. This mirrors
+/// `bynk_lower::lower_actor_seam_ir`, which resolves a sum `by` clause
+/// (`by who: Caller | …`) as a sum (`deps.who`) before it consults
+/// [`crate::actors::caller_binder_for`]; hence the `!is_sum()` that
+/// `caller_binder_for` alone does not need.
+fn handler_binds_caller(handler: &TestHandler, ctx: &Ctx) -> bool {
+    use crate::actors::{Identity, prelude_actor};
+    let Some(by) = &handler.by_clause else {
+        return false;
+    };
+    let Some(binder) = &by.binder else {
+        return false;
+    };
+    let name = &by.primary().name;
+    matches!(handler.kind, bynk_syntax::ast::HandlerKind::Call)
+        && !by.is_sum()
+        && !ctx.test_actors.contains_key(name)
+        && prelude_actor(name).map(|c| c.identity) == Some(Identity::CallerId)
+        && !handler.params.iter().any(|p| p.name.name == binder.name)
 }
 
 /// Resolve a call-site principal actor for its own diagnostics (v0.182).

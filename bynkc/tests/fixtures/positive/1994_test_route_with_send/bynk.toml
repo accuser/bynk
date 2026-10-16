@@ -1,0 +1,6 @@
+[project]
+name = "route-with-send"
+version = "0.1.0"
+
+[paths]
+include = ["src", "tests"]

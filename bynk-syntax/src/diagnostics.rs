@@ -1877,7 +1877,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.test.actor_identity_required",
-        "A call-site `by <Actor>` omits the identity an identity-carrying actor requires.",
+        "A test omits the identity an identity-carrying actor requires: a bare call-site `by <Actor>`, or no `by` at all on a handler that binds its `Caller`.",
         &["case"],
     ),
     dg(

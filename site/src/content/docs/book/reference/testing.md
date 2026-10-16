@@ -41,6 +41,10 @@ as an `HttpResult[User]`, so `Ok(u)` binds `u` as a `User`. The same holds for
 match or `is` test on the outcome is checked like any other: an unknown variant,
 a wrong arity, or a method the payload's type lacks is an error.
 
+A handler that sends with `~>` runs in a case as on the Worker: the send is
+handed to the execution context's `waitUntil`, and the runner awaits every
+such send after the call returns, so the case's expectations see its effects.
+
 ```bynk,fragment
 suite app.web {
   case "the greeting names the visitor" {
@@ -105,6 +109,10 @@ case "each owner's list is private" {
 - `by Visitor` — a unit-identity actor takes **no** argument
   (`bynk.test.actor_no_identity` if one is given; `bynk.test.actor_identity_required`
   if an identity-carrying actor is written bare).
+- `by Caller("orders")` — an `on call` handler that binds its caller
+  (`by c: Caller`) reads the calling context's name, and a case has no calling
+  context, so it must name one; without it the call is
+  `bynk.test.actor_identity_required`.
 - cron and queue run as their internal actor and need no `by`.
 
 At the `unit` tier the identity is *given*, not verified — the handler runs
