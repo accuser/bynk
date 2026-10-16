@@ -1337,6 +1337,21 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An `invariant` was declared after a handler; invariants precede handlers.",
     ),
     dg(
+        "bynk.parse.let_else_on_binding",
+        "An `else` follows a plain `let name = …` binding, which matches every value, so the `else` could never run.",
+        &["let_stmt", "effect_let_stmt"],
+    ),
+    dg(
+        "bynk.parse.let_pattern_annotation",
+        "A `let` with a pattern carries a type annotation; the pattern's names take their types from the value.",
+        &["let_else_stmt"],
+    ),
+    dg(
+        "bynk.parse.let_pattern_without_else",
+        "A `let` binds a pattern but has no `else` saying what the block produces when the value does not match.",
+        &["let_else_stmt"],
+    ),
+    dg(
         "bynk.parse.malformed_float_literal",
         "A float literal is missing a digit on one side of the `.` (`1.`, `.5`).",
         &["float_literal"],

@@ -96,7 +96,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "do",
         "Perform a unit effect as a statement (`do e` — the binder-free `let _ <- e`).",
     ),
-    k("else", "The alternative branch of an `if` expression."),
+    k(
+        "else",
+        "The alternative branch of an `if`, or what a block produces when a `let` pattern does not match (`let Ok(x) = r else { … }`).",
+    ),
     k(
         "ensures",
         "Declare a function postcondition — a pure `Bool` clause over the parameters and `result` (`ensures <name>: <pred>`).",
@@ -137,7 +140,7 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     ),
     k(
         "let",
-        "Bind a local value (`let x = …`, or `let x <- …` for an effect).",
+        "Bind a local value (`let x = …`, or `let x <- …` for an effect), or match a pattern with a fallback (`let Ok(x) = r else { … }`).",
     ),
     k(
         "match",

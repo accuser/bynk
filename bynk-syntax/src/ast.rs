@@ -2424,8 +2424,63 @@ pub struct LetStmt {
     /// `Let` (the `by` is parsed only in the `<-` arm) and on an effect-let with
     /// no principal.
     pub principal: Option<CallSiteActor>,
+    /// #2010: set when this binding is the hidden one a `let <pattern> … else …`
+    /// statement desugars into. `None` for every binding the author wrote.
+    pub let_else: Option<LetElse>,
     pub span: Span,
     pub trivia: Trivia,
+}
+
+/// #2010: what remains of a `let <pattern> <- e else …` (or `= e else …`)
+/// statement once the parser has desugared it.
+///
+/// The parser rewrites `let P <- e else E` followed by the rest of the block
+/// into a hidden binding, `let __letElse<offset> <- e`, and a `match` on it as
+/// the block's tail: `P => { rest of the block }` first, then either
+/// `_ => E` (an `else` block) or the `else match` arms. Everything downstream
+/// (checker, emitter, editor) sees only that ordinary `match`. This marker,
+/// carried on the hidden binding, is what lets the formatter print the sugar
+/// back and the checker word its diagnostics in the author's terms.
+#[derive(Debug, Clone)]
+pub struct LetElse {
+    /// Whether the `else` was a block or a `match { arms }`.
+    pub form: LetElseForm,
+    /// The `else` keyword.
+    pub else_span: Span,
+}
+
+/// #2010: the two spellings of a `let … else` fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LetElseForm {
+    /// `else { … }` — desugared to a trailing `_ => { … }` arm.
+    Block,
+    /// `else match { arms }` — the arms follow the pattern's arm unchanged.
+    Match,
+}
+
+/// #2010: the prefix of every hidden `let … else` binding. User identifiers
+/// start with a letter (the lexer's `Ident` rule), so no user name can collide
+/// with it, and the emitter already treats `__`-prefixed names as its own.
+pub const LET_ELSE_BINDER_PREFIX: &str = "__letElse";
+
+impl Expr {
+    /// #2010: whether this is the `match` a `let <pattern> … else …` was
+    /// desugared into — one whose scrutinee is the hidden binder. It is not an
+    /// expression the author wrote, so source-level tools (refactorings,
+    /// diagnostics) treat it as the statement it came from.
+    pub fn is_let_else_match(&self) -> bool {
+        matches!(
+            &self.kind,
+            ExprKind::Match { discriminant, .. }
+                if matches!(&discriminant.kind, ExprKind::Ident(i) if i.name.starts_with(LET_ELSE_BINDER_PREFIX))
+        )
+    }
+}
+
+/// #2010: whether `name` is a binding the compiler generated rather than one
+/// the author wrote. Editor surfaces (inlay hints, locals, symbols) skip these.
+pub fn is_generated_binding(name: &str) -> bool {
+    name.starts_with("__")
 }
 
 #[derive(Debug, Clone)]
@@ -3503,6 +3558,7 @@ fn f(x: Int) -> Int {
                 type_annot: _,
                 value,
                 principal,
+                let_else: _,
                 span: _,
                 trivia: _,
             } = l;

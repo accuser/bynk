@@ -1,0 +1,117 @@
+context shop.orders {
+  exports transparent { Problem }
+
+  ---
+  Why a placement failed, after any undoing it needed has run.
+  ---
+  type Problem = enum { Taken, NoStock, Declined }
+
+  agent Order {
+    key id: String
+
+    store status: Cell[String] = "new"
+
+    on call open() -> Effect[Result[(), Problem]] {
+      if status == "new" {
+        status := "opened"
+        Ok(())
+      } else {
+        Err(Taken)
+      }
+    }
+
+    on call confirm() -> Effect[()] {
+      status := "placed"
+    }
+
+    on call reject() -> Effect[()] {
+      status := "rejected"
+    }
+
+    on call view() -> Effect[String] { status }
+  }
+
+  agent Stock {
+    key sku: String
+
+    store held: Cell[Int] = 0
+
+    on call reserve(qty: Int) -> Effect[Result[(), Problem]] {
+      if held + qty > 5 {
+        Err(NoStock)
+      } else {
+        let _ <- held.update((h) => h + qty)
+        Ok(())
+      }
+    }
+
+    on call release(qty: Int) -> Effect[()] {
+      let _ <- held.update((h) => h - qty)
+    }
+
+    on call level() -> Effect[Int] { 5 - held }
+  }
+
+  ---
+  A card number of zero is declined; any other is authorised, and the
+  authorisation reference is the number doubled.
+  ---
+  fn authorise(card: Int) -> Result[Int, Problem] {
+    if card == 0 { Err(Declined) } else { Ok(card * 2) }
+  }
+
+  ---
+  Each step undoes what the earlier steps did when it fails.
+  ---
+  service place {
+    on call(id: String, qty: Int, card: Int) -> Effect[Result[String, Problem]] {
+      let Ok(_) <- Order(id).open() else { Err(Taken) }
+      let Ok(_) <- Stock("widget").reserve(qty) else {
+        do Order(id).reject()
+        Err(NoStock)
+      }
+      let Ok(reference) = authorise(card) else match {
+        Err(why) => {
+          do Stock("widget").release(qty)
+          do Order(id).reject()
+          Err(why)
+        },
+      }
+      do Order(id).confirm()
+      Ok("placed \(reference)")
+    }
+  }
+
+  service status {
+    on call(id: String) -> Effect[String] { Order(id).view() }
+  }
+
+  service stock {
+    on call() -> Effect[Int] { Stock("widget").level() }
+  }
+
+  ---
+  The `else` stands in for the rest of its own block only: here that is the
+  `if` branch, so the function still goes on to label the result.
+  ---
+  fn label(o: Option[Int]) -> String {
+    let n = if true {
+      let Some(v) = o else { 0 }
+      v + 1
+    } else {
+      -1
+    }
+    "n=\(n)"
+  }
+
+  ---
+  A `?` inside an `else` still returns from the whole function.
+  ---
+  fn pick(r: Result[Int, Problem], fallback: Result[Int, Problem]) -> Result[Int, Problem] {
+    let Ok(n) = r else {
+      let f = fallback?
+      Ok(f * 10)
+    }
+    Ok(n + 1)
+  }
+}

@@ -385,7 +385,16 @@ fn contains(outer: Span, inner: Span) -> bool {
 /// Finds the body (fn / handler / provider op / test case) whose span
 /// contains `target`, then hands off to [`find_in_block`]. `None` when the
 /// selection sits outside any body (a header, or a file that doesn't parse).
+///
+/// #2010: a selection whose smallest enclosing expression is the `match` a
+/// `let … else` was desugared into — the statement itself, or a span crossing
+/// from it into the rest of its block — has no expression of the author's to
+/// lift, so it is `None` too.
 fn find_site(unit: &SourceUnit, target: Span) -> Option<Site<'_>> {
+    find_site_any(unit, target).filter(|site| !site.expr.is_let_else_match())
+}
+
+fn find_site_any(unit: &SourceUnit, target: Span) -> Option<Site<'_>> {
     match unit {
         SourceUnit::Commons(c) => find_in_items(&c.items, target),
         SourceUnit::Context(c) => find_in_items(&c.items, target),
@@ -906,6 +915,20 @@ fn find_stmt_run_in_expr(e: &Expr, target: Span) -> Option<StmtRun<'_>> {
 /// end (the run includes it). No match — a partial-statement selection, or
 /// one spanning more than this single block — returns `None`.
 fn align_stmt_run(block: &Block, target: Span) -> Option<StmtRun<'_>> {
+    // #2010: a `let … else` is a hidden binding plus the `match` it heads, which
+    // holds the rest of the block; lifting the binding alone would strand the
+    // rest of the block, so a run that reaches one is not offered.
+    if block
+        .statements
+        .iter()
+        .any(|s| matches!(s, Statement::Let(l) | Statement::EffectLet(l) if l.let_else.is_some()))
+        && block
+            .statements
+            .last()
+            .is_some_and(|s| s.span().end <= target.end)
+    {
+        return None;
+    }
     let start_idx = block
         .statements
         .iter()
@@ -1927,6 +1950,77 @@ mod tests {
                 // Inserted above the enclosing `fn f`, not inside the `if`.
                 assert_eq!(edits[0].range.start, Position::new(2, 0));
                 assert_eq!(edits[1].new_text, "extractedFn(num)");
+            }
+
+            /// #2010: a `let … else` line is the hidden binding that heads the
+            /// rest of its block, so neither refactoring lifts it — alone or
+            /// with what follows — while its value is still extractable.
+            #[test]
+            fn a_let_else_statement_is_not_extracted() {
+                let src = "context c\n\nfn f(r: Result[Int, String]) -> Int {\n  let Ok(n) = load(r) else { 0 }\n  let m = n + 1\n  m\n}\n";
+                let uri = Url::parse("file:///a.bynk").unwrap();
+                let locals = vec![param(src, "r", "Result[Int, String]")];
+                for sel in [
+                    "let Ok(n) = load(r) else { 0 }",
+                    "let Ok(n) = load(r) else { 0 }\n  let m = n + 1",
+                    "let Ok(n) = load(r) else { 0 }\n  let m = n + 1\n  m",
+                ] {
+                    let start = src.find(sel).unwrap();
+                    let requested = Span::new(start, start + sel.len());
+                    assert!(
+                        extract_function(src, requested, &uri, Some(3), &[], &locals, &[], &TYS)
+                            .is_empty(),
+                        "extract function must decline {sel:?}"
+                    );
+                    assert!(
+                        extract_variable(src, requested, &uri, Some(3)).is_empty(),
+                        "extract variable must decline {sel:?}"
+                    );
+                }
+                let start = src.find("load(r)").unwrap();
+                let requested = Span::new(start, start + "load(r)".len());
+                let actions = extract_variable(src, requested, &uri, Some(3));
+                assert_eq!(actions.len(), 1, "the value is the author's expression");
+                let edits = sole_edit(&actions[0]);
+                assert!(
+                    edits
+                        .iter()
+                        .any(|e| e.new_text.starts_with("let extracted = load(r)")),
+                    "{edits:?}"
+                );
+            }
+
+            /// #2010: statements after a `let … else` live in its pattern's arm
+            /// and are an ordinary run there.
+            #[test]
+            fn statements_after_a_let_else_still_extract() {
+                let src = "context c\n\nfn f(r: Result[Int, String]) -> Int {\n  let Ok(n) = load(r) else { 0 }\n  let m = n + 1\n  let k = m * 2\n  k\n}\n";
+                let uri = Url::parse("file:///a.bynk").unwrap();
+                let sel = "let m = n + 1\n  let k = m * 2\n  k";
+                let start = src.find(sel).unwrap();
+                let requested = Span::new(start, start + sel.len());
+                let locals = vec![
+                    param(src, "r", "Result[Int, String]"),
+                    let_binding(src, "m", "Int"),
+                    let_binding(src, "k", "Int"),
+                    LocalBinding {
+                        name: "n".to_string(),
+                        def_span: Span::new(nth_offset(src, "n)", 0), nth_offset(src, "n)", 0) + 1),
+                        kind: LocalKind::Let,
+                        ty: "Int".to_string(),
+                        scope: Span::new(0, src.len()),
+                    },
+                ];
+                // The run includes the tail, whose type becomes the lifted
+                // `fn`'s return type.
+                let tail = src.find("  k\n}").unwrap() + 2;
+                let types = vec![(
+                    Span::new(tail, tail + 1),
+                    TYS.intern(Ty::Base(BaseType::Int)),
+                )];
+                let actions =
+                    extract_function(src, requested, &uri, Some(3), &[], &locals, &types, &TYS);
+                assert_eq!(actions.len(), 1, "{actions:#?}");
             }
 
             #[test]

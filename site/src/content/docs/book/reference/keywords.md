@@ -41,7 +41,7 @@ Reserved everywhere — these **60** words can never be used as an identifier.
 | `context` | Declare a deployable context (services, agents, capabilities). |
 | `cron` | The cron protocol on a service header (`from cron`). |
 | `do` | Perform a unit effect as a statement (`do e` — the binder-free `let _ <- e`). |
-| `else` | The alternative branch of an `if` expression. |
+| `else` | The alternative branch of an `if`, or what a block produces when a `let` pattern does not match (`let Ok(x) = r else { … }`). |
 | `ensures` | Declare a function postcondition — a pure `Bool` clause over the parameters and `result` (`ensures <name>: <pred>`). |
 | `enum` | Declare a payloadless sum type (`enum { A, B }`). |
 | `expect` | Assert a predicate inside a test case (`expect <bool-predicate>`). |
@@ -55,7 +55,7 @@ Reserved everywhere — these **60** words can never be used as an identifier.
 | `implies` | Logical implication (`P implies Q` ≡ `!P || Q`), used in invariant predicates. |
 | `invariant` | Declare an agent invariant — a predicate that must hold of every committed state. |
 | `is` | Test a value against a variant pattern, yielding a `Bool`. |
-| `let` | Bind a local value (`let x = …`, or `let x <- …` for an effect). |
+| `let` | Bind a local value (`let x = …`, or `let x <- …` for an effect), or match a pattern with a fallback (`let Ok(x) = r else { … }`). |
 | `match` | Pattern-match over a sum type, `Result`, or `Option`. |
 | `opaque` | Declare an opaque type, or export a type opaquely. |
 | `property` | Declare a generative test inside a `suite` (`property "…" { for all … }`). |

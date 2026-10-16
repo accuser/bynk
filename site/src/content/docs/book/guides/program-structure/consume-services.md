@@ -51,6 +51,35 @@ service placeOrder {
 }
 ```
 
+## Undo earlier steps when a later one fails
+
+Each context commits its own work. When a handler calls several, nothing rolls
+the earlier calls back if a later one fails, so the handler undoes them itself.
+`let <pattern> <- <call> else { … }` puts each step's undo beside the step
+([`let … else`](/book/guides/type-system/result-and-optionals/#let-else)):
+
+```bynk,fragment
+context orders
+
+consumes inventory as Stock
+consumes payment as Pay
+
+service placeOrder {
+  on call(sku: String, total: Int) -> Effect[Result[Int, String]] {
+    let Ok(_) <- Stock.reserve(sku) else { Err("out of stock") }
+    let Ok(receipt) <- Pay.authorise(total) else {
+      let _ <- Stock.release(sku)
+      Err("payment declined")
+    }
+    Ok(receipt)
+  }
+}
+```
+
+If `reserve` fails, nothing has happened yet, so the handler answers at once. If
+`authorise` fails, it releases the stock it reserved first. Either `else`
+produces the handler's result, in place of the rest of its body.
+
 ## How it compiles
 
 The call is the same Bynk code on both targets, but the emitted wiring differs:
