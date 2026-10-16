@@ -3,6 +3,8 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
+import { FetchError, Request, Response } from "../bynk.js";
+
 /**
  * A Cloudflare Workers KV namespace: a key/value store with optional per-entry
  * expiry and prefix listing.
@@ -16,3 +18,33 @@ export interface Kv {
 }
 
 export const __KvToken: symbol = globalThis.Symbol("Kv");
+
+/**
+ * A Service Binding to a Worker that is not part of this Bynk project: an
+ * untyped HTTP call over Cloudflare's private channel, never the public
+ * internet. Used only through a named instance that names its Worker,
+ * `capability Billing = Service @worker("legacy-billing")`, which binds as
+ * `SERVICE_BILLING`; a bare `given Service` names no Worker and is refused.
+ *
+ * `send` has `Fetch.send`'s shape and rules: the same `Request` (its
+ * headers checked the same way, refused as `InvalidHeader` before anything
+ * is sent), the same `Response`, and `Network` when the call itself fails.
+ * The URL's host is not used for routing (the binding decides where the
+ * request goes), but the URL must be absolute and the callee sees it. A
+ * status the Worker returns, 5xx included, is an `Ok` response.
+ *
+ * The callee is not Bynk's: `bynk deploy` neither creates nor checks its
+ * contract, and warns when no Worker of that name exists in the account
+ * (Cloudflare itself then rejects the upload). `bynk dev` binds a local
+ * test double unless `--local-worker` names the Worker, and `bynkc test`
+ * faults until the call is stubbed. A Bynk callee should be consumed with
+ * `consumes` instead, which checks its contract.
+ *
+ * `Request`, `Response` and `FetchError` are `bynk`'s types, so a context
+ * that calls `send` also writes `consumes bynk` to name them.
+ */
+export interface Service {
+  send(req: Request): globalThis.Promise<Result<Response, FetchError>>;
+}
+
+export const __ServiceToken: symbol = globalThis.Symbol("Service");

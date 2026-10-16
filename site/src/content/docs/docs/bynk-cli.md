@@ -96,7 +96,7 @@ locally](/book/guides/projects-build-and-deployment/run-locally/) for a worked
 walkthrough.
 
 ```text
-bynk dev [PATH] [--context NAME]... [--base-port N] [--inspect] [--inspect-port N] [-- <wrangler args>]
+bynk dev [PATH] [--context NAME]... [--base-port N] [--inspect] [--inspect-port N] [--local-worker NAME]... [-- <wrangler args>]
 ```
 
 | Argument | Default | Meaning |
@@ -106,6 +106,7 @@ bynk dev [PATH] [--context NAME]... [--base-port N] [--inspect] [--inspect-port 
 | `--base-port N` | `8787` | First port of the per-context allocation: context *i* is served on `N + i`, in the order listed. |
 | `--inspect` | off | Serve with the V8 inspector enabled (`wrangler dev --inspector-port`) so a JavaScript debugger can attach. Breakpoints set in `.bynk` sources resolve through the emitted source maps, composed into the worker bundle. Prints an inspector URL per context on start. |
 | `--inspect-port N` | `9229` | First inspector port, allocated per context exactly as `--base-port` is. Used under `--inspect`, and also whenever several contexts are served: wrangler always starts an inspector, so each context gets its own port rather than all racing for 9229. A range that overlaps the `--base-port` range is an error. |
+| `--local-worker NAME` | none | A Worker outside the project, named by a [`Service` instance](/book/guides/effects-and-capabilities/call-a-foreign-worker/) (`@worker("NAME")`), to reach in your own locally running `wrangler dev` of it instead of the stand-in `bynk dev` binds by default. **Repeatable.** A name no served context binds is warned about. |
 | `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler dev` verbatim (e.g. `-- --var K:V`). Ports are the driver's to allocate: passing `-- --port` or `-- --inspector-port` against an allocation is an error naming the flag that owns it. |
 
 **Behaviour**
@@ -123,16 +124,32 @@ bynk dev [PATH] [--context NAME]... [--base-port N] [--inspect] [--inspect-port 
    needed** and `wrangler.toml` is served untouched. The processes discover each
    other through wrangler's dev registry and wire the generated `[[services]]`
    bindings between themselves, so a cross-context call resolves locally.
+   A context that binds a Worker outside the project (a `Service` instance)
+   gets a local stand-in for it in its own `wrangler dev`, passed as a second
+   `-c` config and written under `.bynk/dev/stand-ins/`. It runs as
+   `bynk-stand-in-<context>-<worker>`, so it never answers another local
+   session's binding to the real Worker, and the context is served from
+   `wrangler.dev.toml`, a copy of its `wrangler.toml` bound to the stand-in. It
+   answers every request with `503` and a body naming itself, and is listed on
+   start.
+   `--local-worker NAME` drops it, so the dev registry connects the binding to
+   your own `wrangler dev` of that Worker. `-- --remote` runs no stand-ins, and
+   a `-- -c`/`--config` while stand-ins run is an error.
    When `wrangler` resolves via `npx` and several contexts are served, it is
    installed once (`npx --yes wrangler@4 --version`) before they start, so their
    first-run installs do not race in npm's cache.
 6. Watch the `.bynk` sources; a save rebuilds in place and the affected workers
    hot-reload. Any worker exiting stops the rest — a survivor's bindings would
-   point at a context that is gone.
+   point at a context that is gone. So does a SIGINT or SIGTERM sent to `bynk
+   dev` itself (on Linux and macOS): it stops every `wrangler` and the `workerd`
+   processes they started before it exits, so a CI step or test harness that
+   stops it with `kill` leaves no server holding a port. A second Ctrl-C while
+   they are stopping exits at once.
 
 **Exit code** — On a successful hand-off, `bynk dev` exits with the exit code of
-the first `wrangler` to stop (a clean Ctrl-C stop is a `0`). A pre-flight or
-build failure exits non-zero before serving.
+the first `wrangler` to stop (a clean Ctrl-C stop is a `0`). Stopped by a
+SIGTERM, it exits `143`. A pre-flight or build failure exits non-zero before
+serving.
 
 **Notes**
 
@@ -180,6 +197,15 @@ correctness requirement, not a nicety: Cloudflare resolves a Service Binding at
 upload and rejects a Worker whose target does not yet exist. A `consumes` cycle
 cannot arise — the compiler rejects one before emit.
 
+A Service Binding to a Worker **outside the project** (a [`Service`
+instance](/book/guides/effects-and-capabilities/call-a-foreign-worker/)) is
+planned as `service <BINDING> <worker> (foreign Worker; not provisioned)` (in
+JSON, the context's `foreign_services`). It is never created, ordered against or
+environment-suffixed. After authenticating and before confirming, `deploy` asks
+the account whether each such Worker exists (`wrangler deployments list --name`)
+and **warns, never refuses**, when one does not: Cloudflare then rejects the
+upload itself. `--dry-run` does not ask.
+
 **Secrets** — `deploy` sets three kinds, and the plan marks which is which:
 
 - **`declared`** — an `actor`'s `auth` secret (`Bearer(secret = "…")`,
@@ -194,8 +220,12 @@ cannot arise — the compiler rejects one before emit.
 
 A `Secrets.get` call with a **computed** name cannot be planned. The compiler
 warns (`bynk.secrets.computed_name`), and the plan says so rather than
-under-reporting — `secrets incomplete <worker>`, or `secrets_complete: false` on
-the context in `--format json`. **A short `read` list with `secrets_complete:
+under-reporting. Neither can a read inside an adapter's TypeScript binding: a
+Worker that composes an adapter provider `given Secrets` is marked incomplete
+too. Literal names in `provides` bodies — including providers reached through
+`given` — are collected like those in handlers. Either way the plan says so —
+`secrets incomplete <worker>`, or `secrets_complete: false` on the context in
+`--format json`. **A short `read` list with `secrets_complete:
 false` is not a census** — see [the deploy
 guide](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/).
 

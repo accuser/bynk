@@ -31,9 +31,12 @@ function __bynkShow(v: unknown): string {
 function __makeHarness() {
   const env___ns_demo_api: any = {};
   const env___ns_demo_counter: any = {};
+  env___ns_demo_api.BYNK_CALL_SECRET = "bynk-local-call-secret";
   env___ns_demo_api.DEMO_COUNTER = { fetch: (req: globalThis.Request) => worker___ns_demo_counter.fetch(req, env___ns_demo_counter) } as __ServiceBinding;
+  env___ns_demo_counter.BYNK_CALL_SECRET = "bynk-local-call-secret";
   env___ns_demo_counter.COUNTER = __makeIntegrationDoNamespace(__ns_demo_counter.Counter, env___ns_demo_counter);
   const rootEnv: any = {};
+  rootEnv.BYNK_CALL_SECRET = "bynk-local-call-secret";
   rootEnv.DEMO_API = { fetch: (req: globalThis.Request) => worker___ns_demo_api.fetch(req, env___ns_demo_api) } as __ServiceBinding;
   rootEnv.DEMO_COUNTER = { fetch: (req: globalThis.Request) => worker___ns_demo_counter.fetch(req, env___ns_demo_counter) } as __ServiceBinding;
   return { env: rootEnv };
@@ -42,8 +45,8 @@ function __makeHarness() {
 async function test_two_ticks_on_the_same_id_accumulate_across_the_wire() {
   try {
     const deps = __makeHarness();
-    const a = await __callService(deps.env.DEMO_API, "tick", "c1" as __JsonValue, __ns_demo_api.__deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379");
-    const b = await __callService(deps.env.DEMO_API, "tick", "c1" as __JsonValue, __ns_demo_api.__deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379");
+    const a = await __callService(deps.env.DEMO_API, "tick", "c1" as __JsonValue, __ns_demo_api.__deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379", deps.env);
+    const b = await __callService(deps.env.DEMO_API, "tick", "c1" as __JsonValue, __ns_demo_api.__deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379", deps.env);
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
@@ -68,7 +71,7 @@ async function test_two_ticks_on_the_same_id_accumulate_across_the_wire() {
 async function test_a_fresh_id_starts_from_zero_in_a_new_case() {
   try {
     const deps = __makeHarness();
-    const a = await __callService(deps.env.DEMO_API, "tick", "c2" as __JsonValue, __ns_demo_api.__deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379");
+    const a = await __callService(deps.env.DEMO_API, "tick", "c2" as __JsonValue, __ns_demo_api.__deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379", deps.env);
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {

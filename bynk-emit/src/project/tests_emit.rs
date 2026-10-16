@@ -1407,6 +1407,39 @@ fn service_binding_forward(worker_ident: &str, env_ident: &str, sends: bool) -> 
     }
 }
 
+/// Interop I5 (#1972): a Service Binding standing in for a foreign Worker in
+/// the integration harness, answering every request with
+/// [`crate::emitter::wrangler::foreign_service_double_body`]'s 503, as the
+/// double `bynk dev` binds by default does. A case that needs another answer
+/// stubs the instance's `send`.
+fn foreign_service_double(binding: &str, worker: &str) -> TsExpr {
+    let response = TsExpr::New {
+        callee: Box::new(ident("globalThis.Response")),
+        args: vec![
+            str_lit(crate::emitter::wrangler::foreign_service_double_body(
+                binding, worker,
+            )),
+            TsExpr::object(vec![(
+                "status".to_string(),
+                num_lit(crate::emitter::wrangler::FOREIGN_SERVICE_DOUBLE_STATUS.to_string()),
+            )]),
+        ],
+    };
+    TsExpr::As {
+        expr: Box::new(TsExpr::object(vec![(
+            "fetch".to_string(),
+            TsExpr::Arrow {
+                params: Vec::new(),
+                is_async: true,
+                generics: Vec::new(),
+                return_type: None,
+                body: Box::new(TsArrowBody::Expr(Box::new(response))),
+            },
+        )])),
+        ty: TsType::named("__ServiceBinding"),
+    }
+}
+
 /// #1959: the harness's import alias for participant `ns`'s events fan-out
 /// module, shared by the import and the binding that constructs from it.
 fn fanout_alias(ns: &str) -> String {
@@ -1458,6 +1491,13 @@ fn emit_integration_harness<'a>(
     for p in participants {
         let ns = test_ns(p);
         let env = format!("env_{ns}");
+        // #2004: every participant admits the others' calls and event
+        // deliveries under the local call secret, as under `bynk dev`.
+        body.push(TsStmt::assign(
+            member(ident(env.clone()), crate::CALL_SECRET_BINDING),
+            str_lit(crate::LOCAL_CALL_SECRET),
+            None,
+        ));
         for binding in bindings_of(p) {
             let value = match &binding.source {
                 // #1856: a context that is no participant has no Worker here.
@@ -1475,6 +1515,11 @@ fn emit_integration_harness<'a>(
                 // S4a (#1966): each instance its own fresh namespace.
                 BindingSource::Kv | BindingSource::KvInstance { .. } => {
                     call(ident("__makeIntegrationKv"), vec![])
+                }
+                // Interop I5 (#1972): the foreign Worker is not here, so its
+                // binding answers as `bynk dev`'s default double does.
+                BindingSource::ForeignService { worker, .. } => {
+                    foreign_service_double(&binding.name, worker)
                 }
                 BindingSource::Agent { class_name } => call(
                     ident("__makeIntegrationDoNamespace"),
@@ -1501,6 +1546,13 @@ fn emit_integration_harness<'a>(
         TsBindingName::Ident("rootEnv".to_string()),
         Some(TsType::named("any")),
         TsExpr::object(vec![]),
+        None,
+    ));
+    // #2004: the test cases call in through `rootEnv`, so it holds the
+    // secret their `__callService` stamps.
+    body.push(TsStmt::assign(
+        member(ident("rootEnv"), crate::CALL_SECRET_BINDING),
+        str_lit(crate::LOCAL_CALL_SECRET),
         None,
     ));
     for p in participants {
@@ -3683,8 +3735,9 @@ function __bynkOverlay(base: unknown, stub: object, cap: string): unknown {
 /// from a fixed-seed generator, `Secrets` has none, `Locale` is `"en"`,
 /// `Idempotency` and `Kv` are in-memory (a TTL or `expiresAfter` is accepted
 /// and ignored: expiry is not modelled), and `Fetch` faults — a test never
-/// reaches the network, so it must `stub Fetch.send`. `__makeTestDeps` builds
-/// fresh ones per case.
+/// reaches the network, so it must `stub Fetch.send` — as does each
+/// `bynk.cloudflare` `Service` instance (`stub Billing.send`). `__makeTestDeps`
+/// builds fresh ones per case.
 fn platform_double(owner: &str, cap: &str, ns: &str, name: &str) -> Option<String> {
     let body = match (owner, cap) {
         ("bynk", "Logger") => "  return {\n    async info() {},\n    async error() {},\n  };\n".to_string(),
@@ -3696,6 +3749,9 @@ fn platform_double(owner: &str, cap: &str, ns: &str, name: &str) -> Option<Strin
         ("bynk", "Fetch") => "  return {\n    async send() {\n      throw new globalThis.Error(\"bynk: `Fetch.send` is not stubbed, and a test never reaches the network — add `stub Fetch.send(_) returns …`\");\n    },\n  };\n".to_string(),
         ("bynk", "Idempotency") => "  const store = new globalThis.Map<string, unknown>();\n  return {\n    async dedup(key) {\n      return (store.has(key) ? Some(store.get(key)) : None) as never;\n    },\n    async remember(key, value) {\n      store.set(key, value);\n    },\n  };\n".to_string(),
         ("bynk.cloudflare", "Kv") => "  const store = new globalThis.Map<string, string>();\n  return {\n    async get(key) {\n      const v = store.get(key);\n      return v === undefined ? None : Some(v);\n    },\n    async put(key, value) {\n      store.set(key, value);\n    },\n    async putTtl(key, value) {\n      store.set(key, value);\n    },\n    async delete(key) {\n      store.delete(key);\n    },\n    async list(prefix) {\n      return [...store.keys()].filter((k) => prefix.tag === \"None\" || k.startsWith(prefix.value)).sort();\n    },\n  };\n".to_string(),
+        // Interop I5 (#1972): like `Fetch`, a test never reaches the foreign
+        // Worker, so each instance faults until its `send` is stubbed.
+        ("bynk.cloudflare", "Service") => format!("  return {{\n    async send() {{\n      throw new globalThis.Error(\"bynk: `{name}.send` is not stubbed, and a test never reaches the Worker behind it — add `stub {name}.send(_) returns …`\");\n    }},\n  }};\n"),
         _ => return None,
     };
     Some(format!(
@@ -4652,7 +4708,7 @@ fn emit_test_case_function(
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
-        target_uses_send(target_name, UnitKind::Context, unit_tables),
+        target_uses_send(target_name, target_kind, unit_tables),
         source,
         rel_path,
         runtime_use,
@@ -5887,7 +5943,7 @@ fn emit_test_property_function(
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
-        target_uses_send(target_name, UnitKind::Context, unit_tables),
+        target_uses_send(target_name, target_kind, unit_tables),
         source,
         rel_path,
         runtime_use,
@@ -6108,7 +6164,7 @@ fn emit_test_history_property_function(
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
-        target_uses_send(target_name, UnitKind::Context, unit_tables),
+        target_uses_send(target_name, target_kind, unit_tables),
         source,
         rel_path,
         runtime_use,

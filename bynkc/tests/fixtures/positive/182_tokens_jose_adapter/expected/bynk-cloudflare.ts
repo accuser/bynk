@@ -51,7 +51,21 @@ const FORBIDDEN_REQUEST_HEADERS: ReadonlySet<string> = new Set([
   "expect",
 ]);
 
+// The function `FetchProvider` sends with: the global `fetch` for `Fetch`, a
+// Service Binding's own `fetch` for `bynk.cloudflare`'s `Service` (interop I5,
+// #1972), so the two share every header and response rule.
+export type Fetcher = (url: string, init: RequestInit) => Promise<globalThis.Response>;
+
 export class FetchProvider implements Fetch {
+  // A declared field + assigning constructor, not a parameter property: the
+  // latter is non-erasable by pure type-stripping (ADR 0136).
+  private fetcher: Fetcher;
+  constructor(fetcher?: Fetcher) {
+    // Read at call time, not captured: a test (or a runtime) may replace the
+    // global after construction.
+    this.fetcher = fetcher ?? ((url, init) => fetch(url, init));
+  }
+
   async send(req: FetchRequest): Promise<Result<FetchResponse, FetchError>> {
     // Built in its own `try`, apart from the one around `fetch`, so a refused
     // header is `InvalidHeader` — never mistaken for a `Network` failure —
@@ -86,7 +100,7 @@ export class FetchProvider implements Fetch {
       return Err(FetchError.InvalidHeader);
     }
     try {
-      const res = await fetch(req.url, {
+      const res = await this.fetcher(req.url, {
         method: req.method.tag.toUpperCase(),
         headers,
         body: req.body.tag === "Some" ? req.body.value : undefined,

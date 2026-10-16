@@ -93,7 +93,15 @@ fn hello_world_serves_on_workerd() {
     let port = 20000 + (std::process::id() % 10000) as u16;
     let child = wrangler::Wrangler::spawn(
         base_command("npx")
-            .args(["-y", WRANGLER, "dev", "--port", &port.to_string()])
+            .args([
+                "-y",
+                WRANGLER,
+                "dev",
+                "--var",
+                &wrangler::call_secret_var(),
+                "--port",
+                &port.to_string(),
+            ])
             .current_dir(&worker_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped()),
@@ -478,6 +486,8 @@ fn serve_smoke_files(files: &[(&str, &str)], tag: &str, port_base: u16) -> Optio
                 "-y",
                 WRANGLER,
                 "dev",
+                "--var",
+                &wrangler::call_secret_var(),
                 "--port",
                 &port.to_string(),
                 "--inspector-port",

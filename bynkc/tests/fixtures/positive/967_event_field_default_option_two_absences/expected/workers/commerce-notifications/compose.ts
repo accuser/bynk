@@ -6,7 +6,6 @@ import * as handlers from "./handlers.js";
 import * as bynk__binding from "../../bynk-cloudflare.js";
 
 export interface Env {
-  COMMERCE_ORDER: __ServiceBinding;
 }
 
 export function compose(env: Env) {

@@ -31,8 +31,23 @@ struct WranglerConfig {
 
 #[derive(Debug, Deserialize)]
 struct ServiceBinding {
-    /// The *target* worker's name (`worker_dir_name`, dots dasherised).
+    /// The binding's `env` name: `SHOP_CART` for a project context,
+    /// `SERVICE_BILLING` for a foreign Worker (interop I5, #1972).
+    binding: String,
+    /// The *target* worker's name (`worker_dir_name`, dots dasherised), or a
+    /// foreign Worker's as its declaration names it.
     service: String,
+}
+
+/// Interop I5 (#1972): a Service Binding to a Worker that is not one of the
+/// project's (`capability Billing = Service @worker("legacy-billing")`).
+/// Deploy reads only generated output (ADR 0193 D3), so a `[[services]]`
+/// entry is foreign exactly when its target is none of the build's Workers:
+/// every context a project consumes is built beside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ForeignService {
+    pub(crate) binding: String,
+    pub(crate) worker: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,9 +95,14 @@ pub(crate) struct DurableObject {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Resources {
     /// The workers this one binds to — the edges the deploy order respects.
-    /// Adapters are already excluded upstream (they are not Workers), so every
-    /// edge here names a real worker directory.
+    /// Adapters are already excluded upstream (they are not Workers), and
+    /// foreign Workers are in [`Resources::foreign_services`], so every edge
+    /// here names a real worker directory.
     pub(crate) binds_to: Vec<String>,
+    /// Interop I5 (#1972): the Service Bindings to Workers outside the
+    /// project, in binding order. Never provisioned, ordered against or
+    /// environment-qualified: the Worker is not Bynk's.
+    pub(crate) foreign_services: Vec<ForeignService>,
     /// The queues this context consumes, by name. Created before the push
     /// (ADR 0194 D3): a `[[queues.consumers]]` binding whose queue does not
     /// exist fails the deploy.
@@ -111,20 +131,22 @@ pub(crate) struct Resources {
     /// is a legitimate handled outcome and a missing value warns rather than
     /// failing.
     pub(crate) read_secrets: Vec<String>,
-    /// False when the context names a secret with a computed expression, so
-    /// `read_secrets` is not everything. The plan must say so rather than
+    /// False when the context reads a secret the compiler cannot name (a
+    /// computed expression, or an adapter binding — #1976), so `read_secrets`
+    /// is not everything. The plan must say so rather than
     /// presenting its list as whole.
     pub(crate) reads_complete: bool,
 }
 
 impl Default for Resources {
     /// Hand-written for one field: `reads_complete` is **true** by vacuity — a
-    /// context that names no secret has not computed one — whereas `bool`'s
+    /// context that names no secret has none out of sight — whereas `bool`'s
     /// default is false, which would say the opposite. A derived `Default` here
     /// would make every resource-less context claim an incomplete list.
     fn default() -> Self {
         Self {
             binds_to: Vec::new(),
+            foreign_services: Vec::new(),
             queues: Vec::new(),
             durable_objects: Vec::new(),
             needs_kv: false,
@@ -149,8 +171,9 @@ struct SecretsManifest {
     /// handled outcome and a missing value warns rather than failing.
     #[serde(default)]
     read: Vec<String>,
-    /// False when the context names at least one secret with a computed
-    /// expression, so `read` is not everything. Defaulted `true` **only**
+    /// False when the context reads at least one secret the compiler cannot
+    /// name (a computed expression, or an adapter binding — #1976), so `read`
+    /// is not everything. Defaulted `true` **only**
     /// because the version guard already refuses a manifest that predates the
     /// field — no v1 file reaches this.
     #[serde(default = "read_complete_default")]
@@ -202,7 +225,7 @@ fn read_secrets_manifest(worker_dir: &Path) -> Result<SecretsManifest, String> {
 }
 
 /// Read everything `deploy` acts on out of one worker's generated build output.
-fn read_resources(config: &Path) -> Result<Resources, String> {
+fn read_resources(config: &Path, project_workers: &[String]) -> Result<Resources, String> {
     let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
     let parsed: WranglerConfig = toml::from_str(&text).map_err(|e| e.to_string())?;
     // Beside the config, not in it: secrets are a runtime store rather than
@@ -243,8 +266,20 @@ fn read_resources(config: &Path) -> Result<Resources, String> {
         })?;
         durable_objects.push(DurableObject { class, storage });
     }
+    let (binds_to, mut foreign): (Vec<ServiceBinding>, Vec<ServiceBinding>) = parsed
+        .services
+        .into_iter()
+        .partition(|s| project_workers.contains(&s.service));
+    foreign.sort_by(|a, b| a.binding.cmp(&b.binding));
     Ok(Resources {
-        binds_to: parsed.services.into_iter().map(|s| s.service).collect(),
+        binds_to: binds_to.into_iter().map(|s| s.service).collect(),
+        foreign_services: foreign
+            .into_iter()
+            .map(|s| ForeignService {
+                binding: s.binding,
+                worker: s.service,
+            })
+            .collect(),
         queues,
         durable_objects,
         needs_kv: parsed
@@ -268,13 +303,15 @@ fn read_resources(config: &Path) -> Result<Resources, String> {
 }
 
 /// Read the whole project's declared resources, one config read per worker.
+/// `workers` is every Worker the build holds: a Service Binding to anything
+/// else is to a foreign Worker.
 pub(crate) fn project_resources(
     workers_dir: &Path,
     workers: &[String],
 ) -> Result<BTreeMap<String, Resources>, String> {
     let mut all = BTreeMap::new();
     for worker in workers {
-        let resources = read_resources(&workers_dir.join(worker).join("wrangler.toml"))
+        let resources = read_resources(&workers_dir.join(worker).join("wrangler.toml"), workers)
             .map_err(|e| format!("could not read the configuration for `{worker}`: {e}"))?;
         all.insert(worker.clone(), resources);
     }
@@ -441,8 +478,9 @@ pub(crate) fn kv_title(worker: &str, binding: &str, environment: &str) -> String
 /// `bynk-emit`'s private `escape_toml_basic_string`), and appends the result
 /// as text. The original bytes are never touched.
 ///
-/// Queue names and Service Binding targets are environment-qualified
-/// ([`env_qualify`]); each KV namespace gets its resolved id for this
+/// Queue names and the targets of Service Bindings to project contexts are
+/// environment-qualified ([`env_qualify`]); a foreign Worker's is copied as
+/// declared, since Bynk did not name it (interop I5, #1972); each KV namespace gets its resolved id for this
 /// environment, by binding (S4b, #1967); Durable
 /// Object bindings, `exports`, and cron triggers carry no per-environment
 /// identity and are copied verbatim.
@@ -463,6 +501,9 @@ pub(crate) fn synthesise_environment_block(
     // The resolved id of each KV namespace, by binding. Empty for a context
     // with no KV.
     kv_ids: &BTreeMap<String, String>,
+    // Interop I5 (#1972): the bindings of Service Bindings to foreign
+    // Workers, whose targets are copied as declared.
+    foreign_bindings: &BTreeSet<String>,
 ) -> Result<String, String> {
     let doc: toml::Table = config_text
         .parse()
@@ -511,7 +552,10 @@ pub(crate) fn synthesise_environment_block(
     if let Some(toml::Value::Array(services)) = doc.get("services") {
         let mut services = services.clone();
         for service in &mut services {
-            if let toml::Value::Table(t) = service
+            let foreign = matches!(service, toml::Value::Table(t)
+                if t.get("binding").and_then(toml::Value::as_str).is_some_and(|b| foreign_bindings.contains(b)));
+            if !foreign
+                && let toml::Value::Table(t) = service
                 && let Some(target) = t
                     .get("service")
                     .and_then(toml::Value::as_str)
@@ -599,7 +643,19 @@ pub(crate) mod tests {
             self.read_secrets = names(secrets);
             self
         }
-        /// This context names at least one secret with a computed expression.
+        /// Service Bindings to foreign Workers, as `(binding, worker)`
+        /// (interop I5, #1972).
+        pub(crate) fn foreign(mut self, services: &[(&str, &str)]) -> Self {
+            self.foreign_services = services
+                .iter()
+                .map(|(binding, worker)| ForeignService {
+                    binding: binding.to_string(),
+                    worker: worker.to_string(),
+                })
+                .collect();
+            self
+        }
+        /// This context reads at least one secret the compiler cannot name.
         pub(crate) fn reads_incompletely(mut self) -> Self {
             self.reads_complete = false;
             self
@@ -622,6 +678,10 @@ pub(crate) mod tests {
         std::env::temp_dir().join(format!("bynk-{label}-{}-{unique}.toml", std::process::id()))
     }
 
+    /// The Workers the tests' configs are built beside: a `[[services]]`
+    /// target among them is a project context, any other a foreign Worker.
+    const PROJECT_WORKERS: &[&str] = &["payment", "commerce-payment"];
+
     /// Parse `config` as `deploy` does. The literals in these tests are the
     /// emitter's real output (`bynk-emit/src/emitter/wrangler.rs`), pinned
     /// fixture-side by `bynkc/tests/fixtures/positive/` — 121 (an agent), 151
@@ -630,7 +690,8 @@ pub(crate) mod tests {
     fn parse_config(label: &str, text: &str) -> Resources {
         let path = temp_config(label);
         std::fs::write(&path, text).unwrap();
-        let resources = read_resources(&path).expect("the emitted config parses");
+        let resources =
+            read_resources(&path, &names(PROJECT_WORKERS)).expect("the emitted config parses");
         let _ = std::fs::remove_file(&path);
         resources
     }
@@ -688,6 +749,7 @@ max_batch_size = 10
             config,
             "staging",
             &kv_ids(&[("KV", "bare-staging"), ("KV_SESSIONS", "sessions-staging")]),
+            &BTreeSet::new(),
         )
         .unwrap();
         let doc: toml::Table = out.parse().unwrap();
@@ -731,6 +793,7 @@ max_batch_size = 10
             FULL_CONFIG,
             "staging",
             &kv_ids(&[("KV", "kv-staging-id")]),
+            &BTreeSet::new(),
         )
         .expect("valid TOML in, valid TOML out");
 
@@ -809,8 +872,13 @@ max_batch_size = 10
         // `deploy_one` only calls this for a non-default environment, but the
         // function itself staying a faithful no-op at the boundary is worth
         // pinning: "default" must never gain a synthesised block.
-        let out = synthesise_environment_block(FULL_CONFIG, "default", &kv_ids(&[("KV", "kv-id")]))
-            .unwrap();
+        let out = synthesise_environment_block(
+            FULL_CONFIG,
+            "default",
+            &kv_ids(&[("KV", "kv-id")]),
+            &BTreeSet::new(),
+        )
+        .unwrap();
         let doc: toml::Table = out.parse().unwrap();
         assert_eq!(
             doc["env"]["default"]["queues"]["consumers"][0]["queue"].as_str(),
@@ -822,7 +890,8 @@ max_batch_size = 10
     #[test]
     fn synthesise_environment_block_is_a_true_no_op_when_nothing_needs_binding() {
         let bare = "name = \"api\"\nmain = \"index.ts\"\n";
-        let out = synthesise_environment_block(bare, "staging", &BTreeMap::new()).unwrap();
+        let out = synthesise_environment_block(bare, "staging", &BTreeMap::new(), &BTreeSet::new())
+            .unwrap();
         assert_eq!(
             out, bare,
             "a context with no bindable resource appends nothing, not an empty [env.staging]"
@@ -832,8 +901,13 @@ max_batch_size = 10
     #[test]
     fn synthesise_environment_block_rejects_unparseable_config() {
         assert!(
-            synthesise_environment_block("not = valid = toml = =", "staging", &BTreeMap::new())
-                .is_err()
+            synthesise_environment_block(
+                "not = valid = toml = =",
+                "staging",
+                &BTreeMap::new(),
+                &BTreeSet::new()
+            )
+            .is_err()
         );
     }
 
@@ -1044,7 +1118,7 @@ type = "worker"
             "name = \"cart\"\n\n[exports.Cart]\ntype = \"durable-object\"\n",
         )
         .unwrap();
-        let err = read_resources(&path).expect_err("a live class with no backend is refused");
+        let err = read_resources(&path, &[]).expect_err("a live class with no backend is refused");
         let _ = std::fs::remove_file(&path);
         assert!(
             err.contains("`exports.Cart`") && err.contains("`storage`"),
@@ -1128,6 +1202,91 @@ mod served_assets_tests {
                 "/.well-known/security.txt".to_string(),
                 "/_assets/board.1a2b.css".to_string(),
                 "/favicon.ico".to_string(),
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod foreign_service_tests {
+    use super::*;
+
+    const WITH_FOREIGN: &str = r#"
+name = "shop-billing"
+main = "index.ts"
+compatibility_date = "2026-07-01"
+compatibility_flags = ["global_fetch_strictly_public"]
+
+[[services]]
+binding = "PAYMENT"
+service = "payment"
+
+[[services]]
+binding = "SERVICE_LEDGER"
+service = "ledger"
+
+[[services]]
+binding = "SERVICE_BILLING"
+service = "legacy-billing"
+"#;
+
+    /// Interop I5 (#1972): a `[[services]]` target that is none of the
+    /// build's Workers is a foreign Worker, kept out of the deploy graph.
+    #[test]
+    fn a_service_to_a_worker_outside_the_build_is_foreign() {
+        let path = std::env::temp_dir().join(format!(
+            "bynk-foreign-{}-{:?}.toml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, WITH_FOREIGN).unwrap();
+        let resources = read_resources(&path, &["payment".to_string()]).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(resources.binds_to, ["payment"]);
+        assert_eq!(
+            resources.foreign_services,
+            [
+                ForeignService {
+                    binding: "SERVICE_BILLING".into(),
+                    worker: "legacy-billing".into()
+                },
+                ForeignService {
+                    binding: "SERVICE_LEDGER".into(),
+                    worker: "ledger".into()
+                },
+            ]
+        );
+    }
+
+    /// Interop I5 (#1972): under `--env`, a project context's target is
+    /// qualified and a foreign Worker's is copied as declared — Bynk did not
+    /// name it, so `legacy-billing-staging` would be a Worker nobody made.
+    #[test]
+    fn synthesise_environment_block_leaves_a_foreign_target_as_declared() {
+        let foreign: BTreeSet<String> = ["SERVICE_BILLING", "SERVICE_LEDGER"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let out = synthesise_environment_block(WITH_FOREIGN, "staging", &BTreeMap::new(), &foreign)
+            .unwrap();
+        let doc: toml::Table = out.parse().unwrap();
+        let services: Vec<(&str, &str)> = doc["env"]["staging"]["services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                (
+                    s["binding"].as_str().unwrap(),
+                    s["service"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            services,
+            [
+                ("PAYMENT", "payment-staging"),
+                ("SERVICE_LEDGER", "ledger"),
+                ("SERVICE_BILLING", "legacy-billing"),
             ]
         );
     }

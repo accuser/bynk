@@ -2,9 +2,12 @@
 //!
 //! A Worker's bindings come from derivations that know nothing of each other:
 //! the KV namespace's fixed [`crate::firstparty::KV_BINDING_NAME`], a consumed
-//! context's name (`a.b` → `A_B`) and an agent's class name (`OrderEntity` →
-//! `ORDER_ENTITY`). Two of them can meet: an agent `Kv` in a context that
-//! consumes `bynk.cloudflare { Kv }` is `KV` twice. Wrangler takes such a
+//! context's name (`a.b` → `A_B`), an agent's class name (`OrderEntity` →
+//! `ORDER_ENTITY`) and a derived capability's (`Billing` →
+//! `SERVICE_BILLING`). Two of them can meet: an agent `Kv` in a context that
+//! consumes `bynk.cloudflare { Kv }` is `KV` twice, and an agent
+//! `ServiceBilling` and a `capability Billing = Service` are both
+//! `SERVICE_BILLING`. Wrangler takes such a
 //! config without complaint and one binding hides the other, so the clash is
 //! a compile error. The names themselves are never adjusted to avoid it,
 //! because deployed Workers depend on them.
@@ -53,10 +56,11 @@ pub fn instance_binding_name(prefix: &str, capability: &str) -> String {
 /// it on Workers (#1950, `bynk_emit::emitter::wrangler::handler_bindings`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingSource {
-    /// A `[[services]]` Service Binding to another context's Worker: one the
-    /// context consumes, or one subscribing to an event it publishes.
-    /// Handlers see a consumed context's binding when that context has
-    /// services; never a subscriber's, which only the events fan-out calls.
+    /// A `[[services]]` Service Binding to another context's Worker: a
+    /// consumed context whose services the context calls (#1961 — consuming
+    /// one for its types or events alone binds nothing), or one subscribing to
+    /// an event it publishes. Handlers see a called context's binding; never a
+    /// subscriber's, which only the events fan-out calls.
     Service { context: String },
     /// The `[[kv_namespaces]]` binding the cloudflare adapter's `Kv` reads.
     /// Never seen by handlers: they reach KV through the `WorkersKv` provider,
@@ -66,6 +70,11 @@ pub enum BindingSource {
     /// (`capability Sessions = Kv`), one per instance. Never seen by handlers:
     /// they reach it through the instance's `WorkersKv`.
     KvInstance { capability: String },
+    /// Interop I5 (#1972): the `[[services]]` binding of a `Service`
+    /// instance (`capability Billing = Service @worker("legacy-billing")`), a
+    /// Service Binding to a Worker outside the project. Never seen by
+    /// handlers: they reach it through the instance's `WorkersService`.
+    ForeignService { capability: String, worker: String },
     /// A `[[durable_objects.bindings]]` entry for one of the context's agents.
     /// A handler that constructs an agent sees every local agent's binding.
     Agent { class_name: String },
@@ -87,6 +96,9 @@ impl BindingSource {
             Self::KvInstance { capability } => {
                 format!("the KV namespace binding of derived capability `{capability}`")
             }
+            Self::ForeignService { capability, worker } => format!(
+                "the Service Binding of derived capability `{capability}` (to Worker `{worker}`)"
+            ),
             Self::Agent { class_name } => {
                 format!("the Durable Object binding of agent `{class_name}`")
             }
@@ -196,7 +208,8 @@ fn declared_at(
             }),
             BindingSource::Service { context } => consumed(context),
             BindingSource::Kv => consumed(firstparty::CLOUDFLARE_UNIT),
-            BindingSource::KvInstance { capability } => c.items.iter().find_map(|item| {
+            BindingSource::KvInstance { capability }
+            | BindingSource::ForeignService { capability, .. } => c.items.iter().find_map(|item| {
                 let CommonsItem::Capability(d) = item else {
                     return None;
                 };

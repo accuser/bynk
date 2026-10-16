@@ -2543,6 +2543,7 @@ pub(crate) fn emit_provider(
         let effectful = is_effectful_return(&op.return_type);
         let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
         module.agent_method_givens = ctx.agent_method_givens.clone();
+        module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
         module.target = ctx.target;
         module.in_bynk_unit = ctx.commons_name == "bynk";
@@ -2859,6 +2860,7 @@ pub(crate) fn emit_service(
         let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
         module.in_bynk_unit = ctx.commons_name == "bynk";
         module.agent_method_givens = ctx.agent_method_givens.clone();
+        module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
         module.target = ctx.target;
         let mut cx = LowerCtx::new(
@@ -3451,7 +3453,7 @@ fn build_deps_object_ty_with_surface(
                 };
                 members.push(bynk_ts::TsTypeMember::prop(
                     "env",
-                    workers_env_ty(cross_context, &agents),
+                    workers_env_ty(&cx.cross_contexts_called(), &agents),
                 ));
             }
         }
@@ -3480,32 +3482,19 @@ fn sorted_local_agents(cx: &LowerCtx<'_>) -> Vec<String> {
 
 /// Workers-mode deps.env shape: the bindings handlers reach
 /// ([`crate::emitter::wrangler::handler_bindings`], #1950) — one Service
-/// Binding per consumed context with services and one Durable Object
+/// Binding per consumed context the handler calls and one Durable Object
 /// namespace per local agent.
-fn workers_env_ty(
-    cross_context: &bynk_check::resolver::CrossContextInfo,
-    agents: &[String],
-) -> bynk_ts::TsType {
-    // #1950 (review of #1951): only a consumed context with services, the one
-    // thing a handler reaches through `env` (`lower_workers_cross_context_call`).
-    // That is never an adapter (`bynk.adapter.disallowed_item`), so the
-    // Worker's `wrangler.toml` and `Env` always declare its Service Binding.
-    // A unit consumed for capabilities or types only has nothing to call: an
-    // adapter has no Service Binding at all, whether consumed bare
-    // (`consumes bynk`) or selecting (`consumes bynk { Clock }`), and naming
-    // one here made the compose module fail `tsc --strict`.
-    let consumed: Vec<String> = cross_context
-        .consumed_contexts
-        .iter()
-        .filter(|q| {
-            cross_context
-                .consumed_services
-                .get(*q)
-                .is_some_and(|svcs| !svcs.is_empty())
-        })
-        .cloned()
-        .collect();
-    let members = crate::emitter::wrangler::handler_bindings(&consumed, agents)
+fn workers_env_ty(called: &[String], agents: &[String]) -> bynk_ts::TsType {
+    // #1961: only a consumed context this handler **calls**
+    // (`lower_workers_cross_context_call`), the one thing a handler reaches
+    // through `env`. The Worker binds exactly the contexts some body of it
+    // calls (`worker_bindings::context_bindings`), a superset of any one
+    // handler's, so `compose`'s `env` always satisfies this type. A unit
+    // consumed for capabilities, types or events only has no binding at all —
+    // an adapter is not a Worker, and a context whose services go uncalled
+    // need not be bound (binding it made an event subscriber and its
+    // publisher bind each other, which no deploy order satisfies).
+    let members = crate::emitter::wrangler::handler_bindings(called, agents)
         .into_iter()
         .map(|b| {
             let ty = crate::emitter::wrangler::binding_ts_type(&b.source);
@@ -4057,6 +4046,12 @@ pub(crate) fn lower_workers_cross_context_call(
             // itself (documented byte-for-byte match, #1388).
             bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(cx.commons().commons.name.joined())),
             bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(contract)),
+            // #2004: the calling Worker's `env`, which holds the deployment's
+            // call secret; the runtime stamps it, and refuses to send without it.
+            bynk_ts::TsExpr::Member {
+                object: Box::new(bynk_ts::TsExpr::Ident("deps".to_string())),
+                property: "env".to_string(),
+            },
         ],
     };
     pre.finish(bynk_ts::print_expr(&call_expr))
@@ -5128,6 +5123,7 @@ pub(crate) fn emit_agent(
             let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
             module.target = ctx.target;
             module.agent_method_givens = ctx.agent_method_givens.clone();
+            module.agent_called_contexts = ctx.agent_called_contexts.clone();
             module.event_schema_versions = ctx.event_schema_versions.clone();
             let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
             icx.local_agents = ctx.local_agents.clone();
@@ -5990,6 +5986,7 @@ pub(crate) fn emit_agent(
         // type names.
         module.target = ctx.target;
         module.agent_method_givens = ctx.agent_method_givens.clone();
+        module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
         let mut cx = LowerCtx::new(
             module,
@@ -7006,6 +7003,7 @@ fn emit_ws_do_method(
     let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
     module.in_bynk_unit = ctx.commons_name == "bynk";
     module.agent_method_givens = ctx.agent_method_givens.clone();
+    module.agent_called_contexts = ctx.agent_called_contexts.clone();
     module.event_schema_versions = ctx.event_schema_versions.clone();
     module.target = ctx.target;
     let mut cx = LowerCtx::new(

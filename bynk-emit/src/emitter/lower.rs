@@ -2205,8 +2205,15 @@ fn lower_method_call(
         ));
     }
     // v0.6 cross-context service call: receiver is an alias or the
-    // dotted name of a consumed context.
-    if let Some(s) = pre.absorb_opt(lower_cross_context_service_call(receiver, method, args, cx)) {
+    // dotted name of a consumed context. #1961: unless the checker resolved
+    // this call to something else — a local shadowing the alias
+    // (`1203_cross_context_call_shadowed_by_local`) is a UFCS call, and
+    // lowering it over the wire named a Service Binding the Worker, which
+    // binds only what it calls, does not declare.
+    if !matches!(cx.commons().callee(e.id), Some(c) if !matches!(c, Callee::Cross { .. }))
+        && let Some(s) =
+            pre.absorb_opt(lower_cross_context_service_call(receiver, method, args, cx))
+    {
         return pre.finish(s);
     }
     // Events track, slice 0 (spine #936): `Events.emit[E](event)` never
@@ -2981,7 +2988,7 @@ fn lower_cross_context_service_call(
     let mut pre = Pre::new();
     let text: Option<String> =
         if let Some((consumed, key)) = cross_context_lowering_prefix(receiver, cx) {
-            cx.note_cross_context_used();
+            cx.note_cross_context_used(&consumed);
             match cx.target() {
                 BuildTarget::Bundle => {
                     let args_lowered: Vec<String> = args
@@ -5392,7 +5399,8 @@ fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCt
     // `Object.keys`; `.entries` zips both into `{ key, value }` records
     // (`MapEntry[K, V]`). A persisted key is a JS object key (a string), so an
     // `Int`-typed key is decoded back with `Number(...)`; a `String`-typed key
-    // is already correct.
+    // is already correct; a refined or opaque key is asserted to its branded
+    // type (#1982).
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.is_agent_store_map(&id.name)
         && !cx.is_agent_held_map(&id.name)
@@ -5511,7 +5519,8 @@ fn map_key_ty(e: &Expr, cx: &LowerCtx) -> Option<TyId> {
 /// string) back to its bynk type. Value-keyable keys are `Int`/`String` and
 /// refinements/opaques over them (ADR 0110 D5); an `Int`-based key erases to
 /// `number`, so it is parsed with `Number(...)`, while a `String`-based key is
-/// already correct and passes through unchanged.
+/// already correct and passes through unchanged. A refined or opaque key is
+/// then asserted back to its branded type (#1982).
 fn decode_map_key(k: Option<TyId>, raw: &str, tys: &Arc<Types>) -> String {
     // The key type is always recorded for a well-typed `.entries`/`.keys` — a
     // `None` means the checker failed to stamp it, and the identity fallback
@@ -5521,17 +5530,25 @@ fn decode_map_key(k: Option<TyId>, raw: &str, tys: &Arc<Types>) -> String {
         k.is_some(),
         "map key type unrecorded — `.entries`/`.keys` key decode would fall back to identity",
     );
-    let base = match k.map(|t| tys.get(t)).as_deref() {
-        Some(Ty::Base(b)) => Some(*b),
+    let (base, branded) = match k.map(|t| tys.get(t)).as_deref() {
+        Some(Ty::Base(b)) => (Some(*b), false),
         Some(Ty::Named {
             kind: NamedKind::Refined(b) | NamedKind::Opaque(b),
             ..
-        }) => Some(*b),
-        _ => None,
+        }) => (Some(*b), true),
+        _ => (None, false),
+    };
+    // #1982: a refined or opaque key is a branded TS type (`Sku = string & {
+    // readonly __brand: "Sku" }`), which neither the raw string nor its
+    // `Number(...)` is. The key was that type when it was put, and its storage
+    // is the base value, so asserting it back is sound.
+    let brand = |decoded: String| match (branded, k) {
+        (true, Some(k)) => format!("({decoded} as {})", ts_ty(k, tys)),
+        _ => decoded,
     };
     match base {
-        Some(BaseType::Int) => format!("globalThis.Number({raw})"),
-        Some(BaseType::String) => raw.to_string(),
+        Some(BaseType::Int) => brand(format!("globalThis.Number({raw})")),
+        Some(BaseType::String) => brand(raw.to_string()),
         // #70/#71 review: `resolver.rs`'s `check_map_key_keyable` and
         // `validate.rs`'s `@indexed`-field check both gate value-keyability
         // (ADR 0110 D5) on exactly `String`/`Int` — the same pair this match
@@ -5578,18 +5595,19 @@ mod decode_map_key_tests {
         });
         assert_eq!(
             decode_map_key(Some(refined), "k", &TYS),
-            "globalThis.Number(k)"
+            "(globalThis.Number(k) as UserId)"
         );
     }
 
     #[test]
-    fn opaque_string_key_passes_through() {
+    fn opaque_string_key_is_asserted_to_its_brand() {
+        // #1982: `Object.keys` yields `string`, not the branded `Slug`.
         let opaque = TYS.intern(Ty::Named {
             name: "Slug".to_string(),
             kind: NamedKind::Opaque(BaseType::String),
             args: Vec::new(),
         });
-        assert_eq!(decode_map_key(Some(opaque), "k", &TYS), "k");
+        assert_eq!(decode_map_key(Some(opaque), "k", &TYS), "(k as Slug)");
     }
 
     // #70/#71 review: a non-`String`/`Int` base reaching here means the

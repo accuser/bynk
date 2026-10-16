@@ -182,8 +182,13 @@ missing, and that follows from their types:
 > …and the plan admits it:
 >
 > ```
-> secrets incomplete api (computes at least one name)
+> secrets incomplete api (reads at least one name the compiler cannot see)
 > ```
+>
+> The same line appears when the Worker composes an adapter whose provider is
+> `given Secrets`: the adapter's TypeScript binding can read any name, and the
+> compiler cannot see into it. A literal `Secrets.get("X")` in a `provides`
+> body is collected like one in a handler.
 >
 > **That line is the important one.** Without it, a short `read` list would be
 > the most dangerous thing Bynk could show you: a list that's usually right gets
@@ -236,6 +241,41 @@ One consequence worth knowing: `--dry-run` never authenticates, which is what
 lets you plan offline — so a plan says `set` for everything, and the skip shows
 up when you actually run.
 
+### The call secret
+
+Every Worker in a deployment also gets one secret you never write:
+`BYNK_CALL_SECRET`. Your contexts send it with every cross-context call and
+event delivery, and a Worker refuses those requests without it. Their paths
+(`/_bynk/call/…`, `/_bynk/event/…`) answer on the Worker's public address too,
+so without the secret anyone could call your `on call` services, claiming any
+context as the caller. The plan lists it on every context:
+
+```
+secret set BYNK_CALL_SECRET (managed)
+```
+
+`bynk deploy` mints it and never shows or stores the value. Every Worker must
+hold the same one, and Cloudflare won't give it back, so:
+
+- A first deploy, or one where any Worker lacks it, mints a fresh value and sets
+  it on **every** context. Cross-context calls can fail for the moment between
+  one Worker taking the new value and the next.
+- A redeploy where every Worker has it leaves it alone. `--force` rotates it.
+- `--context NAME` can't mint, since the others would keep the old value. If the
+  context lacks it, the deploy stops and asks for a whole-project deploy, or for
+  the value in `--secrets-file` or as `BYNK_CALL_SECRET` in the environment.
+
+If a deploy that is setting a new value stops partway, some contexts hold the
+new value and the rest the old one, and a plain rerun keeps both. The deploy
+says so when it stops. Rerun `bynk deploy --force` to set one value everywhere.
+
+To hold the value yourself, put `BYNK_CALL_SECRET` in your `--secrets-file`;
+`bynk deploy` then sets yours instead of minting one. Like any secret, a
+supplied value only fills contexts that lack one, so pass `--force` when you
+change it. `bynk dev` and `bynk test`
+use a fixed local value. A Worker you push with `wrangler deploy` yourself
+needs the secret set too (`wrangler secret put BYNK_CALL_SECRET`).
+
 ### Several KV namespaces
 
 Each [derived capability](/book/reference/capabilities/#derived-capabilities-capability-x--k)
@@ -260,6 +300,26 @@ Titles are account-wide, so two of a project's namespaces must not share one:
 Worker `shop` with `capability CartSessions` and Worker `shop-cart` with
 `capability Sessions` would both be `shop-cart-sessions`. `bynk deploy` refuses
 that before planning, `--dry-run` included, and names both namespaces.
+
+### Workers outside the project
+
+A [`Service` instance](/book/guides/effects-and-capabilities/call-a-foreign-worker/)
+(`capability Billing = Service @worker("legacy-billing")`) binds a Worker that
+is not Bynk's. Deploy never creates or changes it, so the plan shows the binding
+with no action:
+
+```
+service SERVICE_BILLING legacy-billing (foreign Worker; not provisioned)
+deploy shop-checkout
+```
+
+After authenticating, and before asking to confirm, `bynk deploy` asks the
+account whether each such Worker exists (`wrangler deployments list --name`)
+and warns, never refuses, when one does not. Cloudflare rejects an upload whose
+Service Binding names a missing Worker, so deploy that Worker first.
+`--dry-run` stays offline and does not ask. The Worker is not ordered against
+the project's own, and under `--env` its name is used as declared, without an
+environment suffix.
 
 ## Multi-context projects
 

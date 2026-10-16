@@ -73,8 +73,205 @@ pub struct DevOptions {
     /// deployed only under a non-default `--env` previously read as
     /// "never provisioned" here, because this always looked at `"default"`).
     pub environment: String,
+    /// `--local-worker NAME`, repeatable (interop I5, #1972): a foreign
+    /// Worker a `Service` instance names that `wrangler dev` should reach in
+    /// the user's own locally running `wrangler dev` of it, through the dev
+    /// registry, rather than in the stand-in `dev` binds by default.
+    pub local_workers: Vec<String>,
     /// Everything after `--`, forwarded to `wrangler dev` verbatim (D5).
     pub wrangler_args: Vec<String>,
+}
+
+/// Interop I5 (#1972): one stand-in `bynk dev` runs for a foreign Worker that
+/// a served context binds: the Worker's name, and the context's bindings to
+/// it. It runs inside that context's own `wrangler dev`, as a second `-c`
+/// config, under a name of its own ([`stand_in_name`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandIn {
+    pub worker: String,
+    pub bindings: Vec<String>,
+}
+
+/// The Worker name `context`'s stand-in for `worker` runs under. Not the
+/// foreign Worker's own: a `-c` config's Worker also registers in wrangler's
+/// dev registry, which every local `wrangler dev` shares (verified on 4.149.0),
+/// so under the real name it would answer other sessions' bindings to that
+/// Worker and, once stopped, could leave a stale entry for `--local-worker` to
+/// connect to. The context's binding is pointed at this name instead
+/// (`point_at_stand_ins`).
+///
+/// Kept within Cloudflare's 63-character Worker name limit: a longer name is
+/// cut and given a hash of the whole, so two stand-ins never share one.
+pub fn stand_in_name(context: &str, worker: &str) -> String {
+    let name = format!("bynk-stand-in-{context}-{worker}");
+    if name.len() <= 63 {
+        return name;
+    }
+    // FNV-1a: stable across runs and toolchains, unlike `DefaultHasher`.
+    let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    let suffix = format!("-{:08x}", hash as u32);
+    let mut cut = 63 - suffix.len();
+    while !name.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}{suffix}", name[..cut].trim_end_matches('-'))
+}
+
+/// The config a context with stand-ins is served from: its generated
+/// `wrangler.toml` with each binding to a foreign Worker pointed at the
+/// stand-in, beside the original so `main` resolves the same.
+pub const STAND_IN_CONFIG: &str = "wrangler.dev.toml";
+
+/// Write each served context's [`STAND_IN_CONFIG`] from its generated
+/// `wrangler.toml`, run after every build. A copy, not an edit: a rebuild
+/// rewrites `wrangler.toml` with the Workers' real names, and `wrangler dev`
+/// watching it would reload once with the real Worker bound (reaching a real
+/// local session of it, which the stand-in's own name exists to prevent)
+/// before an edit could retarget it (review of #2008). The copy is replaced
+/// by a rename, so wrangler only ever reads it whole, and only when it
+/// changes.
+fn point_at_stand_ins(workers_dir: &Path, plans: &[(String, Vec<StandIn>)]) -> Result<(), String> {
+    for (context, stand_ins) in plans {
+        let targets: std::collections::BTreeMap<String, String> = stand_ins
+            .iter()
+            .flat_map(|s| {
+                let name = stand_in_name(context, &s.worker);
+                s.bindings.iter().map(move |b| (b.clone(), name.clone()))
+            })
+            .collect();
+        let dir = workers_dir.join(context);
+        let text = std::fs::read_to_string(dir.join("wrangler.toml")).map_err(|e| e.to_string())?;
+        let out = bynk_emit::emitter::wrangler::retarget_services(&text, &targets)?;
+        let path = dir.join(STAND_IN_CONFIG);
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(out.as_str()) {
+            let staged = dir.join(format!("{STAND_IN_CONFIG}.tmp"));
+            std::fs::write(&staged, out).map_err(|e| e.to_string())?;
+            std::fs::rename(&staged, &path).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Interop I5 (#1972): the Service Bindings in a generated `wrangler.toml`
+/// whose target is none of `project_workers`, as `(binding, worker)` in
+/// binding order: the bindings to foreign Workers, by the rule `bynk deploy`
+/// uses. An unreadable config has none; the serve step reports it.
+pub fn foreign_services(config_text: &str, project_workers: &[String]) -> Vec<(String, String)> {
+    let Ok(doc) = config_text.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = doc
+        .get("services")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|s| {
+            let binding = s.get("binding")?.as_str()?;
+            let worker = s.get("service")?.as_str()?;
+            (!project_workers.iter().any(|w| w == worker))
+                .then(|| (binding.to_string(), worker.to_string()))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Interop I5 (#1972, track §11 Q8): the stand-ins one context's `wrangler
+/// dev` runs, one per foreign Worker it binds, in Worker order, less those
+/// `local` names. Verified on wrangler 4.149.0: a second `-c` config's Worker
+/// answers its primary's binding to it, and without one a binding to a Worker
+/// that is not running answers 503 ("Worker … not found").
+pub fn stand_ins(foreign: &[(String, String)], local: &[String]) -> Vec<StandIn> {
+    let mut by_worker: std::collections::BTreeMap<&str, Vec<String>> = Default::default();
+    for (binding, worker) in foreign {
+        if !local.iter().any(|l| l == worker) {
+            by_worker.entry(worker).or_default().push(binding.clone());
+        }
+    }
+    by_worker
+        .into_iter()
+        .map(|(worker, bindings)| StandIn {
+            worker: worker.to_string(),
+            bindings,
+        })
+        .collect()
+}
+
+/// The stand-in's `wrangler.toml` and `index.js`. It answers every request
+/// with [`bynk_emit::emitter::wrangler::FOREIGN_SERVICE_DOUBLE_STATUS`] and a
+/// body saying what it is and how to reach the real Worker, as the
+/// integration test harness's stand-in does.
+pub fn stand_in_files(context: &str, stand_in: &StandIn) -> (String, String) {
+    let config = format!(
+        "# Generated by bynk dev — `{context}`'s local stand-in for Worker `{w}`.\nname = {name}\nmain = \"index.js\"\ncompatibility_date = \"{date}\"\n",
+        w = stand_in.worker,
+        name = toml::Value::String(stand_in_name(context, &stand_in.worker)),
+        date = bynk_emit::emitter::wrangler::COMPATIBILITY_DATE,
+    );
+    let body = format!(
+        "{} Run that Worker locally with `wrangler dev` and pass `--local-worker {}` to `bynk dev` to call it instead.",
+        bynk_emit::emitter::wrangler::foreign_service_double_body(
+            &stand_in.bindings.join("`, `"),
+            &stand_in.worker
+        ),
+        stand_in.worker
+    );
+    let script = format!(
+        "// Generated by bynk dev — a local stand-in for Worker `{w}`.\nexport default {{\n  async fetch() {{\n    return new Response({body}, {{\n      status: {status},\n      headers: {{ \"content-type\": \"text/plain; charset=utf-8\", \"x-bynk-stand-in\": {name} }},\n    }});\n  }},\n}};\n",
+        w = stand_in.worker,
+        body = serde_json::Value::String(body),
+        status = bynk_emit::emitter::wrangler::FOREIGN_SERVICE_DOUBLE_STATUS,
+        name = serde_json::Value::String(stand_in.worker.clone()),
+    );
+    (config, script)
+}
+
+/// Write each served context's stand-ins under `<build>/stand-ins/<context
+/// worker>/<foreign worker>/`, returning their config paths by context. The
+/// directory is rebuilt each session, like `workers/`.
+fn write_stand_ins(
+    build_dir: &Path,
+    plans: &[(String, Vec<StandIn>)],
+) -> std::io::Result<std::collections::BTreeMap<String, Vec<PathBuf>>> {
+    let root = build_dir.join("stand-ins");
+    match std::fs::remove_dir_all(&root) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let mut configs = std::collections::BTreeMap::new();
+    for (context, stand_ins) in plans {
+        for stand_in in stand_ins {
+            let dir = root.join(context).join(&stand_in.worker);
+            std::fs::create_dir_all(&dir)?;
+            let (config, script) = stand_in_files(context, stand_in);
+            std::fs::write(dir.join("wrangler.toml"), config)?;
+            std::fs::write(dir.join("index.js"), script)?;
+            configs
+                .entry(context.clone())
+                .or_insert_with(Vec::new)
+                .push(dir.join("wrangler.toml"));
+        }
+    }
+    Ok(configs)
+}
+
+/// The start-up lines naming each stand-in, so a 503 from one is never a
+/// mystery. Empty when there are none.
+pub fn stand_in_report(plans: &[(String, Vec<StandIn>)]) -> String {
+    let mut out = String::new();
+    for (context, stand_ins) in plans {
+        for s in stand_ins {
+            out.push_str(&format!(
+                "bynk dev: `{context}` binds Worker `{w}` ({}) to a local stand-in that answers 503; pass `--local-worker {w}` to reach a `wrangler dev` of it instead.\n",
+                s.bindings.join(", "),
+                w = s.worker,
+            ));
+        }
+    }
+    out
 }
 
 /// Wrangler's own default dev port — the base of the per-context allocation
@@ -224,6 +421,52 @@ pub fn run(
         }
     }
 
+    // Interop I5 (#1972, track §11 Q8): each context's Service Bindings to
+    // foreign Workers get a stand-in in its own `wrangler dev`, unless
+    // `--local-worker` names the Worker (the dev registry then reaches the
+    // user's own `wrangler dev` of it). Under `--remote` the bindings are the
+    // account's, so there is nothing to stand in for.
+    let remote = opts.wrangler_args.iter().any(|arg| arg == "--remote");
+    let mut stand_in_plans: Vec<(String, Vec<StandIn>)> = Vec::new();
+    let mut bound_foreign: Vec<String> = Vec::new();
+    for s in &serving {
+        let config = std::fs::read_to_string(workers_dir.join(&s.worker).join("wrangler.toml"))
+            .unwrap_or_default();
+        let foreign = foreign_services(&config, &available);
+        bound_foreign.extend(foreign.iter().map(|(_, w)| w.clone()));
+        let planned = stand_ins(&foreign, &opts.local_workers);
+        if !remote && !planned.is_empty() {
+            stand_in_plans.push((s.worker.clone(), planned));
+        }
+    }
+    for local in &opts.local_workers {
+        if !bound_foreign.contains(local) {
+            eprintln!(
+                "bynk: warning: `--local-worker {local}` names no Worker the served contexts bind with a `Service` instance."
+            );
+        }
+    }
+    if !stand_in_plans.is_empty()
+        && (passthrough_has(&opts.wrangler_args, "-c")
+            || passthrough_has(&opts.wrangler_args, "--config"))
+    {
+        eprintln!(
+            "bynk: `-c`/`--config` is the driver's when it runs stand-ins for foreign Workers — pass `--local-worker NAME` instead of a config after `--`."
+        );
+        return ExitCode::FAILURE;
+    }
+    let stand_in_configs = match write_stand_ins(&build_dir, &stand_in_plans) {
+        Ok(configs) => configs,
+        Err(e) => {
+            eprintln!("bynk: could not write the stand-ins for foreign Workers: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = point_at_stand_ins(&workers_dir, &stand_in_plans) {
+        eprintln!("bynk: could not bind the stand-ins for foreign Workers: {e}");
+        return ExitCode::FAILURE;
+    }
+
     // 4. Serve — one `wrangler dev` per context, each from inside its own worker
     //    dir (the emitted `index.ts` imports `../../runtime.js`, so cwd must be
     //    the worker dir, exactly the manual recipe's `cd`). The processes find
@@ -279,6 +522,14 @@ pub fn run(
     // and the wranglers share the terminal's foreground process group, so a
     // Ctrl-C SIGINT reaches them all — we must not bail before reaping; we reap
     // in the watch loop and propagate the first exit code (ADR 0096 §Exit).
+    //
+    // #1955: a SIGINT or SIGTERM sent to `bynk dev` *alone* (a CI step, a test
+    // harness) used to kill it outright and strand every wrangler and its
+    // `workerd`s. Record it instead, and let the watch loop stop the contexts.
+    // Installed before the spawns, so there is no window in which a child is
+    // up and the driver still dies of the default action; the children
+    // themselves get the default back at `exec`.
+    crate::stop::install();
     let mut children: Vec<(String, Served)> = Vec::new();
     for s in &serving {
         let Some(mut cmd) = wrangler_command(&probe.provenance, "dev") else {
@@ -287,6 +538,14 @@ pub fn run(
             return ExitCode::FAILURE;
         };
         cmd.current_dir(workers_dir.join(&s.worker));
+        // Interop I5 (#1972): the context's own config first (wrangler's
+        // primary Worker, the one served on the port), then its stand-ins.
+        if let Some(configs) = stand_in_configs.get(&s.worker) {
+            cmd.args(["-c", STAND_IN_CONFIG]);
+            for config in configs {
+                cmd.arg("-c").arg(config);
+            }
+        }
         for arg in serve_args(s) {
             cmd.arg(arg);
         }
@@ -303,6 +562,7 @@ pub fn run(
         }
     }
     eprint!("{}", serving_report(&serving));
+    eprint!("{}", stand_in_report(&stand_in_plans));
 
     // 5. Watch — #524: `bynk dev` is the edit loop, so watch the project's
     // `.bynk` sources (the full `[paths]` layout plus `bynk.toml`) and rebuild
@@ -314,7 +574,47 @@ pub fn run(
     // under a keystroke-to-glance.
     eprintln!("bynk dev: watching for source changes (edit `.bynk` files to rebuild)");
     let mut fingerprint = watch_fingerprint(project_root);
+    let code = supervise(&mut children, &workers_dir, || {
+        let now = watch_fingerprint(project_root);
+        if now != fingerprint {
+            fingerprint = now;
+            eprintln!("bynk dev: change detected — rebuilding…");
+            if compile_once(compiler, project_root, &build_dir, true) {
+                // Interop I5 (#1972): refresh the served copy from the
+                // rebuilt config. A binding added since start has no
+                // stand-in until `bynk dev` restarts.
+                if let Err(e) = point_at_stand_ins(&workers_dir, &stand_in_plans) {
+                    eprintln!("bynk: could not bind the stand-ins for foreign Workers: {e}");
+                }
+                eprintln!("bynk dev: rebuilt");
+            }
+            // On failure the diagnostics are already rendered; keep serving
+            // the last good build and keep watching.
+        }
+    });
+    ExitCode::from(code)
+}
+
+/// The watch loop: every 500ms, end the session if it was asked to stop or a
+/// worker exited, and otherwise run `tick` (the rebuild check). Returns the
+/// session's exit byte once every child is stopped and reaped.
+fn supervise(
+    children: &mut Vec<(String, Served)>,
+    workers_dir: &Path,
+    mut tick: impl FnMut(),
+) -> u8 {
     loop {
+        // #1955: a SIGINT/SIGTERM recorded by `stop::install`. Checked before
+        // the children, so a Ctrl-C — which reaches the wranglers too — reads
+        // as the stop it is rather than as a worker exiting.
+        if let Some(sig) = crate::stop::received() {
+            eprintln!(
+                "bynk dev: received {} — stopping the contexts.",
+                crate::stop::name(sig)
+            );
+            terminate(children, workers_dir);
+            return crate::stop::exit_byte(sig);
+        }
         // Any worker exiting ends the session: the survivors' bindings now
         // point at a context that is gone, so a half-served project would fail
         // in a way that looks like a code bug. Stop them and propagate the
@@ -324,8 +624,8 @@ pub fn run(
                 Ok(status) => status,
                 Err(e) => {
                     eprintln!("bynk: could not poll wrangler: {e}");
-                    terminate(&mut children, &workers_dir);
-                    return ExitCode::FAILURE;
+                    terminate(children, workers_dir);
+                    return 1;
                 }
             };
             if let Some(status) = status {
@@ -335,21 +635,12 @@ pub fn run(
                 if !children.is_empty() {
                     eprintln!("bynk dev: `{name}` exited — stopping the other contexts.");
                 }
-                terminate(&mut children, &workers_dir);
-                return ExitCode::from(exit_status_byte(&status));
+                terminate(children, workers_dir);
+                return exit_status_byte(&status);
             }
         }
         std::thread::sleep(Duration::from_millis(500));
-        let now = watch_fingerprint(project_root);
-        if now != fingerprint {
-            fingerprint = now;
-            eprintln!("bynk dev: change detected — rebuilding…");
-            if compile_once(compiler, project_root, &build_dir, true) {
-                eprintln!("bynk dev: rebuilt");
-            }
-            // On failure the diagnostics are already rendered; keep serving
-            // the last good build and keep watching.
-        }
+        tick();
     }
 }
 
@@ -650,10 +941,23 @@ fn passthrough_has(args: &[String], flag: &str) -> bool {
 /// under `--inspect` (slice 3, ADR 0104), so a JavaScript debugger can attach and
 /// `.bynk` breakpoints resolve through the emitted source maps.
 ///
-/// Empty for a lone worker without `--base-port` or `--inspect` — byte-for-byte
-/// the pre-#552 invocation, so that path keeps its `-- --port N` passthrough.
+/// A lone worker without `--base-port` or `--inspect` gets no port flag — the
+/// pre-#552 invocation, so that path keeps its `-- --port N` passthrough.
+///
+/// #2004: and always the local call secret, as a `--var` rather than a file:
+/// every Worker refuses an internal request (`/_bynk/call/`, `/_bynk/event/`)
+/// without the deployment's secret, and a lone context still delivers its own
+/// events to itself. The fixed [`bynk_emit::LOCAL_CALL_SECRET`], so two `bynk
+/// dev --context` sessions run side by side admit each other's calls.
 fn serve_args(s: &Serving) -> Vec<String> {
-    let mut args = Vec::new();
+    let mut args = vec![
+        "--var".to_string(),
+        format!(
+            "{}:{}",
+            bynk_emit::CALL_SECRET_BINDING,
+            bynk_emit::LOCAL_CALL_SECRET
+        ),
+    ];
     if let Some(port) = s.port {
         args.push("--port".to_string());
         args.push(port.to_string());
@@ -766,12 +1070,20 @@ mod tests {
         }
     }
 
+    /// #2004: every `wrangler dev` gets the local call secret first.
+    fn with_secret(rest: &[&str]) -> Vec<String> {
+        let mut args = names(&["--var", "BYNK_CALL_SECRET:bynk-local-call-secret"]);
+        args.extend(names(rest));
+        args
+    }
+
     #[test]
     fn inspect_injects_the_inspector_port() {
         let off = DevOptions::default();
         let lone = allocate(&names(&["links"]), None, &off);
-        assert!(
-            serve_args(&lone[0]).is_empty(),
+        assert_eq!(
+            serve_args(&lone[0]),
+            with_secret(&[]),
             "a lone worker without --inspect keeps the pre-#552 invocation"
         );
 
@@ -783,7 +1095,7 @@ mod tests {
         let lone = allocate(&names(&["links"]), None, &on);
         assert_eq!(
             serve_args(&lone[0]),
-            vec!["--inspector-port".to_string(), "9229".to_string()]
+            with_secret(&["--inspector-port", "9229"])
         );
     }
 
@@ -852,7 +1164,7 @@ mod tests {
         );
         assert_eq!(
             serve_args(&serving[1]),
-            names(&["--port", "8788", "--inspector-port", "9230"])
+            with_secret(&["--port", "8788", "--inspector-port", "9230"])
         );
     }
 
@@ -871,7 +1183,7 @@ mod tests {
         // reaches wrangler (a repeated --port is a hard error, not last-wins).
         let serving = allocate(&names(&["links"]), None, &DevOptions::default());
         assert_eq!(serving[0].port, None);
-        assert!(serve_args(&serving[0]).is_empty());
+        assert_eq!(serve_args(&serving[0]), with_secret(&[]));
         // …but an explicit --base-port is honoured even for one context.
         let pinned = allocate(&names(&["links"]), Some(8900), &DevOptions::default());
         assert_eq!(pinned[0].port, Some(8900));
@@ -892,7 +1204,7 @@ mod tests {
         );
         assert_eq!(
             serve_args(&serving[1]),
-            names(&["--port", "8788", "--inspector-port", "9230"])
+            with_secret(&["--port", "8788", "--inspector-port", "9230"])
         );
         // `--inspect-port` moves that allocation even without `--inspect`…
         let moved = DevOptions {
@@ -940,6 +1252,67 @@ mod tests {
         assert!(!needs_wrangler_warmup(&Provenance::Npx, 1));
         let installed = Provenance::Path(PathBuf::from("/usr/bin/wrangler"));
         assert!(!needs_wrangler_warmup(&installed, 2));
+    }
+
+    /// #1955: a SIGTERM sent to `bynk dev` alone stops its contexts and what
+    /// they started. `sh` stands in for wrangler and its `sleep`s for the
+    /// `workerd`s: the `sh` dies of the SIGTERM `terminate` sends and orphans
+    /// them, as a wrangler resolved via npx does, and the sweep must stop them.
+    #[cfg(unix)]
+    #[test]
+    fn a_sigterm_to_the_driver_stops_every_context_and_its_children() {
+        use std::process::{Command, Stdio};
+        let root = std::env::temp_dir().join(format!("bynk-dev-sigterm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut children = Vec::new();
+        for ctx in ["api", "worker"] {
+            let dir = root.join(ctx);
+            std::fs::create_dir_all(&dir).unwrap();
+            let child = Command::new("sh")
+                .args(["-c", "sleep 300 & sleep 300 & wait"])
+                .current_dir(&dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("sh spawns");
+            children.push((ctx.to_string(), Served::new(child)));
+        }
+        let started = std::time::Instant::now();
+        while crate::sweep::stragglers(&root).len() < 6 {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "the stand-ins never started their sleeps"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // What a CI step's `kill -TERM <bynk dev>` does. Without the handler
+        // this would end the test binary.
+        crate::stop::install();
+        let sent = Command::new("kill")
+            .args(["-TERM", &std::process::id().to_string()])
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(sent, "kill(1) runs");
+        let started = std::time::Instant::now();
+        while crate::stop::received().is_none() {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "the SIGTERM was never recorded"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let code = supervise(&mut children, &root, || {
+            panic!("a recorded stop must end the session before any rebuild")
+        });
+        crate::stop::reset();
+        let left = crate::sweep::stragglers(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(code, 143, "a SIGTERM stop exits 128 + 15");
+        assert!(children.is_empty());
+        assert!(left.is_empty(), "processes survived the stop: {left:?}");
     }
 
     #[test]
@@ -992,5 +1365,149 @@ mod tests {
         ));
         assert!(report.contains("serving 1 context."), "{report}");
         assert!(!report.contains("bindings"), "{report}");
+    }
+
+    // ---- interop I5 (#1972): stand-ins for foreign Workers ----
+
+    const BILLING_CONFIG: &str = "name = \"shop-billing\"\n\n[[services]]\nbinding = \"SHOP_FRONT\"\nservice = \"shop-front\"\n\n[[services]]\nbinding = \"SERVICE_LEDGER\"\nservice = \"ledger\"\n\n[[services]]\nbinding = \"SERVICE_BILLING\"\nservice = \"legacy-billing\"\n\n[[services]]\nbinding = \"SERVICE_INVOICES\"\nservice = \"legacy-billing\"\n";
+
+    fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn foreign_services_are_the_bindings_to_workers_outside_the_build() {
+        assert_eq!(
+            foreign_services(BILLING_CONFIG, &names(&["shop-billing", "shop-front"])),
+            pairs(&[
+                ("SERVICE_BILLING", "legacy-billing"),
+                ("SERVICE_INVOICES", "legacy-billing"),
+                ("SERVICE_LEDGER", "ledger"),
+            ])
+        );
+        assert!(foreign_services("not toml [", &[]).is_empty());
+    }
+
+    /// One stand-in per foreign Worker, carrying every binding to it, less
+    /// the Workers `--local-worker` names.
+    #[test]
+    fn stand_ins_are_one_per_foreign_worker_less_the_local_ones() {
+        let foreign = foreign_services(BILLING_CONFIG, &names(&["shop-front"]));
+        assert_eq!(
+            stand_ins(&foreign, &[]),
+            [
+                StandIn {
+                    worker: "ledger".into(),
+                    bindings: names(&["SERVICE_LEDGER"]),
+                },
+                StandIn {
+                    worker: "legacy-billing".into(),
+                    bindings: names(&["SERVICE_BILLING", "SERVICE_INVOICES"]),
+                },
+            ]
+        );
+        assert_eq!(
+            stand_ins(&foreign, &names(&["legacy-billing"])),
+            [StandIn {
+                worker: "ledger".into(),
+                bindings: names(&["SERVICE_LEDGER"]),
+            }]
+        );
+    }
+
+    /// The stand-in runs under a name of its own, never the foreign Worker's
+    /// (which wrangler's shared dev registry would hand to other sessions), and
+    /// says what it is.
+    #[test]
+    fn a_stand_in_is_named_for_its_worker_and_answers_503() {
+        let (config, script) = stand_in_files(
+            "shop-billing",
+            &StandIn {
+                worker: "legacy-billing".into(),
+                bindings: names(&["SERVICE_BILLING"]),
+            },
+        );
+        let doc: toml::Table = config.parse().expect("valid TOML");
+        assert_eq!(
+            doc["name"].as_str(),
+            Some("bynk-stand-in-shop-billing-legacy-billing")
+        );
+        assert_eq!(doc["main"].as_str(), Some("index.js"));
+        assert_eq!(
+            doc["compatibility_date"].as_str(),
+            Some(bynk_emit::emitter::wrangler::COMPATIBILITY_DATE)
+        );
+        assert!(script.contains("status: 503"), "{script}");
+        assert!(
+            script.contains("`--local-worker legacy-billing`"),
+            "{script}"
+        );
+        assert!(script.contains("`SERVICE_BILLING`"), "{script}");
+    }
+
+    #[test]
+    fn a_stand_in_name_fits_a_worker_name() {
+        assert_eq!(
+            stand_in_name("shop-billing", "legacy-billing"),
+            "bynk-stand-in-shop-billing-legacy-billing"
+        );
+        let long_context = "commerce-fulfilment-warehouse-allocation";
+        let a = stand_in_name(long_context, "legacy-billing-reconciliation");
+        let b = stand_in_name(long_context, "legacy-billing-reconciliation-eu");
+        assert!(a.len() <= 63 && b.len() <= 63, "{a} / {b}");
+        assert_ne!(a, b);
+        assert_eq!(
+            a,
+            stand_in_name(long_context, "legacy-billing-reconciliation")
+        );
+        assert!(!a.contains("--"), "{a}");
+    }
+
+    /// The served copy points the binding at the stand-in; the generated
+    /// config keeps the real name (review of #2008).
+    #[test]
+    fn the_stand_in_config_is_a_retargeted_copy() {
+        let dir = std::env::temp_dir().join(format!("bynk-stand-in-copy-{}", std::process::id()));
+        let ctx = dir.join("shop-billing");
+        std::fs::create_dir_all(&ctx).unwrap();
+        let generated = "name = \"shop-billing\"\n\n[[services]]\nbinding = \"SERVICE_BILLING\"\nservice = \"legacy-billing\"\n";
+        std::fs::write(ctx.join("wrangler.toml"), generated).unwrap();
+        let plans = vec![(
+            "shop-billing".to_string(),
+            vec![StandIn {
+                worker: "legacy-billing".into(),
+                bindings: names(&["SERVICE_BILLING"]),
+            }],
+        )];
+        point_at_stand_ins(&dir, &plans).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(ctx.join("wrangler.toml")).unwrap(),
+            generated
+        );
+        let served = std::fs::read_to_string(ctx.join(STAND_IN_CONFIG)).unwrap();
+        assert!(
+            served.contains("service = \"bynk-stand-in-shop-billing-legacy-billing\""),
+            "{served}"
+        );
+        assert!(!ctx.join(format!("{STAND_IN_CONFIG}.tmp")).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_stand_in_report_names_each_and_the_way_out() {
+        assert_eq!(stand_in_report(&[]), "");
+        let report = stand_in_report(&[(
+            "shop-billing".into(),
+            vec![StandIn {
+                worker: "legacy-billing".into(),
+                bindings: names(&["SERVICE_BILLING"]),
+            }],
+        )]);
+        assert_eq!(
+            report,
+            "bynk dev: `shop-billing` binds Worker `legacy-billing` (SERVICE_BILLING) to a local stand-in that answers 503; pass `--local-worker legacy-billing` to reach a `wrangler dev` of it instead.\n"
+        );
     }
 }

@@ -1,11 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { callService, deserialiseEventEnvelope, rehydrationViolation, type BoundaryError, type ServiceBinding } from "../src/boundary.ts";
+import {
+  CALL_SECRET_HEADER,
+  callService,
+  deliverEvent,
+  deserialiseEventEnvelope,
+  rehydrationViolation,
+  verifyCallSecret,
+  type BoundaryError,
+  type ServiceBinding,
+} from "../src/boundary.ts";
 import { Ok, Err, type Result } from "../src/result.ts";
 
 function bindingReturning(body: unknown, init?: ResponseInit): ServiceBinding {
   return { fetch: async () => new Response(JSON.stringify(body), init) };
 }
+
+// #2004: a caller's `env`, holding the deployment's call secret.
+const ENV = { BYNK_CALL_SECRET: "s3cret" };
 
 // A deserialiser that expects { ok: T } | { err: E }.
 const deser =
@@ -18,19 +30,19 @@ const deser =
   };
 
 test("callService: unwraps a successful inner Ok", async () => {
-  const r = await callService(bindingReturning({ ok: 7 }), "svc", null, deser<number, string>());
+  const r = await callService(bindingReturning({ ok: 7 }), "svc", null, deser<number, string>(), "", "", ENV);
   assert.deepEqual(r, { tag: "Ok", value: 7 });
 });
 
 test("callService: returns the inner Err to the caller", async () => {
-  const r = await callService(bindingReturning({ err: "nope" }), "svc", null, deser<number, string>());
+  const r = await callService(bindingReturning({ err: "nope" }), "svc", null, deser<number, string>(), "", "", ENV);
   assert.deepEqual(r, { tag: "Err", error: "nope" });
 });
 
 test("callService: non-2xx response throws a Transport BoundaryError", async () => {
   const binding = bindingReturning({}, { status: 503 });
   await assert.rejects(
-    () => callService(binding, "svc", null, deser<number, string>()),
+    () => callService(binding, "svc", null, deser<number, string>(), "", "", ENV),
     (e: Error) => (e as any).boundaryError.kind === "Transport" && (e as any).boundaryError.status === 503,
   );
 });
@@ -38,7 +50,7 @@ test("callService: non-2xx response throws a Transport BoundaryError", async () 
 test("callService: invalid JSON body throws MalformedJson", async () => {
   const binding: ServiceBinding = { fetch: async () => new Response("not json", { status: 200 }) };
   await assert.rejects(
-    () => callService(binding, "svc", null, deser<number, string>()),
+    () => callService(binding, "svc", null, deser<number, string>(), "", "", ENV),
     (e: Error) => (e as any).boundaryError.kind === "MalformedJson",
   );
 });
@@ -46,7 +58,7 @@ test("callService: invalid JSON body throws MalformedJson", async () => {
 test("callService: a deserialiser BoundaryError is thrown", async () => {
   const binding = bindingReturning({ unexpected: true });
   await assert.rejects(
-    () => callService(binding, "svc", null, deser<number, string>()),
+    () => callService(binding, "svc", null, deser<number, string>(), "", "", ENV),
     (e: Error) => (e as any).boundaryError.kind === "MalformedJson",
   );
 });
@@ -59,7 +71,7 @@ test("callService: stamps the caller context header", async () => {
       return new Response(JSON.stringify({ ok: 1 }));
     },
   };
-  await callService(binding, "svc", null, deser<number, string>(), "ctx.Caller");
+  await callService(binding, "svc", null, deser<number, string>(), "ctx.Caller", "", ENV);
   assert.equal(seen, "ctx.Caller");
 });
 
@@ -76,7 +88,7 @@ test("callService: a 409 ContractMismatch surfaces as the named error", async ()
     { status: 409 },
   );
   await assert.rejects(
-    () => callService(binding, "whoami", null, deser<string, string>(), "app.a", "0000000000000000"),
+    () => callService(binding, "whoami", null, deser<string, string>(), "app.a", "0000000000000000", ENV),
     (e: Error) => {
       const be = (e as { boundaryError?: { kind: string; service?: string } }).boundaryError;
       assert.equal(be?.kind, "ContractMismatch");
@@ -102,10 +114,10 @@ test("callService: a 409 ContractMismatch is logged before it throws", async () 
   };
   try {
     await assert.rejects(() =>
-      callService(bindingReturning(detail, { status: 409 }), "whoami", null, deser<string, string>(), "app.a", "0000000000000000"),
+      callService(bindingReturning(detail, { status: 409 }), "whoami", null, deser<string, string>(), "app.a", "0000000000000000", ENV),
     );
     await assert.rejects(() =>
-      callService(bindingReturning({ kind: "SomethingElse" }, { status: 409 }), "whoami", null, deser<string, string>()),
+      callService(bindingReturning({ kind: "SomethingElse" }, { status: 409 }), "whoami", null, deser<string, string>(), "", "", ENV),
     );
   } finally {
     globalThis.console.error = original;
@@ -121,7 +133,7 @@ test("callService: a 409 ContractMismatch is logged before it throws", async () 
 test("callService: a 409 that is not a ContractMismatch stays a Transport error", async () => {
   const binding = bindingReturning({ kind: "SomethingElse" }, { status: 409 });
   await assert.rejects(
-    () => callService(binding, "whoami", null, deser<string, string>(), "app.a", "h"),
+    () => callService(binding, "whoami", null, deser<string, string>(), "app.a", "h", ENV),
     (e: Error) => {
       const be = (e as { boundaryError?: { kind: string; status?: number } }).boundaryError;
       assert.equal(be?.kind, "Transport", `got ${e.message}`);
@@ -136,7 +148,7 @@ test("callService: a 409 with an unparseable body stays a Transport error", asyn
     fetch: async () => new Response("<html>gateway</html>", { status: 409 }),
   };
   await assert.rejects(
-    () => callService(binding, "whoami", null, deser<string, string>(), "app.a", "h"),
+    () => callService(binding, "whoami", null, deser<string, string>(), "app.a", "h", ENV),
     (e: Error) => {
       const be = (e as { boundaryError?: { kind: string; details?: string } }).boundaryError;
       assert.equal(be?.kind, "Transport", `got ${e.message}`);
@@ -238,7 +250,7 @@ test("boundaryError: the payload is readable but not enumerable", async () => {
   const { inspect } = await import("node:util");
   const binding = { fetch: async () => new Response("secret-body", { status: 502 }) };
   await assert.rejects(
-    () => callService(binding, "svc", null, deser<number, string>()),
+    () => callService(binding, "svc", null, deser<number, string>(), "", "", ENV),
     (e: Error) => {
       assert.equal((e as { boundaryError?: { kind: string } }).boundaryError?.kind, "Transport");
       assert.ok(!Object.keys(e).includes("boundaryError"));
@@ -246,4 +258,67 @@ test("boundaryError: the payload is readable but not enumerable", async () => {
       return true;
     },
   );
+});
+
+// #2004: the deployment's call secret.
+
+function internalRequest(headers: Record<string, string> = {}): Request {
+  return new Request("http://internal/_bynk/call/svc", { method: "POST", headers, body: "{}" });
+}
+
+test("verifyCallSecret: accepts the deployment's secret", async () => {
+  assert.equal(await verifyCallSecret(internalRequest({ [CALL_SECRET_HEADER]: "s3cret" }), ENV), true);
+});
+
+test("verifyCallSecret: refuses a missing, empty, wrong or longer secret", async () => {
+  const cases: Record<string, string>[] = [{}, { [CALL_SECRET_HEADER]: "" }, { [CALL_SECRET_HEADER]: "s3creT" }, { [CALL_SECRET_HEADER]: "s3cret-and-more" }];
+  for (const headers of cases) {
+    assert.equal(await verifyCallSecret(internalRequest(headers), ENV), false, JSON.stringify(headers));
+  }
+});
+
+test("verifyCallSecret: fails closed when the receiving Worker has no secret", async () => {
+  const forged = internalRequest({ [CALL_SECRET_HEADER]: "" });
+  for (const env of [undefined, {}, { BYNK_CALL_SECRET: "" }, { BYNK_CALL_SECRET: 7 }]) {
+    assert.equal(await verifyCallSecret(forged, env), false, JSON.stringify(env));
+  }
+});
+
+test("callService: stamps the call secret", async () => {
+  let seen: string | null = null;
+  const binding: ServiceBinding = {
+    fetch: async (req) => {
+      seen = req.headers.get(CALL_SECRET_HEADER);
+      return new Response(JSON.stringify({ ok: 1 }));
+    },
+  };
+  await callService(binding, "svc", null, deser<number, string>(), "ctx.Caller", "", ENV);
+  assert.equal(seen, "s3cret");
+});
+
+test("callService: refuses to send without a call secret, naming the binding", async () => {
+  let sent = false;
+  const binding: ServiceBinding = {
+    fetch: async () => {
+      sent = true;
+      return new Response(JSON.stringify({ ok: 1 }));
+    },
+  };
+  await assert.rejects(
+    () => callService(binding, "svc", null, deser<number, string>(), "ctx.Caller", "", {}),
+    /BYNK_CALL_SECRET is not set/,
+  );
+  assert.equal(sent, false);
+});
+
+test("deliverEvent: stamps the call secret", async () => {
+  let seen: string | null = null;
+  const binding: ServiceBinding = {
+    fetch: async (req) => {
+      seen = req.headers.get(CALL_SECRET_HEADER);
+      return new Response(null, { status: 204 });
+    },
+  };
+  await deliverEvent(binding, "svc", {}, {}, ENV);
+  assert.equal(seen, "s3cret");
 });

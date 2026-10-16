@@ -13,12 +13,15 @@ pub(crate) fn service_graph(
 /// Why an order could not be produced.
 #[derive(Debug, PartialEq, Eq)]
 pub enum OrderError {
-    /// A `consumes` cycle. Unreachable through the compiler — `bynkc` rejects
-    /// one as `bynk.context.consumes_cycle` before emit, and `deploy` compiles
-    /// first — so this is defence in depth against a hand-edited build tree,
-    /// not a user-facing path. Named rather than silently tolerated because the
-    /// alternative under Cloudflare's upload-time resolution is a deploy that
-    /// cannot be completed in one pass.
+    /// A Service Binding cycle. A `consumes` cycle never reaches here —
+    /// `bynkc` rejects one as `bynk.context.consumes_cycle` before emit — and
+    /// a context is bound only when called (#1961), so the one cycle the
+    /// compiler can produce runs through an events fan-out: the publisher
+    /// binds to each subscriber to deliver, and a subscriber that also calls
+    /// the publisher (directly or through others) binds back.
+    /// [`cycle_publishers`] names that case. Refused rather than tolerated
+    /// because Cloudflare resolves a binding at upload: whichever Worker goes
+    /// first binds to one that does not exist yet.
     Cycle(Vec<String>),
 }
 
@@ -32,6 +35,30 @@ impl std::fmt::Display for OrderError {
             ),
         }
     }
+}
+
+/// The workers on `cycle` (a closed path, as [`OrderError::Cycle`] reports
+/// it) that publish events — those declaring the events fan-out Durable
+/// Object, whose delivery binds them to every subscriber. Empty for a cycle
+/// the compiler cannot produce (a hand-edited build tree).
+pub(crate) fn cycle_publishers(
+    cycle: &[String],
+    resources: &BTreeMap<String, Resources>,
+) -> Vec<String> {
+    let mut publishers: Vec<String> = cycle
+        .iter()
+        .filter(|worker| {
+            resources.get(*worker).is_some_and(|r| {
+                r.durable_objects
+                    .iter()
+                    .any(|d| d.class == bynk_emit::emitter::wrangler::EVENTS_FANOUT_CLASS_NAME)
+            })
+        })
+        .cloned()
+        .collect();
+    publishers.sort();
+    publishers.dedup();
+    publishers
 }
 
 /// Order the workers so that **every binding target is uploaded before the
@@ -257,10 +284,8 @@ pub(crate) mod tests {
 
     #[test]
     fn a_cycle_is_reported_rather_than_looping_forever() {
-        // Defence in depth: `bynkc` rejects a `consumes` cycle
-        // (`bynk.context.consumes_cycle`) before emit and `deploy` compiles
-        // first, so this is unreachable through the compiler — but a
-        // hand-edited build tree must not hang or overflow the stack.
+        // A hand-edited build tree, or the events case below: either way the
+        // order must not hang or overflow the stack.
         let g = graph(&[("a", &["b"]), ("b", &["a"])]);
         let Err(OrderError::Cycle(path)) = deploy_order(&names(&["a", "b"]), &g) else {
             panic!("a cycle must be reported");
@@ -271,6 +296,59 @@ pub(crate) mod tests {
             "the path closes into a loop: {path:?}"
         );
         assert!(path.contains(&"a".to_string()) && path.contains(&"b".to_string()));
+    }
+
+    // ---- #1961: events and the deploy order ----------------------------
+
+    #[test]
+    fn a_subscriber_that_only_consumes_its_publisher_deploys_first() {
+        // The issue's shape after the fix: the subscriber consumes the
+        // publisher for the event type alone, so it binds to nothing, and the
+        // publisher's fan-out binds to it. Subscriber first, then publisher.
+        let g = graph(&[("ev-emitter", &["ev-listener"]), ("ev-listener", &[])]);
+        assert_eq!(
+            deploy_order(&names(&["ev-emitter", "ev-listener"]), &g),
+            Ok(names(&["ev-listener", "ev-emitter"]))
+        );
+    }
+
+    #[test]
+    fn a_subscriber_that_calls_its_publisher_is_a_cycle_through_the_fan_out() {
+        // The case still refused: the listener calls an emitter service (a
+        // real binding) and the emitter delivers to the listener. The cycle
+        // names the publisher, so the message can say why.
+        let g = graph(&[
+            ("ev-emitter", &["ev-listener"]),
+            ("ev-listener", &["ev-emitter"]),
+        ]);
+        let Err(OrderError::Cycle(path)) = deploy_order(&names(&["ev-emitter", "ev-listener"]), &g)
+        else {
+            panic!("a subscriber calling its publisher is a binding cycle");
+        };
+        let resources = project(vec![
+            (
+                "ev-emitter",
+                Resources::default()
+                    .binds(&["ev-listener"])
+                    .exports(&["__EventsFanout"]),
+            ),
+            (
+                "ev-listener",
+                Resources::default()
+                    .binds(&["ev-emitter"])
+                    .exports(&["Tally"]),
+            ),
+        ]);
+        assert_eq!(cycle_publishers(&path, &resources), names(&["ev-emitter"]));
+    }
+
+    #[test]
+    fn a_cycle_without_a_publisher_names_none() {
+        let resources = project(vec![
+            ("a", Resources::default().binds(&["b"])),
+            ("b", Resources::default().binds(&["a"])),
+        ]);
+        assert!(cycle_publishers(&names(&["a", "b", "a"]), &resources).is_empty());
     }
 
     #[test]

@@ -1,0 +1,13 @@
+context demo
+
+consumes bynk
+consumes bynk.cloudflare { Service }
+
+-- #1972: a `Service` instance names the Worker it reaches; there is no default.
+capability Billing = Service
+
+service probe {
+  on call() -> Effect[Int] {
+    Effect.pure(0)
+  }
+}

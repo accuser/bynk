@@ -244,8 +244,10 @@ context's closure, so the config always matches what the code actually reaches:
   `Fetch` to a URL goes over the public internet even when the URL is another
   Worker on the same account, followed by any flags the project lists in
   [`bynk.toml`'s `[workers]`](/docs/manifest/#workers) table.
-- **`[[services]]`** — one Service Binding per consumed context. The binding name is
-  the consumed context uppercased with dots replaced by underscores
+- **`[[services]]`** — one Service Binding per consumed context whose services the
+  context calls, plus one per context subscribing to an event it publishes. A
+  context consumed only for its types, events or capabilities is not bound. The
+  binding name is the bound context uppercased with dots replaced by underscores
   (`commerce.payment` → `COMMERCE_PAYMENT`).
 - **`[[kv_namespaces]]`** — emitted only if the closure reaches the `bynk.cloudflare`
   KV adapter. The `id` is a deploy-time placeholder.
@@ -294,9 +296,15 @@ wrong:
 
 `callService` stamps the calling context's qualified name into an `X-Bynk-Caller`
 header. The callee threads this into a handler's `by c: Caller` binding so it can
-present a live `CallerId`. This is *identity, not authentication*: the `Internal`
-channel trusts the Service Binding, so the header records who called, and is not a
-credential the callee verifies cryptographically.
+present a live `CallerId`. This is *identity, not authentication*: the header
+records who called, and the callee does not verify it.
+
+What the callee does verify is the deployment's call secret (#2004).
+`callService` also stamps `BYNK_CALL_SECRET`, from the calling Worker's `env`, in an
+`X-Bynk-Call-Secret` header. Every Worker refuses a `/_bynk/call/` or `/_bynk/event/`
+request without it (`401`, before anything else is checked), because those paths
+answer on the Worker's public address too. Every holder shares the one secret, so
+it admits members of the deployment without telling them apart.
 
 ## Actor authentication
 

@@ -76,7 +76,7 @@ pub const WRANGLER_MIN: &str = "4.107.0";
 /// `expected identifier after \`agent\`, found \`_\``), so an agent
 /// coincidentally named the same as this synthetic class is structurally
 /// impossible, not merely unlikely.
-pub(crate) const EVENTS_FANOUT_CLASS_NAME: &str = "__EventsFanout";
+pub const EVENTS_FANOUT_CLASS_NAME: &str = "__EventsFanout";
 
 /// Deploy-time sentinel in generated Worker configuration. The driver replaces
 /// this with the persistent Cloudflare KV namespace id immediately before a
@@ -214,6 +214,15 @@ pub(crate) fn emit_wrangler_toml(
                     ),
                 ],
             ),
+            // Interop I5 (#1972): the Worker as the declaration names it,
+            // not a project context's `worker_dir_name`.
+            BindingSource::ForeignService { worker, .. } => TomlBlock::array_table(
+                "services",
+                vec![
+                    TomlEntry::kv("binding", name),
+                    TomlEntry::kv("service", TomlValue::str(worker.clone())),
+                ],
+            ),
             BindingSource::Agent { class_name } | BindingSource::EventsFanout { class_name } => {
                 class_names.push(class_name);
                 TomlBlock::array_table(
@@ -292,8 +301,8 @@ pub(crate) fn emit_wrangler_toml(
 }
 
 /// Every binding a Worker's `wrangler.toml` declares, in emission order:
-/// Service Bindings by target, then the KV namespace, then the Durable
-/// Objects by class name. [`emit_wrangler_toml`] writes exactly this list,
+/// Service Bindings by target, then those to foreign Workers by capability,
+/// then the KV namespaces, then the Durable Objects by class name. [`emit_wrangler_toml`] writes exactly this list,
 /// the Worker's `Env` interface (`emitter::workers`) types it, and the
 /// duplicate check (`bynk_check::worker_bindings`) reads it, so a new kind of
 /// binding is declared, typed and checked from one place (#1944). Each kind
@@ -306,27 +315,32 @@ pub(crate) fn worker_bindings(
     agents: &[String],
     consumes: &[String],
     needs_kv: bool,
-    // S4a (#1966): the context's derived KV instances, `(capability,
-    // binding)`, in capability order.
-    kv_instances: &[(String, String)],
+    // The context's derived instances, each its binding with a
+    // `KvInstance` (S4a, #1966) or `ForeignService` (interop I5, #1972)
+    // source, in capability order.
+    instances: &[WorkerBinding],
     uses_emit: bool,
 ) -> Vec<WorkerBinding> {
     let mut bindings = Vec::new();
     let mut sorted_consumes: Vec<&String> = consumes.iter().collect();
     sorted_consumes.sort();
     bindings.extend(sorted_consumes.into_iter().map(|t| service_binding(t)));
+    // Interop I5 (#1972): Service Bindings to foreign Workers, beside the
+    // ones to project contexts.
+    bindings.extend(
+        instances
+            .iter()
+            .filter(|b| matches!(b.source, BindingSource::ForeignService { .. }))
+            .cloned(),
+    );
     if needs_kv {
         bindings.push(kv_binding());
     }
     bindings.extend(
-        kv_instances
+        instances
             .iter()
-            .map(|(capability, binding)| WorkerBinding {
-                name: binding.clone(),
-                source: BindingSource::KvInstance {
-                    capability: capability.clone(),
-                },
-            }),
+            .filter(|b| matches!(b.source, BindingSource::KvInstance { .. }))
+            .cloned(),
     );
     // Events track, slice 0 (spine #936, ADR 0284): a context whose handlers
     // emit gets its own fan-out DO among the agents' — Cloudflare only cares
@@ -349,13 +363,14 @@ pub(crate) fn worker_bindings(
 /// #1950: the bindings a handler's `deps.env` type exposes on Workers — the
 /// projection of [`worker_bindings`] handlers reach directly, which
 /// `BindingSource`'s variant docs state per kind. `consumed` is the consumed
-/// contexts with services, `agents` every local agent when the handler
-/// constructs one (else empty); order as in [`worker_bindings`].
+/// contexts the handler calls (#1961), `agents` every local agent when the
+/// handler constructs one (else empty); order as in [`worker_bindings`].
 ///
 /// Built by the same constructors, so each name and source is the Worker's
-/// own: a consumed context with services is never an adapter (an adapter may
-/// not declare a `service`, `bynk.adapter.disallowed_item`), so it has a
-/// Service Binding, and every local agent has a Durable Object binding. The
+/// own: a called context is never an adapter (an adapter may not declare a
+/// `service`, `bynk.adapter.disallowed_item`), and the Worker binds every
+/// context any of its bodies calls, so it has a Service Binding; every local
+/// agent has a Durable Object binding. The
 /// KV namespace, the events fan-out and subscribers' Service Bindings never
 /// reach handlers.
 pub(crate) fn handler_bindings(consumed: &[String], agents: &[String]) -> Vec<WorkerBinding> {
@@ -374,7 +389,7 @@ pub(crate) fn handler_bindings(consumed: &[String], agents: &[String]) -> Vec<Wo
 /// `Env` interface and a handler's `deps.env`.
 pub(crate) fn binding_ts_type(source: &BindingSource) -> &'static str {
     match source {
-        BindingSource::Service { .. } => "__ServiceBinding",
+        BindingSource::Service { .. } | BindingSource::ForeignService { .. } => "__ServiceBinding",
         BindingSource::Kv | BindingSource::KvInstance { .. } => "__KVNamespace",
         BindingSource::Agent { .. } | BindingSource::EventsFanout { .. } => {
             "__DurableObjectNamespace"
@@ -396,6 +411,20 @@ pub(crate) fn service_binding(target: &str) -> WorkerBinding {
             context: target.to_string(),
         },
     }
+}
+
+/// Interop I5 (#1972): the status of the stand-in for a foreign Worker that
+/// `bynk dev` binds by default and the integration test harness binds always.
+/// 503, not a 2xx: the stand-in served nothing, and code that ignores the
+/// status should not mistake it for the Worker's answer.
+pub const FOREIGN_SERVICE_DOUBLE_STATUS: u16 = 503;
+
+/// Interop I5 (#1972): the body of that stand-in's every response, saying
+/// what it is. `bynk dev` adds how to reach the real Worker instead.
+pub fn foreign_service_double_body(binding: &str, worker: &str) -> String {
+    format!(
+        "bynk: `{binding}` is bound to a stand-in for Worker `{worker}`, which is not part of this project."
+    )
 }
 
 /// S4a (#1966): the deploy-time id placeholder of a derived KV instance's
@@ -571,6 +600,48 @@ pub fn materialise_kv_namespace_ids(
     })
 }
 
+/// Interop I5 (#1972): point Service Bindings at other Workers, structurally,
+/// by binding: each `[[services]]` entry whose binding `targets` names gets
+/// that `service`. `bynk dev` uses it to bind a foreign Worker to its local
+/// stand-in, which runs under a name of its own so that it never answers for
+/// the real Worker in wrangler's shared dev registry. Unchanged text when
+/// nothing matches, as [`materialise_kv_namespace_ids`].
+pub fn retarget_services(
+    text: &str,
+    targets: &std::collections::BTreeMap<String, String>,
+) -> Result<String, String> {
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e| format!("invalid wrangler.toml: {e}"))?;
+    let mut changed = false;
+    if let Some(entries) = doc
+        .get_mut("services")
+        .and_then(|i| i.as_array_of_tables_mut())
+    {
+        for entry in entries.iter_mut() {
+            let Some(target) = entry
+                .get("binding")
+                .and_then(|b| b.as_str())
+                .and_then(|b| targets.get(b))
+                .cloned()
+            else {
+                continue;
+            };
+            if let Some(item) = entry.get_mut("service")
+                && item.as_str() != Some(target.as_str())
+            {
+                set_string_preserving_decor(item, &target);
+                changed = true;
+            }
+        }
+    }
+    Ok(if changed {
+        doc.to_string()
+    } else {
+        text.to_string()
+    })
+}
+
 /// Each `[[kv_namespaces]]` entry's `(binding, id)`, in file order; an entry
 /// missing either is skipped.
 fn kv_entries(doc: &toml_edit::DocumentMut) -> impl Iterator<Item = (&str, &str)> {
@@ -646,6 +717,31 @@ id = \"<KV_PRICE_CACHE_ID>\" # set at deploy time
 binding = \"KV_SESSIONS\"
 id = \"<KV_SESSIONS_ID>\" # set at deploy time
 ";
+
+    /// Interop I5 (#1972): only the named bindings move; the rest of the
+    /// file, comments included, is untouched, and a no-op is byte-identical.
+    #[test]
+    fn retarget_services_moves_only_the_named_bindings() {
+        let text = "name = \"shop-billing\"\n\n[[services]]\nbinding = \"SHOP_FRONT\"\nservice = \"shop-front\"\n\n[[services]]\nbinding = \"SERVICE_BILLING\"\nservice = \"legacy-billing\" # foreign\n";
+        let targets = std::collections::BTreeMap::from([(
+            "SERVICE_BILLING".to_string(),
+            "bynk-stand-in-shop-billing-legacy-billing".to_string(),
+        )]);
+        let out = retarget_services(text, &targets).unwrap();
+        assert_eq!(
+            out,
+            text.replace(
+                "service = \"legacy-billing\"",
+                "service = \"bynk-stand-in-shop-billing-legacy-billing\""
+            )
+        );
+        assert_eq!(retarget_services(&out, &targets).unwrap(), out);
+        assert_eq!(
+            retarget_services(text, &std::collections::BTreeMap::new()).unwrap(),
+            text
+        );
+        assert!(retarget_services("not [ toml", &targets).is_err());
+    }
 
     #[test]
     fn materialise_kv_namespace_ids_changes_only_the_bare_id() {
