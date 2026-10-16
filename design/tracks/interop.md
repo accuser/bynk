@@ -214,9 +214,7 @@ So the forgery #1971 describes is reachable two ways:
 1. **From a Worker holding a Service Binding** (the issue's case). Granting a
    binding grants every context's identity.
 2. **From the public internet**, for any context whose Worker is publicly
-   routable, with a request such as
-   `curl -X POST https://shop-inventory.<sub>.workers.dev/_bynk/call/reserve -H 'X-Bynk-Caller: shop.orders' -H 'X-Bynk-Contract: <hash>' -d '{…}'`.
-   The contract hash is not a secret: it is in `bynk-contracts.json`, and a
+   routable, by a plain HTTP request to the call prefix. The contract hash is not a secret: it is in `bynk-contracts.json`, and a
    wrong one is echoed back in the 409 body.
 
 Case 2 needs no interop at all, so it is a defect in today's boundary rather
@@ -299,9 +297,10 @@ Every decision below must meet these.
 
 ## 7. Prerequisites before any slicing
 
-- **PR-1 Close or contain §3.3 case 2.** Either an urgent fix outside this
-  track or the first D2 slice (§11 Q1). No slice that advertises the call
-  boundary to outsiders ships first.
+- **PR-1 Close or contain §3.3 case 2.** Recommended as an urgent fix outside
+  this track (§11 Q1), or as slice I0, which needs no other slice. No slice
+  and no reference note that advertises the call boundary to outsiders ships
+  first.
 - **PR-2 One binding list.** Already met: ADR 0462/0464/0466 give each Worker
   one list driving `wrangler.toml`, `Env` and the duplicate check. D4 adds a
   kind to it.
@@ -344,8 +343,10 @@ versions side by side.
     prose cannot drift from the emitter.
   - *Clean-up before freezing:* fix or deliberately keep each rough edge in
     §3.1–3.2: `POST` only (405 otherwise), malformed JSON as 400
-    `MalformedJson` rather than 500, the caller (and D2's signature) checked
-    before the body is read, inline field refinements hashed and validated,
+    `MalformedJson` rather than 500, the caller header checked before the
+    body is read, D2's signature verified after the raw bytes are read (under
+    a body-size cap, 413 above it, since §3.1 has no limit today) but before
+    `JSON.parse` and the codec decode, inline field refinements hashed and validated,
     and the `Duration` field guard. `Option`'s lenient decode stays: ADR 0450
     adopted it precisely so non-Bynk JSON decodes, so it is part of the
     format, and a foreign caller may send either form.
@@ -409,22 +410,27 @@ that only refuses requests no Bynk caller sends.
   needs (c) or a channel proof to stop a foreign Worker from claiming
   `shop.orders`.
 - **(c) A signed caller header.** Every caller signs
-  `(caller, service, contract, timestamp, body digest)` with HMAC-SHA256 under
-  a per-binding secret; the callee verifies in constant time before decoding
+  `(caller, method, full path, contract, wire version, timestamp, body digest)`
+  with HMAC-SHA256 under a per-binding secret. Every header the callee acts
+  on is in the tuple, so an unsigned `X-Bynk-Wire` cannot make the callee
+  decode the same bytes under another version's rules. The callee reads the
+  raw body under a size cap, verifies in constant time before decoding
   the body and refuses unsigned, stale or mis-signed calls with 401. This is
   ADR 0092's named "multi-trust-domain integrity" extension. *Cost:* one secret
   per (caller, callee) edge, provisioned by `bynk deploy` through the secrets
   manifest; a crypto dependency on Web Crypto (the standard-library track's
   K4 `bynk.crypto` work, or a runtime-only verifier in `auth.ts` as Bearer
-  already has); a few hundred microseconds per call. It closes §3.3 for Bynk
+  already has); a small per-call cost (*verify*: not measured). It closes §3.3 for Bynk
   callers as well, not only foreign ones.
 - **(d) A shared deployment secret.** One secret per deployment, sent as a
   bearer header. Simpler than (c), but every holder can claim every identity,
   so it closes §3.3 case 2 and nothing else.
 
-**Recommendation: (c) as the mechanism, (b) as the surface, (a) now.**
+**Recommendation: (c) as the mechanism, (b) as the surface, (a) once §3.3
+is contained.**
 
-- Ship (a) immediately as a reference note, whatever else is decided.
+- Ship (a) as a reference note as soon as PR-1's mitigation has landed, not
+  before: a public note should not advertise an open boundary.
 - Every Bynk-to-Bynk call becomes signed under a per-edge secret the deploy
   mints. The callee refuses a call whose signature does not verify for the
   claimed caller. This closes §3.3 for both cases without new syntax, and
@@ -602,8 +608,8 @@ shares an increment with language or emitter work (ADR 0023).
 
 | Slice | What | Needs |
 |---|---|---|
-| I0 | Close §3.3 case 2, if §11 Q1 keeps it in-track: refuse `/_bynk/call/` unless the request proves it came from a caller the callee trusts (D2's signature, or an interim shared secret, D2 d) | D2 mechanism |
-| I1 | **D1, documentation and guard.** The wire-contract reference page generated from `WireModel` plus a drift guard; the wire-format version header; the format's ADR and the Gate 1 note; D2 (a)'s reference note | D1 |
+| I0 | Contain §3.3, if §11 Q1 keeps it in-track rather than as an urgent fix: the D2 (d) shared deployment secret on every `/_bynk/call/` request, minted by `bynk deploy`. I2 later replaces it | — |
+| I1 | **D1, documentation and guard.** The wire-contract reference page generated from `WireModel` plus a drift guard; the wire-format version header; the format's ADR and the Gate 1 note; D2 (a)'s reference note | D1, PR-1 (I0 or the urgent fix) |
 | I2 | **D2 mechanism.** Signed caller headers for every Bynk-to-Bynk edge; per-edge secrets in `bynk deploy` and a fixed key in `bynk dev`; ADR 0092 amendment | D2, I1 |
 | I3 | **D2 surface.** Declared foreign callers, the structured `CallerId`, foreign edges' secrets surfaced by deploy | I2 |
 | I4 | **D3.** The generated TS client, its drift guard, and foreign callers recorded in `bynk-contracts.json` and the deploy ledger | I1, I3 |
@@ -635,9 +641,10 @@ For the maintainer. Each must close before this PR is marked ready.
 
 1. **§3.3 case 2: in-track or urgent fix?** The public reachability of
    `/_bynk/call/` with a forgeable caller is a live defect independent of
-   interop. Fix it now outside this track (the interim D2 d shared secret, or
-   `workers_dev = false` for Workers with no `from http` routes), or keep it
-   as slice I0? First confirm the `workers.dev` default against a real
+   interop. Recommended: fix it now outside this track, before this doc
+   merges, with the D2 (d) shared deployment secret (`workers_dev = false`
+   alone does not cover a Worker that has `from http` routes). Or keep it as
+   slice I0. First confirm the `workers.dev` default against a real
    deploy.
 2. **D1's stability rule.** Is the wire format versioned independently of the
    compiler, like ADR 0310's ABI (recommended), or tied to the language's 1.x
@@ -678,10 +685,16 @@ For the maintainer. Each must close before this PR is marked ready.
   never be treated as one.
 - **After D2.** Each edge has its own secret, so a holder can claim only its
   own identity. A body digest and a timestamp bound the signature to one
-  request for a short window; full replay protection needs a nonce store,
-  which this track does not build (ADR 0092 left replay and ordering to the
-  events track, its Q8). Verification is constant-time and runs before the
-  body is decoded, so an unauthenticated sender cannot reach the codec.
+  request for a short window, which D2's ADR must name (a requirement, not a
+  tuning knob). Full replay protection needs a nonce store, which this track
+  does not build (ADR 0092 left replay and ordering to the events track, its
+  Q8). `on call` handlers are not idempotent in general, so a captured call
+  can be replayed inside the window. A handler with side effects should use
+  the Idempotency capability (#921) for that, and the reference note says so.
+  Verification is constant-time and runs before the body is decoded, so an
+  unauthenticated sender cannot reach the codec. The body is read under a
+  size cap before it is hashed, so such a sender cannot make the callee
+  buffer and hash an unbounded body either.
 - **D4.** A `Service` capability reaches only the Worker named in the
   declaration; the binding list is compiler-derived, so user code cannot bind
   an arbitrary Worker at runtime.
