@@ -75,6 +75,9 @@ jobs:
       # prepends the changelog row(s), writes the ADR file(s) + index row(s), and
       # deletes the consumed pending file(s) — the delete happens only after the
       # bump succeeds, so a failure in this or the next step leaves nothing to push.
+      # It also rewrites the gated rows of design/greenfield-status.md, so a PR
+      # that moves a gated probe acknowledges it in its pending file (`probes:`)
+      # instead of editing the shared table.
       - name: Stamp
         run: cargo run --quiet --package xtask -- stamp --apply
 

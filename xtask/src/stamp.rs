@@ -90,6 +90,9 @@ pub struct Stamped {
     /// Greenfield reference rule ids this increment closes (#1001) — already
     /// validated (syntax and existence) by `validated_pending_in`.
     pub closes_rule: Vec<String>,
+    /// Gated greenfield-status probes this increment acknowledges moving — the
+    /// stamp rewrites only these rows of the table.
+    pub probes: Vec<String>,
 }
 
 /// The full stamp plan for the pending files present.
@@ -144,6 +147,7 @@ pub fn plan(root: &Path) -> Result<Plan, Vec<String>> {
             changelog: p.changelog,
             adrs: p.adrs,
             closes_rule: p.closes_rule,
+            probes: p.probes,
         });
     }
 

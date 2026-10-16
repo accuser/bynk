@@ -23,11 +23,36 @@ fn repo_root() -> PathBuf {
 #[test]
 fn greenfield_status_table_is_current() {
     let root = repo_root();
-    let disagreements = xtask::greenfield_status::gated_disagreements(&root);
+    let probes = xtask::greenfield_status::run_gated(&root);
+
+    // A pending file's `probes` key is validated against GATED_PROBES; pin that
+    // list to the probes that actually run so the two can never drift.
+    let names: Vec<&str> = probes.iter().map(|p| p.name).collect();
+    assert_eq!(
+        names,
+        xtask::greenfield_status::GATED_PROBES,
+        "GATED_PROBES is out of step with run_gated()"
+    );
+
+    let disagreements = xtask::greenfield_status::gated_disagreements_in(&probes, &root);
+    let acknowledged = xtask::acknowledged_probes(&root);
+    for (name, committed, live) in &disagreements {
+        if acknowledged.contains(name) {
+            eprintln!(
+                "greenfield-status: {name} moves {committed:?} -> {live:?} \
+                 (acknowledged by a pending file; the stamp rewrites the row on merge)"
+            );
+        }
+    }
+
+    let unacknowledged = xtask::greenfield_status::unacknowledged(disagreements, &acknowledged);
     assert!(
-        disagreements.is_empty(),
-        "design/greenfield-status.md is stale — run `cargo xtask greenfield-status --apply`:\n{}",
-        disagreements
+        unacknowledged.is_empty(),
+        "gated greenfield-status probe(s) moved without acknowledgement. Either name them in \
+         your increment's `design/pending/<slug>.md` (`probes: a, b` — preferred: the stamp \
+         rewrites the table on merge, so parallel PRs don't conflict on it), or, for a change \
+         with no increment, run `cargo xtask greenfield-status --apply`:\n{}",
+        unacknowledged
             .iter()
             .map(|(name, committed, live)| format!(
                 "  {name}: committed {committed:?}, live {live:?}"
