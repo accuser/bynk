@@ -45,7 +45,7 @@ export function serverVersion(context: vscode.ExtensionContext): string {
  * `github\.com[/:]([^/]+\/…)` match backtracks polynomially on adversarial
  * input (CodeQL js/polynomial-redos). indexOf + split has no such blowup. */
 function repoSlug(context: vscode.ExtensionContext): string {
-  const fallback = "accuser/bynk";
+  const fallback = "bynk-lang/bynk";
   const url: string = context.extension.packageJSON.repository?.url ?? "";
   const host = url.indexOf("github.com");
   if (host === -1) return fallback;

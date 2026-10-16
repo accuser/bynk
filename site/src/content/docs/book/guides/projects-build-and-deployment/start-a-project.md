@@ -34,7 +34,7 @@ hello/
 ```
 
 The starter is a minimal but real service — the single-file analogue of the
-[`hello-world` example](https://github.com/accuser/bynk/tree/main/examples/hello-world):
+[`hello-world` example](https://github.com/bynk-lang/bynk/tree/main/examples/hello-world):
 
 ```bynk
 context hello

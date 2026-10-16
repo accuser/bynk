@@ -12,7 +12,7 @@ touches the bundle and nothing else.
 - [Declare a message bundle](/book/guides/localisation/declare-a-message-bundle/)
 - [Format with ICU](/book/guides/localisation/format-with-icu/)
 
-**Worked example:** [`examples/greeter-i18n`](https://github.com/accuser/bynk/tree/main/examples/greeter-i18n)
+**Worked example:** [`examples/greeter-i18n`](https://github.com/bynk-lang/bynk/tree/main/examples/greeter-i18n)
 — an HTTP service that negotiates a locale and renders from a three-language
 bundle.
 

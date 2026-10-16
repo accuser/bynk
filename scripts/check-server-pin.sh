@@ -20,7 +20,7 @@ strict=0
 [ "${1:-}" = "--strict" ] && strict=1
 
 cd "$(dirname "$0")/.."
-repo="${GITHUB_REPOSITORY:-accuser/bynk}"
+repo="${GITHUB_REPOSITORY:-bynk-lang/bynk}"
 
 pin="$(sed -nE 's/^  "bynkServerVersion": "([^"]+)".*/\1/p' vscode-bynk/package.json)"
 if [ -z "$pin" ]; then

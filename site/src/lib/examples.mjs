@@ -29,7 +29,7 @@ function findRepoRoot() {
 const REPO_ROOT = findRepoRoot();
 
 const PLAYGROUND_ORIGIN = "https://playground.bynk-lang.org";
-const GITHUB_TREE = "https://github.com/accuser/bynk/tree/main";
+const GITHUB_TREE = "https://github.com/bynk-lang/bynk/tree/main";
 
 /** Read a source file given a path relative to the repo root. */
 export function readSource(relUnderRepo) {

@@ -23,7 +23,7 @@ grammar.
 > [!NOTE]
 > The `tree-sitter-bynk` grammar is the parser used by the editor tooling; it is
 > a separate implementation from the recursive-descent parser the compiler runs.
-> A [conformance test](https://github.com/accuser/bynk/blob/main/tree-sitter-bynk/tests/conformance.rs)
+> A [conformance test](https://github.com/bynk-lang/bynk/blob/main/tree-sitter-bynk/tests/conformance.rs)
 > parses the same sources with both and asserts they accept and reject the same
 > programs, so the generated productions describe what the compiler accepts, not
 > only what the editor grammar does.

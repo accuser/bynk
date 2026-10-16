@@ -64,7 +64,7 @@ export default defineConfig({
       expressiveCode: {
         shiki: { langs: [{ ...bynkGrammar, name: "bynk" }] },
       },
-      social: [{ icon: "github", label: "GitHub", href: "https://github.com/accuser/bynk" }],
+      social: [{ icon: "github", label: "GitHub", href: "https://github.com/bynk-lang/bynk" }],
       // The Book sidebar is generated from src/SUMMARY.md; the By Example and
       // Developer Docs surfaces (their own surfaces, not part of the Book) each
       // append their own group. By Example: snippets first (the gentle tier),
