@@ -60,7 +60,7 @@ export const placement = {
    * contexts can integrate without coupling to HTTP status semantics.
    */
   async call(total: Money, deps: { env: { COMMERCE_PAYMENT: __ServiceBinding } }): globalThis.Promise<Result<void, OrderError>> {
-    const auth = await __callService(deps.env.COMMERCE_PAYMENT, "authorise", __serialise_Money(total), __deserialise_Result_AuthId_PaymentError, "commerce.orders", "938adff5c562387b");
+    const auth = await __callService(deps.env.COMMERCE_PAYMENT, "authorise", __serialise_Money(total), __deserialise_Result_AuthId_PaymentError, "commerce.orders", "938adff5c562387b", deps.env);
     switch (auth.tag) {
       case "Ok": {
         return Ok(undefined);
@@ -94,7 +94,7 @@ export const orders = {
    */
   async http_POST_orders(body: CreateOrderRequest, deps: { env: { COMMERCE_PAYMENT: __ServiceBinding } }): globalThis.Promise<HttpResult<OrderView>> {
     const total = { minorUnits: body.amountMinor, currency: body.currency };
-    const auth = await __callService(deps.env.COMMERCE_PAYMENT, "authorise", __serialise_Money(total), __deserialise_Result_AuthId_PaymentError, "commerce.orders", "938adff5c562387b");
+    const auth = await __callService(deps.env.COMMERCE_PAYMENT, "authorise", __serialise_Money(total), __deserialise_Result_AuthId_PaymentError, "commerce.orders", "938adff5c562387b", deps.env);
     switch (auth.tag) {
       case "Ok": {
         return HttpResult.Created({ status: "placed", totalMinor: body.amountMinor });

@@ -33,6 +33,8 @@ which.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+# #2004: the deployment's call secret, minted by `bynk deploy`.
+getrandom.workspace = true
 
 # #1762: `bynk dev` puts each wrangler in a job object on Windows, so stopping it
 # stops the whole `cmd.exe` → `npx` → wrangler → `workerd` tree. No new crate

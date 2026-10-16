@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.334**.
+written against **v0.335**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.335.0** | Every cross-context call and event delivery now carries the deployment's call secret `BYNK_CALL_SECRET` in an `X-Bynk-Call-Secret` header, and a Worker refuses a `/_bynk/call/` or `/_bynk/event/` request without it (`401`, before anything else), because those paths answered on the Worker's public `workers.dev` address and anyone could call an `on call` service claiming any caller. `bynk deploy` mints the secret and sets it on every context, `bynk dev` and `bynk test` use a fixed local value. **Breaking for deployed projects:** redeploy the whole project once (`bynk deploy`, not `--context`), since until every Worker holds the secret, calls between old and new Workers fail |
 | **v0.334.0** | In a test case, a `svc.call(…)` outcome takes the handler's declared type, so `expect r == Ok("a")` checks; a `by c: Caller` handler called without `by Caller("…")` is `bynk.test.actor_identity_required`; and a handler that sends with `~>` runs at every tier, its sends awaited before the case's expectations |
 | **v0.333.6** | A `fold` over a collected `store` map's `.entries` no longer names an unimported `MapEntry` type, and `.keys`/`.entries` over a map keyed by an opaque or refined type now yield that branded key type, so both pass `tsc` |
 | **v0.333.5** | A SIGINT or SIGTERM sent to `bynk dev` itself now stops its `wrangler` and `workerd` processes before it exits, instead of leaving them running with their ports bound |

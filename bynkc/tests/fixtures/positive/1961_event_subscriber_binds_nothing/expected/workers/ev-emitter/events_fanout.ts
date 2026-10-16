@@ -29,7 +29,7 @@ export class __EventsFanout {
         const binding = this.env[sub.binding];
         if (!binding) continue;
         try {
-          await __deliverEvent(binding, sub.service, ev.payload, ev.envelope);
+          await __deliverEvent(binding, sub.service, ev.payload, ev.envelope, this.env);
         } catch (e) {
           globalThis.console.error("EventsFanout delivery failed", { event: ev.type, service: sub.service, error: String(e) });
         }

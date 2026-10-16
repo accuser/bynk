@@ -296,9 +296,15 @@ wrong:
 
 `callService` stamps the calling context's qualified name into an `X-Bynk-Caller`
 header. The callee threads this into a handler's `by c: Caller` binding so it can
-present a live `CallerId`. This is *identity, not authentication*: the `Internal`
-channel trusts the Service Binding, so the header records who called, and is not a
-credential the callee verifies cryptographically.
+present a live `CallerId`. This is *identity, not authentication*: the header
+records who called, and the callee does not verify it.
+
+What the callee does verify is the deployment's call secret (#2004).
+`callService` also stamps `BYNK_CALL_SECRET`, from the calling Worker's `env`, in an
+`X-Bynk-Call-Secret` header. Every Worker refuses a `/_bynk/call/` or `/_bynk/event/`
+request without it (`401`, before anything else is checked), because those paths
+answer on the Worker's public address too. Every holder shares the one secret, so
+it admits members of the deployment without telling them apart.
 
 ## Actor authentication
 

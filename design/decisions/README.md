@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0479](0479-deployment-call-secret.md) | **A shared per-deployment secret admits every internal request, amending ADR 0092** (v0.335) — `BYNK_CALL_SECRET` is minted by `bynk deploy` and checked first on every `/_bynk/call/` and `/_bynk/event/` request | Accepted (v0.335) |
 | [0478](0478-test-harness-settles-sends.md) | **The test harness supplies an execution context and settles `~>` sends** (v0.334) — A collecting `waitUntil` per case, awaited after each addressed call, at the unit, integration and system tiers | Accepted (v0.334) |
 | [0477](0477-caller-handler-needs-a-named-caller-in-tests.md) | **A test calling a `by c: Caller` handler names the calling context** (v0.334) — No default caller; the call is rejected at check without `by Caller("…")` | Accepted (v0.334) |
 | [0476](0476-test-call-outcome-takes-the-handlers-type.md) | **A test-body `svc.call(…)` outcome takes the handler's declared type** (v0.334) — `.call` outcomes are typed; http/cron/queue outcomes stay loose and reject `==` against a bare constructor | Accepted (v0.334) |
