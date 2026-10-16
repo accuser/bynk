@@ -40,10 +40,10 @@ async function test_a_Raw_body__matched_in_the_case() {
           case "Raw": {
             const body = __d.body;
             const ct = __d.contentType;
-            return __bynkExpect(((body).length === 2 && ct.startsWith("text/")), "tests/app/web.bynk:9:31", 420, 464, "expect body.length() == 2 && ct.startsWith(\"text/\")");
+            return __bynkExpect(((body).length === 2 && ct.startsWith("text/")), "tests/app/web.bynk:9:31", 415, 459, "expect body.length() == 2 && ct.startsWith(\"text/\")");
           }
           default: {
-            return __bynkExpect((false), "tests/app/web.bynk:10:19", 483, 488, "expect false");
+            return __bynkExpect((false), "tests/app/web.bynk:10:19", 478, 483, "expect false");
           }
         }
         throw new globalThis.Error("non-exhaustive match");
@@ -66,10 +66,10 @@ async function test_a_Raw_body__through_an_is_test() {
     void ((() => {
         if (r.tag === "Raw") {
           const body = r.body;
-          if (!(__bynkBytesToBase64(body) === "aGk=")) { throw __bynkExpectFailure("tests/app/web.bynk:16:14", 621, 646, "expect body.toBase64() == \"aGk=\"\n  expected: body.toBase64() == \"aGk=\"\n  actual:   " + __bynkShow((__bynkBytesToBase64(body))) + " == " + __bynkShow(("aGk="))); }
+          if (!(__bynkBytesToBase64(body) === "aGk=")) { throw __bynkExpectFailure("tests/app/web.bynk:16:14", 616, 641, "expect body.toBase64() == \"aGk=\"\n  expected: body.toBase64() == \"aGk=\"\n  actual:   " + __bynkShow((__bynkBytesToBase64(body))) + " == " + __bynkShow(("aGk="))); }
           return undefined;
         } else {
-          if (!(false)) { throw __bynkExpectFailure("tests/app/web.bynk:18:14", 673, 678, "expect false"); }
+          if (!(false)) { throw __bynkExpectFailure("tests/app/web.bynk:18:14", 668, 673, "expect false"); }
           return undefined;
         }
       })());
@@ -100,7 +100,7 @@ async function test_a_match_on_the_outcome__used_as_a_value() {
         }
         throw new globalThis.Error("non-exhaustive match");
       })(r);
-    if (!(n === 2)) { throw __bynkExpectFailure("tests/app/web.bynk:27:12", 868, 874, "expect n == 2\n  expected: n == 2\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((2))); }
+    if (!(n === 2)) { throw __bynkExpectFailure("tests/app/web.bynk:27:12", 863, 869, "expect n == 2\n  expected: n == 2\n  actual:   " + __bynkShow((n)) + " == " + __bynkShow((2))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -120,10 +120,10 @@ async function test_a_message_variant_binds_a_String() {
         switch (__d.tag) {
           case "BadRequest": {
             const m = __d.message;
-            return __bynkExpect(((m).length === 9), "tests/app/web.bynk:32:31", 1010, 1025, "expect m.length() == 9");
+            return __bynkExpect(((m).length === 9), "tests/app/web.bynk:32:31", 1005, 1020, "expect m.length() == 9");
           }
           default: {
-            return __bynkExpect((false), "tests/app/web.bynk:33:19", 1044, 1049, "expect false");
+            return __bynkExpect((false), "tests/app/web.bynk:33:19", 1039, 1044, "expect false");
           }
         }
         throw new globalThis.Error("non-exhaustive match");

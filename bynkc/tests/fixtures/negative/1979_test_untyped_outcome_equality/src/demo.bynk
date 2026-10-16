@@ -1,7 +1,0 @@
-context demo
-
-service api from http {
-  on GET("/") () -> Effect[HttpResult[String]] by v: Visitor {
-    Ok("hi")
-  }
-}
