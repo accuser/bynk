@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk-lsp)](https://docs.rs/bynk-lsp)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-The **Language Server for the [Bynk](https://github.com/accuser/bynk)
+The **Language Server for the [Bynk](https://github.com/bynk-lang/bynk)
 language**. The crate builds the `bynkc-lsp` binary, which any LSP-capable
 editor can speak to for live diagnostics, navigation, and refactoring of `.bynk`
 projects.
@@ -38,7 +38,7 @@ report, without linking the CLI it doesn't need.
 - **File watching** across the project.
 
 The full capability list is specified in
-[`design/bynk-lsp-spec.md`](https://github.com/accuser/bynk/blob/main/design/bynk-lsp-spec.md).
+[`design/bynk-lsp-spec.md`](https://github.com/bynk-lang/bynk/blob/main/design/bynk-lsp-spec.md).
 
 ## Install
 
@@ -58,7 +58,7 @@ This produces the **`bynkc-lsp`** binary. Requires a stable Rust toolchain,
 ## Use
 
 `bynkc-lsp` speaks LSP over stdio. Most users consume it through the
-[VS Code extension](https://github.com/accuser/bynk/tree/main/vscode-bynk),
+[VS Code extension](https://github.com/bynk-lang/bynk/tree/main/vscode-bynk),
 which bundles and launches it automatically. For other editors, point your LSP
 client at the `bynkc-lsp` binary and associate it with the `bynk` language /
 `.bynk` files. See the
@@ -72,5 +72,5 @@ level. `bynkc-lsp --version` prints the version.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

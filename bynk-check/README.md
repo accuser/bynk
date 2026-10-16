@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk-check)](https://docs.rs/bynk-check)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-The **semantic-analysis layer of the [Bynk](https://github.com/accuser/bynk)
+The **semantic-analysis layer of the [Bynk](https://github.com/bynk-lang/bynk)
 compiler** — name resolution and type checking over the
 [`bynk-syntax`](https://crates.io/crates/bynk-syntax) AST.
 
@@ -85,5 +85,5 @@ See the [API docs](https://docs.rs/bynk-check) for the full surface.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

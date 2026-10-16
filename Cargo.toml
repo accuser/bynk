@@ -43,8 +43,8 @@ version = "0.332.2"
 # verified rather than asserted — if it fails, raise this (don't lower the leg).
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/accuser/bynk"
-homepage = "https://github.com/accuser/bynk"
+repository = "https://github.com/bynk-lang/bynk"
+homepage = "https://github.com/bynk-lang/bynk"
 
 [workspace.lints.clippy]
 # R2.12 (design/bynk-greenfield-compiler.md): refuses the wildcard-arm class of drift

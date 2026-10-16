@@ -2,10 +2,10 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-Language support for the **[Bynk](https://github.com/accuser/bynk) language**
+Language support for the **[Bynk](https://github.com/bynk-lang/bynk) language**
 (`.bynk` files) in Visual Studio Code: syntax highlighting plus full language
 features backed by the
-[`bynkc-lsp`](https://github.com/accuser/bynk/tree/main/bynk-lsp) language
+[`bynkc-lsp`](https://github.com/bynk-lang/bynk/tree/main/bynk-lsp) language
 server, which the extension finds or downloads for you.
 
 The extension activates on any `.bynk` file, or on any workspace containing a
@@ -14,7 +14,7 @@ The extension activates on any `.bynk` file, or on any workspace containing a
 ## Features
 
 - **Syntax highlighting** — a TextMate grammar, mirrored from the
-  [tree-sitter grammar](https://github.com/accuser/bynk/tree/main/tree-sitter-bynk)
+  [tree-sitter grammar](https://github.com/bynk-lang/bynk/tree/main/tree-sitter-bynk)
   (the source of truth).
 - **Live diagnostics** — errors and warnings as you type, exactly as
   `bynkc check` reports them, each tagged with its dotted category.

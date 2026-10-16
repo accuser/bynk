@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk-ir)](https://docs.rs/bynk-ir)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-The **resolved declaration-level vocabulary the [Bynk](https://github.com/accuser/bynk)
+The **resolved declaration-level vocabulary the [Bynk](https://github.com/bynk-lang/bynk)
 emitter reads**, instead of re-deriving the same facts from
 `bynk_syntax::ast` a second time.
 
@@ -74,5 +74,5 @@ See the [API docs](https://docs.rs/bynk-ir) for the full surface.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

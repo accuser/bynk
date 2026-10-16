@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk-syntax)](https://docs.rs/bynk-syntax)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-The **syntax foundation of the [Bynk](https://github.com/accuser/bynk)
+The **syntax foundation of the [Bynk](https://github.com/bynk-lang/bynk)
 compiler** — the lowest leaf of the compiler's layered crate set.
 
 It holds the modules every other layer depends *on* and none depend *up* from:
@@ -70,5 +70,5 @@ See the [API docs](https://docs.rs/bynk-syntax) for the full surface.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

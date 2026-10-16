@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk-project)](https://docs.rs/bynk-project)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-[Bynk](https://github.com/accuser/bynk)'s **project model**: discovery, the
+[Bynk](https://github.com/bynk-lang/bynk)'s **project model**: discovery, the
 unit dependency graph, path resolution, cross-unit consistency checks, and
 the schema-registry document's read/write halves.
 
@@ -77,5 +77,5 @@ See the [API docs](https://docs.rs/bynk-project) for the full surface.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

@@ -2,7 +2,7 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-Cross-crate test fixtures for the [Bynk](https://github.com/accuser/bynk)
+Cross-crate test fixtures for the [Bynk](https://github.com/bynk-lang/bynk)
 compiler, built directly on `bynk-ide`'s production discovery
 (`bynk_ide::discover_files`).
 
@@ -33,5 +33,5 @@ dev-only crates like this one.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

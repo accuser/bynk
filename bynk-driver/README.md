@@ -5,7 +5,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 The **shared front-end of the `bynkc` and `bynk` CLIs**, for the
-[Bynk](https://github.com/accuser/bynk) compiler.
+[Bynk](https://github.com/bynk-lang/bynk) compiler.
 
 Both binaries expose `fmt` and `check` with identical semantics; this crate
 holds the one implementation of each command body — project rooting,
@@ -70,5 +70,5 @@ See the [API docs](https://docs.rs/bynk-driver) for the full surface.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

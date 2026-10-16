@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk-fmt)](https://docs.rs/bynk-fmt)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-The **formatter for the [Bynk](https://github.com/accuser/bynk) language**.
+The **formatter for the [Bynk](https://github.com/bynk-lang/bynk) language**.
 Given Bynk source, it produces the one canonical formatting — comments and
 layout-significant trivia preserved.
 
@@ -84,5 +84,5 @@ See the [API docs](https://docs.rs/bynk-fmt) for details.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.

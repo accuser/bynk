@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk-strip)](https://docs.rs/bynk-strip)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-**Strip-only TypeScript → JavaScript for [Bynk](https://github.com/accuser/bynk)'s
+**Strip-only TypeScript → JavaScript for [Bynk](https://github.com/bynk-lang/bynk)'s
 first-class JS artefact.** It erases TypeScript type syntax while preserving
 every runtime construct and value import, so a JS artefact is simply the
 emitter's TypeScript with its types deleted.
@@ -75,5 +75,5 @@ See the [API docs](https://docs.rs/bynk-strip) for the full surface.
 
 ## License
 
-Licensed under either of [Apache-2.0](https://github.com/accuser/bynk/blob/main/LICENSE-APACHE) or
-[MIT](https://github.com/accuser/bynk/blob/main/LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](https://github.com/bynk-lang/bynk/blob/main/LICENSE-APACHE) or
+[MIT](https://github.com/bynk-lang/bynk/blob/main/LICENSE-MIT) at your option.
