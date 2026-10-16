@@ -1068,7 +1068,9 @@ pub(crate) fn ty_to_type_ref(t: TyId, tys: &Arc<Types>) -> Option<TypeRef> {
         | Ty::Stream(_)
         | Ty::Connection(_)
         | Ty::HttpResult(_)
+        | Ty::HttpOutcome(_)
         | Ty::QueueResult
+        | Ty::BoundaryRejection
         | Ty::Asset
         | Ty::Fn { .. }
         | Ty::Var(_)
@@ -2892,6 +2894,7 @@ fn record_ty_refs(
         Ty::Option(t)
         | Ty::Effect(t)
         | Ty::HttpResult(t)
+        | Ty::HttpOutcome(t)
         | Ty::List(t)
         | Ty::Query(t)
         | Ty::Stream(t)
@@ -2915,6 +2918,7 @@ fn record_ty_refs(
         Ty::Error
         | Ty::Base(_)
         | Ty::QueueResult
+        | Ty::BoundaryRejection
         | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
@@ -4749,6 +4753,12 @@ impl<'a> LowerCtx<'a> {
         self.runtime_use().note_bytes();
     }
 
+    /// Record that this lowering constructed an `HttpResult` variant (#1934),
+    /// so a test module imports it.
+    fn note_http_result(&self) {
+        self.runtime_use().note_http_result();
+    }
+
     /// Record that this lowering emitted a reference to `__bynkEq` (#1652), so
     /// the module imports it.
     fn note_eq(&self) {
@@ -5035,6 +5045,15 @@ impl<'a> LowerCtx<'a> {
         if let Some(Ty::ActorSum(_)) = disc_node.as_deref() {
             return "identity".to_string();
         }
+        // #1934: the payloads a case binds from a queue verdict and a
+        // boundary rejection, named as `queue.ts` and `http.ts` name them.
+        match disc_node.as_deref() {
+            Some(Ty::QueueResult) if variant == "Retry" && idx == 0 => {
+                return "reason".to_string();
+            }
+            Some(Ty::BoundaryRejection) if idx == 0 => return "detail".to_string(),
+            _ => {}
+        }
         if let Some(Ty::Named {
             kind: NamedKind::Sum,
             name,
@@ -5048,12 +5067,12 @@ impl<'a> LowerCtx<'a> {
             return payload_prop(&f.name.name);
         }
         // #1883, slice 3: an `HttpResult` variant's payload fields, named as
-        // the runtime union in `bynk-emit/runtime/src/http.ts` names them.
-        // Reached by a suite matching a service address's result, which the
-        // checker leaves untyped, recorded as `Ty::Error` (`Raw(body, ct)`, `BadRequest(m)`,
-        // `Found(url)`); the single-field fallback below named them all
-        // `value`, which `tsc` rejected for every variant but `Ok`, `Created`
-        // and `Accepted`. A typed user sum is resolved above, first.
+        // the runtime union in `bynk-emit/runtime/src/http.ts` names them
+        // (`Raw(body, ct)`, `BadRequest(m)`, `Found(url)`); the single-field
+        // fallback below names them all `value`, which `tsc` rejects for
+        // every variant but `Ok`, `Created` and `Accepted`. A typed user sum
+        // is resolved above, first. `Ty::Error` is a program that failed
+        // checking, which is still lowered and its output discarded.
         if matches!(
             disc_node.as_deref(),
             None | Some(Ty::HttpResult(_)) | Some(Ty::Error)
@@ -5094,6 +5113,13 @@ impl<'a> LowerCtx<'a> {
                 _ => None,
             },
             Some(Ty::HttpResult(t)) if variant == "Ok" && idx == 0 => Some(*t),
+            // #1934: `Handled(Created(i))` resolves `i`'s field through the
+            // `HttpResult` it carries.
+            Some(Ty::HttpOutcome(t)) if idx == 0 => match variant {
+                "Rejected" => Some(tys.intern(Ty::BoundaryRejection)),
+                "Handled" => Some(tys.intern(Ty::HttpResult(*t))),
+                _ => None,
+            },
             Some(Ty::Option(t)) if variant == "Some" && idx == 0 => Some(*t),
             Some(Ty::Named {
                 kind: NamedKind::Sum,
@@ -5790,6 +5816,13 @@ fn ts_ty_to_ts_type(t: TyId, tys: &Arc<Types>) -> TsType {
             vec![ts_ty_to_ts_type(*k, tys), ts_ty_to_ts_type(*v, tys)],
         ),
         Ty::QueueResult => TsType::named("QueueResult"),
+        // #1934: produced only by a `system`-tier test-service address, so
+        // only a test module meets them: the runtime's `HttpOutcome<T>`, and
+        // the shape of its `Rejected` payload.
+        Ty::HttpOutcome(t) => {
+            TsType::named_with_args("HttpOutcome", vec![ts_ty_to_ts_type(*t, tys)])
+        }
+        Ty::BoundaryRejection => TsType::named("{ readonly tag: string; readonly detail: string }"),
         Ty::Asset => asset_ts_type(),
         Ty::ValidationError => TsType::named("ValidationError"),
         Ty::JsonError => TsType::named("JsonError"),
