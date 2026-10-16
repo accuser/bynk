@@ -1,0 +1,13 @@
+-- #1960: the agent reaches `ag.doubler` across the Worker boundary, and its
+-- state accumulates the doubled values. The agent it constructs is the same
+-- one the `calls` service reaches, so its count is shared.
+suite ag.web as system {
+  case "an agent calls a consumed context's service" {
+    let a <- ag.web.add(1)
+    expect a == 2
+    let b <- ag.web.add(20)
+    expect b == 42
+    let c <- ag.web.calls()
+    expect c == 3
+  }
+}

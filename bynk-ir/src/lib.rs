@@ -528,6 +528,30 @@ pub fn block_uses_emit(b: &Block, callees: &HashMap<ExprId, bynk_check::checker:
     found
 }
 
+/// #1960: whether a body reaches the Worker `env` on the Workers target: it
+/// calls a consumed context's service (through its Service Binding) or
+/// constructs a local agent (through its Durable Object namespace).
+pub fn block_reaches_worker_env(
+    b: &Block,
+    callees: &HashMap<ExprId, bynk_check::checker::Callee>,
+) -> bool {
+    let mut found = false;
+    walk_block_exprs(b, &mut |e| {
+        if !found
+            && matches!(
+                callees.get(&e.id),
+                Some(
+                    bynk_check::checker::Callee::Cross { .. }
+                        | bynk_check::checker::Callee::AgentInit(_)
+                )
+            )
+        {
+            found = true;
+        }
+    });
+    found
+}
+
 pub fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
     let mut exprs = Vec::new();
     for s in &b.statements {

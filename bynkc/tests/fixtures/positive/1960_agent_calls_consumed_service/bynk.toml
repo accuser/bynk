@@ -1,0 +1,6 @@
+[project]
+name = "agent-calls-consumed-service"
+version = "0.1.0"
+
+[paths]
+include = ["src", "tests"]
