@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Every cross-context call and event delivery now carries the deployment's call secret `BYNK_CALL_SECRET` in an `X-Bynk-Call-Secret` header, and a Worker refuses a `/_bynk/call/` or `/_bynk/event/` request without it (`401`, before anything else), because those paths answered on the Worker's public `workers.dev` address and anyone could call an `on call` service claiming any caller. `bynk deploy` mints the secret and sets it on every context, `bynk dev` and `bynk test` use a fixed local value. **Breaking for deployed projects:** redeploy the whole project once (`bynk deploy`, not `--context`), since until every Worker holds the secret, calls between old and new Workers fail
----
+# 0479 — A shared per-deployment secret admits every internal request, amending ADR 0092
 
-## ADR: deployment-call-secret
-title: A shared per-deployment secret admits every internal request, amending ADR 0092
-summary: `BYNK_CALL_SECRET` is minted by `bynk deploy` and checked first on every `/_bynk/call/` and `/_bynk/event/` request
+- **Status:** Accepted (v0.335)
 
 **Context.** ADR 0092 trusts the `X-Bynk-Caller` header because
 `/_bynk/call/` "is platform-dispatched and not externally routable", so only
