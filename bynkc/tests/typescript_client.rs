@@ -136,10 +136,11 @@ fn every_client_embeds_its_callees_contracts() {
             "{fixture}: the client's wire version is not the compiler's"
         );
         let context = ctx_line.captures(&client).unwrap()[1].to_string();
-        let secret = bynk_check::wire_format::edge_key_to(&context).unwrap();
+        // The env binding's *name* (`BYNK_CALL_TO_<CALLEE>`), never a key value.
+        let key_binding = bynk_check::wire_format::edge_key_to(&context).unwrap();
         assert!(
-            client.contains(&format!("export const SECRET = \"{secret}\";")),
-            "{fixture}: the client does not name `{secret}`"
+            client.contains(&format!("export const SECRET = \"{key_binding}\";")),
+            "{fixture}: the client does not name `{key_binding}`"
         );
         assert!(
             client.contains(&format!(
