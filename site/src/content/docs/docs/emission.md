@@ -300,9 +300,12 @@ records who called, and the callee does not verify it.
 What the callee does verify is the deployment's call secret (#2004).
 `callService` also stamps `BYNK_CALL_SECRET`, from the calling Worker's `env`, in an
 `X-Bynk-Call-Secret` header. Every Worker refuses a `/_bynk/call/` or `/_bynk/event/`
-request without it (`401`, before anything else is checked), because those paths
-answer on the Worker's public address too. Every holder shares the one secret, so
-it admits members of the deployment without telling them apart.
+request without it (`401`, checked straight after the method), because those
+paths answer on the Worker's public address too. Every holder shares the one
+secret, so it admits members of the deployment without telling them apart.
+
+The whole request and response format of `/_bynk/call/`, with its own version
+(`X-Bynk-Wire`), is published in the [wire format reference](/book/reference/wire-format/).
 
 ## Actor authentication
 

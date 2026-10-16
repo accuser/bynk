@@ -71,7 +71,9 @@ expected to be rare and codemod-backed, not the daily hand-rewrite of today.
 - **The emitted TypeScript.** The compile target is an implementation detail, not
   part of the frozen contract; the codegen may improve within a 1.x release as
   long as documented behaviour holds. (The README's "readable output" is a
-  property, not a byte-for-byte promise.)
+  property, not a byte-for-byte promise.) The exception is the published
+  **cross-context wire format** (`reference/wire-format.md`, #1969), which
+  follows its own version rather than the compiler's or the language's.
 - **The tooling surface** (LSP, formatter, driver flags) — versioned with the
   toolchain, not the language-stability promise.
 

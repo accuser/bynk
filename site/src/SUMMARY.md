@@ -101,6 +101,7 @@
   - [Static assets](reference/assets.md)
   - [Actors](reference/actors.md)
   - [Testing](reference/testing.md)
+  - [Wire format](reference/wire-format.md)
   - [Diagnostic index](reference/diagnostics.md)
   - [Version compatibility & changelog](reference/changelog.md)
 

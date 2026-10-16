@@ -429,6 +429,10 @@
         "link": "/book/reference/testing/"
       },
       {
+        "label": "Wire format",
+        "link": "/book/reference/wire-format/"
+      },
+      {
         "label": "Diagnostic index",
         "link": "/book/reference/diagnostics/"
       },
