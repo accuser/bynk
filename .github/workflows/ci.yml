@@ -73,6 +73,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      # Read the parent commit's CI jobs for the stamp's Linux-only decision.
+      actions: read
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       extension: ${{ steps.filter.outputs.extension }}
@@ -85,7 +87,8 @@ jobs:
       site: ${{ steps.filter.outputs.site }}
       all: ${{ steps.all.outputs.value }}
       # JSON array of OSes for the `test` matrix. PRs run Linux + Windows; every
-      # other event (push to main, merge_group, the weekly schedule) adds macOS.
+      # other event (push to main, merge_group, the weekly schedule) adds macOS,
+      # except a stamp commit whose parent already passed macOS (see the step).
       #
       # Windows is on the PR gate because the evidence said it had to be. This
       # leg was Linux-only on PRs until 2026-07-29, on the theory that cross-OS
@@ -186,13 +189,63 @@ jobs:
             echo "value=false" >> "$GITHUB_OUTPUT"
           fi
       # Decide the `test` job's OS matrix from the event: Linux + Windows on PRs,
-      # all three OSes on everything else (push/main, merge_group, schedule).
+      # all three OSes on everything else (push/main, merge_group, schedule) —
+      # except a stamp commit whose code macOS and Windows have already passed.
+      #
+      # The stamp commit changes no code: it rewrites version strings, the
+      # changelog, ADR files and the greenfield table, and stamp.yml already
+      # builds the workspace and runs the tests covering exactly those outputs
+      # before pushing. So when its parent commit's own CI run passed macOS
+      # (and so ran the full three-OS matrix), repeating it on the stamp buys
+      # nothing. Both conditions are checked, not assumed:
+      #
+      #   - It really is the stamp: the `chore(stamp):` prefix AND the stamp
+      #     App's bot author, so a squash-merged PR that merely carries that
+      #     title still gets the full matrix.
+      #   - Its code really was covered: GitHub keeps only one *pending* run per
+      #     concurrency group, so two merges close together can leave the first
+      #     one's run cancelled, and the stamp's run is then the only one to see
+      #     that code. Runs on `main` are serialised (see the concurrency note),
+      #     so the parent's run has always finished by now; Linux-only applies
+      #     only if it has a successful `Test suite (macos-latest)` job.
+      #     Anything else (cancelled, failed, a stamp parent that itself ran
+      #     Linux-only, a lookup error) falls back to all three OSes.
+      #
+      # The stamp commit still completes a full Linux run of its own. Every
+      # untrusted value travels via env, never interpolated into the script.
       - id: test-os
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+          HEAD_AUTHOR: ${{ github.event.head_commit.author.name }}
+          PARENT_SHA: ${{ github.event.before }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          three='["ubuntu-latest","macos-latest","windows-latest"]'
+          if [ "$EVENT" = "pull_request" ]; then
             echo 'value=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$EVENT" != "push" ] || [[ "$HEAD_MESSAGE" != "chore(stamp):"* ]] \
+             || [ "$HEAD_AUTHOR" != "bynk-stamp[bot]" ]; then
+            echo "value=$three" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          run_id="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$PARENT_SHA&event=push&per_page=1" \
+            --jq '.workflow_runs[0].id // empty' || true)"
+          macos_ok=0
+          if [ -n "$run_id" ]; then
+            macos_ok="$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.name == "Test suite (macos-latest)" and .conclusion == "success")] | length' \
+              || echo 0)"
+          fi
+          if [ "$macos_ok" = "1" ]; then
+            echo "Stamp commit; parent $PARENT_SHA passed macOS in run $run_id - Linux only."
+            echo 'value=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
           else
-            echo 'value=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+            echo "Stamp commit, but parent $PARENT_SHA has no successful macOS run - full matrix."
+            echo "value=$three" >> "$GITHUB_OUTPUT"
           fi
 
   fmt:
