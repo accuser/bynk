@@ -1770,6 +1770,7 @@ fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::T
                     kind: h.kind.clone(),
                     params: h.params.clone(),
                     by_clause: h.by_clause.clone(),
+                    return_type: h.return_type.clone(),
                     span: h.span,
                 })
                 .collect();
@@ -3375,147 +3376,162 @@ service api from http {
     }
 }
 
-/// #1931: a case over a service call's outcome, which is untyped (ADR 0203).
+/// #1934: a case's service call is typed by what its handler yields
+/// (re-opening ADR 0203), and a `system`-tier call that reaches past the
+/// handler's types by what the wire yields.
 #[cfg(test)]
-mod untyped_outcome_tests {
-    const RAW_API: &str = "context app.web\n\nservice api from http {\n  on GET(\"/x\") () -> Effect[HttpResult[()]] by Visitor {\n    Raw(Bytes.fromUtf8(\"hi\"), \"text/plain\")\n  }\n}\n";
+mod typed_outcome_tests {
+    const API: &str = "context app.web
+
+type Item = { sku: String }
+
+service api from http {
+  on GET(\"/x\") () -> Effect[HttpResult[()]] by Visitor {
+    Raw(Bytes.fromUtf8(\"hi\"), \"text/plain\")
+  }
+  on GET(\"/name\") () -> Effect[HttpResult[String]] by Visitor {
+    Ok(\"ada\")
+  }
+  on GET(\"/item\") () -> Effect[HttpResult[Item]] by Visitor {
+    Ok(Item { sku: \"w\" })
+  }
+}
+
+service calc {
+  on call(n: Int) -> Effect[Int] {
+    n
+  }
+}
+
+service sweeper from cron {
+  on schedule(\"0 0 * * *\") () -> Effect[Result[(), String]] {
+    Ok(())
+  }
+}
+
+service intake from queue(\"orders\") {
+  on message(item: Item) -> Effect[QueueResult] {
+    Ack
+  }
+}
+";
 
     fn case(body: &str) -> crate::testkit::Analysed {
         crate::testkit::analyse(&[
-            ("app/web.bynk", RAW_API),
+            ("app/web.bynk", API),
             (
                 "app/tests/web.test.bynk",
-                &format!(
-                    "suite app.web {{\n  case \"c\" {{\n    let r <- api.GET(\"/x\") by Visitor\n{body}\n  }}\n}}\n"
-                ),
+                &format!("suite app.web {{\n  case \"c\" {{\n{body}\n  }}\n}}\n"),
             ),
         ])
     }
 
-    /// A fixed payload binds its type, so a wrong method on it is reported
-    /// against `Bytes`, and a right one checks.
+    /// The case of #1931 and #1934: a method on a value of the handler's
+    /// result type checks, and a wrong one is reported against that type.
     #[test]
-    fn a_raw_payload_binds_bytes() {
-        case("    match r {\n      Raw(body, _) => expect body.length() == 2\n      _ => expect false\n    }")
+    fn an_http_outcome_has_the_handlers_result_type() {
+        let get = "    let r <- api.GET(\"/name\") by Visitor\n";
+        case(&format!("{get}    match r {{\n      Ok(v) => expect v.length() == 3\n      _ => expect false\n    }}"))
             .assert_clean();
-        case("    match r {\n      Raw(body, _) => expect body.nosuch() == 2\n      _ => expect false\n    }")
+        case(&format!("{get}    match r {{\n      Ok(v) => expect v.nosuch() == 3\n      _ => expect false\n    }}"))
             .assert_reports("bynk.types.method_not_found");
-        case("    if r is Raw(body, _) {\n      expect body.nosuch() == 2\n    } else {\n      expect false\n    }")
-            .assert_reports("bynk.types.method_not_found");
+        case(&format!("{get}    expect r is Ok(v) && v.startsWith(\"a\")")).assert_clean();
+        case(&format!("{get}    expect r == Ok(\"ada\")")).assert_clean();
+        let item = "    let r <- api.GET(\"/item\") by Visitor\n";
+        case(&format!("{item}    expect r is Ok(i) && i.sku.length() == 1")).assert_clean();
+        case(&format!("{item}    expect r is Ok(i) && i.nosuch == 1"))
+            .assert_reports("bynk.types.unknown_field");
     }
 
-    /// The arms of a match on the outcome are checked: before #1931 they were
-    /// skipped, so an unknown name in one went unreported.
+    /// A payload of fixed type binds it, as before; the arms are checked by
+    /// the ordinary rules.
     #[test]
-    fn the_arms_of_a_match_on_the_outcome_are_checked() {
-        case("    match r {\n      Raw(_, _) => expect nope == 1\n      _ => expect false\n    }")
+    fn fixed_payloads_and_arms_are_checked() {
+        let get = "    let r <- api.GET(\"/x\") by Visitor\n";
+        case(&format!("{get}    match r {{\n      Raw(body, ct) => expect body.length() == 2 && ct.startsWith(\"text/\")\n      _ => expect false\n    }}"))
+            .assert_clean();
+        case(&format!("{get}    match r {{\n      Raw(_, _) => expect nope == 1\n      _ => expect false\n    }}"))
             .assert_reports("bynk.resolve.unknown_name");
-    }
-
-    /// A value of the handler's result type stays untyped, so a method on it,
-    /// or on a field of it, is reported rather than lowered on nothing.
-    #[test]
-    fn a_method_on_an_untyped_payload_is_reported() {
-        case("    match r {\n      Ok(v) => expect v.length() == 0\n      _ => expect true\n    }")
-            .assert_reports("bynk.test.untyped_outcome");
-        case("    match r {\n      Ok(v) => expect v.name.length() == 0\n      _ => expect true\n    }")
-            .assert_reports("bynk.test.untyped_outcome");
-        case("    expect r.length() == 0").assert_reports("bynk.test.untyped_outcome");
-        case("    if r is Ok(v) {\n      expect v.length() == 0\n    } else {\n      expect true\n    }")
-            .assert_reports("bynk.test.untyped_outcome");
-        // Bound in the else branch of a negated test.
-        case("    if !(r is Ok(v)) {\n      expect true\n    } else {\n      expect v.length() == 0\n    }")
-            .assert_reports("bynk.test.untyped_outcome");
-        // Bound by the `&&` alone, in its right operand.
-        case("    expect r is Ok(v) && v.length() == 0")
-            .assert_reports("bynk.test.untyped_outcome");
-        // Bound by both the `&&` and the `if` (one memoised collection).
-        case("    if r is Ok(v) && true {\n      expect v.length() == 0\n    } else {\n      expect true\n    }")
-            .assert_reports("bynk.test.untyped_outcome");
-    }
-
-    /// Review of #1935: a loose binding ends with its frame, so a sibling frame
-    /// at the same depth that binds the name to an absorbed failure is not
-    /// read as loose.
-    #[test]
-    fn a_sibling_frame_does_not_inherit_looseness() {
-        let r = case(
-            "    let a = if r is Ok(v) { 1 } else { 0 }\n    let b = if 1 is Some(v) { v.length() } else { 0 }\n    expect a + b == 1",
-        );
-        assert!(
-            !r.error_categories().contains(&"bynk.test.untyped_outcome"),
-            "{:?}",
-            r.error_categories()
-        );
-    }
-
-    /// Review of #1935: a redirect variant binds `String` and `Streaming` a
-    /// `Stream[String]`; a wrong method on each is reported against its type,
-    /// not as untyped.
-    #[test]
-    fn redirect_and_streaming_payloads_are_typed() {
-        case("    match r {\n      Found(loc) => expect loc.nosuch()\n      _ => expect false\n    }")
-            .assert_reports("bynk.types.method_not_found");
-        case("    match r {\n      Found(loc) => expect loc.startsWith(\"/\")\n      _ => expect false\n    }")
-            .assert_clean();
-        let streaming = case(
-            "    match r {\n      Streaming(st) => expect st.nosuch()\n      _ => expect false\n    }",
-        );
-        assert!(
-            !streaming
-                .error_categories()
-                .contains(&"bynk.test.untyped_outcome"),
-            "a Streaming payload is typed: {:?}",
-            streaming.error_categories()
-        );
-    }
-
-    /// Review of #1935: a value that reads a loose one is loose too, so a
-    /// method on it is reported rather than lowered on nothing.
-    #[test]
-    fn a_loose_value_stays_loose_through_a_let() {
-        case("    let s = r\n    expect s.length() == 2")
-            .assert_reports("bynk.test.untyped_outcome");
-    }
-
-    /// Review of #1935: a match on the outcome has the arms' type when they
-    /// agree, and is loose when they do not.
-    #[test]
-    fn a_match_on_the_outcome_has_its_arms_type() {
-        case("    let n = match r {\n      Raw(body, _) => body.length()\n      _ => 0\n    }\n    expect n.abs() == 2")
-            .assert_clean();
-        case("    let n = match r {\n      Raw(body, _) => body.length()\n      _ => \"x\"\n    }\n    expect n.length() == 1")
-            .assert_reports("bynk.test.untyped_outcome");
-    }
-
-    /// Review of #1935: a loose arm's pattern is checked by the ordinary rules,
-    /// or-pattern bindings included, rather than binding the first
-    /// alternative's names.
-    #[test]
-    fn a_loose_arms_pattern_is_checked() {
-        case("    match r {\n      BadRequest(m) | NotFound => expect m.length() == 9\n      _ => expect false\n    }")
+        case(&format!("{get}    match r {{\n      BadRequest(m) | NotFound => expect m.length() == 9\n      _ => expect false\n    }}"))
             .assert_reports("bynk.types.or_pattern_binding_mismatch");
-        let arity = case(
-            "    match r {\n      Raw(body) => expect body.length() == 2\n      _ => expect false\n    }",
-        );
-        assert_eq!(arity.error_categories(), vec!["bynk.types.pattern_arity"]);
+        case(&format!("{get}    expect r is Bogus(_)")).assert_reports("bynk.types.is_unknown_variant");
     }
 
-    /// Review of #1935: looseness ends with its scope, so a later failure that
-    /// binds the same name error-typed is reported once, not also as untyped.
+    /// An `on call` handler's return type is what the case binds.
     #[test]
-    fn looseness_ends_with_its_scope() {
-        let r = case(
-            "    let a = match r {\n      Ok(v) => 1\n      _ => 0\n    }\n    let v = nope()\n    expect v.length() == a",
-        );
-        assert_eq!(r.error_categories(), vec!["bynk.resolve.unknown_function"]);
+    fn a_call_outcome_has_the_handlers_return_type() {
+        case("    let n <- calc.call(2)\n    expect n.abs() == 2").assert_clean();
+        case("    let n <- calc.call(2)\n    expect n.length() == 2")
+            .assert_reports("bynk.types.method_not_found");
     }
 
-    /// A real binding that shadows a loose one is typed, so it is not read as
-    /// loose.
+    /// cron and queue handlers are typed by their return types too, so a
+    /// queue verdict is matchable.
     #[test]
-    fn a_shadowing_binding_is_not_loose() {
-        case("    let r = \"text\"\n    expect r.length() == 4").assert_clean();
+    fn cron_and_queue_outcomes_are_typed() {
+        case("    let r <- sweeper.schedule(\"0 0 * * *\")\n    match r {\n      Ok(_) => expect true\n      Err(e) => expect e.length() > 0\n    }")
+            .assert_clean();
+        case("    let r <- intake.message(Item { sku: \"x\" })\n    expect r is Ack").assert_clean();
+        case("    let r <- intake.message(Item { sku: \"x\" })\n    match r {\n      Retry(why) => expect why.length() > 0\n      Ack => expect true\n    }")
+            .assert_clean();
+        case("    let r <- intake.message(Item { sku: \"x\" })\n    expect r is Ok(_)")
+            .assert_reports("bynk.types.is_unknown_variant");
+    }
+
+    /// The context of `385_system_wire_rejection`, cut down.
+    const CART_API: &str = "context shop.api
+
+type UserId = String where NonEmpty
+actor User { auth = Bearer(secret = \"AUTH_SECRET\"), identity = UserId }
+
+type Item = { sku: String }
+
+service api from http {
+  on POST(\"/cart\") (body: Item) -> Effect[HttpResult[Item]] by u: User {
+    Created(body)
+  }
+}
+";
+
+    fn system_case(body: &str) -> crate::testkit::Analysed {
+        crate::testkit::analyse(&[
+            ("shop/api.bynk", CART_API),
+            (
+                "shop/tests/api.test.bynk",
+                &format!("suite shop.api as system {{\n  case \"c\" {{\n{body}\n  }}\n}}\n"),
+            ),
+        ])
+    }
+
+    /// A typed `system`-tier call decodes the handler's `HttpResult`.
+    #[test]
+    fn a_typed_system_call_is_the_handlers_result() {
+        system_case("    let r <- api.POST(\"/cart\", Item { sku: \"w\" }) by User(\"a\")\n    expect r is Created(i) && i.sku == \"w\"")
+            .assert_clean();
+        system_case("    let r <- api.POST(\"/cart\", Item { sku: \"w\" }) by User(\"a\")\n    expect r is Rejected(_)")
+            .assert_reports("bynk.types.is_unknown_variant");
+    }
+
+    /// `Wire`, `by Nobody` and a wrong method observe the boundary, so they
+    /// yield an `HttpOutcome`: its kinds are checked, and `Handled` carries
+    /// the handler's `HttpResult`.
+    #[test]
+    fn a_call_past_the_handlers_types_is_an_http_outcome() {
+        let wire = "    let r <- api.POST(\"/cart\", Wire(\"{}\")) by User(\"a\")\n";
+        system_case(&format!("{wire}    match r {{\n      Rejected(RefinementViolation(d)) => expect d.length() > 0\n      Rejected(_) => expect false\n      Handled(Created(i)) => expect i.sku == \"w\"\n      Handled(_) => expect false\n    }}"))
+            .assert_clean();
+        system_case(&format!("{wire}    match r {{\n      Rejected(Unauthorized(d)) => expect true\n      _ => expect false\n    }}"))
+            .assert_reports("bynk.types.pattern_arity");
+        system_case(&format!("{wire}    expect r is Rejected(Refinement(_))"))
+            .assert_reports("bynk.types.unknown_variant_in_pattern");
+        system_case(&format!("{wire}    expect r is Created(_)"))
+            .assert_reports("bynk.types.is_unknown_variant");
+        system_case("    let r <- api.POST(\"/cart\", Item { sku: \"w\" }) by Nobody\n    expect r is Rejected(Unauthorized)")
+            .assert_clean();
+        system_case("    let r <- api.DELETE(\"/cart\")\n    expect r is Rejected(MethodNotAllowed)")
+            .assert_clean();
+        system_case("    let r <- api.DELETE(\"/cart\")\n    expect r is NotFound")
+            .assert_reports("bynk.types.is_unknown_variant");
     }
 }
 

@@ -148,8 +148,6 @@ pub(crate) fn check_fn(
         requirements,
         callees,
         scopes: vec![param_scope],
-        loose_bindings: std::collections::HashSet::new(),
-        loose_is_tests: HashMap::new(),
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
@@ -252,8 +250,6 @@ fn check_static_initialiser(
             requirements: &mut init_requirements,
             callees,
             scopes: vec![HashMap::new()],
-            loose_bindings: std::collections::HashSet::new(),
-            loose_is_tests: HashMap::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: field_ty,
@@ -2221,26 +2217,14 @@ pub(crate) fn check_method_call(
         }
         return None;
     }
-    // #1931: a method on part of a test-service call's outcome, which is
-    // untyped (ADR 0203). Neither a kernel method nor a declared one can be
-    // lowered without the receiver's type, so this is reported here rather
-    // than emitted as a call on nothing.
-    if ctx.reads_loose(receiver) {
-        for a in args {
-            let _ = type_of(a, None, ctx);
-        }
-        ctx.errors.push(untyped_outcome_receiver(receiver, method));
-        return None;
-    }
     // v0.25 / v0.178: a test body invokes the target's service as
     // `svc.call(args)`. The emitter wires the call from the same service set;
     // the checker resolves the service's `on call` handler and verifies the
     // call's arity and argument types (v0.178, #662 — before this, the branch
     // matched the literal method name `call` without checking the handler
     // exists, so `api.call(…)` on a `from http` service passed `check` and
-    // crashed at runtime, #654). The outcome type stays loose — the runner
-    // recovers `Result`/`Effect` shapes at runtime — but the binding edge is
-    // real, so it is recorded for test-file references. Returns here: the
+    // crashed at runtime, #654). #1934: the call is typed by what the handler
+    // yields, and the binding edge is recorded for test-file references. Returns here: the
     // resolution must not fall through to the receiver walk, which would
     // report the service name as unknown (#504 backstop).
     if let ExprKind::Ident(id) = &receiver.kind
@@ -3082,22 +3066,6 @@ fn check_generic_method_call(
     Some(substitute(ret_pattern, &subst, tys))
 }
 
-/// #1931: `bynk.test.untyped_outcome` for `.method()` called on `receiver`,
-/// part of a test-service call's untyped outcome.
-fn untyped_outcome_receiver(receiver: &Expr, method: &Ident) -> CompileError {
-    CompileError::new(
-        "bynk.test.untyped_outcome",
-        receiver.span,
-        format!(
-            "`.{}()` is called on part of a service call's outcome, which a case does not type",
-            method.name
-        ),
-    )
-    .with_note(
-        "a case does not type a service call's outcome. Matching an `HttpResult` variant binds a payload of fixed type (`Raw(body, contentType)` binds `Bytes` and `String`, a message or redirect variant binds `String`), but any other value drawn from the outcome, such as `v` in `Ok(v)`, has no type. Call the method in a source function the case calls, or compare the value instead",
-    )
-}
-
 /// v0.178 (#662) / v0.182 (#664): resolve a test-body service invocation against
 /// the target's declared handlers and check its arity and argument types. The
 /// address form depends on the method name:
@@ -3107,9 +3075,14 @@ fn untyped_outcome_receiver(receiver: &Expr, method: &Ident) -> CompileError {
 /// - `svc.schedule("<expr>", …)` — a cron handler by its schedule string;
 /// - `svc.message(msg)` — the queue message handler.
 ///
-/// The outcome type stays loose (the runner recovers `Result`/`Effect` at
-/// runtime); the call-site principal (`by <Actor>`) is checked separately at the
-/// statement level. Returns `None` (the loose outcome) in every arm.
+/// #1934 (re-opening ADR 0203): the call is typed by what it yields. A
+/// resolved handler yields its declared return type. An http
+/// address carrying a `Wire(…)` argument, or naming a method the path declares
+/// no handler for, yields `Effect[HttpOutcome[T]]` instead (`by Nobody`, which
+/// lives on the statement, is applied by [`nobody_outcome`]); an asset fetch
+/// yields `Effect[HttpResult[()]]`. The call-site principal (`by <Actor>`) is
+/// checked separately at the statement level. Returns `None` in an arm that
+/// reported an error.
 fn check_test_service_address(
     sig: &TestServiceSig,
     id: &Ident,
@@ -3151,7 +3124,7 @@ fn check_test_service_address(
         };
         let params = handler.params.clone();
         check_address_args(&id.name, "call", &params, args, method.span, ctx);
-        return None;
+        return handler_outcome(handler, ctx);
     }
 
     // `svc.<VERB>("/path", …)` — an http route. The first argument is the route
@@ -3230,7 +3203,9 @@ fn check_test_service_address(
                     service: id.name.clone(),
                 },
             );
-            return None;
+            // `Raw(body, contentType)` or `NotFound`: no handler's `T` is involved.
+            let unit = ctx.tys.intern(Ty::Unit);
+            return Some(effect_of(ctx.tys.intern(Ty::HttpResult(unit)), ctx));
         }
         let Some(EK::StrLit(path)) = args.first().map(|a| &a.kind) else {
             ctx.errors.push(
@@ -3268,7 +3243,8 @@ fn check_test_service_address(
             // the `405` fall-through test. Allow it: it drives the router with a
             // method the path has no handler for and observes `Rejected(
             // MethodNotAllowed)`. There is no handler, so no args are matched (a
-            // `405` is synthesised before the body is read); the outcome is loose.
+            // `405` is synthesised before the body is read), and the outcome is an
+            // `HttpOutcome` over `()`: no handler's `T` is involved.
             let path_declared = sig
                 .handlers
                 .iter()
@@ -3297,7 +3273,8 @@ fn check_test_service_address(
                         let _ = type_of(a, None, ctx);
                     }
                 }
-                return None;
+                let unit = ctx.tys.intern(Ty::Unit);
+                return Some(effect_of(ctx.tys.intern(Ty::HttpOutcome(unit)), ctx));
             }
             ctx.errors.push(
                 CompileError::new(
@@ -3326,7 +3303,14 @@ fn check_test_service_address(
             method.span,
             ctx,
         );
-        return None;
+        // A `Wire(…)` argument reaches the router unvalidated, so the call
+        // observes the boundary as well as the handler: the raw driver decodes
+        // an `HttpOutcome`. The emitter picks that driver on the same test.
+        let outcome = handler_outcome(handler, ctx);
+        if args[1..].iter().any(|a| matches!(a.kind, EK::Wire(_))) {
+            return outcome.map(|t| wire_outcome(t, ctx));
+        }
+        return outcome;
     }
 
     // `svc.schedule("<expr>", …)` — a cron handler, matched by its schedule.
@@ -3382,7 +3366,7 @@ fn check_test_service_address(
         let params = handler.params.clone();
         let _ = type_of(&args[0], None, ctx);
         check_address_args(&id.name, "schedule", &params, &args[1..], method.span, ctx);
-        return None;
+        return handler_outcome(handler, ctx);
     }
 
     // `svc.message(msg)` — the queue message handler.
@@ -3411,7 +3395,7 @@ fn check_test_service_address(
         };
         let params = handler.params.clone();
         check_address_args(&id.name, "message", &params, args, method.span, ctx);
-        return None;
+        return handler_outcome(handler, ctx);
     }
 
     // Not a recognised address form for this service.
@@ -3428,6 +3412,50 @@ fn check_test_service_address(
         let _ = type_of(a, None, ctx);
     }
     None
+}
+
+/// #1934: what a case's call to `handler` yields — its declared return type,
+/// an `Effect[_]` (`bynk.service.return_not_effect`). `None` if the type does
+/// not resolve in the case, which a checked target's handler always does.
+fn handler_outcome(handler: &TestHandler, ctx: &mut Ctx) -> Option<TyId> {
+    resolve_type_ref(&handler.return_type, &ctx.input.types, ctx.tys)
+}
+
+/// `Effect[ty]`.
+fn effect_of(ty: TyId, ctx: &Ctx) -> TyId {
+    ctx.tys.intern(Ty::Effect(ty))
+}
+
+/// #1934: an http handler's outcome `Effect[HttpResult[T]]` as a `system`-tier
+/// case observes it past the handler's types: `Effect[HttpOutcome[T]]`.
+fn wire_outcome(outcome: TyId, ctx: &Ctx) -> TyId {
+    let tys = ctx.tys;
+    let inner = match &*tys.get(outcome) {
+        Ty::Effect(t) => *t,
+        _ => outcome,
+    };
+    let t = match &*tys.get(inner) {
+        Ty::HttpResult(t) => *t,
+        _ => return outcome,
+    };
+    tys.intern(Ty::Effect(tys.intern(Ty::HttpOutcome(t))))
+}
+
+/// #1934: the type an effect-let binds for `value` driven `by Nobody`. The
+/// no-credential driver decodes an `HttpOutcome` (a `401` from the auth seam is
+/// `Rejected(Unauthorized)`), so a typed http address's `Effect[HttpResult[T]]`
+/// becomes `Effect[HttpOutcome[T]]`; anything else is unchanged.
+pub(crate) fn nobody_outcome(value: &Expr, ty: TyId, ctx: &Ctx) -> TyId {
+    let is_http_address = matches!(
+        ctx.callees.get(&value.id),
+        Some(Callee::TestService { address, .. })
+            if address.split(' ').next().is_some_and(|m| bynk_syntax::ast::HttpMethod::from_ident(m).is_some())
+    );
+    if is_http_address {
+        wire_outcome(ty, ctx)
+    } else {
+        ty
+    }
 }
 
 /// What identity, if any, a resolved actor expects (v0.182).

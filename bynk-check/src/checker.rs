@@ -305,6 +305,16 @@ pub enum Ty {
     HttpResult(TyId),
     /// `QueueResult` — the built-in queue verdict sum (v0.44). Non-generic.
     QueueResult,
+    /// `HttpOutcome[T]` — what a `system`-tier case observes when it drives an
+    /// http address past the handler's types (#1934): a `Wire(…)` argument, `by
+    /// Nobody`, or a method the path declares no handler for. `Rejected(
+    /// BoundaryRejection)` when the router or the auth seam refused the request
+    /// before the handler ran, `Handled(HttpResult[T])` when it ran. Produced
+    /// only by a test-service address; it cannot be written in source.
+    HttpOutcome(TyId),
+    /// `BoundaryRejection` — why the boundary refused a request before the
+    /// handler (#1934), the payload of `HttpOutcome.Rejected`. Non-generic.
+    BoundaryRejection,
     /// `Asset` — a static file declared by `asset name = "path"` (#1883,
     /// slice 1a, [DECISION H]). Non-generic; its one field is `.url : String`.
     Asset,
@@ -410,6 +420,8 @@ impl Ty {
             Ty::Effect(t) => format!("Effect[{}]", types.display(*t)),
             Ty::HttpResult(t) => format!("HttpResult[{}]", types.display(*t)),
             Ty::QueueResult => "QueueResult".to_string(),
+            Ty::HttpOutcome(t) => format!("HttpOutcome[{}]", types.display(*t)),
+            Ty::BoundaryRejection => "BoundaryRejection".to_string(),
             Ty::Asset => "Asset".to_string(),
             Ty::List(t) => format!("List[{}]", types.display(*t)),
             Ty::Map(k, v) => format!("Map[{}, {}]", types.display(*k), types.display(*v)),
@@ -1273,8 +1285,6 @@ pub fn check_handler_body(
         requirements,
         callees,
         scopes: vec![param_scope],
-        loose_bindings: HashSet::new(),
-        loose_is_tests: HashMap::new(),
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
@@ -1424,8 +1434,6 @@ pub fn check_body(
         requirements,
         callees,
         scopes: vec![scope],
-        loose_bindings: HashSet::new(),
-        loose_is_tests: HashMap::new(),
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
@@ -1574,8 +1582,6 @@ pub fn check_invariants(
             requirements,
             callees,
             scopes: vec![field_scope.clone()],
-            loose_bindings: HashSet::new(),
-            loose_is_tests: HashMap::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -1720,8 +1726,6 @@ pub fn check_contracts(
             requirements,
             callees,
             scopes: vec![scope],
-            loose_bindings: HashSet::new(),
-            loose_is_tests: HashMap::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -1945,8 +1949,6 @@ pub fn check_transitions(
             requirements,
             callees,
             scopes: vec![scope.clone()],
-            loose_bindings: HashSet::new(),
-            loose_is_tests: HashMap::new(),
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
@@ -2136,6 +2138,9 @@ pub struct TestHandler {
     /// The handler's declared `by <Actor>` clause, if any — the actor a call-site
     /// principal is checked against. `None` inherits the protocol default actor.
     pub by_clause: Option<bynk_syntax::ast::ByClause>,
+    /// The handler's declared return type — what a case's call to it yields
+    /// (#1934).
+    pub return_type: bynk_syntax::ast::TypeRef,
     pub span: Span,
 }
 
@@ -2202,17 +2207,6 @@ pub(crate) struct Ctx<'a> {
     pub callees: &'a mut HashMap<ExprId, Callee>,
     /// Stack of in-scope name → type frames.
     pub scopes: Vec<HashMap<String, TyId>>,
-    /// #1931: names bound from a test-service call's outcome, which is
-    /// untyped (ADR 0203), or from a pattern over one: error-typed with no
-    /// error reported. Each is keyed by the scope frame it is bound in, so it
-    /// ends with that frame ([`Ctx::pop_scope`]) and is never confused with a
-    /// later error-typed binding of the name (#1663's absorbed failures).
-    /// Read through [`Ctx::is_loose`].
-    pub loose_bindings: HashSet<(String, usize)>,
-    /// #1931: for each `is` test over a loose value, the names it binds loose.
-    /// The collector that finds them is memoised and does not bind; each
-    /// branch that binds a condition's tests adopts them ([`Ctx::adopt_loose`]).
-    pub loose_is_tests: HashMap<ExprId, Vec<String>>,
     /// Memoised `is`-pattern bindings, keyed by the condition sub-expression's
     /// span. `collect_is_bindings` runs at every `&&`/`implies` node and, for a
     /// left-nested `&&` chain, would otherwise re-walk each lhs subtree once per
@@ -2373,78 +2367,11 @@ impl<'a> Ctx<'a> {
     }
     pub fn pop_scope(&mut self) {
         self.scopes.pop();
-        // #1931: a loose binding ends with its frame.
-        let depth = self.scopes.len();
-        self.loose_bindings.retain(|(_, d)| *d < depth);
     }
     pub fn bind(&mut self, name: String, ty: TyId) {
         self.scopes.last_mut().unwrap().insert(name, ty);
     }
 
-    /// #1931: bind `name` to a value of no known type that is not an error: a
-    /// test-service call's outcome, or a binding drawn from one.
-    pub fn bind_loose(&mut self, name: String) {
-        let error = self.tys.intern(Ty::Error);
-        self.bind(name.clone(), error);
-        self.mark_loose_here(&name);
-    }
-
-    /// #1931: mark `name`, just bound error-typed in the current frame, loose.
-    pub fn mark_loose_here(&mut self, name: &str) {
-        let depth = self.scopes.len().saturating_sub(1);
-        self.loose_bindings.insert((name.to_string(), depth));
-    }
-
-    /// #1931: after binding the `is` tests `cond` proves matched (when
-    /// `when_true`) in the current frame, mark loose the names those tests
-    /// over a loose value bind loose. Keyed by test, so a later test that
-    /// binds the name to an absorbed failure (#1663) is not affected.
-    pub fn adopt_loose(&mut self, cond: &Expr, when_true: bool) {
-        let names: Vec<String> = crate::narrowing::matched_is_tests(cond, when_true)
-            .into_iter()
-            .filter_map(|t| self.loose_is_tests.get(&t.id))
-            .flatten()
-            .cloned()
-            .collect();
-        for name in names {
-            if self
-                .scopes
-                .last()
-                .and_then(|f| f.get(&name))
-                .is_some_and(|t| matches!(&*self.tys.get(*t), Ty::Error))
-            {
-                self.mark_loose_here(&name);
-            }
-        }
-    }
-
-    /// #1931: whether `name` is loose where it is read: the frame that binds
-    /// it bound it loose, and it is still error-typed there.
-    pub fn is_loose(&self, name: &str) -> bool {
-        let Some((depth, ty)) = self
-            .scopes
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(i, frame)| frame.get(name).map(|t| (i, *t)))
-        else {
-            return false;
-        };
-        matches!(&*self.tys.get(ty), Ty::Error)
-            && self.loose_bindings.contains(&(name.to_string(), depth))
-    }
-
-    /// #1931: whether `expr` reads a loose binding: the name itself, a field
-    /// path rooted in it (`v.name`), or a match on it whose arms gave no common
-    /// type, all untyped too.
-    pub fn reads_loose(&self, expr: &Expr) -> bool {
-        match &expr.kind {
-            ExprKind::Ident(id) => self.is_loose(&id.name),
-            ExprKind::FieldAccess { receiver, .. } => self.reads_loose(receiver),
-            ExprKind::Match { discriminant, .. } => self.reads_loose(discriminant),
-            _ => false,
-        }
-    }
 }
 
 // ==== Type-system core (resolution, unification, compatibility, inference) ====
@@ -2600,6 +2527,7 @@ pub(crate) fn substitute(t: TyId, subst: &HashMap<String, TyId>, tys: &Types) ->
         Ty::Option(a) => Ty::Option(substitute(*a, subst, tys)),
         Ty::Effect(a) => Ty::Effect(substitute(*a, subst, tys)),
         Ty::HttpResult(a) => Ty::HttpResult(substitute(*a, subst, tys)),
+        Ty::HttpOutcome(a) => Ty::HttpOutcome(substitute(*a, subst, tys)),
         Ty::List(a) => Ty::List(substitute(*a, subst, tys)),
         Ty::Query(a) => Ty::Query(substitute(*a, subst, tys)),
         Ty::Stream(a) => Ty::Stream(substitute(*a, subst, tys)),
@@ -2626,6 +2554,7 @@ pub(crate) fn substitute(t: TyId, subst: &HashMap<String, TyId>, tys: &Types) ->
         Ty::Error
         | Ty::Base(_)
         | Ty::QueueResult
+        | Ty::BoundaryRejection
         | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
@@ -2646,6 +2575,7 @@ pub(crate) fn contains_var(t: TyId, tys: &Types) -> bool {
         Ty::Option(a)
         | Ty::Effect(a)
         | Ty::HttpResult(a)
+        | Ty::HttpOutcome(a)
         | Ty::List(a)
         | Ty::Query(a)
         | Ty::Stream(a)
@@ -2657,6 +2587,7 @@ pub(crate) fn contains_var(t: TyId, tys: &Types) -> bool {
         Ty::Named { args, .. } => args.iter().any(|a| contains_var(*a, tys)),
         Ty::Base(_)
         | Ty::QueueResult
+        | Ty::BoundaryRejection
         | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
@@ -2681,6 +2612,7 @@ fn contains_flexible_var(t: TyId, rigid: &HashSet<String>, tys: &Types) -> bool 
         Ty::Option(a)
         | Ty::Effect(a)
         | Ty::HttpResult(a)
+        | Ty::HttpOutcome(a)
         | Ty::List(a)
         | Ty::Query(a)
         | Ty::Stream(a)
@@ -2693,6 +2625,7 @@ fn contains_flexible_var(t: TyId, rigid: &HashSet<String>, tys: &Types) -> bool 
         Ty::Named { args, .. } => args.iter().any(|a| contains_flexible_var(*a, rigid, tys)),
         Ty::Base(_)
         | Ty::QueueResult
+        | Ty::BoundaryRejection
         | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
@@ -2735,6 +2668,7 @@ pub(crate) fn unify(
         (Ty::Option(a1), Ty::Option(a2))
         | (Ty::Effect(a1), Ty::Effect(a2))
         | (Ty::HttpResult(a1), Ty::HttpResult(a2))
+        | (Ty::HttpOutcome(a1), Ty::HttpOutcome(a2))
         | (Ty::List(a1), Ty::List(a2))
         | (Ty::Query(a1), Ty::Query(a2))
         | (Ty::Stream(a1), Ty::Stream(a2))
@@ -2779,7 +2713,9 @@ pub(crate) fn unify(
             | Ty::Option(_)
             | Ty::Effect(_)
             | Ty::HttpResult(_)
+            | Ty::HttpOutcome(_)
             | Ty::QueueResult
+            | Ty::BoundaryRejection
             | Ty::Asset
             | Ty::List(_)
             | Ty::Map(..)
@@ -3096,7 +3032,9 @@ pub fn compatible(t: TyId, u: TyId, tys: &Types) -> bool {
         }
         (Ty::Option(a), Ty::Option(b)) => compatible(*a, *b, tys),
         (Ty::Effect(a), Ty::Effect(b)) => compatible(*a, *b, tys),
-        (Ty::HttpResult(a), Ty::HttpResult(b)) => compatible(*a, *b, tys),
+        (Ty::HttpResult(a), Ty::HttpResult(b)) | (Ty::HttpOutcome(a), Ty::HttpOutcome(b)) => {
+            compatible(*a, *b, tys)
+        }
         // v0.20b: collections are covariant in their element/value types;
         // Map keys must match exactly — key-position widening would split a
         // map's keys across refined/base identities at lookup time.
@@ -3112,7 +3050,7 @@ pub fn compatible(t: TyId, u: TyId, tys: &Types) -> bool {
         // they are not `==`-comparable (guarded in the `Eq`/`NotEq` arm).
         (Ty::Connection(a), Ty::Connection(b)) => compatible(*a, *b, tys),
         (Ty::Map(k1, v1), Ty::Map(k2, v2)) => k1 == k2 && compatible(*v1, *v2, tys),
-        (Ty::QueueResult, Ty::QueueResult) => true,
+        (Ty::QueueResult, Ty::QueueResult) | (Ty::BoundaryRejection, Ty::BoundaryRejection) => true,
         (Ty::Asset, Ty::Asset) => true,
         (Ty::ValidationError, Ty::ValidationError) => true,
         (Ty::JsonError, Ty::JsonError) => true,
@@ -3145,7 +3083,9 @@ pub fn compatible(t: TyId, u: TyId, tys: &Types) -> bool {
             | Ty::Option(_)
             | Ty::Effect(_)
             | Ty::HttpResult(_)
+            | Ty::HttpOutcome(_)
             | Ty::QueueResult
+            | Ty::BoundaryRejection
             | Ty::Asset
             | Ty::List(_)
             | Ty::Map(..)
@@ -3185,13 +3125,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                     }
                     r
                 });
-                let errors_before = ctx.errors.len();
                 let rhs_ty = type_of(&l.value, annot_ty, ctx);
-                // #1931: a value that reads a loose binding (`let s = r`) is
-                // loose too, not a failed value.
-                let loose_value = rhs_ty.is_none()
-                    && ctx.errors.len() == errors_before
-                    && ctx.reads_loose(&l.value);
                 check_unbound_effects(&l.value, false, ctx);
                 let final_ty = match (annot_ty, rhs_ty) {
                     (Some(annot), Some(rhs)) => {
@@ -3221,11 +3155,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                     // absorb instead of echoing as unknown names.
                     (None, None) => {
                         if l.name.name != "_" {
-                            if loose_value {
-                                ctx.bind_loose(l.name.name.clone());
-                            } else {
-                                ctx.bind(l.name.name.clone(), tys.intern(Ty::Error));
-                            }
+                            ctx.bind(l.name.name.clone(), tys.intern(Ty::Error));
                         }
                         continue;
                     }
@@ -3287,17 +3217,19 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                 });
                 // The expected type for the RHS is `Effect[annot]` if annot present.
                 let rhs_expected = annot_ty.map(|t| tys.intern(Ty::Effect(t)));
-                let errors_before = ctx.errors.len();
-                let rhs_ty = type_of(&l.value, rhs_expected, ctx);
-                // #1931: a test-service call's outcome is untyped (ADR 0203).
-                // Bound loose below, rather than as a failed value, so its uses
-                // are checked as far as they can be.
-                let loose_outcome = rhs_ty.is_none()
-                    && ctx.errors.len() == errors_before
-                    && (matches!(
-                        ctx.callees.get(&l.value.id),
-                        Some(Callee::TestService { .. } | Callee::TestAssetFetch { .. })
-                    ) || ctx.reads_loose(&l.value));
+                let mut rhs_ty = type_of(&l.value, rhs_expected, ctx);
+                // #1934: a test-service address driven `by Nobody` observes the
+                // auth seam, so it yields an `HttpOutcome`. The principal is on
+                // the statement, so the call alone cannot say so.
+                if l.principal.as_ref().is_some_and(|p| p.actor.name == "Nobody")
+                    && let Some(t) = rhs_ty
+                {
+                    let t = calls::nobody_outcome(&l.value, t, ctx);
+                    if let Some(te) = ctx.expr_types.get_mut(&l.value.id) {
+                        te.ty = t;
+                    }
+                    rhs_ty = Some(t);
+                }
                 check_unbound_effects(&l.value, true, ctx);
                 // v0.182 (#664): validate the call-site principal against the
                 // addressed handler — including the *absent* case, where an
@@ -3346,11 +3278,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                     // absorb instead of echoing as unknown names.
                     (None, None) => {
                         if l.name.name != "_" {
-                            if loose_outcome {
-                                ctx.bind_loose(l.name.name.clone());
-                            } else {
-                                ctx.bind(l.name.name.clone(), tys.intern(Ty::Error));
-                            }
+                            ctx.bind(l.name.name.clone(), tys.intern(Ty::Error));
                         }
                         continue;
                     }
@@ -4381,6 +4309,7 @@ fn rebrand_return_type(
         Ty::Option(t) => tys.intern(Ty::Option(rebrand_return_type(*t, caller_types, tys))),
         Ty::Effect(t) => tys.intern(Ty::Effect(rebrand_return_type(*t, caller_types, tys))),
         Ty::HttpResult(t) => tys.intern(Ty::HttpResult(rebrand_return_type(*t, caller_types, tys))),
+        Ty::HttpOutcome(t) => tys.intern(Ty::HttpOutcome(rebrand_return_type(*t, caller_types, tys))),
         Ty::List(t) => tys.intern(Ty::List(rebrand_return_type(*t, caller_types, tys))),
         Ty::Query(t) => tys.intern(Ty::Query(rebrand_return_type(*t, caller_types, tys))),
         Ty::Stream(t) => tys.intern(Ty::Stream(rebrand_return_type(*t, caller_types, tys))),
@@ -4393,6 +4322,7 @@ fn rebrand_return_type(
         Ty::Error
         | Ty::Base(_)
         | Ty::QueueResult
+        | Ty::BoundaryRejection
         | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
@@ -4608,7 +4538,7 @@ fn structurally_compatible_inner(
         (Ty::Effect(a), Ty::Effect(b)) => {
             structurally_compatible_inner(*a, *b, arg_types, param_types, tys, visited)
         }
-        (Ty::HttpResult(a), Ty::HttpResult(b)) => {
+        (Ty::HttpResult(a), Ty::HttpResult(b)) | (Ty::HttpOutcome(a), Ty::HttpOutcome(b)) => {
             structurally_compatible_inner(*a, *b, arg_types, param_types, tys, visited)
         }
         // The boundary-crossing collections walk their element types like
@@ -4621,7 +4551,7 @@ fn structurally_compatible_inner(
             structurally_compatible_inner(*k1, *k2, arg_types, param_types, tys, visited)
                 && structurally_compatible_inner(*v1, *v2, arg_types, param_types, tys, visited)
         }
-        (Ty::QueueResult, Ty::QueueResult) => true,
+        (Ty::QueueResult, Ty::QueueResult) | (Ty::BoundaryRejection, Ty::BoundaryRejection) => true,
         (Ty::Asset, Ty::Asset) => true,
         (
             Ty::Named {
@@ -4677,7 +4607,9 @@ fn structurally_compatible_inner(
             | Ty::Option(_)
             | Ty::Effect(_)
             | Ty::HttpResult(_)
+            | Ty::HttpOutcome(_)
             | Ty::QueueResult
+            | Ty::BoundaryRejection
             | Ty::Asset
             | Ty::List(_)
             | Ty::Map(..)
@@ -4974,9 +4906,64 @@ pub fn variants_of(
                 })
                 .collect(),
         ),
+        // #1934: a case matches a queue handler's verdict (`expect r is Ack`).
+        // Field names are the runtime union's in `bynk-emit/runtime/src/queue.ts`.
+        Ty::QueueResult => Some(
+            QUEUE_VARIANTS
+                .iter()
+                .map(|v| VariantInfo {
+                    name: v.name.to_string(),
+                    payload: match v.payload {
+                        QueueVariantPayload::None => vec![],
+                        QueueVariantPayload::Message => {
+                            vec![("reason".to_string(), tys.intern(Ty::Base(BaseType::String)))]
+                        }
+                    },
+                })
+                .collect(),
+        ),
+        // #1934: the `system`-tier wire outcome. Field names are the runtime
+        // union's in `bynk-emit/runtime/src/http.ts` (`HttpOutcome<T>`).
+        Ty::HttpOutcome(t) => Some(vec![
+            VariantInfo {
+                name: "Rejected".to_string(),
+                payload: vec![("value".to_string(), tys.intern(Ty::BoundaryRejection))],
+            },
+            VariantInfo {
+                name: "Handled".to_string(),
+                payload: vec![("value".to_string(), tys.intern(Ty::HttpResult(*t)))],
+            },
+        ]),
+        Ty::BoundaryRejection => Some(
+            BOUNDARY_REJECTIONS
+                .iter()
+                .map(|(name, has_detail)| VariantInfo {
+                    name: (*name).to_string(),
+                    payload: if *has_detail {
+                        vec![("detail".to_string(), tys.intern(Ty::Base(BaseType::String)))]
+                    } else {
+                        vec![]
+                    },
+                })
+                .collect(),
+        ),
         _ => None,
     }
 }
+
+/// #1934: the variants of `BoundaryRejection`, each with whether it carries a
+/// `detail: String` (the router's description of a refused body or path). The
+/// first three are the router's `BoundaryError` kinds; `Unauthorized` is the
+/// auth seam's `401` to a request with no credential, and `MethodNotAllowed`
+/// the router's `405` to a method the path declares no handler for. Kept in
+/// sync with `responseToHttpOutcome` in `bynk-emit/runtime/src/http.ts`.
+pub const BOUNDARY_REJECTIONS: &[(&str, bool)] = &[
+    ("RefinementViolation", true),
+    ("MalformedJson", true),
+    ("StructuralMismatch", true),
+    ("Unauthorized", false),
+    ("MethodNotAllowed", false),
+];
 
 // ── v0.9.2: agent state-field zeroability ──────────────────────────────────
 //
