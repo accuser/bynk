@@ -58,6 +58,9 @@ export function __deserialise_Money(json: __JsonValue, path: string = "$"): Resu
     return Err({ kind: "StructuralMismatch", path: `${path}.minorUnits`, expected: "safe integer", actual: String(obj["minorUnits"]) });
   }
   const __minorUnits = obj["minorUnits"];
+  if (!(__minorUnits >= 0)) {
+    return Err({ kind: "RefinementViolation", path: `${path}.minorUnits`, violation: { field: "minorUnits", message: "must be non-negative", value: __minorUnits } });
+  }
   const __r_currency = __deserialise_CurrencyCode(obj["currency"], `${path}.currency`);
   if (__r_currency.tag === "Err") return __r_currency;
   const __currency = __r_currency.value;

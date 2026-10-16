@@ -105,7 +105,7 @@ export function __serialise_MessageArg(value: MessageArg): __JsonValue {
       return { kind: "Num", value: ((v: number) => { if (!globalThis.Number.isFinite(v)) throw new globalThis.Error("non-finite Float at boundary"); return v as __JsonValue; })(value.value) };
     }
     case "Moment": {
-      return { kind: "Moment", value: value.value as __JsonValue };
+      return { kind: "Moment", value: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Instant outside the safe-integer range at boundary"); return v as __JsonValue; })(value.value) };
     }
   }
 }

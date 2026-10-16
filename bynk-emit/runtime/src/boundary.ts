@@ -175,6 +175,14 @@ function requireCallSecret(env: unknown, what: string): string {
   return secret;
 }
 
+// #1969: the published cross-context wire format's version
+// (`reference/wire-format.md`). A caller states the version it speaks; a callee
+// accepts a range of them and treats an absent header as version 1. Bynk's
+// emitter holds the same values in `bynk_check::wire_format`, and
+// `bynkc/tests/wire_reference.rs` fails if the two disagree.
+export const WIRE_VERSION_HEADER = "X-Bynk-Wire";
+export const WIRE_VERSION = "1";
+
 export async function callService<R>(
   binding: ServiceBinding,
   servicePath: string,
@@ -208,6 +216,7 @@ export async function callService<R>(
       "content-type": "application/json",
       "X-Bynk-Caller": callerContext,
       "X-Bynk-Contract": contractHash,
+      [WIRE_VERSION_HEADER]: WIRE_VERSION,
       [CALL_SECRET_HEADER]: secret,
     },
     body: JSON.stringify(argsJson),
