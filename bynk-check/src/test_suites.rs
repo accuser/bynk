@@ -3690,3 +3690,103 @@ mod participant_tests {
         );
     }
 }
+
+/// #2018: the `is`-pattern comparison the history restate check uses. It is
+/// conservative: only literals and payload-free variants (same name, same
+/// optional qualifier) are equal; anything else compares unequal.
+#[cfg(test)]
+mod history_pattern_tests {
+    use super::*;
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            name: name.to_string(),
+            span: Span::default(),
+        }
+    }
+
+    fn variant(type_name: Option<&str>, name: &str) -> Pattern {
+        Pattern::Variant {
+            type_name: type_name.map(ident),
+            variant: ident(name),
+            bindings: Vec::new(),
+            span: Span::default(),
+        }
+    }
+
+    fn payload_variant(name: &str) -> Pattern {
+        Pattern::Variant {
+            type_name: None,
+            variant: ident(name),
+            bindings: vec![PatternBinding {
+                kind: PatternBindingKind::Positional {
+                    pattern: Pattern::Wildcard(Span::default()),
+                },
+                span: Span::default(),
+            }],
+            span: Span::default(),
+        }
+    }
+
+    fn int(n: i64) -> Pattern {
+        Pattern::Literal {
+            value: LiteralValue::Int(n),
+            span: Span::default(),
+        }
+    }
+
+    #[test]
+    fn same_payload_free_variant_matches() {
+        assert!(history_pattern_matches(
+            &variant(None, "Closed"),
+            &variant(None, "Closed")
+        ));
+        assert!(history_pattern_matches(
+            &variant(Some("Status"), "Closed"),
+            &variant(Some("Status"), "Closed")
+        ));
+    }
+
+    #[test]
+    fn different_variant_names_do_not_match() {
+        assert!(!history_pattern_matches(
+            &variant(None, "Open"),
+            &variant(None, "Closed")
+        ));
+    }
+
+    #[test]
+    fn qualifier_present_vs_absent_does_not_match() {
+        assert!(!history_pattern_matches(
+            &variant(Some("Status"), "Closed"),
+            &variant(None, "Closed")
+        ));
+        assert!(!history_pattern_matches(
+            &variant(None, "Closed"),
+            &variant(Some("Status"), "Closed")
+        ));
+        assert!(!history_pattern_matches(
+            &variant(Some("Status"), "Closed"),
+            &variant(Some("Other"), "Closed")
+        ));
+    }
+
+    #[test]
+    fn literals_match_by_value() {
+        assert!(history_pattern_matches(&int(3), &int(3)));
+        assert!(!history_pattern_matches(&int(3), &int(4)));
+        assert!(!history_pattern_matches(&int(3), &variant(None, "Closed")));
+    }
+
+    #[test]
+    fn payload_variant_never_matches() {
+        assert!(!history_pattern_matches(
+            &payload_variant("Some"),
+            &payload_variant("Some")
+        ));
+        assert!(!history_pattern_matches(
+            &payload_variant("Some"),
+            &variant(None, "Some")
+        ));
+    }
+}
