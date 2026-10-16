@@ -735,18 +735,27 @@ resource. Otherwise `X` is an ordinary capability: `given X`, `X.op(…)`, `stub
 and `expect` apply to it unchanged. The rules:
 - `K` MUST be a capability the unit selects with `consumes U { K }`
   (`bynk.capability.unknown_base`).
-- `K` MUST be a platform resource kind with instances. Only `bynk.cloudflare`'s
-  `Kv` has them today (`bynk.capability.base_not_instantiable`).
-- Each `@annotation` MUST be one of `K`'s instance options. `Kv` takes none
-  (`bynk.capability.unknown_option`).
+- `K` MUST be a platform resource kind with instances. `bynk.cloudflare`'s
+  `Kv` and `Service` have them (`bynk.capability.base_not_instantiable`).
+- Each `@annotation` MUST be one of `K`'s instance options
+  (`bynk.capability.unknown_option`), given at most once, with one positional
+  string literal (`bynk.capability.invalid_option`). Every option `K` requires
+  MUST be present (`bynk.capability.missing_option`). `Kv` takes none.
+  `Service` requires `@worker("name")`, where `name` is 1 to 63 lowercase
+  letters, digits, `-` or `_`, not starting or ending with `-`, and not the
+  Worker of a context in the project (`bynk.capability.invalid_option`): the
+  Worker outside the project the instance reaches (interop I5, #1972).
+- A kind used only through instances MUST NOT be named bare in a `given`
+  clause (`bynk.capability.instance_only`). `Service` is such a kind.
 - `X` MUST be declared in a context (`bynk.capability.derived_outside_context`).
   An instance belongs to the context that owns its data.
 - `X` MUST NOT be exported (`bynk.exports.derived_capability`). Another context
   reaches the data through this context's services.
 - `X` shares the unit's capability namespace and its conflict rules.
 - On Workers, `X`'s binding is `K`'s prefix and `X` in screaming snake case
-  (`Sessions` → `KV_SESSIONS`). It MUST NOT clash with another of the Worker's
-  bindings (`bynk.context.duplicate_binding`).
+  (`Sessions` → `KV_SESSIONS`, `Billing` → `SERVICE_BILLING`). It MUST NOT
+  clash with another of the Worker's bindings
+  (`bynk.context.duplicate_binding`).
 
 A write to an instance commits as it returns and is not rolled back on a fault,
 like any platform-resource write (ADR 0109 D4).

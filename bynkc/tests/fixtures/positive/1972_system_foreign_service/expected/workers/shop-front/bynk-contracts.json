@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "provides": {
+    "checkout": "23b80d3680e41a5e",
+    "close": "614d0647df013548"
+  },
+  "expects": {
+    "shop.billing": {
+      "charge": "60ff2f89ce0e6366",
+      "settle": "cfa1f336e5dedf97"
+    }
+  }
+}

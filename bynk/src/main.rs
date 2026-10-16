@@ -36,6 +36,7 @@ fn main() -> ExitCode {
             inspect,
             inspect_port,
             env,
+            local_workers,
             wrangler_args,
         } => run_dev(
             path,
@@ -45,6 +46,7 @@ fn main() -> ExitCode {
                 inspect,
                 inspect_port,
                 environment: env,
+                local_workers,
                 wrangler_args,
             },
         ),

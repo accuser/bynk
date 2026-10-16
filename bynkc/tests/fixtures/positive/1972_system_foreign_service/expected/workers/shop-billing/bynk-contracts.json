@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "provides": {
+    "audit": "c3bb0dc16cbd2553",
+    "charge": "60ff2f89ce0e6366",
+    "settle": "cfa1f336e5dedf97"
+  },
+  "expects": {}
+}
