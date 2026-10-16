@@ -12,11 +12,11 @@
 //!
 //! Nothing here is a second implementation of the boundary. The codecs are the
 //! ones a Bynk *consumer* generates for a callee's types
-//! ([`serialisation::emit_helpers_for_owner_qualified`] under a non-empty
+//! (`serialisation::emit_helpers_for_owner_qualified` under a non-empty
 //! qualifier, which inlines a transparent refinement and casts an opaque
 //! one), each call goes through the runtime's own `callService`, and the
 //! encode and decode references at each call site come from the same
-//! [`serialisation::serialise_expr_via`] / [`serialisation::deserialise_ref_via`]
+//! `serialisation::serialise_expr_via` / `serialisation::deserialise_ref_via`
 //! the Bynk call site uses (`emit.rs`'s cross-context call lowering). The
 //! runtime half ships as `@bynk/wire-client`, bundled from the runtime's own
 //! modules and versioned with the wire format (§11 Q7).
