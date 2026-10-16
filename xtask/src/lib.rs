@@ -68,6 +68,14 @@ pub struct Pending {
     /// separately by [`known_rule_ids`], which needs the repo root this pure
     /// parse doesn't have.
     pub closes_rule: Vec<String>,
+    /// Gated greenfield-status probes this increment moves (see
+    /// `design/pending/README.md`). Acknowledging a probe here is what lets the
+    /// increment change its reading *without* editing the shared
+    /// `design/greenfield-status.md` table: the gate accepts an acknowledged
+    /// disagreement, and the stamp rewrites the table's gated rows on `main` in
+    /// merge order. Optional and usually empty. Each entry is checked against
+    /// [`greenfield_status::GATED_PROBES`].
+    pub probes: Vec<String>,
 }
 
 /// The repo root, resolved from this crate's manifest dir so it's independent
@@ -174,7 +182,7 @@ pub fn validate(filename: &str, content: &str) -> Result<Pending, Vec<String>> {
         ));
     }
 
-    let (level, changelog, closes_rule) = match parse_frontmatter(content, &mut errors) {
+    let (level, changelog, closes_rule, probes) = match parse_frontmatter(content, &mut errors) {
         Some(fm) => fm,
         None => return Err(errors),
     };
@@ -186,21 +194,23 @@ pub fn validate(filename: &str, content: &str) -> Result<Pending, Vec<String>> {
             changelog: changelog.expect("no errors implies a changelog"),
             adrs,
             closes_rule,
+            probes,
         })
     } else {
         Err(errors)
     }
 }
 
+/// The header fields [`parse_frontmatter`] recovers: `level`, `changelog`,
+/// `closes_rule`, `probes`.
+type Frontmatter = (Option<Level>, Option<String>, Vec<String>, Vec<String>);
+
 /// Parse and validate the `---`-delimited header. Pushes errors; returns the
-/// fields when present and well-formed (`closes_rule` defaults to empty rather
-/// than `Option` — it's genuinely optional, unlike `level`/`changelog`). Returns
+/// fields when present and well-formed (`closes_rule` and `probes` default to
+/// empty rather than `Option` — it's genuinely optional, unlike `level`/`changelog`). Returns
 /// `None` only when the frontmatter block itself is missing/unterminated
 /// (nothing to recover).
-fn parse_frontmatter(
-    content: &str,
-    errors: &mut Vec<String>,
-) -> Option<(Option<Level>, Option<String>, Vec<String>)> {
+fn parse_frontmatter(content: &str, errors: &mut Vec<String>) -> Option<Frontmatter> {
     let mut lines = content.lines();
     if lines.next().map(str::trim_end) != Some("---") {
         errors.push("must open with a `---` frontmatter fence on line 1".into());
@@ -224,11 +234,13 @@ fn parse_frontmatter(
     let mut level = None;
     let mut changelog = None;
     let mut closes_rule = Vec::new();
+    let mut probes = Vec::new();
     // Track key presence separately from a valid value: a key that is present
     // but malformed reports its own error and must not also be "missing".
     let mut saw_level = false;
     let mut saw_changelog = false;
     let mut saw_closes_rule = false;
+    let mut saw_probes = false;
     for raw in header {
         let line = raw.trim();
         if line.is_empty() {
@@ -303,6 +315,34 @@ fn parse_frontmatter(
                     }
                 }
             }
+            "probes" => {
+                if saw_probes {
+                    errors.push("duplicate frontmatter key `probes`".into());
+                }
+                saw_probes = true;
+                if value.is_empty() {
+                    errors.push(
+                        "probes must not be empty (omit the key entirely if no gated probe \
+                         moves)"
+                            .into(),
+                    );
+                } else {
+                    for entry in value.split(',') {
+                        let entry = entry.trim().trim_matches('`');
+                        if greenfield_status::GATED_PROBES.contains(&entry) {
+                            if !probes.iter().any(|p| p == entry) {
+                                probes.push(entry.to_string());
+                            }
+                        } else {
+                            errors.push(format!(
+                                "probes entry {entry:?} is not a gated greenfield-status probe \
+                                 (one of: {})",
+                                greenfield_status::GATED_PROBES.join(", ")
+                            ));
+                        }
+                    }
+                }
+            }
             other => errors.push(format!("unknown frontmatter key {other:?}")),
         }
     }
@@ -314,7 +354,19 @@ fn parse_frontmatter(
         errors.push("frontmatter is missing `changelog`".into());
     }
 
-    Some((level, changelog, closes_rule))
+    Some((level, changelog, closes_rule, probes))
+}
+
+/// The gated probes acknowledged by every pending file under `root` — the union
+/// of their `probes` keys. The pending files present in a tree are exactly the
+/// increments not yet stamped (the stamp deletes each one as it rewrites the
+/// table), so on a PR's merge ref this covers both the PR's own acknowledgement
+/// and any just-merged increment whose stamp hasn't landed yet. An unreadable or
+/// invalid pending directory acknowledges nothing; `pending_files` reports why.
+pub fn acknowledged_probes(root: &Path) -> std::collections::BTreeSet<String> {
+    validated_pending_in(root)
+        .map(|ps| ps.into_iter().flat_map(|(_, p)| p.probes).collect())
+        .unwrap_or_default()
 }
 
 /// Is `s` shaped like a greenfield-reference rule id — `R` followed by
@@ -947,6 +999,57 @@ mod tests {
             err("x.md", "---\nlevel: minor\nchangelog: x\nversion: 9\n---\n")
                 .iter()
                 .any(|e| e.contains("unknown frontmatter key"))
+        );
+    }
+
+    // --- probes --------------------------------------------------------------
+
+    #[test]
+    fn probes_is_optional_and_defaults_empty() {
+        let p = ok("x.md", "---\nlevel: patch\nchangelog: x\n---\n");
+        assert!(p.probes.is_empty());
+    }
+
+    #[test]
+    fn probes_parses_a_list_trims_backticks_and_dedupes() {
+        let p = ok(
+            "x.md",
+            "---\nlevel: patch\nchangelog: x\nprobes: `ts_writes`, diagnostic_coverage ,ts_writes\n---\n",
+        );
+        assert_eq!(
+            p.probes,
+            vec!["ts_writes".to_string(), "diagnostic_coverage".to_string()]
+        );
+    }
+
+    #[test]
+    fn probes_rejects_a_trend_or_unknown_probe() {
+        let errs = err(
+            "x.md",
+            "---\nlevel: patch\nchangelog: x\nprobes: wildcard_arms, nope\n---\n",
+        );
+        assert_eq!(
+            errs.iter()
+                .filter(|e| e.contains("is not a gated greenfield-status probe"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn probes_rejects_empty_and_duplicate_keys() {
+        assert!(
+            err("x.md", "---\nlevel: patch\nchangelog: x\nprobes:\n---\n")
+                .iter()
+                .any(|e| e.contains("probes must not be empty"))
+        );
+        assert!(
+            err(
+                "x.md",
+                "---\nlevel: patch\nchangelog: x\nprobes: ts_any\nprobes: ts_any\n---\n"
+            )
+            .iter()
+            .any(|e| e.contains("duplicate frontmatter key `probes`"))
         );
     }
 

@@ -37,6 +37,12 @@
 //! explains why a `drift`-job *step* would have been silently skipped on the PRs that
 //! move these probes most).
 //!
+//! A disagreement a pending file acknowledges (its `probes` key) does not fail the
+//! gate: the increment leaves the shared table alone and `cargo xtask stamp --apply`
+//! rewrites the gated rows on `main` in merge order ([`refresh_gated_rows`]). The
+//! acknowledgement still has to be written, and reviewed, in the PR — a gated probe
+//! still cannot move silently — but parallel PRs no longer conflict on these rows.
+//!
 //! **Five are count/ratio trend probes**, recomputed and printed but never diffed:
 //! `wildcard_arms`, `keep_in_sync`, `test_density`, `fixture_kinds`,
 //! `keystroke_latency`. The first four move on nearly any ordinary Rust PR with no
@@ -87,8 +93,30 @@ pub fn run(root: &Path) -> Report {
     Report { probes }
 }
 
+/// The gated probes' names, in [`run_gated`]'s order — what a pending file's
+/// `probes` key may cite. `greenfield_status_table_is_current` asserts this
+/// matches the probes [`run_gated`] actually returns, so the two cannot drift.
+pub const GATED_PROBES: [&str; 16] = [
+    "workspace_lints",
+    "fs_below_driver",
+    "options_sources",
+    "hoist_sinks",
+    "span_keyed_maps",
+    "emit_diagnostics",
+    "ide_emit_edge",
+    "ast_importers",
+    "emit_abi_shapes",
+    "ts_writes",
+    "ts_any",
+    "verbatim_origins",
+    "verbatim_sites",
+    "incremental_query_types",
+    "unconsumed_ir_items",
+    "diagnostic_coverage",
+];
+
 /// The sixteen gated (zero/closure) probes only — what [`gated_disagreements`] diffs.
-fn run_gated(root: &Path) -> Vec<Probe> {
+pub fn run_gated(root: &Path) -> Vec<Probe> {
     vec![
         workspace_lints(root),
         fs_below_driver(root),
@@ -2955,9 +2983,110 @@ pub fn gated_disagreements_in(probes: &[Probe], root: &Path) -> Vec<(String, Str
     out
 }
 
+/// The disagreements no pending file acknowledges — what actually fails the gate.
+///
+/// A gated probe may move in a PR in one of two ways: the PR regenerates
+/// `design/greenfield-status.md` itself (the original mechanism, still valid for
+/// a change that carries no increment), or the PR's `design/pending/<slug>.md`
+/// names the probe in its `probes` key and leaves the table alone. The second
+/// keeps the acknowledgement in review — a probe still cannot move silently —
+/// without every probe-moving PR editing the same shared rows, which is what
+/// made this table the repo's most-conflicted file. The stamp then rewrites the
+/// gated rows on `main` in merge order ([`refresh_gated_rows`]).
+pub fn unacknowledged(
+    disagreements: Vec<(String, String, String)>,
+    acknowledged: &BTreeSet<String>,
+) -> Vec<(String, String, String)> {
+    disagreements
+        .into_iter()
+        .filter(|(name, _, _)| !acknowledged.contains(name))
+        .collect()
+}
+
+/// `committed` (the table's current text) with every gated row's reading
+/// replaced by `probes`' live one; trend rows, prose and the rule-ledger pointer
+/// are left exactly as committed, so the stamp never pays for the trend probes'
+/// workspace-wide clippy pass. Errors naming any gated probe with no row to
+/// rewrite — a table that has lost a row needs a full
+/// `cargo xtask greenfield-status --apply`, not a silent append.
+pub fn refresh_gated_rows(committed: &str, probes: &[Probe]) -> Result<String, String> {
+    let mut out = String::with_capacity(committed.len());
+    let mut seen = BTreeSet::new();
+    for line in committed.split_inclusive('\n') {
+        let replacement = probes.iter().filter(|p| p.gated).find_map(|p| {
+            let prefix = format!("| `{}` | yes | ", p.name);
+            line.starts_with(&prefix).then(|| {
+                seen.insert(p.name);
+                let eol = if line.ends_with('\n') { "\n" } else { "" };
+                format!("{prefix}{} |{eol}", p.reads)
+            })
+        });
+        out.push_str(replacement.as_deref().unwrap_or(line));
+    }
+    let missing: Vec<_> = probes
+        .iter()
+        .filter(|p| p.gated && !seen.contains(p.name))
+        .map(|p| p.name)
+        .collect();
+    if missing.is_empty() {
+        Ok(out)
+    } else {
+        Err(format!(
+            "design/greenfield-status.md has no row for gated probe(s) {} — run \
+             `cargo xtask greenfield-status --apply`",
+            missing.join(", ")
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- probe acknowledgement + refresh ------------------------------------
+
+    fn gated(name: &'static str, reads: &str) -> Probe {
+        Probe {
+            name,
+            gated: true,
+            reads: reads.to_string(),
+        }
+    }
+
+    #[test]
+    fn unacknowledged_drops_only_acknowledged_probes() {
+        let d = vec![
+            (
+                "ts_writes".to_string(),
+                "850".to_string(),
+                "851".to_string(),
+            ),
+            ("ts_any".to_string(), "26".to_string(), "27".to_string()),
+        ];
+        let ack: BTreeSet<String> = ["ts_writes".to_string()].into();
+        let left = unacknowledged(d, &ack);
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].0, "ts_any");
+    }
+
+    #[test]
+    fn refresh_rewrites_gated_rows_and_leaves_the_rest() {
+        let committed = "# Greenfield status\n\n| Probe | Gated | Reads |\n|---|---|---|\n\
+                         | `ts_writes` | yes | 850 |\n\
+                         | `wildcard_arms` | no (trend) | 355 |\n\nfooter\n";
+        let out = refresh_gated_rows(committed, &[gated("ts_writes", "851")]).unwrap();
+        assert!(out.contains("| `ts_writes` | yes | 851 |\n"));
+        assert!(out.contains("| `wildcard_arms` | no (trend) | 355 |\n"));
+        assert!(out.ends_with("\nfooter\n"));
+        assert_eq!(out.lines().count(), committed.lines().count());
+    }
+
+    #[test]
+    fn refresh_errors_on_a_missing_gated_row() {
+        let err = refresh_gated_rows("| Probe | Gated | Reads |\n", &[gated("ts_any", "26")])
+            .unwrap_err();
+        assert!(err.contains("ts_any"));
+    }
 
     // --- emit_diagnostics (#999 Decision A) ---------------------------------
 
