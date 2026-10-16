@@ -86,7 +86,7 @@ pub(crate) fn local_edge_keys(
                 resources[w]
                     .foreign_callers
                     .iter()
-                    .map(|f| f.secret.clone()),
+                    .map(|f| f.binding.clone()),
             );
             (w.clone(), keys)
         })
@@ -184,12 +184,12 @@ mod tests {
             .foreign_callers = vec![
             ForeignCaller {
                 actor: "Ledger".into(),
-                secret: "LEDGER_CALL_KEY".into(),
+                binding: "LEDGER_CALL_KEY".into(),
                 worker: Some("ledger-svc".into()),
             },
             ForeignCaller {
                 actor: "Legacy".into(),
-                secret: "LEGACY_CALL_KEY".into(),
+                binding: "LEGACY_CALL_KEY".into(),
                 worker: None,
             },
         ];

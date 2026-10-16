@@ -147,8 +147,10 @@ pub(crate) struct Resources {
 pub(crate) struct ForeignCaller {
     /// The `Foreign` actor's name, which the caller sends as `X-Bynk-Caller`.
     pub(crate) actor: String,
-    /// The secret the context verifies its calls under.
-    pub(crate) secret: String,
+    /// The name of the env binding the context verifies its calls under: a
+    /// name, never a value. The manifest's `secret` key.
+    #[serde(rename = "secret")]
+    pub(crate) binding: String,
     /// The foreign Worker's name, when the declaration gives one.
     #[serde(default)]
     pub(crate) worker: Option<String>,

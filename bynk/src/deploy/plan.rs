@@ -552,25 +552,25 @@ pub fn run(
     // admits it. Only that end is ours, so a `--context` run decides it too.
     let foreign_secrets: BTreeSet<String> = resources
         .values()
-        .flat_map(|r| r.foreign_callers.iter().map(|f| f.secret.clone()))
+        .flat_map(|r| r.foreign_callers.iter().map(|f| f.binding.clone()))
         .collect();
     let mut foreign_keys: BTreeMap<(String, String), ForeignKey> = BTreeMap::new();
     for worker in &order {
         for caller in &resources[worker].foreign_callers {
             let presence = presence_of(
-                &caller.secret,
+                &caller.binding,
                 listed[worker].as_ref(),
                 !lock.is_deployed(&opts.environment, worker),
             );
-            let supplied = value_from_source(&caller.secret, &secret_source);
+            let supplied = value_from_source(&caller.binding, &secret_source);
             match decide_foreign_key(supplied, presence, opts.force, &mut mint_edge_key) {
                 Ok(decision) => {
-                    foreign_keys.insert((worker.clone(), caller.secret.clone()), decision);
+                    foreign_keys.insert((worker.clone(), caller.binding.clone()), decision);
                 }
                 Err(e) => {
                     eprintln!(
                         "bynk: `{}` (the foreign caller `{}` of `{worker}`): {e}",
-                        caller.secret, caller.actor
+                        caller.binding, caller.actor
                     );
                     return ExitCode::FAILURE;
                 }
@@ -623,7 +623,7 @@ pub fn run(
                     if let Some(ForeignKey::Set {
                         value,
                         minted: true,
-                    }) = foreign_keys.get(&(worker.clone(), caller.secret.clone()))
+                    }) = foreign_keys.get(&(worker.clone(), caller.binding.clone()))
                     {
                         eprint!("{}", foreign_hand_off(worker, caller, value));
                     }
@@ -671,11 +671,11 @@ pub fn run(
                     if let Some(ForeignKey::Set {
                         value,
                         minted: true,
-                    }) = foreign_keys.get(&(worker.clone(), caller.secret.clone()))
+                    }) = foreign_keys.get(&(worker.clone(), caller.binding.clone()))
                     {
                         eprintln!(
                             "bynk: `{worker}` may already hold the {} minted for its foreign caller `{}`. If `wrangler secret list` shows it, hand this off; if not, the next deploy mints another.",
-                            caller.secret, caller.actor
+                            caller.binding, caller.actor
                         );
                         eprint!("{}", foreign_hand_off(worker, caller, value));
                     }
@@ -960,7 +960,7 @@ pub(crate) fn derive_plan<'a>(
     let edges = project_edges(resources);
     let foreign_secrets: BTreeSet<String> = resources
         .values()
-        .flat_map(|r| r.foreign_callers.iter().map(|f| f.secret.clone()))
+        .flat_map(|r| r.foreign_callers.iter().map(|f| f.binding.clone()))
         .collect();
     Plan {
         environment,
@@ -1026,7 +1026,7 @@ pub(crate) fn derive_plan<'a>(
                     // I3 (#1971): and the secret of each foreign caller it
                     // admits, which `deploy` mints and hands off.
                     .chain(declared.foreign_callers.iter().map(|f| WantedSecret {
-                        name: f.secret.clone(),
+                        name: f.binding.clone(),
                         origin: Origin::Managed,
                     }))
                     .map(|want| PlanSecret {

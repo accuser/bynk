@@ -469,11 +469,11 @@ pub(crate) fn foreign_hand_off(worker: &str, caller: &ForeignCaller, value: &str
         .clone()
         .unwrap_or_else(|| "<foreign-worker>".to_string());
     format!(
-        "bynk: minted {secret} for `{actor}`, a foreign caller of `{context}`. Its operator sets it on their Worker:\n\n  \
+        "bynk: minted {binding} for `{actor}`, a foreign caller of `{context}`. Its operator sets it on their Worker:\n\n  \
          printf '%s' '{value}' | npx wrangler secret put {key} --name {name}\n\n  \
          It signs its calls to `{context}` as `{actor}` (X-Bynk-Caller), under that key; see the wire format reference.\n  \
          This is the only time the value is shown: `bynk deploy --force` mints a new one.\n",
-        secret = caller.secret,
+        binding = caller.binding,
         actor = caller.actor,
     )
 }
@@ -1249,7 +1249,7 @@ WITH_EQUALS=a=b
     fn the_hand_off_is_a_ready_to_run_command_for_the_foreign_worker() {
         let caller = ForeignCaller {
             actor: "Ledger".into(),
-            secret: "LEDGER_CALL_KEY".into(),
+            binding: "LEDGER_CALL_KEY".into(),
             worker: Some("ledger-svc".into()),
         };
         let text = foreign_hand_off("shop-orders", &caller, "abc123");
