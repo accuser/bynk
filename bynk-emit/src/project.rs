@@ -2942,7 +2942,13 @@ fn build_output(
                     });
                 }
 
-                let (reads, _) = emitter::secrets::secret_reads(table, &flattened);
+                let reads = emitter::secrets::secret_reads(
+                    ctx_name,
+                    &unit_tables,
+                    &unit_consumes,
+                    &unit_consumes_aliases,
+                    &unit_flattened,
+                );
                 if let Some(manifest) = emitter::emit_secrets_manifest(table, &reads) {
                     compiled.push(StagedFile {
                         output_path: PathBuf::from(format!(
