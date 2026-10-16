@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.333.3** | "`bynk-secrets.json` no longer claims a complete read list it does not have (closes #1976): literal `Secrets.get` names in `provides` bodies — including providers reached through `given` — and in agent handlers are collected into `read`, a Worker that composes an adapter provider `given Secrets` is marked `read_complete: false` because its TypeScript binding's reads cannot be seen, and `bynk deploy`'s `secrets incomplete` line no longer blames a computed name for both" |
 | **v0.333.2** | `bynk dev` with two or more contexts now starts without `--inspect`: each context gets its own inspector port instead of all racing for 9229, and a wrangler resolved via `npx` is installed once before the contexts start |
 | **v0.333.1** | An agent handler that calls a consumed context's service (`Alias.service(…)`) or constructs another agent now works on the Workers target, reaching the Service Binding and the agent's namespace through the Durable Object's own `env`, instead of reading `deps.surface` and faulting with a `TypeError` |
 | **v0.333.0** | A field read on a value of a consumed context's type is checked — rejected for an `exports opaque` type (`bynk.context.opaque_inspection`), typed against the providing context's declaration for an unexported one, and rejected as `bynk.boundary.ambiguous_type` where two consumed contexts declare the name differently |

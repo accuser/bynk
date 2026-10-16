@@ -182,8 +182,13 @@ missing, and that follows from their types:
 > …and the plan admits it:
 >
 > ```
-> secrets incomplete api (computes at least one name)
+> secrets incomplete api (reads at least one name the compiler cannot see)
 > ```
+>
+> The same line appears when the Worker composes an adapter whose provider is
+> `given Secrets`: the adapter's TypeScript binding can read any name, and the
+> compiler cannot see into it. A literal `Secrets.get("X")` in a `provides`
+> body is collected like one in a handler.
 >
 > **That line is the important one.** Without it, a short `read` list would be
 > the most dangerous thing Bynk could show you: a list that's usually right gets

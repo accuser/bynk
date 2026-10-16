@@ -77,8 +77,10 @@ struct ContextPlan<'a> {
     durable_objects: Vec<PlanDurableObject<'a>>,
     /// One line per secret this run will set on this context, in name order.
     secrets: Vec<PlanSecret>,
-    /// False when this context names at least one secret with a computed
-    /// expression, so `secrets` is **not** everything it reads (ADR 0196 D2).
+    /// False when this context reads at least one secret the compiler cannot
+    /// name — a computed `Secrets.get` argument, or an adapter binding `given`
+    /// `bynk.Secrets` (#1976) — so `secrets` is **not** everything it reads
+    /// (ADR 0196 D2).
     ///
     /// Carried in the machine surface as well as the human one, because this is
     /// the field that stops a CI job trusting a short list — the failure the
@@ -662,7 +664,7 @@ pub(crate) fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
                 // exists to prevent (ADR 0196 D2).
                 if !context.secrets_complete {
                     out.push_str(&format!(
-                        "secrets incomplete {} (computes at least one name)\n",
+                        "secrets incomplete {} (reads at least one name the compiler cannot see)\n",
                         context.worker
                     ));
                 }

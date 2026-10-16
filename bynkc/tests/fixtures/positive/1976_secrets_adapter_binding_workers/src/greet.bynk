@@ -1,0 +1,11 @@
+adapter greet
+
+binding "./greet.binding.ts"
+consumes bynk { Secrets }
+exports capability { Greeter }
+
+capability Greeter {
+	fn hello(name: String) -> Effect[String]
+}
+
+provides Greeter = SecretGreeter given Secrets
