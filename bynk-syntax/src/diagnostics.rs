@@ -450,6 +450,21 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["capability_decl"],
     ),
     dg(
+        "bynk.capability.instance_only",
+        "A platform capability that is used only through named instances (`Service`) was used bare, in a `given` clause.",
+        &["given_clause"],
+    ),
+    dg(
+        "bynk.capability.invalid_option",
+        "A derived capability's option is not one string literal, is given twice, or (`@worker`) is not a Worker name outside the project.",
+        &["capability_decl"],
+    ),
+    dg(
+        "bynk.capability.missing_option",
+        "A derived capability lacks an option its base requires, such as a `Service` instance's `@worker`.",
+        &["capability_decl"],
+    ),
+    dg(
         "bynk.capability.not_provided",
         "On the Workers target, a capability a context requires has no provider in it.",
         &["given_clause"],
@@ -1963,11 +1978,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.test.unknown_actor",
         "A call-site `by <Actor>` names an actor the target context does not declare and that is not a prelude actor.",
-        &["case"],
-    ),
-    dg(
-        "bynk.test.untyped_outcome",
-        "A case calls a method on, or compares with `==`/`!=` against a bare `Ok`/`Err`/`None` constructor, part of an http, cron, or queue address's outcome, whose type the case does not know.",
         &["case"],
     ),
     dg(

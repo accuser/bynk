@@ -1,0 +1,23 @@
+context demo
+
+consumes bynk
+consumes bynk.cloudflare { Service }
+
+-- #1972: a bare `Service` names no Worker.
+service probe {
+  on call() -> Effect[Int] given Service {
+    let req = Request {
+      method: Get,
+      url: "https://legacy-billing/",
+      contentType: None,
+      authorization: None,
+      headers: Map.empty(),
+      body: None,
+    }
+    let res <- Service.send(req)
+    match res {
+      Ok(r) => r.status,
+      Err(_) => 0,
+    }
+  }
+}

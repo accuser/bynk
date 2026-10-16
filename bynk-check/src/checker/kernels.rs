@@ -2185,6 +2185,7 @@ fn first_recursive_generic(
         | Ty::List(a)
         | Ty::Effect(a)
         | Ty::HttpResult(a)
+        | Ty::HttpOutcome(a)
         | Ty::Query(a)
         | Ty::Stream(a)
         | Ty::Connection(a) => first_recursive_generic(*a, types, tys),
@@ -2219,7 +2220,9 @@ fn json_codable(t: TyId, tys: &Types) -> bool {
         | Ty::Stream(_)
         | Ty::Connection(_)
         | Ty::HttpResult(_)
+        | Ty::HttpOutcome(_)
         | Ty::QueueResult
+        | Ty::BoundaryRejection
         | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError

@@ -1,0 +1,35 @@
+context demo
+
+consumes bynk
+consumes bynk.cloudflare { Service }
+
+-- #1972: the instance's binding `SERVICE_BILLING` is also agent
+-- `ServiceBilling`'s.
+capability Billing = Service @worker("legacy-billing")
+
+agent ServiceBilling {
+  key id: String
+  store n: Cell[Int]
+
+  on call bump() -> Effect[Int] {
+    Effect.pure(1)
+  }
+}
+
+service probe {
+  on call() -> Effect[Int] given Billing {
+    let req = Request {
+      method: Get,
+      url: "https://legacy-billing/",
+      contentType: None,
+      authorization: None,
+      headers: Map.empty(),
+      body: None,
+    }
+    let res <- Billing.send(req)
+    match res {
+      Ok(r) => r.status,
+      Err(_) => 0,
+    }
+  }
+}

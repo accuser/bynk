@@ -316,6 +316,66 @@ async function test_a_typed_path_segment_with_a_raw_body_passes_both_through_the
   }
 }
 
+async function test_a_refinement_rejection_carries_the_router_s_detail() {
+  try {
+    const deps = __makeHarness();
+    const r = await __sysdrive_raw_api_http_POST_cart("{\"sku\": \"\"}", ("alice" as any));
+    void (((__d) => {
+        if (__d.tag === "Rejected" && __d.value.tag === "RefinementViolation") {
+          const d = __d.value.detail;
+          return __bynkExpect((d.includes("sku")), "shop/tests/api.test.bynk:69:50", 3523, 3540, "expect d.contains(\"sku\")");
+        }
+        return __bynkExpect((false), "shop/tests/api.test.bynk:70:19", 3559, 3564, "expect false");
+      })(r));
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+async function test_a_malformed_body_s_rejection_carries_the_parser_s_detail() {
+  try {
+    const deps = __makeHarness();
+    const r = await __sysdrive_raw_api_http_POST_cart("{not json", ("alice" as any));
+    void (((__d) => {
+        if (__d.tag === "Rejected" && __d.value.tag === "MalformedJson") {
+          const d = __d.value.detail;
+          return __bynkExpect(((d).length > 0), "shop/tests/api.test.bynk:76:44", 3767, 3781, "expect d.length() > 0");
+        }
+        return __bynkExpect((false), "shop/tests/api.test.bynk:77:19", 3800, 3805, "expect false");
+      })(r));
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+async function test_a_handled_raw_body_carries_the_handler_s_typed_result() {
+  try {
+    const deps = __makeHarness();
+    const r = await __sysdrive_raw_api_http_POST_cart("{\"sku\": \"raw-ok\"}", ("alice" as any));
+    void (((__d) => {
+        if (__d.tag === "Handled" && __d.value.tag === "Created") {
+          const item = __d.value.value;
+          return __bynkExpect((item.sku === "raw-ok"), "shop/tests/api.test.bynk:83:40", 4013, 4033, "expect item.sku == \"raw-ok\"");
+        }
+        return __bynkExpect((false), "shop/tests/api.test.bynk:84:19", 4052, 4057, "expect false");
+      })(r));
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
@@ -332,5 +392,8 @@ export async function run(only?: string) {
   if (want("a raw path segment failing refinement is rejected even with a typed body")) results.push({ name: "a raw path segment failing refinement is rejected even with a typed body", ...(await test_a_raw_path_segment_failing_refinement_is_rejected_even_with_a_typed_body()) });
   if (want("an empty raw path segment does not route and falls through")) results.push({ name: "an empty raw path segment does not route and falls through", ...(await test_an_empty_raw_path_segment_does_not_route_and_falls_through()) });
   if (want("a typed path segment with a raw body passes both through the boundary")) results.push({ name: "a typed path segment with a raw body passes both through the boundary", ...(await test_a_typed_path_segment_with_a_raw_body_passes_both_through_the_boundary()) });
+  if (want("a refinement rejection carries the router's detail")) results.push({ name: "a refinement rejection carries the router's detail", ...(await test_a_refinement_rejection_carries_the_router_s_detail()) });
+  if (want("a malformed body's rejection carries the parser's detail")) results.push({ name: "a malformed body's rejection carries the parser's detail", ...(await test_a_malformed_body_s_rejection_carries_the_parser_s_detail()) });
+  if (want("a handled raw body carries the handler's typed result")) results.push({ name: "a handled raw body carries the handler's typed result", ...(await test_a_handled_raw_body_carries_the_handler_s_typed_result()) });
   return results;
 }
