@@ -1,0 +1,2 @@
+bynk.capability.invalid_option
+`shop-billing` is this project's context `shop.billing`, not a Worker outside it

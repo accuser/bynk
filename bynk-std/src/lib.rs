@@ -334,9 +334,29 @@ pub struct Instantiable {
     /// `capability Sessions = Kv` bind as `KV_SESSIONS`.
     pub binding_prefix: &'static str,
     /// The creation options (`@name(…)`) an instance may carry; any other is
-    /// refused. Empty when the kind takes none yet.
+    /// refused. Empty when the kind takes none yet. Each takes one string
+    /// literal (`@worker("legacy-billing")`).
     pub options: &'static [&'static str],
+    /// The options every instance must carry (interop I5, #1972): a
+    /// `Service` names the Worker it reaches, so it has no default. A subset
+    /// of [`Instantiable::options`].
+    pub required: &'static [&'static str],
+    /// Whether the base capability is usable bare, through `given Kv`, as
+    /// well as through instances. `false` for a kind whose every use needs an
+    /// option: a bare `Service` would name no Worker.
+    pub bare: bool,
 }
+
+/// The Worker binding prefix of a `Service` instance (interop I5, #1972):
+/// `capability Billing = Service @worker("legacy-billing")` binds as
+/// `SERVICE_BILLING`, a `[[services]]` entry naming `legacy-billing`.
+pub const SERVICE_BINDING_PREFIX: &str = "SERVICE";
+
+/// The option of a `Service` instance that names the Worker it reaches.
+/// `worker`, not D4's `service`: `service` is a keyword, so `@service(…)`
+/// does not parse, and widening the annotation grammar is language work
+/// (ADR 0023).
+pub const SERVICE_WORKER_OPTION: &str = "worker";
 
 /// Whether a first-party item is under the 1.0 promise (track D2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -394,15 +414,28 @@ pub const UNITS: &[Unit] = &[
         },
         id_block: 1,
         platform: Some(Platform::Cloudflare),
-        env_providers: &["WorkersKv"],
+        env_providers: &["WorkersKv", "WorkersService"],
         stability: Stability::Stable,
-        experimental: &[],
+        // Interop I5 (#1972): a Service Binding to a non-Bynk Worker is new
+        // and its surface is untyped, so it lands outside the 1.0 promise.
+        experimental: &["Service"],
         extensible: &[],
-        instantiable: &[Instantiable {
-            capability: "Kv",
-            binding_prefix: KV_BINDING_NAME,
-            options: &[],
-        }],
+        instantiable: &[
+            Instantiable {
+                capability: "Kv",
+                binding_prefix: KV_BINDING_NAME,
+                options: &[],
+                required: &[],
+                bare: true,
+            },
+            Instantiable {
+                capability: "Service",
+                binding_prefix: SERVICE_BINDING_PREFIX,
+                options: &[SERVICE_WORKER_OPTION],
+                required: &[SERVICE_WORKER_OPTION],
+                bare: false,
+            },
+        ],
     },
     Unit {
         name: LIST_UNIT,
@@ -826,9 +859,11 @@ mod tests {
         assert!(!is_extensible_in(SYNTH, "bynk", "Method"));
     }
 
-    /// The shipped instantiable kinds (S4a, #1966): only `bynk.cloudflare`'s
-    /// `Kv`, binding as `KV_<NAME>`, with no creation options yet. Each one is a
-    /// capability its unit exports.
+    /// The shipped instantiable kinds: `bynk.cloudflare`'s `Kv` (S4a, #1966),
+    /// binding as `KV_<NAME>` with no creation options, and its `Service`
+    /// (interop I5, #1972), binding as `SERVICE_<NAME>` and naming its Worker
+    /// with a required `@worker`, never usable bare. Each one is a capability
+    /// its unit exports.
     #[test]
     fn the_shipped_instantiable_kinds_are_pinned() {
         let kinds: Vec<(&str, &str, &str)> = UNITS
@@ -839,25 +874,46 @@ mod tests {
                     .map(move |i| (u.name, i.capability, i.binding_prefix))
             })
             .collect();
-        assert_eq!(kinds, [("bynk.cloudflare", "Kv", "KV")]);
+        assert_eq!(
+            kinds,
+            [
+                ("bynk.cloudflare", "Kv", "KV"),
+                ("bynk.cloudflare", "Service", "SERVICE")
+            ]
+        );
         let kv = instantiable("bynk.cloudflare", "Kv").expect("Kv is instantiable");
-        assert!(kv.options.is_empty());
+        assert!(kv.options.is_empty() && kv.required.is_empty() && kv.bare);
+        let service = instantiable("bynk.cloudflare", "Service").expect("Service is instantiable");
+        assert_eq!(service.options, ["worker"]);
+        assert_eq!(service.required, ["worker"]);
+        assert!(!service.bare);
+        for u in UNITS {
+            for i in u.instantiable {
+                assert!(
+                    i.required.iter().all(|r| i.options.contains(r)),
+                    "{}.{}: a required option must be an option",
+                    u.name,
+                    i.capability
+                );
+            }
+        }
         assert!(exported_names(unit("bynk.cloudflare").unwrap()).contains(&"Kv"));
+        assert!(exported_names(unit("bynk.cloudflare").unwrap()).contains(&"Service"));
         assert_eq!(instantiable("bynk", "Clock"), None);
         assert_eq!(instantiable("bynk.cloudflare", "Nope"), None);
     }
 
-    /// The shipped registry: every unit is stable with nothing experimental (S3
-    /// ships the mechanism, #1963 Decision C), and the `bynk` surface's two
-    /// growing enums are extensible. A slice that marks an item experimental
-    /// updates this test, so the change is visible in review.
+    /// The shipped registry: every unit is stable (S3 ships the mechanism,
+    /// #1963 Decision C), the one experimental item is `bynk.cloudflare`'s
+    /// `Service` (interop I5, #1972), and the `bynk` surface's two growing
+    /// enums are extensible. A slice that marks an item experimental updates
+    /// this test, so the change is visible in review.
     #[test]
     fn the_shipped_stability_is_pinned() {
         for u in UNITS {
             assert_eq!(u.stability, Stability::Stable, "{}", u.name);
-            assert!(u.experimental.is_empty(), "{}", u.name);
         }
-        assert!(experimental_items().is_empty());
+        assert_eq!(experimental_items(), ["bynk.cloudflare.Service"]);
         let extensible: Vec<(&str, &str)> = UNITS
             .iter()
             .flat_map(|u| u.extensible.iter().map(move |e| (u.name, *e)))

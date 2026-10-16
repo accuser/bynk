@@ -98,6 +98,10 @@ pub(crate) struct RuntimeUse {
     icu: Cell<bool>,
     boundary_codec: Cell<bool>,
     json_codec: Cell<bool>,
+    /// #1934: the module constructs an `HttpResult` variant. A source module
+    /// imports `HttpResult` by its own structural scan; a test module, whose
+    /// case compares a typed outcome with `Ok(…)`, reads this.
+    http_result: Cell<bool>,
     /// #917: for a test-scaffold module, the type-only namespace each
     /// codec-eligible named type reaches through (`"Order" -> "orders."`) — the
     /// module has no local declaration of its own, only a namespace import of
@@ -129,6 +133,16 @@ impl RuntimeUse {
     /// walker behind `==`/`!=` on a non-primitive operand (#1652).
     pub fn note_eq(&self) {
         self.eq.set(true);
+    }
+
+    /// Record that the module constructs an `HttpResult` variant (#1934).
+    pub fn note_http_result(&self) {
+        self.http_result.set(true);
+    }
+
+    /// Whether a test module must import `HttpResult` (#1934).
+    pub fn http_result(&self) -> bool {
+        self.http_result.get()
     }
 
     /// Record that the module references the `Int` domain traps: `Int` division

@@ -1598,6 +1598,11 @@ const CAPABILITY_SURFACE: &[&str] = &[
     "LocaleTag",
     "Kv",
     "KVNamespace",
+    // Interop I5 (#1972): `bynk.cloudflare`'s `Service`, and the Cloudflare
+    // `Fetch` provider its binding sends through, so the two share one set of
+    // header and response rules. Binding-to-binding, not a codegen shape.
+    "Service",
+    "FetchProvider",
 ];
 
 /// Is `ident` one of ADR 0310's enumerated emit-ABI shapes, or part of the capability

@@ -94,6 +94,7 @@ fn collect_vars(ty: TyId, tys: &Types, out: &mut HashSet<String>) {
         Ty::Option(a)
         | Ty::Effect(a)
         | Ty::HttpResult(a)
+        | Ty::HttpOutcome(a)
         | Ty::List(a)
         | Ty::Query(a)
         | Ty::Stream(a)
@@ -112,6 +113,7 @@ fn collect_vars(ty: TyId, tys: &Types, out: &mut HashSet<String>) {
         Ty::Base(_)
         | Ty::Error
         | Ty::QueueResult
+        | Ty::BoundaryRejection
         | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError
@@ -272,7 +274,9 @@ fn walk_ty(ty: TyId, ctx: &Ctx, visited: &mut HashSet<String>) -> Option<NotComp
         Ty::Fn { .. } | Ty::Effect(_) | Ty::Query(_) => {
             Some(NotComparable::Computation(tys.display(ty)))
         }
-        Ty::Option(t) | Ty::List(t) | Ty::HttpResult(t) => walk_ty(*t, ctx, visited),
+        Ty::Option(t) | Ty::List(t) | Ty::HttpResult(t) | Ty::HttpOutcome(t) => {
+            walk_ty(*t, ctx, visited)
+        }
         Ty::Result(a, b) | Ty::Map(a, b) => {
             walk_ty(*a, ctx, visited).or_else(|| walk_ty(*b, ctx, visited))
         }
@@ -293,6 +297,7 @@ fn walk_ty(ty: TyId, ctx: &Ctx, visited: &mut HashSet<String>) -> Option<NotComp
         Ty::Error
         | Ty::Base(_)
         | Ty::QueueResult
+        | Ty::BoundaryRejection
         | Ty::Asset
         | Ty::ValidationError
         | Ty::JsonError

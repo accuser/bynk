@@ -1,0 +1,38 @@
+-- #1934: a case's service call is typed by what its handler yields, so a
+-- value of the handler's result type has that type in the case. #1931 left
+-- it untyped, and a method on it was `bynk.test.untyped_outcome`.
+suite app.web {
+  case "a method on an Ok payload" {
+    let r <- api.GET("/name") by Visitor
+    match r {
+      Ok(name) => expect name.length() == 4
+      _ => expect false
+    }
+  }
+  case "a field of an Ok payload" {
+    let r <- api.GET("/item") by Visitor
+    expect r is Ok(item) && item.sku.startsWith("wid")
+  }
+  case "the whole outcome compared" {
+    let r <- api.GET("/name") by Visitor
+    expect r == Ok("bynk")
+  }
+  case "a call's outcome is the handler's return type" {
+    let n <- calc.call(21)
+    expect n.abs() == 42
+  }
+  case "a cron outcome is the handler's Result" {
+    let r <- sweeper.schedule("0 0 * * *")
+    match r {
+      Err(why) => expect why.contains("sweep")
+      Ok(_) => expect false
+    }
+  }
+  case "a queue verdict binds its reason" {
+    let r <- intake.message(Item { sku: "" })
+    match r {
+      Retry(why) => expect why.length() == 9
+      Ack => expect false
+    }
+  }
+}

@@ -136,6 +136,14 @@
       "summary": "A derived capability was declared outside a context."
     },
     {
+      "code": "bynk.capability.invalid_option",
+      "summary": "A derived capability's option is not one string literal, is given twice, or (`@worker`) is not a Worker name outside the project."
+    },
+    {
+      "code": "bynk.capability.missing_option",
+      "summary": "A derived capability lacks an option its base requires, such as a `Service` instance's `@worker`."
+    },
+    {
       "code": "bynk.capability.op_arity",
       "summary": "A capability operation was called with the wrong number of arguments."
     },
@@ -234,10 +242,6 @@
     {
       "code": "bynk.test.unknown_actor",
       "summary": "A call-site `by <Actor>` names an actor the target context does not declare and that is not a prelude actor."
-    },
-    {
-      "code": "bynk.test.untyped_outcome",
-      "summary": "A case calls a method on, or compares with `==`/`!=` against a bare `Ok`/`Err`/`None` constructor, part of an http, cron, or queue address's outcome, whose type the case does not know."
     },
     {
       "code": "bynk.test.wire_needs_system",
@@ -541,6 +545,10 @@
     }
   ],
   "given_clause": [
+    {
+      "code": "bynk.capability.instance_only",
+      "summary": "A platform capability that is used only through named instances (`Service`) was used bare, in a `given` clause."
+    },
     {
       "code": "bynk.capability.not_provided",
       "summary": "On the Workers target, a capability a context requires has no provider in it."
