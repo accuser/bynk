@@ -691,6 +691,14 @@ need to wait" are independent: to *await* a unit-returning effect (a durable
 write that must join the commit) keep the `<-` bind; to await and discard a
 **valued** reply, write `let _ <- e`. A send is a statement, never an expression.
 
+A send MUST NOT occur in an **agent handler** body, a closure within one included
+(`bynk.send.in_agent_handler`): an agent handler runs inside the agent's Durable
+Object and has no execution context to keep a fire-and-forget effect alive past
+it, so its effects are awaited (`let _ <- e`, `do e`). A send of the agent's own
+**store operation** is refused with its own code (`bynk.send.store_op`): a store
+write is staged and committed atomically at the handler boundary, so there is
+nothing to send without waiting for — write it as `do field.op(…)`.
+
 A **`do` statement** (`do e`, §4.8.6) performs a unit effect without a binder: it
 MUST occur in an effectful position (`bynk.effect.do_in_pure_context`) and MUST
 be applied to an `Effect[()]` (`bynk.effect.do_on_non_effect`,

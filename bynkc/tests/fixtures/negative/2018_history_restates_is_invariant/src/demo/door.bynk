@@ -1,0 +1,10 @@
+context demo.door
+
+type Status = enum { Open, Closed }
+
+agent Door {
+  key id: String
+  store status: Cell[Status] = Open
+  invariant always_open: status is Open
+  on call open() -> Effect[()] { status := Open }
+}

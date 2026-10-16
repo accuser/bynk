@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0487](0487-no-send-in-agent-handler.md) | **An agent handler cannot `~>` send; a store operation is refused with its own code** (v0.342) — `~>` needs an execution context to keep the effect alive, and an agent handler has none, so the checker refuses it there (`bynk.send.in_agent_handler`), and refuses a sent store operation as `bynk.send.store_op` | Accepted (v0.342) |
 | [0486](0486-foreign-caller-actors.md) | **Foreign callers are declared actors with their own `call` scheme** (v0.341) — A non-Bynk caller is a `Foreign` actor the callee declares; it signs as the actor under a deploy-minted secret, resolves to that actor and never to `Caller`, and `bynk deploy` prints the hand-off | Accepted (v0.341) |
 | [0485](0485-per-edge-call-signature.md) | **Caller identity is proved by a per-edge signature, amending ADR 0092 and superseding ADR 0479** (v0.340) — Every internal request is HMAC-signed under a key one sender shares with one receiver; the callee picks the key by the claimed caller and refuses what does not verify | Accepted (v0.340) |
 | [0484](0484-let-else-is-a-block-scoped-match.md) | **`let <pattern> … else …` is the `match` it stands for, scoped to its block** (v0.339) — `let P <- e else E` followed by the rest of the block means `match` on `e` with `P => { rest }` and `_ => E`; the parser builds that `match`, so it adds no control flow, and the `else` has the enclosing block's type | Accepted (v0.339) |

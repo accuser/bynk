@@ -1,0 +1,10 @@
+context demo.door
+
+type Status = enum { Open, Closed }
+
+agent Door {
+  key id: String
+  store status: Cell[Status] = Open
+  transition closed_is_final: old.status is Closed implies new.status is Closed
+  on call close() -> Effect[()] { status := Closed }
+}
