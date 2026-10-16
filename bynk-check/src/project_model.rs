@@ -732,7 +732,35 @@ pub fn phase_resolve_derived(
                         } else if let Some(value) =
                             instance_option_value(ann, &d.base.name, &path, errors)
                         {
-                            options.push((ann.name.name.clone(), value));
+                            // A Worker the build itself makes is a Bynk
+                            // context: deploy and dev read any build Worker
+                            // as a project edge, never a foreign one, so it
+                            // is reached with `consumes` (review of #2008).
+                            let own = (ann.name.name == firstparty::SERVICE_WORKER_OPTION)
+                                .then(|| {
+                                    kinds.iter().find(|(unit, kind)| {
+                                        **kind == UnitKind::Context
+                                            && bynk_project::worker_dir_name(unit) == value
+                                    })
+                                })
+                                .flatten();
+                            if let Some((context, _)) = own {
+                                errors.push_for(
+                                    Some(&path),
+                                    CompileError::new(
+                                        "bynk.capability.invalid_option",
+                                        ann.span,
+                                        format!(
+                                            "`{value}` is this project's context `{context}`, not a Worker outside it"
+                                        ),
+                                    )
+                                    .with_note(format!(
+                                        "reach a Bynk context with `consumes {context}`, which checks its contract"
+                                    )),
+                                );
+                            } else {
+                                options.push((ann.name.name.clone(), value));
+                            }
                         }
                     }
                     if !kind.options.contains(&ann.name.name.as_str()) {

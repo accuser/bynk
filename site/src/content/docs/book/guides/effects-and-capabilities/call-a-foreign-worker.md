@@ -14,7 +14,8 @@ allow = ["bynk.cloudflare.Service"]
 ```
 
 If the Worker you call is itself a Bynk context, `consumes` it instead: that
-checks its contract, which `Service` cannot.
+checks its contract, which `Service` cannot. A `@worker` naming one of your
+project's own contexts is refused.
 
 ## Declare the Worker
 

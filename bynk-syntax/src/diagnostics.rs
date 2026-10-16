@@ -456,7 +456,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.capability.invalid_option",
-        "A derived capability's option is not one string literal, is given twice, or (`@worker`) is not a Worker name.",
+        "A derived capability's option is not one string literal, is given twice, or (`@worker`) is not a Worker name outside the project.",
         &["capability_decl"],
     ),
     dg(

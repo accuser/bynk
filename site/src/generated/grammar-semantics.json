@@ -137,7 +137,7 @@
     },
     {
       "code": "bynk.capability.invalid_option",
-      "summary": "A derived capability's option is not one string literal, is given twice, or (`@worker`) is not a Worker name."
+      "summary": "A derived capability's option is not one string literal, is given twice, or (`@worker`) is not a Worker name outside the project."
     },
     {
       "code": "bynk.capability.missing_option",

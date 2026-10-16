@@ -99,13 +99,39 @@ pub struct StandIn {
 /// Worker and, once stopped, could leave a stale entry for `--local-worker` to
 /// connect to. The context's binding is pointed at this name instead
 /// (`point_at_stand_ins`).
+///
+/// Kept within Cloudflare's 63-character Worker name limit: a longer name is
+/// cut and given a hash of the whole, so two stand-ins never share one.
 pub fn stand_in_name(context: &str, worker: &str) -> String {
-    format!("bynk-stand-in-{context}-{worker}")
+    let name = format!("bynk-stand-in-{context}-{worker}");
+    if name.len() <= 63 {
+        return name;
+    }
+    // FNV-1a: stable across runs and toolchains, unlike `DefaultHasher`.
+    let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    let suffix = format!("-{:08x}", hash as u32);
+    let mut cut = 63 - suffix.len();
+    while !name.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}{suffix}", name[..cut].trim_end_matches('-'))
 }
 
-/// Point each served context's bindings to foreign Workers at their stand-ins,
-/// in the dev build's `wrangler.toml`. Run after every build, since a rebuild
-/// rewrites the file with the Workers' real names.
+/// The config a context with stand-ins is served from: its generated
+/// `wrangler.toml` with each binding to a foreign Worker pointed at the
+/// stand-in, beside the original so `main` resolves the same.
+pub const STAND_IN_CONFIG: &str = "wrangler.dev.toml";
+
+/// Write each served context's [`STAND_IN_CONFIG`] from its generated
+/// `wrangler.toml`, run after every build. A copy, not an edit: a rebuild
+/// rewrites `wrangler.toml` with the Workers' real names, and `wrangler dev`
+/// watching it would reload once with the real Worker bound (reaching a real
+/// local session of it, which the stand-in's own name exists to prevent)
+/// before an edit could retarget it (review of #2008). The copy is replaced
+/// by a rename, so wrangler only ever reads it whole, and only when it
+/// changes.
 fn point_at_stand_ins(workers_dir: &Path, plans: &[(String, Vec<StandIn>)]) -> Result<(), String> {
     for (context, stand_ins) in plans {
         let targets: std::collections::BTreeMap<String, String> = stand_ins
@@ -115,11 +141,14 @@ fn point_at_stand_ins(workers_dir: &Path, plans: &[(String, Vec<StandIn>)]) -> R
                 s.bindings.iter().map(move |b| (b.clone(), name.clone()))
             })
             .collect();
-        let path = workers_dir.join(context).join("wrangler.toml");
-        let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let dir = workers_dir.join(context);
+        let text = std::fs::read_to_string(dir.join("wrangler.toml")).map_err(|e| e.to_string())?;
         let out = bynk_emit::emitter::wrangler::retarget_services(&text, &targets)?;
-        if out != text {
-            std::fs::write(&path, out).map_err(|e| e.to_string())?;
+        let path = dir.join(STAND_IN_CONFIG);
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(out.as_str()) {
+            let staged = dir.join(format!("{STAND_IN_CONFIG}.tmp"));
+            std::fs::write(&staged, out).map_err(|e| e.to_string())?;
+            std::fs::rename(&staged, &path).map_err(|e| e.to_string())?;
         }
     }
     Ok(())
@@ -512,7 +541,7 @@ pub fn run(
         // Interop I5 (#1972): the context's own config first (wrangler's
         // primary Worker, the one served on the port), then its stand-ins.
         if let Some(configs) = stand_in_configs.get(&s.worker) {
-            cmd.args(["-c", "wrangler.toml"]);
+            cmd.args(["-c", STAND_IN_CONFIG]);
             for config in configs {
                 cmd.arg("-c").arg(config);
             }
@@ -551,8 +580,8 @@ pub fn run(
             fingerprint = now;
             eprintln!("bynk dev: change detected — rebuilding…");
             if compile_once(compiler, project_root, &build_dir, true) {
-                // Interop I5 (#1972): the rebuild wrote the foreign Workers'
-                // real names back. A binding added since start has no
+                // Interop I5 (#1972): refresh the served copy from the
+                // rebuilt config. A binding added since start has no
                 // stand-in until `bynk dev` restarts.
                 if let Err(e) = point_at_stand_ins(&workers_dir, &stand_in_plans) {
                     eprintln!("bynk: could not bind the stand-ins for foreign Workers: {e}");
@@ -1395,6 +1424,54 @@ mod tests {
             "{script}"
         );
         assert!(script.contains("`SERVICE_BILLING`"), "{script}");
+    }
+
+    #[test]
+    fn a_stand_in_name_fits_a_worker_name() {
+        assert_eq!(
+            stand_in_name("shop-billing", "legacy-billing"),
+            "bynk-stand-in-shop-billing-legacy-billing"
+        );
+        let long_context = "commerce-fulfilment-warehouse-allocation";
+        let a = stand_in_name(long_context, "legacy-billing-reconciliation");
+        let b = stand_in_name(long_context, "legacy-billing-reconciliation-eu");
+        assert!(a.len() <= 63 && b.len() <= 63, "{a} / {b}");
+        assert_ne!(a, b);
+        assert_eq!(
+            a,
+            stand_in_name(long_context, "legacy-billing-reconciliation")
+        );
+        assert!(!a.contains("--"), "{a}");
+    }
+
+    /// The served copy points the binding at the stand-in; the generated
+    /// config keeps the real name (review of #2008).
+    #[test]
+    fn the_stand_in_config_is_a_retargeted_copy() {
+        let dir = std::env::temp_dir().join(format!("bynk-stand-in-copy-{}", std::process::id()));
+        let ctx = dir.join("shop-billing");
+        std::fs::create_dir_all(&ctx).unwrap();
+        let generated = "name = \"shop-billing\"\n\n[[services]]\nbinding = \"SERVICE_BILLING\"\nservice = \"legacy-billing\"\n";
+        std::fs::write(ctx.join("wrangler.toml"), generated).unwrap();
+        let plans = vec![(
+            "shop-billing".to_string(),
+            vec![StandIn {
+                worker: "legacy-billing".into(),
+                bindings: names(&["SERVICE_BILLING"]),
+            }],
+        )];
+        point_at_stand_ins(&dir, &plans).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(ctx.join("wrangler.toml")).unwrap(),
+            generated
+        );
+        let served = std::fs::read_to_string(ctx.join(STAND_IN_CONFIG)).unwrap();
+        assert!(
+            served.contains("service = \"bynk-stand-in-shop-billing-legacy-billing\""),
+            "{served}"
+        );
+        assert!(!ctx.join(format!("{STAND_IN_CONFIG}.tmp")).exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

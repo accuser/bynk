@@ -181,6 +181,7 @@ on it unchanged.
   (`bynk.capability.unknown_option`), each one string literal, given once
   (`bynk.capability.invalid_option`). `Kv` takes none. `Service` requires
   `@worker("name")`, the Worker it reaches (`bynk.capability.missing_option`),
+  which must not be one of the project's own contexts' Workers,
   and is used only through instances (`bynk.capability.instance_only`).
 - Only a context declares one (`bynk.capability.derived_outside_context`), and
   it cannot be exported (`bynk.exports.derived_capability`). The data belongs to

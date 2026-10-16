@@ -127,8 +127,9 @@ bynk dev [PATH] [--context NAME]... [--base-port N] [--inspect] [--inspect-port 
    A context that binds a Worker outside the project (a `Service` instance)
    gets a local stand-in for it in its own `wrangler dev`, passed as a second
    `-c` config and written under `.bynk/dev/stand-ins/`. It runs as
-   `bynk-stand-in-<context>-<worker>`, with the build's binding pointed at it,
-   so it never answers another local session's binding to the real Worker. It
+   `bynk-stand-in-<context>-<worker>`, so it never answers another local
+   session's binding to the real Worker, and the context is served from
+   `wrangler.dev.toml`, a copy of its `wrangler.toml` bound to the stand-in. It
    answers every request with `503` and a body naming itself, and is listed on
    start.
    `--local-worker NAME` drops it, so the dev registry connects the binding to

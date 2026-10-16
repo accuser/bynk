@@ -30,8 +30,10 @@ changes.
   `@worker` (`bynk.capability.missing_option`) and is never usable bare
   (`bynk.capability.instance_only`, on the `given`). An option takes one positional string literal,
   once (`bynk.capability.invalid_option`). `@worker`'s value must be a Worker name: 1–63 lowercase
-  letters, digits, `-` or `_`, not starting or ending with `-`. The resolved value is carried on the
-  instance (`DerivedInstance::options`).
+  letters, digits, `-` or `_`, not starting or ending with `-`, and not the Worker of one of the
+  project's own contexts: deploy and dev read any build Worker as a project edge, so a Bynk context
+  is reached with `consumes`. The resolved value is carried on the instance
+  (`DerivedInstance::options`).
 - **D3 — `@worker`, not D4's `@service`.** `service` is a keyword, so `@service(…)` does not parse.
   Admitting keywords as annotation names is a grammar change, which ADR 0023 keeps out of a platform
   increment. `@worker` also names what the value is: the callee's Worker name.
@@ -66,10 +68,14 @@ changes.
   stand-in Worker per foreign Worker the context binds, under `.bynk/dev/stand-ins/`, and passes it
   to the context's own `wrangler dev` as an extra `-c` config. A stand-in answers every request with
   503 and a body naming the bindings and the way out.
-  - It runs under a name of its own, `bynk-stand-in-<context>-<worker>`, and the dev build's
-    binding is pointed at it, again after every rebuild. A `-c` Worker also registers in wrangler's
-    shared dev registry, so under the real name it would answer other local sessions' bindings to
-    that Worker, and once stopped it could leave a stale entry.
+  - It runs under a name of its own, `bynk-stand-in-<context>-<worker>` (cut and hashed past 63
+    characters). A `-c` Worker also registers in wrangler's shared dev registry, so under the real
+    name it would answer other local sessions' bindings to that Worker, and once stopped it could
+    leave a stale entry.
+  - The context is served from `wrangler.dev.toml`, a copy of its generated `wrangler.toml` with
+    the binding pointed at the stand-in, refreshed by an atomic rename after every build. Editing
+    `wrangler.toml` in place would let a watching `wrangler dev` reload once, between the rebuild
+    and the edit, with the real Worker bound.
   - `--local-worker <name>` (repeatable) drops a Worker's stand-in and leaves the binding as
     declared, so the dev registry connects it to the user's own `wrangler dev` of that Worker.
   - `-- --remote` runs no stand-ins.
