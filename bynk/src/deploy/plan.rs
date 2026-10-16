@@ -1098,9 +1098,10 @@ pub(crate) mod tests {
         let plan = plan_of(&order, &resources, &DeployLock::default());
         assert_eq!(
             plan_report(&plan, DeployFormat::Short),
-            // #2004's call secret goes on the project's own Worker only:
-            // the foreign Worker is not Bynk's and never receives it.
-            "service SERVICE_BILLING legacy-billing (foreign Worker; not provisioned)\nsecret set BYNK_CALL_SECRET (managed)\ndeploy shop-billing\n"
+            // I2 (#1971): a binding to a foreign Worker is no edge, so it
+            // carries no edge key: the foreign Worker is not Bynk's and
+            // never receives one.
+            "service SERVICE_BILLING legacy-billing (foreign Worker; not provisioned)\ndeploy shop-billing\n"
         );
         let json: serde_json::Value =
             serde_json::from_str(&plan_report(&plan, DeployFormat::Json)).unwrap();

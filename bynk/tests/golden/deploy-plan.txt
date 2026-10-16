@@ -296,9 +296,9 @@ orphan kv gone KV_SESSIONS
 deploy api
 
 # interop I5: a foreign Worker beside a project context
-secret set BYNK_CALL_SECRET (managed)
+secret set BYNK_CALL_FROM_SHOP__CHECKOUT (managed)
 deploy shop-payment
 service SERVICE_BILLING legacy-billing (foreign Worker; not provisioned)
-secret set BYNK_CALL_SECRET (managed)
+secret set BYNK_CALL_TO_SHOP__PAYMENT (managed)
 deploy shop-checkout
 order shop-payment → shop-checkout
