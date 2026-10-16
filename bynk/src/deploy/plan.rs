@@ -65,7 +65,10 @@ pub(crate) struct Plan<'a> {
 #[derive(Debug, Serialize)]
 struct ContextPlan<'a> {
     worker: &'a str,
-    kv: Option<PlanKv<'a>>,
+    /// One line per KV namespace the Worker binds: the bare `KV` first, then
+    /// each derived instance in binding order (S4b, #1967). Empty for a
+    /// context with no KV.
+    kv: Vec<PlanKv<'a>>,
     /// One line per queue this context consumes, in name order.
     queues: Vec<PlanQueue<'a>>,
     /// #1796: one line per Durable Object class the push declares in
@@ -90,8 +93,11 @@ struct ContextPlan<'a> {
 
 #[derive(Debug, Serialize)]
 struct PlanKv<'a> {
+    /// `KV` for the bare `Kv`, `KV_<SNAKE>` for a derived instance.
+    binding: &'a str,
     action: &'static str,
-    namespace: &'a str,
+    /// The namespace's account-facing title ([`kv_title`]).
+    namespace: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -331,6 +337,15 @@ pub fn run(
         }
     };
 
+    // Review of #1974: namespace titles are account-wide, and a derived
+    // instance's joins two names with the separator Worker names already use,
+    // so two can coincide. Refused before the plan, `--dry-run` included,
+    // rather than met as wrangler's own error partway through a deploy.
+    if let Some(message) = kv_title_collision(&resources, &opts.environment) {
+        eprintln!("bynk: {message}");
+        return ExitCode::FAILURE;
+    }
+
     let plan = derive_plan(
         &order,
         &resources,
@@ -349,14 +364,16 @@ pub fn run(
     // leaves an orphan nobody can find again. A queue's name comes from the
     // source, so CI creating one loses nothing: the next run derives the same
     // name and finds the same queue (ADR 0194 D2).
-    for worker in &order {
-        let recorded = recorded_kv(&lock, worker, &opts.environment);
-        if should_refuse_unrecorded_ci(resources[worker].needs_kv, recorded, is_ci()) {
-            eprintln!(
-                "bynk: KV namespace for `{worker}` is unrecorded; provision locally first and commit {LOCK_FILE}"
-            );
-            return ExitCode::FAILURE;
-        }
+    // Per namespace (S4b, #1967): each derived instance's id is minted too.
+    if is_ci()
+        && let Some((worker, binding)) =
+            first_unrecorded_kv(&order, &resources, &lock, &opts.environment)
+    {
+        eprintln!(
+            "bynk: {} is unrecorded; provision locally first and commit {LOCK_FILE}",
+            kv_namespace_noun(worker, binding)
+        );
+        return ExitCode::FAILURE;
     }
     let probe = probe::detect(
         tb,
@@ -387,10 +404,10 @@ pub fn run(
     // checking; a first deploy has nothing to check drift against). `None`
     // (no wrangler, or the call failed) falls back to trusting the ledger
     // unconditionally, exactly as every deploy before this slice did.
-    let live_kv_ids = if order
-        .iter()
-        .any(|w| resources[w].needs_kv && recorded_kv(&lock, w, &opts.environment).is_some())
-    {
+    let live_kv_ids = if order.iter().any(|w| {
+        kv_bindings(&resources[w])
+            .any(|b| recorded_kv_binding(&lock, w, b, &opts.environment).is_some())
+    }) {
         live_kv_namespace_ids(&probe.provenance, project_root)
     } else {
         None
@@ -480,7 +497,7 @@ pub fn run(
     // only after every selected context has pushed cleanly: a failed deploy
     // above already returned, so a mid-flight ledger never reaches this.
     if opts.prune && plan.orphans.has_prunable() {
-        if !confirm_prune(opts.yes, &plan.orphans) {
+        if !confirm_prune(opts.yes, &plan.orphans, &opts.environment) {
             return ExitCode::FAILURE;
         }
         if let Err(e) = prune_orphans(
@@ -570,7 +587,12 @@ pub(crate) fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
             // do, and a reader should see it before the noise of what's being
             // pushed (slice 5).
             for kv in &plan.orphans.kv {
-                out.push_str(&format!("orphan kv {kv}\n"));
+                match &kv.binding {
+                    None => out.push_str(&format!("orphan kv {}\n", kv.worker)),
+                    Some(binding) => {
+                        out.push_str(&format!("orphan kv {} {binding}\n", kv.worker));
+                    }
+                }
             }
             for worker in &plan.orphans.workers {
                 out.push_str(&format!("orphan worker {worker}\n"));
@@ -579,8 +601,16 @@ pub(crate) fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
                 out.push_str(&format!("orphan queue {queue}\n"));
             }
             for context in &plan.contexts {
-                if let Some(kv) = &context.kv {
-                    out.push_str(&format!("kv {} {}\n", kv.action, kv.namespace));
+                for kv in &context.kv {
+                    // The bare line is unchanged; an instance names its binding.
+                    if is_bare_kv(kv.binding) {
+                        out.push_str(&format!("kv {} {}\n", kv.action, kv.namespace));
+                    } else {
+                        out.push_str(&format!(
+                            "kv {} {} ({})\n",
+                            kv.action, kv.namespace, kv.binding
+                        ));
+                    }
                 }
                 for queue in &context.queues {
                     out.push_str(&format!("queue {} {}\n", queue.action, queue.queue));
@@ -667,14 +697,19 @@ pub(crate) fn derive_plan<'a>(
                 let declared = &resources[worker];
                 ContextPlan {
                     worker,
-                    kv: declared.needs_kv.then(|| PlanKv {
-                        action: if recorded_kv(lock, worker, environment).is_some() {
-                            "reuse"
-                        } else {
-                            "create"
-                        },
-                        namespace: worker,
-                    }),
+                    kv: kv_bindings(declared)
+                        .map(|binding| PlanKv {
+                            binding,
+                            action: if recorded_kv_binding(lock, worker, binding, environment)
+                                .is_some()
+                            {
+                                "reuse"
+                            } else {
+                                "create"
+                            },
+                            namespace: kv_title(worker, binding, environment),
+                        })
+                        .collect(),
                     queues: declared
                         .queues
                         .iter()
@@ -724,8 +759,49 @@ pub(crate) fn derive_plan<'a>(
     }
 }
 
-fn should_refuse_unrecorded_ci(needs_kv: bool, recorded: Option<&str>, ci: bool) -> bool {
-    needs_kv && recorded.is_none() && ci
+/// Two of the project's KV namespaces that would share one account-facing
+/// title under `environment` ([`kv_title`]), described for the user: Worker
+/// `shop` with `capability CartSessions` and Worker `shop-cart` with
+/// `capability Sessions` both give `shop-cart-sessions`. `None` when every
+/// title is distinct. Checked across the whole project, not just `--context`'s
+/// selection, since titles are account-wide.
+pub(crate) fn kv_title_collision(
+    resources: &BTreeMap<String, Resources>,
+    environment: &str,
+) -> Option<String> {
+    let mut seen: BTreeMap<String, (&str, &str)> = BTreeMap::new();
+    for (worker, declared) in resources {
+        for binding in kv_bindings(declared) {
+            let title = kv_title(worker, binding, environment);
+            if let Some((first_worker, first_binding)) =
+                seen.insert(title.clone(), (worker.as_str(), binding))
+            {
+                return Some(format!(
+                    "{} and {} would both be titled `{title}` on the account; rename a capability or context so they differ",
+                    kv_namespace_noun(first_worker, first_binding),
+                    kv_namespace_noun(worker, binding)
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// The first KV namespace in `order` with no recorded id, as `(worker,
+/// binding)`: what CI refuses to mint, since an id created there and never
+/// committed is an orphan nobody can find again. Every namespace counts, the
+/// bare `KV` and each derived instance alike (S4b, #1967).
+fn first_unrecorded_kv<'a>(
+    order: &'a [String],
+    resources: &'a BTreeMap<String, Resources>,
+    lock: &DeployLock,
+    environment: &str,
+) -> Option<(&'a str, &'a str)> {
+    order.iter().find_map(|worker| {
+        kv_bindings(&resources[worker])
+            .find(|binding| recorded_kv_binding(lock, worker, binding, environment).is_none())
+            .map(|binding| (worker.as_str(), binding))
+    })
 }
 
 pub(crate) fn requires_interactive_confirmation(yes: bool, stdin_is_terminal: bool) -> bool {
@@ -832,18 +908,11 @@ pub(crate) mod tests {
         let declared = project(vec![("api", Resources::default().needs_kv())]);
         let fresh = DeployLock::default();
         assert_eq!(
-            plan_of(&order, &declared, &fresh).contexts[0]
-                .kv
-                .as_ref()
-                .unwrap()
-                .action,
+            plan_of(&order, &declared, &fresh).contexts[0].kv[0].action,
             "create"
         );
         assert_eq!(
-            plan_of(&order, &declared, &with_kv(DeployLock::default(), "api")).contexts[0]
-                .kv
-                .as_ref()
-                .unwrap()
+            plan_of(&order, &declared, &with_kv(DeployLock::default(), "api")).contexts[0].kv[0]
                 .action,
             "reuse"
         );
@@ -855,7 +924,7 @@ pub(crate) mod tests {
             )
             .contexts[0]
                 .kv
-                .is_none(),
+                .is_empty(),
             "a context declaring no KV gets no KV line"
         );
     }
@@ -1054,9 +1123,79 @@ pub(crate) mod tests {
             }
             .dry_run
         );
-        assert!(should_refuse_unrecorded_ci(true, None, true));
-        assert!(!should_refuse_unrecorded_ci(true, Some("id"), true));
-        assert!(!should_refuse_unrecorded_ci(true, None, false));
+    }
+
+    /// Review of #1974: an instance title another Worker's namespace already
+    /// takes is refused, naming both; distinct titles pass.
+    #[test]
+    fn a_kv_title_two_namespaces_would_share_is_refused() {
+        let colliding = project(vec![
+            (
+                "shop",
+                Resources::default().kv_instances(&["KV_CART_SESSIONS"]),
+            ),
+            (
+                "shop-cart",
+                Resources::default().kv_instances(&["KV_SESSIONS"]),
+            ),
+        ]);
+        let message = kv_title_collision(&colliding, "default").expect("a collision");
+        assert!(
+            message.contains("`shop-cart-sessions`")
+                && message.contains("`KV_CART_SESSIONS` for `shop`")
+                && message.contains("`KV_SESSIONS` for `shop-cart`"),
+            "{message}"
+        );
+        // An instance title equal to another Worker's bare namespace title.
+        let bare = project(vec![
+            ("shop", Resources::default().kv_instances(&["KV_CART"])),
+            ("shop-cart", Resources::default().needs_kv()),
+        ]);
+        assert!(kv_title_collision(&bare, "default").is_some());
+        let distinct = project(vec![(
+            "shop-cart",
+            Resources::default()
+                .needs_kv()
+                .kv_instances(&["KV_PRICE_CACHE", "KV_SESSIONS"]),
+        )]);
+        assert_eq!(kv_title_collision(&distinct, "staging"), None);
+    }
+
+    /// S4b (#1967): CI refuses any unrecorded namespace, including an
+    /// instance whose Worker's bare namespace is recorded.
+    #[test]
+    fn ci_refuses_the_first_unrecorded_namespace_bare_or_instance() {
+        use crate::deploy::ledger::tests::with_kv_instance;
+        let order = names(&["shop-cart"]);
+        let declared = project(vec![(
+            "shop-cart",
+            Resources::default()
+                .needs_kv()
+                .kv_instances(&["KV_PRICE_CACHE", "KV_SESSIONS"]),
+        )]);
+        assert_eq!(
+            first_unrecorded_kv(&order, &declared, &DeployLock::default(), "default"),
+            Some(("shop-cart", "KV"))
+        );
+        let bare = with_kv(DeployLock::default(), "shop-cart");
+        assert_eq!(
+            first_unrecorded_kv(&order, &declared, &bare, "default"),
+            Some(("shop-cart", "KV_PRICE_CACHE"))
+        );
+        let all = with_kv_instance(
+            with_kv_instance(bare, "shop-cart", "KV_PRICE_CACHE"),
+            "shop-cart",
+            "KV_SESSIONS",
+        );
+        assert_eq!(
+            first_unrecorded_kv(&order, &declared, &all, "default"),
+            None
+        );
+        assert_eq!(
+            first_unrecorded_kv(&order, &declared, &all, "staging"),
+            Some(("shop-cart", "KV")),
+            "recorded under another environment is unrecorded here"
+        );
     }
 
     #[test]

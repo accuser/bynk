@@ -134,8 +134,8 @@ build failure exits non-zero before serving.
 **Notes**
 
 - `bynk dev` provisions nothing. For `bynk dev -- --remote`, a prior
-  [`bynk deploy`](#bynk-deploy) must have recorded the KV namespace id in
-  `bynk.deploy.lock`.
+  [`bynk deploy`](#bynk-deploy) must have recorded every KV namespace id the
+  Worker binds (the bare `KV` and each derived instance) in `bynk.deploy.lock`.
 - `wrangler` is resolved with the same provenance ordering as `doctor`
   (project-local `node_modules/.bin` → `PATH` → `npx`). An `npx` resolution is
   surfaced as a notice — it downloads on first use.
@@ -206,7 +206,8 @@ Per context, the plan carries one line per resource it declares:
 
 | Plan line | Meaning |
 |---|---|
-| `kv create\|reuse <namespace>` | A KV namespace is created, or its recorded id reused. |
+| `kv create\|reuse <namespace>` | A KV namespace is created, or its recorded id reused. A derived instance's line ends with its binding (`kv create shop-cart-sessions (KV_SESSIONS)`). In `--format json` the context's `"kv"` is a list of `{"binding", "action", "namespace"}`, empty for a context with no KV. |
+| `orphan kv <worker> [<binding>]` | A recorded KV namespace the build no longer declares: a removed context's, or a derived instance its context dropped or renamed. Deleted only by `--prune`, behind its own confirmation. In `--format json`, `"orphans": {"kv": [{"worker", "binding"?}]}`, with no `binding` for the bare namespace. |
 | `queue create\|reuse <name>` | A queue is provisioned before the push, which `wrangler deploy` will not do for you. `reuse` forecasts that it already exists; existence is checked against Cloudflare at provision time regardless, so a queue deleted out-of-band is restored. |
 | `durable object <Class> (<storage>; advisory — Cloudflare reconciles it)` | One line per Durable Object class (each agent, and a context's events fan-out) the push declares in the config's `exports` map. **Advisory**: Cloudflare compares the declared classes with the Worker's namespaces on every deploy and creates what's missing, and `bynk` keeps no record of them, so this states what the push will declare, never which namespaces already exist. In `--format json` it is `"durable_objects": [{"class": …, "storage": "sqlite", "reconciled_by": "Cloudflare"}]`. |
 | `deploy\|redeploy <worker>` | The Worker is pushed; `redeploy` when the ledger has pushed it before. |
@@ -214,7 +215,8 @@ Per context, the plan carries one line per resource it declares:
 Each context's Cloudflare ids and its deployed state are recorded in the
 committed, secret-free `bynk.deploy.lock` at the project root, written as each
 resource lands. A recorded id is reused on later deploys. CI refuses to create an
-unrecorded namespace; provision it locally and commit the lock file first. That
+unrecorded namespace, the bare one or any derived instance's; provision it
+locally and commit the lock file first. That
 refusal covers KV alone — a queue is addressed by the name in your source, so CI
 creating one strands nothing.
 

@@ -83,6 +83,11 @@ pub(crate) const EVENTS_FANOUT_CLASS_NAME: &str = "__EventsFanout";
 /// remote Wrangler command runs.
 pub const KV_NAMESPACE_ID_PLACEHOLDER: &str = "<KV_NAMESPACE_ID>";
 
+/// The bare `Kv`'s binding (`KV`), re-exported for `bynk deploy`, which reads
+/// generated configs and tells the bare namespace from derived instances by
+/// it (S4b, #1967).
+pub use bynk_check::firstparty::KV_BINDING_NAME;
+
 /// #1883, slice 1b: the `[assets]` block for a Worker that ships static files.
 /// `directory` is the Worker's own assets directory
 /// ([`crate::project::WORKER_ASSETS_DIR`]), beside — never containing — its
@@ -393,15 +398,15 @@ pub(crate) fn service_binding(target: &str) -> WorkerBinding {
     }
 }
 
-/// The KV namespace binding the cloudflare adapter's `Kv` reads. Private:
-/// nothing outside this file reads it by name. Its one read is the literal in
-/// `bynk-std`'s `cloudflare.binding.ts`, pinned to `KV_BINDING_NAME` by a test.
 /// S4a (#1966): the deploy-time id placeholder of a derived KV instance's
 /// `[[kv_namespaces]]` entry: `KV_SESSIONS` → `<KV_SESSIONS_ID>`.
 pub fn kv_instance_id_placeholder(binding: &str) -> String {
     format!("<{binding}_ID>")
 }
 
+/// The bare KV namespace binding the cloudflare adapter's `Kv` reads. Its one
+/// TypeScript read is the default of `WorkersKv`'s `binding` parameter in
+/// `bynk-std`'s `cloudflare.binding.ts`, pinned to `KV_BINDING_NAME` by a test.
 fn kv_binding() -> WorkerBinding {
     WorkerBinding {
         name: bynk_check::firstparty::KV_BINDING_NAME.to_string(),
@@ -479,90 +484,101 @@ fn set_string_preserving_decor(item: &mut toml_edit::Item, s: &str) {
     *item = toml_edit::Item::Value(new_value);
 }
 
-/// S4a (#1966): refuse a generated `wrangler.toml` that declares a derived
-/// capability's KV namespace (`capability Sessions = Kv` → `KV_SESSIONS`).
-/// Provisioning one namespace per instance, and recording each in the deploy
-/// ledger, is #1967; until then `bynk deploy` and `bynk dev --remote` stop
-/// here rather than send Cloudflare an `<KV_SESSIONS_ID>` placeholder, or a
-/// Worker whose instances all read one namespace. Only the bare
-/// [`bynk_check::firstparty::KV_BINDING_NAME`] passes.
-pub fn refuse_kv_instances(text: &str) -> Result<(), String> {
-    let doc: toml_edit::DocumentMut = text
-        .parse()
-        .map_err(|e| format!("invalid wrangler.toml: {e}"))?;
-    let instances: Vec<&str> = doc
-        .get("kv_namespaces")
-        .and_then(|i| i.as_array_of_tables())
-        .into_iter()
-        .flatten()
-        .filter_map(|t| t.get("binding")?.as_str())
-        .filter(|b| *b != bynk_check::firstparty::KV_BINDING_NAME)
-        .collect();
-    match instances.as_slice() {
-        [] => Ok(()),
-        names => Err(format!(
-            "this Worker declares a derived capability's KV namespace ({}), which `bynk deploy` cannot provision yet (#1967); deploy it by hand with `wrangler` for now",
-            names
-                .iter()
-                .map(|n| format!("`{n}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+/// The deploy-time placeholder a `[[kv_namespaces]]` entry for `binding`
+/// carries until `bynk deploy` materialises it: [`KV_NAMESPACE_ID_PLACEHOLDER`]
+/// for the bare `KV`, [`kv_instance_id_placeholder`] for a derived instance
+/// (S4b, #1967).
+pub fn kv_id_placeholder(binding: &str) -> String {
+    if binding == bynk_check::firstparty::KV_BINDING_NAME {
+        KV_NAMESPACE_ID_PLACEHOLDER.to_string()
+    } else {
+        kv_instance_id_placeholder(binding)
     }
 }
 
-/// Whether a generated `wrangler.toml`'s KV namespace id is still the
-/// deploy-time placeholder — the same condition [`materialise_kv_namespace_id`]
-/// itself checks internally before writing, exposed separately so a caller
-/// can decide whether materialising is needed at all *before* doing the
-/// (possibly fallible) work of finding the real id to substitute — e.g.
-/// `bynk dev --remote` skipping a lock-file lookup entirely for a project
-/// that either has no KV binding or is already materialised.
-pub fn wrangler_needs_kv_materialisation(text: &str) -> Result<bool, String> {
+/// S4b (#1967): the account-facing title stem of a derived instance's KV
+/// namespace, `<worker>-<capability, kebab>`: `shop-cart` and `KV_SESSIONS`
+/// give `shop-cart-sessions`, `KV_PRICE_CACHE` gives `shop-cart-price-cache`.
+/// Read off the binding, which is a function of the capability's name, so a
+/// renamed capability is a new title. `bynk deploy` environment-qualifies it.
+pub fn kv_instance_title(worker: &str, binding: &str) -> String {
+    let prefix = format!("{}_", bynk_check::firstparty::KV_BINDING_NAME);
+    let stem = binding.strip_prefix(&prefix).unwrap_or(binding);
+    format!("{worker}-{}", stem.to_ascii_lowercase().replace('_', "-"))
+}
+
+/// The bindings of a generated `wrangler.toml`'s `[[kv_namespaces]]` entries
+/// whose `id` is still that binding's deploy-time placeholder
+/// ([`kv_id_placeholder`]), in file order: what [`materialise_kv_namespace_ids`]
+/// would patch. Exposed so a caller can learn which ids it needs before doing
+/// the (possibly fallible) work of finding them, as `bynk dev --remote` does
+/// before it reads the ledger. Empty for a config with no KV, or one already
+/// materialised.
+pub fn kv_bindings_needing_ids(text: &str) -> Result<Vec<String>, String> {
     let doc: toml_edit::DocumentMut = text
         .parse()
         .map_err(|e| format!("invalid wrangler.toml: {e}"))?;
-    Ok(current_kv_namespace_id(&doc) == Some(KV_NAMESPACE_ID_PLACEHOLDER))
+    Ok(kv_entries(&doc)
+        .filter(|(binding, id)| *id == kv_id_placeholder(binding))
+        .map(|(binding, _)| binding.to_string())
+        .collect())
 }
 
-/// Materialise the deploy-time KV namespace id placeholder in a generated
-/// `wrangler.toml`'s text, structurally. Parses `text` and, if (and only
-/// if) the first `[[kv_namespaces]]` entry's `id` is currently *exactly*
-/// [`KV_NAMESPACE_ID_PLACEHOLDER`], replaces it with `id`.
+/// Materialise deploy-time KV namespace ids in a generated `wrangler.toml`'s
+/// text, structurally, by binding (S4b, #1967). Each `[[kv_namespaces]]` entry
+/// whose binding has an id in `ids`, and whose `id` is currently *exactly* that
+/// binding's placeholder ([`kv_id_placeholder`]), gets the id; the decor around
+/// the value (the `# set at deploy time` note) is kept.
 ///
-/// Any other state — no `[[kv_namespaces]]` section at all, or an `id`
-/// that's already been materialised to a real value — is a **no-op**,
-/// returning `text` unchanged (byte-for-byte: the document is never
-/// re-serialised in this branch, so there's nothing for a caller to
-/// mistakenly treat as a real write). This mirrors the exact gate the old
-/// `text.contains(KV_NAMESPACE_ID_PLACEHOLDER)` check enforced; it is not a
-/// general "always overwrite with the given id" operation. Widening it into
-/// a re-provisioning operation is a different feature, out of scope here
-/// (#1305's own Decision B).
-pub fn materialise_kv_namespace_id(text: &str, id: &str) -> Result<String, String> {
+/// Any other state — no `[[kv_namespaces]]` section, an entry already
+/// materialised, a binding `ids` doesn't name — is left alone, and when nothing
+/// changes `text` is returned unchanged (byte-for-byte: the document is never
+/// re-serialised in that case, so there's nothing for a caller to mistake for
+/// a real write). It is not a general "overwrite with the given id" operation:
+/// re-provisioning is a different feature (#1305's Decision B).
+pub fn materialise_kv_namespace_ids(
+    text: &str,
+    ids: &std::collections::BTreeMap<String, String>,
+) -> Result<String, String> {
     let mut doc: toml_edit::DocumentMut = text
         .parse()
         .map_err(|e| format!("invalid wrangler.toml: {e}"))?;
-    if current_kv_namespace_id(&doc) != Some(KV_NAMESPACE_ID_PLACEHOLDER) {
-        return Ok(text.to_string());
-    }
-    let item = doc
+    let mut changed = false;
+    if let Some(entries) = doc
         .get_mut("kv_namespaces")
         .and_then(|i| i.as_array_of_tables_mut())
-        .and_then(|arr| arr.get_mut(0))
-        .and_then(|t| t.get_mut("id"))
-        .expect("current_kv_namespace_id returned Some, so this navigation cannot fail");
-    set_string_preserving_decor(item, id);
-    Ok(doc.to_string())
+    {
+        for entry in entries.iter_mut() {
+            let Some(binding) = entry.get("binding").and_then(|b| b.as_str()) else {
+                continue;
+            };
+            let Some(id) = ids.get(binding) else {
+                continue;
+            };
+            let placeholder = kv_id_placeholder(binding);
+            if let Some(item) = entry.get_mut("id")
+                && item.as_str() == Some(placeholder.as_str())
+            {
+                set_string_preserving_decor(item, id);
+                changed = true;
+            }
+        }
+    }
+    Ok(if changed {
+        doc.to_string()
+    } else {
+        text.to_string()
+    })
 }
 
-/// The first `[[kv_namespaces]]` entry's `id`, if the stanza exists at all.
-fn current_kv_namespace_id(doc: &toml_edit::DocumentMut) -> Option<&str> {
-    doc.get("kv_namespaces")?
-        .as_array_of_tables()?
-        .get(0)?
-        .get("id")?
-        .as_str()
+/// Each `[[kv_namespaces]]` entry's `(binding, id)`, in file order; an entry
+/// missing either is skipped.
+fn kv_entries(doc: &toml_edit::DocumentMut) -> impl Iterator<Item = (&str, &str)> {
+    doc.get("kv_namespaces")
+        .and_then(|i| i.as_array_of_tables())
+        .into_iter()
+        .flatten()
+        .filter_map(|t| Some((t.get("binding")?.as_str()?, t.get("id")?.as_str()?)))
 }
 
 #[cfg(test)]
@@ -607,23 +623,35 @@ queue = \"job-intake\"
 max_batch_size = 10
 ";
 
-    /// S4a (#1966): the bare `KV` namespace passes; a derived capability's
-    /// instance is refused, named, until deploy provisions instances (#1967).
-    #[test]
-    fn refuse_kv_instances_passes_only_the_bare_namespace() {
-        assert_eq!(refuse_kv_instances(REPRESENTATIVE), Ok(()));
-        assert_eq!(refuse_kv_instances("name = \"w\"\n"), Ok(()));
-        let instances = "[[kv_namespaces]]\nbinding = \"KV\"\nid = \"<KV_NAMESPACE_ID>\"\n\n[[kv_namespaces]]\nbinding = \"KV_SESSIONS\"\nid = \"<KV_SESSIONS_ID>\"\n";
-        let refused = refuse_kv_instances(instances).unwrap_err();
-        assert!(refused.contains("`KV_SESSIONS`"), "{refused}");
-        assert!(!refused.contains("`KV`"), "{refused}");
+    fn ids(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(b, i)| (b.to_string(), i.to_string()))
+            .collect()
     }
 
+    /// A Worker with the bare namespace and two derived instances (S4b,
+    /// #1967), as the emitter writes it (fixture `1966_derived_kv_workers`
+    /// plus the bare `KV`).
+    const INSTANCES: &str = "\
+[[kv_namespaces]]
+binding = \"KV\"
+id = \"<KV_NAMESPACE_ID>\" # set at deploy time
+
+[[kv_namespaces]]
+binding = \"KV_PRICE_CACHE\"
+id = \"<KV_PRICE_CACHE_ID>\" # set at deploy time
+
+[[kv_namespaces]]
+binding = \"KV_SESSIONS\"
+id = \"<KV_SESSIONS_ID>\" # set at deploy time
+";
+
     #[test]
-    fn materialise_kv_namespace_id_changes_only_the_id() {
+    fn materialise_kv_namespace_ids_changes_only_the_bare_id() {
         let expected = REPRESENTATIVE.replacen("<KV_NAMESPACE_ID>", "abc123", 1);
         assert_eq!(
-            materialise_kv_namespace_id(REPRESENTATIVE, "abc123").unwrap(),
+            materialise_kv_namespace_ids(REPRESENTATIVE, &ids(&[("KV", "abc123")])).unwrap(),
             expected
         );
         // The `# set at deploy time` note survives — the old text-replace
@@ -633,50 +661,109 @@ max_batch_size = 10
         assert!(expected.contains("id = \"abc123\" # set at deploy time"));
     }
 
+    /// S4b (#1967): each instance's placeholder gets its own id, and only its
+    /// own: an id for one binding never lands in another's entry.
     #[test]
-    fn materialise_kv_namespace_id_is_immune_to_reformatting() {
-        let text = "[[kv_namespaces]]\nbinding = \"BYNK_KV\"\nid = \"<KV_NAMESPACE_ID>\" # set at deploy time\n";
-        let patched = materialise_kv_namespace_id(text, "abc123").unwrap();
+    fn materialise_kv_namespace_ids_patches_each_binding_apart() {
+        let all = materialise_kv_namespace_ids(
+            INSTANCES,
+            &ids(&[
+                ("KV", "bare"),
+                ("KV_SESSIONS", "sess"),
+                ("KV_PRICE_CACHE", "price"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            all,
+            INSTANCES
+                .replacen("<KV_NAMESPACE_ID>", "bare", 1)
+                .replacen("<KV_PRICE_CACHE_ID>", "price", 1)
+                .replacen("<KV_SESSIONS_ID>", "sess", 1)
+        );
+        let one =
+            materialise_kv_namespace_ids(INSTANCES, &ids(&[("KV_SESSIONS", "sess")])).unwrap();
+        assert_eq!(one, INSTANCES.replacen("<KV_SESSIONS_ID>", "sess", 1));
+        assert_eq!(
+            kv_bindings_needing_ids(&one).unwrap(),
+            ["KV", "KV_PRICE_CACHE"]
+        );
+    }
+
+    /// A placeholder belongs to its binding: the bare placeholder under an
+    /// instance's binding is not that instance's to patch.
+    #[test]
+    fn materialise_kv_namespace_ids_matches_each_bindings_own_placeholder() {
+        let text = "[[kv_namespaces]]\nbinding = \"KV_SESSIONS\"\nid = \"<KV_NAMESPACE_ID>\"\n";
+        assert_eq!(
+            materialise_kv_namespace_ids(text, &ids(&[("KV_SESSIONS", "sess")])).unwrap(),
+            text
+        );
+        assert!(kv_bindings_needing_ids(text).unwrap().is_empty());
+    }
+
+    #[test]
+    fn materialise_kv_namespace_ids_is_immune_to_reformatting() {
+        let text = "[[kv_namespaces]]\nbinding = \"KV\"\nid = \"<KV_NAMESPACE_ID>\" # set at deploy time\n";
+        let patched = materialise_kv_namespace_ids(text, &ids(&[("KV", "abc123")])).unwrap();
         assert_eq!(
             patched,
-            "[[kv_namespaces]]\nbinding = \"BYNK_KV\"\nid = \"abc123\" # set at deploy time\n"
+            "[[kv_namespaces]]\nbinding = \"KV\"\nid = \"abc123\" # set at deploy time\n"
         );
     }
 
     #[test]
-    fn materialise_kv_namespace_id_is_a_no_op_without_a_kv_namespaces_section() {
+    fn materialise_kv_namespace_ids_is_a_no_op_without_a_kv_namespaces_section() {
         let text = "name = \"api\"\nmain = \"index.ts\"\n";
-        let patched = materialise_kv_namespace_id(text, "abc123").unwrap();
+        let patched = materialise_kv_namespace_ids(text, &ids(&[("KV", "abc123")])).unwrap();
         assert_eq!(patched, text);
     }
 
     #[test]
-    fn materialise_kv_namespace_id_is_a_no_op_once_already_materialised() {
-        let text = "[[kv_namespaces]]\nbinding = \"BYNK_KV\"\nid = \"already-real\"\n";
-        let patched = materialise_kv_namespace_id(text, "abc123").unwrap();
+    fn materialise_kv_namespace_ids_is_a_no_op_once_already_materialised() {
+        let text = "[[kv_namespaces]]\nbinding = \"KV\"\nid = \"already-real\"\n";
+        let patched = materialise_kv_namespace_ids(text, &ids(&[("KV", "abc123")])).unwrap();
         assert_eq!(patched, text);
     }
 
     #[test]
-    fn wrangler_needs_kv_materialisation_matches_materialise_kv_namespace_ids_own_gate() {
-        let placeholder = "[[kv_namespaces]]\nid = \"<KV_NAMESPACE_ID>\"\n";
-        assert!(wrangler_needs_kv_materialisation(placeholder).unwrap());
-
-        let no_kv = "name = \"api\"\n";
-        assert!(!wrangler_needs_kv_materialisation(no_kv).unwrap());
-
-        let already_real = "[[kv_namespaces]]\nid = \"already-real\"\n";
-        assert!(!wrangler_needs_kv_materialisation(already_real).unwrap());
+    fn kv_bindings_needing_ids_matches_materialise_kv_namespace_ids_own_gate() {
+        assert_eq!(
+            kv_bindings_needing_ids(INSTANCES).unwrap(),
+            ["KV", "KV_PRICE_CACHE", "KV_SESSIONS"]
+        );
+        assert!(
+            kv_bindings_needing_ids("name = \"api\"\n")
+                .unwrap()
+                .is_empty()
+        );
+        let already_real = "[[kv_namespaces]]\nbinding = \"KV\"\nid = \"already-real\"\n";
+        assert!(kv_bindings_needing_ids(already_real).unwrap().is_empty());
     }
 
     #[test]
-    fn wrangler_needs_kv_materialisation_rejects_invalid_toml() {
-        assert!(wrangler_needs_kv_materialisation("not = valid = toml = at = all").is_err());
+    fn kv_instance_title_is_the_worker_then_the_capability_in_kebab_case() {
+        assert_eq!(
+            kv_instance_title("shop-cart", "KV_SESSIONS"),
+            "shop-cart-sessions"
+        );
+        assert_eq!(
+            kv_instance_title("shop-cart", "KV_PRICE_CACHE"),
+            "shop-cart-price-cache"
+        );
     }
 
     #[test]
-    fn materialise_kv_namespace_id_rejects_invalid_toml() {
-        assert!(materialise_kv_namespace_id("not = valid = toml = at = all", "abc123").is_err());
+    fn kv_bindings_needing_ids_rejects_invalid_toml() {
+        assert!(kv_bindings_needing_ids("not = valid = toml = at = all").is_err());
+    }
+
+    #[test]
+    fn materialise_kv_namespace_ids_rejects_invalid_toml() {
+        assert!(
+            materialise_kv_namespace_ids("not = valid = toml = at = all", &ids(&[("KV", "x")]))
+                .is_err()
+        );
     }
 }
 

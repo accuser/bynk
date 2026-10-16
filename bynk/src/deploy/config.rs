@@ -37,9 +37,10 @@ struct ServiceBinding {
 
 #[derive(Debug, Deserialize)]
 struct KvNamespaceBinding {
-    // Presence of the stanza, not its `id`, is what `needs_kv` asks — the
-    // `id` itself is only ever read/written structurally by
-    // `bynk_emit::emitter::wrangler::materialise_kv_namespace_id`.
+    /// `KV` for the bare `Kv`, `KV_<SNAKE>` for a derived instance (S4b,
+    /// #1967). The `id` itself is only ever read and written structurally, by
+    /// `bynk_emit::emitter::wrangler::materialise_kv_namespace_ids`.
+    binding: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -93,8 +94,12 @@ pub(crate) struct Resources {
     /// what the push will declare, never which namespaces already exist (the
     /// principle of ADR 0194 D1).
     pub(crate) durable_objects: Vec<DurableObject>,
-    /// Still carries the KV placeholder, i.e. needs a namespace.
+    /// Declares the bare `KV` namespace, the cloudflare adapter's `Kv`.
     pub(crate) needs_kv: bool,
+    /// S4b (#1967): the bindings of the derived instances' namespaces
+    /// (`capability Sessions = Kv` → `KV_SESSIONS`), in binding order. Each is
+    /// its own namespace, provisioned and recorded apart from the bare one.
+    pub(crate) kv_instances: Vec<String>,
     /// Slice 3: the secret names this context's handlers will read from `env` —
     /// an `actor`'s `auth` secret, read from the emitted `bynk-secrets.json`.
     ///
@@ -123,6 +128,7 @@ impl Default for Resources {
             queues: Vec::new(),
             durable_objects: Vec::new(),
             needs_kv: false,
+            kv_instances: Vec::new(),
             declared_secrets: Vec::new(),
             read_secrets: Vec::new(),
             reads_complete: true,
@@ -199,7 +205,6 @@ fn read_secrets_manifest(worker_dir: &Path) -> Result<SecretsManifest, String> {
 fn read_resources(config: &Path) -> Result<Resources, String> {
     let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
     let parsed: WranglerConfig = toml::from_str(&text).map_err(|e| e.to_string())?;
-    bynk_emit::emitter::wrangler::refuse_kv_instances(&text)?;
     // Beside the config, not in it: secrets are a runtime store rather than
     // configuration, so `wrangler.toml` has no stanza to carry them.
     let secrets = read_secrets_manifest(
@@ -242,7 +247,20 @@ fn read_resources(config: &Path) -> Result<Resources, String> {
         binds_to: parsed.services.into_iter().map(|s| s.service).collect(),
         queues,
         durable_objects,
-        needs_kv: !parsed.kv_namespaces.is_empty(),
+        needs_kv: parsed
+            .kv_namespaces
+            .iter()
+            .any(|ns| ns.binding == bynk_emit::emitter::wrangler::KV_BINDING_NAME),
+        kv_instances: {
+            let mut instances: Vec<String> = parsed
+                .kv_namespaces
+                .into_iter()
+                .map(|ns| ns.binding)
+                .filter(|b| b != bynk_emit::emitter::wrangler::KV_BINDING_NAME)
+                .collect();
+            instances.sort();
+            instances
+        },
         declared_secrets: secrets.declared,
         read_secrets: secrets.read,
         reads_complete: secrets.read_complete,
@@ -334,19 +352,21 @@ pub(crate) fn read_contracts_manifest(worker_dir: &Path) -> Result<ContractsMani
 }
 
 // P7.4 (#1305): a thin wrapper over `bynk_emit::emitter::wrangler::
-// materialise_kv_namespace_id` — the structural read-modify-write closing
+// materialise_kv_namespace_ids` — the structural read-modify-write closing
 // R7.6/R8.20. `-> bool` and the read-then-write shape are kept unchanged:
 // both callers (`deploy/provisioning.rs`, `deploy/ledger.rs`) already treat
 // `false` uniformly as "could not write" and don't need to distinguish read
 // failure from a malformed file from a write failure.
-pub(crate) fn materialise_kv_id(path: &Path, id: &str) -> bool {
+//
+// S4b (#1967): by binding, so each of a Worker's namespaces gets its own id.
+pub(crate) fn materialise_kv_ids(path: &Path, ids: &BTreeMap<String, String>) -> bool {
     let Ok(text) = std::fs::read_to_string(path) else {
         return false;
     };
-    let Ok(patched) = bynk_emit::emitter::wrangler::materialise_kv_namespace_id(&text, id) else {
+    let Ok(patched) = bynk_emit::emitter::wrangler::materialise_kv_namespace_ids(&text, ids) else {
         return false;
     };
-    // Review of #1305, finding 3: `materialise_kv_namespace_id` returning
+    // Review of #1305, finding 3: `materialise_kv_namespace_ids` returning
     // `text` unchanged (no `[[kv_namespaces]]` at all, or already
     // materialised) is a no-op by design — skip the write rather than
     // reopening the file to write back what's already there, restoring the
@@ -378,6 +398,23 @@ pub(crate) fn env_qualify(environment: &str, name: &str) -> String {
     }
 }
 
+/// The account-facing title of one of `worker`'s KV namespaces under
+/// `environment` (S4b, #1967). The bare `KV`'s is the Worker's name, as it has
+/// always been, so a live namespace is never renamed under an existing
+/// project. A derived instance's is `<worker>-<capability, kebab>`,
+/// environment-qualified ([`env_qualify`]): `shop-cart-sessions`, and
+/// `shop-cart-sessions-staging` under `--env staging`.
+pub(crate) fn kv_title(worker: &str, binding: &str, environment: &str) -> String {
+    if binding == bynk_emit::emitter::wrangler::KV_BINDING_NAME {
+        worker.to_string()
+    } else {
+        env_qualify(
+            environment,
+            &bynk_emit::emitter::wrangler::kv_instance_title(worker, binding),
+        )
+    }
+}
+
 /// Synthesise a `[env.<name>]` table covering every binding Wrangler does not
 /// inherit into a named environment, and append it to the generated config —
 /// slice 4, DECISIONs B and C combined.
@@ -405,7 +442,8 @@ pub(crate) fn env_qualify(environment: &str, name: &str) -> String {
 /// as text. The original bytes are never touched.
 ///
 /// Queue names and Service Binding targets are environment-qualified
-/// ([`env_qualify`]); KV gets the resolved id for this environment; Durable
+/// ([`env_qualify`]); each KV namespace gets its resolved id for this
+/// environment, by binding (S4b, #1967); Durable
 /// Object bindings, `exports`, and cron triggers carry no per-environment
 /// identity and are copied verbatim.
 ///
@@ -422,7 +460,9 @@ pub(crate) fn env_qualify(environment: &str, name: &str) -> String {
 pub(crate) fn synthesise_environment_block(
     config_text: &str,
     environment: &str,
-    kv_id: Option<&str>,
+    // The resolved id of each KV namespace, by binding. Empty for a context
+    // with no KV.
+    kv_ids: &BTreeMap<String, String>,
 ) -> Result<String, String> {
     let doc: toml::Table = config_text
         .parse()
@@ -430,13 +470,18 @@ pub(crate) fn synthesise_environment_block(
 
     let mut env_block = toml::Table::new();
 
-    if let Some(id) = kv_id
+    if !kv_ids.is_empty()
         && let Some(toml::Value::Array(namespaces)) = doc.get("kv_namespaces")
     {
         let mut namespaces = namespaces.clone();
         for ns in &mut namespaces {
-            if let toml::Value::Table(t) = ns {
-                t.insert("id".to_string(), toml::Value::String(id.to_string()));
+            if let toml::Value::Table(t) = ns
+                && let Some(id) = t
+                    .get("binding")
+                    .and_then(toml::Value::as_str)
+                    .and_then(|b| kv_ids.get(b))
+            {
+                t.insert("id".to_string(), toml::Value::String(id.clone()));
             }
         }
         env_block.insert("kv_namespaces".to_string(), toml::Value::Array(namespaces));
@@ -538,6 +583,11 @@ pub(crate) mod tests {
             self.needs_kv = true;
             self
         }
+        /// Derived KV instances, by binding (S4b, #1967).
+        pub(crate) fn kv_instances(mut self, bindings: &[&str]) -> Self {
+            self.kv_instances = names(bindings);
+            self
+        }
         /// The secret names the emitted manifest carries — an `actor`'s `auth`
         /// secret, which the compiler proved this Worker reads.
         pub(crate) fn declares(mut self, secrets: &[&str]) -> Self {
@@ -601,7 +651,7 @@ binding = "PAYMENT"
 service = "payment"
 
 [[kv_namespaces]]
-binding = "BYNK_KV"
+binding = "KV"
 id = "<KV_NAMESPACE_ID>" # set at deploy time
 
 [[durable_objects.bindings]]
@@ -620,7 +670,53 @@ queue = "jobs"
 max_batch_size = 10
 "#;
 
+    fn kv_ids(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(b, i)| (b.to_string(), i.to_string()))
+            .collect()
+    }
+
     // ---- #835 slice 4: environments -------------------------------------
+
+    /// S4b (#1967): each namespace in the `[env.<name>]` block gets its own
+    /// id, by binding, never another's.
+    #[test]
+    fn synthesise_environment_block_gives_each_kv_namespace_its_own_id() {
+        let config = "name = \"shop-cart\"\n\n[[kv_namespaces]]\nbinding = \"KV\"\nid = \"<KV_NAMESPACE_ID>\"\n\n[[kv_namespaces]]\nbinding = \"KV_SESSIONS\"\nid = \"<KV_SESSIONS_ID>\"\n";
+        let out = synthesise_environment_block(
+            config,
+            "staging",
+            &kv_ids(&[("KV", "bare-staging"), ("KV_SESSIONS", "sessions-staging")]),
+        )
+        .unwrap();
+        let doc: toml::Table = out.parse().unwrap();
+        let namespaces = doc["env"]["staging"]["kv_namespaces"].as_array().unwrap();
+        let ids: Vec<(&str, &str)> = namespaces
+            .iter()
+            .map(|ns| (ns["binding"].as_str().unwrap(), ns["id"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            ids,
+            [("KV", "bare-staging"), ("KV_SESSIONS", "sessions-staging")]
+        );
+    }
+
+    #[test]
+    fn kv_titles_keep_the_bare_name_and_qualify_instances() {
+        assert_eq!(kv_title("api", "KV", "default"), "api");
+        // Unqualified for the bare namespace even under `--env`: the live
+        // namespace keeps the title it was created with.
+        assert_eq!(kv_title("api", "KV", "staging"), "api");
+        assert_eq!(
+            kv_title("shop-cart", "KV_SESSIONS", "default"),
+            "shop-cart-sessions"
+        );
+        assert_eq!(
+            kv_title("shop-cart", "KV_PRICE_CACHE", "staging"),
+            "shop-cart-price-cache-staging"
+        );
+    }
 
     #[test]
     fn env_qualify_is_a_no_op_for_default_and_suffixes_otherwise() {
@@ -631,8 +727,12 @@ max_batch_size = 10
 
     #[test]
     fn synthesise_environment_block_covers_every_binding_kind() {
-        let out = synthesise_environment_block(FULL_CONFIG, "staging", Some("kv-staging-id"))
-            .expect("valid TOML in, valid TOML out");
+        let out = synthesise_environment_block(
+            FULL_CONFIG,
+            "staging",
+            &kv_ids(&[("KV", "kv-staging-id")]),
+        )
+        .expect("valid TOML in, valid TOML out");
 
         // The top level is untouched — it still serves a plain `bynk deploy`.
         assert!(
@@ -649,7 +749,7 @@ max_batch_size = 10
         // takes the top level's rather than a copy.
         assert!(!env.contains_key("compatibility_flags"));
 
-        assert_eq!(env["kv_namespaces"][0]["binding"].as_str(), Some("BYNK_KV"));
+        assert_eq!(env["kv_namespaces"][0]["binding"].as_str(), Some("KV"));
         assert_eq!(
             env["kv_namespaces"][0]["id"].as_str(),
             Some("kv-staging-id"),
@@ -709,7 +809,8 @@ max_batch_size = 10
         // `deploy_one` only calls this for a non-default environment, but the
         // function itself staying a faithful no-op at the boundary is worth
         // pinning: "default" must never gain a synthesised block.
-        let out = synthesise_environment_block(FULL_CONFIG, "default", Some("kv-id")).unwrap();
+        let out = synthesise_environment_block(FULL_CONFIG, "default", &kv_ids(&[("KV", "kv-id")]))
+            .unwrap();
         let doc: toml::Table = out.parse().unwrap();
         assert_eq!(
             doc["env"]["default"]["queues"]["consumers"][0]["queue"].as_str(),
@@ -721,7 +822,7 @@ max_batch_size = 10
     #[test]
     fn synthesise_environment_block_is_a_true_no_op_when_nothing_needs_binding() {
         let bare = "name = \"api\"\nmain = \"index.ts\"\n";
-        let out = synthesise_environment_block(bare, "staging", None).unwrap();
+        let out = synthesise_environment_block(bare, "staging", &BTreeMap::new()).unwrap();
         assert_eq!(
             out, bare,
             "a context with no bindable resource appends nothing, not an empty [env.staging]"
@@ -730,7 +831,10 @@ max_batch_size = 10
 
     #[test]
     fn synthesise_environment_block_rejects_unparseable_config() {
-        assert!(synthesise_environment_block("not = valid = toml = =", "staging", None).is_err());
+        assert!(
+            synthesise_environment_block("not = valid = toml = =", "staging", &BTreeMap::new())
+                .is_err()
+        );
     }
 
     #[test]
@@ -905,22 +1009,28 @@ type = "worker"
     }
 
     #[test]
-    fn a_derived_kv_instance_is_refused_until_deploy_provisions_it() {
-        // S4a (#1966): fixture `1966_derived_kv_workers`'s config. Pushing it
-        // would send Cloudflare the `<KV_SESSIONS_ID>` placeholder; #1967
-        // provisions each instance and lifts this.
-        let path = temp_config("kv-instance");
-        std::fs::write(
-            &path,
-            "name = \"shop-cart\"\n\n[[kv_namespaces]]\nbinding = \"KV_SESSIONS\"\nid = \"<KV_SESSIONS_ID>\" # set at deploy time\n",
-        )
-        .unwrap();
-        let err = read_resources(&path).expect_err("an instance is refused");
-        let _ = std::fs::remove_file(&path);
-        assert!(
-            err.contains("`KV_SESSIONS`") && err.contains("#1967"),
-            "{err}"
+    fn the_bare_namespace_and_each_instance_are_read_apart() {
+        // S4b (#1967): fixture `1966_derived_kv_workers`'s namespaces beside
+        // the bare `KV`. The config lists them in emission order; the
+        // instances come back in binding order.
+        let resources = parse_config(
+            "kv-instances",
+            "name = \"shop-cart\"\n\n[[kv_namespaces]]\nbinding = \"KV\"\nid = \"<KV_NAMESPACE_ID>\"\n\n[[kv_namespaces]]\nbinding = \"KV_SESSIONS\"\nid = \"<KV_SESSIONS_ID>\"\n\n[[kv_namespaces]]\nbinding = \"KV_PRICE_CACHE\"\nid = \"<KV_PRICE_CACHE_ID>\"\n",
         );
+        assert!(resources.needs_kv);
+        assert_eq!(
+            resources.kv_instances,
+            names(&["KV_PRICE_CACHE", "KV_SESSIONS"])
+        );
+        let instances_only = parse_config(
+            "kv-instances-only",
+            "name = \"shop-cart\"\n\n[[kv_namespaces]]\nbinding = \"KV_SESSIONS\"\nid = \"<KV_SESSIONS_ID>\"\n",
+        );
+        assert!(
+            !instances_only.needs_kv,
+            "an instance is not the bare namespace"
+        );
+        assert_eq!(instances_only.kv_instances, names(&["KV_SESSIONS"]));
     }
 
     #[test]

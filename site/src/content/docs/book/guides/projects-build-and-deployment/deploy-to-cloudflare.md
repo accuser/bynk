@@ -45,6 +45,7 @@ nothing speculative. If it isn't in the generated `wrangler.toml`, it isn't
 | In your context | What `bynk deploy` does |
 |---|---|
 | `consumes bynk.cloudflare { Kv }` | Creates a KV namespace and records its id |
+| `capability Sessions = Kv` | Creates a KV namespace of its own for that instance, and records its id |
 | An `agent` | Nothing to create — the config declares its Durable Object class, and Cloudflare registers it |
 | `service … from queue("n")` | Creates the queue `n` before pushing |
 | An `on cron` handler | Nothing to create — the schedule rides the config |
@@ -235,6 +236,31 @@ One consequence worth knowing: `--dry-run` never authenticates, which is what
 lets you plan offline — so a plan says `set` for everything, and the skip shows
 up when you actually run.
 
+### Several KV namespaces
+
+Each [derived capability](/book/reference/capabilities/#derived-capabilities-capability-x--k)
+(`capability Sessions = Kv`) is a namespace of its own. The plan gives it a line
+of its own, with its binding:
+
+```
+kv create shop-cart
+kv create shop-cart-price-cache (KV_PRICE_CACHE)
+kv create shop-cart-sessions (KV_SESSIONS)
+deploy shop-cart
+```
+
+The first line is the bare `Kv`'s namespace, titled with the Worker's name as it
+always has been. It appears only if the context uses the bare `Kv`. An
+instance's namespace is titled `<worker>-<capability>`, and gets an
+environment suffix under `--env` (`shop-cart-sessions-staging`). Each id is
+recorded in `bynk.deploy.lock` under its Worker and its binding, and only ever
+written into the generated `wrangler.toml` immediately before the push.
+
+Titles are account-wide, so two of a project's namespaces must not share one:
+Worker `shop` with `capability CartSessions` and Worker `shop-cart` with
+`capability Sessions` would both be `shop-cart-sessions`. `bynk deploy` refuses
+that before planning, `--dry-run` included, and names both namespaces.
+
 ## Multi-context projects
 
 A project with several contexts ships every one of them, in the order their
@@ -327,8 +353,11 @@ queue create job-intake-staging
 deploy commerce-orders-staging
 ```
 
-KV needs no such suffix — its identity is the namespace id Cloudflare hands
-back, already kept apart per environment in `bynk.deploy.lock`.
+KV's identity is the namespace id Cloudflare hands back, already kept apart per
+environment in `bynk.deploy.lock`. The bare `Kv`'s namespace keeps its plain
+title, so no live namespace is ever renamed. A derived instance's title does
+take the suffix (`shop-cart-sessions-staging`), so the environments' namespaces
+are told apart in the dashboard too.
 
 `--env` is the driver's own flag; putting `--env` or `--environment` after
 `--` as well is rejected rather than silently resolved one way or the other:
@@ -349,7 +378,8 @@ it trusts them to three different degrees:
 
 - **KV namespace ids** — the real state. Cloudflare generates the id, and this
   file is the only place it exists, so every developer and CI job deploys to the
-  same namespaces.
+  same namespaces. The bare `Kv`'s are kept by Worker, under `kv`; each derived
+  instance's by Worker and binding, under `kv_instances`.
 - **Which contexts have been deployed** — how `--context` knows whether the
   contexts you bind to are actually live.
 - **Which queues have been created** — a note to itself, so the plan can say
@@ -361,12 +391,13 @@ one: run the first deploy locally, commit `bynk.deploy.lock`, and then let CI
 push subsequent builds. This avoids creating a namespace whose identity cannot
 be committed back to the project.
 
-That restriction is about ids, so it applies to KV alone. CI happily creates a
+That restriction is about ids, so it applies to KV alone, and to every KV
+namespace: an unrecorded derived instance is refused in CI too. CI happily creates a
 queue, because a queue's name comes from your source — the next run derives the
 same name and finds the same queue, with or without the lock file.
 
 After a first deploy, `bynk dev -- --remote` reads the same lock file to fill
-the KV binding — pass the matching `--env` if you deployed to a named one
+every KV binding, the bare one and each instance's — pass the matching `--env` if you deployed to a named one
 (`bynk dev --env staging -- --remote`). Normal local `bynk dev` remains
 entirely local and needs no Cloudflare account.
 
@@ -385,7 +416,19 @@ deploy commerce-orders
 
 A removed context with a KV namespace shows up as **two** lines — the
 namespace and the Worker are separate resources, tracked separately, and
-reported separately. This is a plain diff against your current source; it
+reported separately. A derived instance is an orphan with its context, or on its
+own when its context still deploys but no longer declares it. So is the bare
+namespace, once a context stops using the bare `Kv` (`orphan kv api`). Renaming
+`capability Carts = Kv` to `Baskets` is a new binding, so the plan creates
+`KV_BASKETS` and reports the old one, naming its binding:
+
+```
+orphan kv shop-cart KV_CARTS
+kv create shop-cart-baskets (KV_BASKETS)
+redeploy shop-cart
+```
+
+The data is not moved. Copy it across before you prune the old namespace. This is a plain diff against your current source; it
 never calls Cloudflare, so it works under `--dry-run` too.
 
 Pass `--prune` to delete what's reported — KV namespaces and queues only,
@@ -397,8 +440,9 @@ bynk deploy --prune
 
 ```
 bynk: will delete KV namespace for `payment`
+bynk: will delete KV namespace `shop-cart-carts` for `shop-cart`'s `KV_CARTS`
 bynk: will delete queue `old-jobs`
-Delete 2 resource(s)? [y/N]
+Delete 3 resource(s)? [y/N]
 ```
 
 That confirmation is separate from the one `--yes` already skips for
