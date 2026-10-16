@@ -1,0 +1,2 @@
+bynk.test.principal_identity_mismatch
+this handler binds its caller's identity, but `by Visitor` supplies none

@@ -6,7 +6,6 @@ import * as handlers from "./handlers.js";
 
 export interface Env {
   SHOP_LEDGER: __ServiceBinding;
-  SHOP_ORDER: __ServiceBinding;
 }
 
 export function compose(env: Env) {

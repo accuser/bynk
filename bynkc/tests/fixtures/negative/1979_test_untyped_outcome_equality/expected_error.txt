@@ -1,0 +1,2 @@
+bynk.test.untyped_outcome
+this service outcome is untyped in a test, so `==` cannot compare it with a bare constructor

@@ -5,7 +5,6 @@ import { type __ServiceBinding } from "../../runtime.js";
 import * as handlers from "./handlers.js";
 
 export interface Env {
-  SHOP_LEDGER: __ServiceBinding;
 }
 
 export function compose(env: Env) {

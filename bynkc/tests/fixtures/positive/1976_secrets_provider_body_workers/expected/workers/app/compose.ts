@@ -7,7 +7,6 @@ import * as bynk__binding from "../../bynk-cloudflare.js";
 import * as handlers_tone from "../tone/handlers.js";
 
 export interface Env {
-  TONE: __ServiceBinding;
   GATE: __DurableObjectNamespace;
 }
 

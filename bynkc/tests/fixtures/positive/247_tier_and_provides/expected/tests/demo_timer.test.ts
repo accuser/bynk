@@ -97,7 +97,7 @@ async function test_a_specific_argument_pattern_beats_the_fallback() {
     const deps = __makeTestDeps();
     const { elapsed, rate } = __ns_demo_timer;
     const g = await rate.call("GBP", deps);
-    if (!(__bynkEq(g, 125))) { throw __bynkExpectFailure("tests/timer.test.bynk:14:12", 521, 529, "expect g == 125\n  expected: g == 125\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow((125))); }
+    if (!(g === 125)) { throw __bynkExpectFailure("tests/timer.test.bynk:14:12", 521, 529, "expect g == 125\n  expected: g == 125\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow((125))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -113,7 +113,7 @@ async function test_the_fallback_pattern_applies_to_other_arguments() {
     const deps = __makeTestDeps();
     const { elapsed, rate } = __ns_demo_timer;
     const u = await rate.call("USD", deps);
-    if (!(__bynkEq(u, 100))) { throw __bynkExpectFailure("tests/timer.test.bynk:19:12", 635, 643, "expect u == 100\n  expected: u == 100\n  actual:   " + __bynkShow((u)) + " == " + __bynkShow((100))); }
+    if (!(u === 100)) { throw __bynkExpectFailure("tests/timer.test.bynk:19:12", 635, 643, "expect u == 100\n  expected: u == 100\n  actual:   " + __bynkShow((u)) + " == " + __bynkShow((100))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -129,7 +129,7 @@ async function test_an_advancing_clock_via_returns_each() {
     const deps = __makeTestDeps("an advancing clock via returns each");
     const { elapsed, rate } = __ns_demo_timer;
     const e = await elapsed.call(deps);
-    if (!(__bynkEq(e, 150))) { throw __bynkExpectFailure("tests/timer.test.bynk:25:12", 780, 788, "expect e == 150\n  expected: e == 150\n  actual:   " + __bynkShow((e)) + " == " + __bynkShow((150))); }
+    if (!(e === 150)) { throw __bynkExpectFailure("tests/timer.test.bynk:25:12", 780, 788, "expect e == 150\n  expected: e == 150\n  actual:   " + __bynkShow((e)) + " == " + __bynkShow((150))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

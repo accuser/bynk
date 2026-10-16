@@ -6,7 +6,6 @@ import * as handlers from "./handlers.js";
 import * as handlers_shop_clock from "../shop-clock/handlers.js";
 
 export interface Env {
-  SHOP_CLOCK: __ServiceBinding;
   SHOP_PAYMENT: __ServiceBinding;
 }
 

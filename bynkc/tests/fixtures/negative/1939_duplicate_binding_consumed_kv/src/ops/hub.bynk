@@ -6,6 +6,7 @@ consumes kv
 service intake from queue("job-intake") {
   on message(message: String) -> Effect[QueueResult] given Kv {
     let _ <- Kv.put(message, message)
+    let _ <- kv.store(1)
     Ack
   }
 }

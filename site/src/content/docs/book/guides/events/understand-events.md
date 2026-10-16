@@ -397,6 +397,16 @@ handler on every target too — deliver-and-filter, not a routing difference:
 | **Cloudflare Workers** | Each publishing context gets its own compiler-synthesised fan-out Durable Object. One subscriber's delivery failure is caught and logged without blocking delivery to its siblings. Ordering is preserved *within* one emission (everything a single handler invocation emits) and *across* successive, non-overlapping calls to one agent — but **not** across concurrent invocations of the same agent, since the Durable Object delivers by making an outbound call per subscriber and does not serialise two overlapping deliveries against each other. |
 | **Bundle** (node, browser) | Dispatch is in-process — no Durable Object, no wire. The composed program calls directly into each subscriber's handler. |
 
+On Workers, delivery travels over a Service Binding from the publisher to each
+subscriber. A subscriber that `consumes` its publisher only to name the event
+calls nothing, so it has no binding back, and `bynk deploy` uploads the
+subscriber first and the publisher second. A subscriber that also **calls** a
+service of its publisher, directly or through other contexts, makes the two
+Workers bind each other. Cloudflare rejects an upload whose binding target
+doesn't exist yet, so neither Worker can go first, and `bynk deploy` refuses
+that project and names the publisher. `bynk dev` serves it fine. To deploy it,
+move the services the subscriber calls out of the publishing context.
+
 What the track does **not** yet give you: a delivery retry, a durable log to
 replay from, or ordering across *concurrent* invocations of the same
 publishing agent — measured, not assumed, and found not to hold. A subscriber
