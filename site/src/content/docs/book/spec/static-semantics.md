@@ -1322,6 +1322,19 @@ argument of a service address in a `system`-tier `case`
 (`bynk.test.wire_needs_system`): it hands unvalidated input to the boundary,
 which only a `system` case runs.
 
+A service address in a `case` (`svc.call(…)`, `svc.<VERB>("/path", …)`,
+`svc.schedule("…")`, `svc.message(m)`) has the addressed handler's declared
+return type, an `Effect[T]` (#1934). An http address that carries a `Wire(...)`
+argument, is driven `by Nobody`, or names a method the path declares no handler
+for has type `Effect[HttpOutcome[T]]` instead, where the handler returns
+`Effect[HttpResult[T]]` (`T` is `()` for a method with no handler).
+`HttpOutcome[T]` is the built-in sum `Rejected(BoundaryRejection) |
+Handled(HttpResult[T])`, and `BoundaryRejection` is the built-in sum
+`RefinementViolation(detail: String) | MalformedJson(detail: String) |
+StructuralMismatch(detail: String) | Unauthorized | MethodNotAllowed`. Neither
+type can be named in source. An asset fetch (`svc.GET(asset)`) has type
+`Effect[HttpResult[()]]`.
+
 ### §5.9c Tiers (v0.118)
 
 *(ADR 0153)* A `case` runs at one of three **tiers** — `unit` | `integration` |

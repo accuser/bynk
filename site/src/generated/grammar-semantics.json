@@ -236,10 +236,6 @@
       "summary": "A call-site `by <Actor>` names an actor the target context does not declare and that is not a prelude actor."
     },
     {
-      "code": "bynk.test.untyped_outcome",
-      "summary": "A case calls a method on part of a service call's outcome whose type the case does not know (a value of the handler's result type)."
-    },
-    {
       "code": "bynk.test.wire_needs_system",
       "summary": "A `Wire(...)` raw argument is used outside a `system`-tier service address; `Wire` hands pre-validation input to the boundary and is meaningless at `unit` or in any other position."
     },

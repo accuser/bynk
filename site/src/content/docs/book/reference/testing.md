@@ -33,26 +33,30 @@ A route/schedule the service does not declare is `bynk.test.service_unknown_rout
 `svc.call(...)` on a service with no `on call` handler is
 `bynk.test.service_no_call_handler`.
 
-The outcome (`let r <- api.GET("/x")`) is not typed by the handler's
-return type: the runner recovers its shape at run time. Match or test it,
-and a payload of fixed type binds that type. `Raw(body, contentType)` binds
-`Bytes` and `String`; a message variant (`BadRequest(m)`) or a redirect binds
-`String`. A value of the handler's result type, such as `v` in `Ok(v)`, has
-no type in the case, so calling a method on it, or on a field of it, is
-`bynk.test.untyped_outcome`. Compare it instead, or call the method in a
-source function the case calls.
+The outcome is typed by what the addressed handler returns. `let r <-
+api.GET("/x")` on a handler that returns `Effect[HttpResult[User]]` binds `r`
+as an `HttpResult[User]`, so `Ok(u)` binds `u` as a `User`. The same holds for
+`svc.call(…)`, `svc.schedule("…")` (usually a `Result[(), String]`) and
+`svc.message(m)` (a `QueueResult`, whose `Retry(reason)` binds a `String`). A
+match or `is` test on the outcome is checked like any other: an unknown variant,
+a wrong arity, or a method the payload's type lacks is an error.
 
 ```bynk,fragment
 suite app.web {
-  case "the body is the greeting" {
-    let r <- api.GET("/raw") by Visitor
+  case "the greeting names the visitor" {
+    let r <- api.GET("/hello") by Visitor
     match r {
-      Raw(body, ct) => expect body.length() == 2 && ct.startsWith("text/")
+      Ok(greeting) => expect greeting.startsWith("Hello")
       _ => expect false
     }
   }
 }
 ```
+
+A call that reaches past the handler's types yields an
+[`HttpOutcome`](#httpoutcome) instead. Such calls drive a raw `Wire(…)`
+argument, drive `by Nobody`, or use a method the path declares no handler for.
+A [static asset](#assets) fetch yields an `HttpResult[()]`.
 
 ### Fetching a static asset — `svc.GET(asset)` {#assets}
 
@@ -129,11 +133,25 @@ case "an empty sku is rejected at the boundary" as system {
 }
 ```
 
-A `Wire`-carrying call yields `Rejected(kind) | Handled(_)` instead of an
-`HttpResult`: `Rejected` when the router refused the input before the handler,
-`Handled` when it ran (a valid raw body promotes to the handler, so
-`expect r is Handled(_)`). The rejection's *kind* is discriminable — the nested
-pattern tests it:
+A `Wire`-carrying call yields an `HttpOutcome[T]` instead of the handler's
+`HttpResult[T]`.
+
+### The `HttpOutcome` type {#httpoutcome}
+
+```text
+HttpOutcome[T]    = Rejected(BoundaryRejection) | Handled(HttpResult[T])
+BoundaryRejection = RefinementViolation(detail: String)
+                  | MalformedJson(detail: String)
+                  | StructuralMismatch(detail: String)
+                  | Unauthorized
+                  | MethodNotAllowed
+```
+
+`Rejected` means the request was refused before the handler ran. `Handled`
+means the handler ran, and it carries the handler's typed result. A valid raw
+body reaches the handler, so `expect r is Handled(_)` holds, and
+`Handled(Created(item))` binds `item` with the handler's type. A nested pattern
+tests the rejection's kind:
 
 ```bynk,fragment
 expect r is Rejected(_)                       -- any boundary rejection
@@ -141,13 +159,22 @@ expect r is Rejected(RefinementViolation(_))  -- specifically a refinement viola
 expect r is Rejected(MalformedJson(_))        -- specifically malformed JSON
 ```
 
-The kinds are `RefinementViolation`, `MalformedJson`, and `StructuralMismatch`.
-The outcome is checked at runtime, not statically typed, so a mistyped kind
-name is a case that *fails* (the pattern never matches) rather than a compile
-error. `Wire` is legal **only** as a service-address argument in a `system`-tier
-case — there is no wire to be raw about at `unit`
-(`bynk.test.wire_needs_system`) — and no refined value is ever built from it: the
-router validates the raw string, which is the whole point.
+The body and path rejections carry `detail`, the router's one-line
+description of what it refused:
+
+```bynk,fragment
+match r {
+  Rejected(RefinementViolation(d)) => expect d.contains("sku")
+  _ => expect false
+}
+```
+
+`HttpOutcome` and `BoundaryRejection` are checked like any sum, so a mistyped
+kind name is a compile error. A source file cannot name either type: only a
+case's service address produces them. `Wire` is legal **only** as a
+service-address argument in a `system`-tier case. At `unit` there is no wire to
+be raw about (`bynk.test.wire_needs_system`). No refined value is ever built
+from it: the router validates the raw string, which is the whole point.
 
 ### Testing the auth seam with `by Nobody`
 
@@ -163,7 +190,7 @@ case "no credential is rejected at the seam" as system {
 }
 ```
 
-`by Nobody` yields the same `Rejected(_) | Handled(_)` outcome as a `Wire` call:
+`by Nobody` yields the same [`HttpOutcome[T]`](#httpoutcome) as a `Wire` call:
 a `401` from the seam is `Rejected(Unauthorized)`. It presents no identity
 (`by Nobody(...)` is an error), and is meaningful only at `system`, where the
 real seam exists (`bynk.test.credential_needs_system`). A validly-signed but
@@ -184,8 +211,9 @@ case "DELETE is not allowed on /cart" as system {
 ```
 
 No handler runs, so the call takes no arguments and no `by` clause. Like the
-other boundary refusals it yields the `Rejected(_) | Handled(_)` outcome — a
-`405` is `Rejected(MethodNotAllowed)`.
+other boundary refusals it yields an [`HttpOutcome`](#httpoutcome), over `()`
+because no handler's result is involved: a `405` is
+`Rejected(MethodNotAllowed)`.
 
 ## `expect`
 
