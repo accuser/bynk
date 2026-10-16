@@ -9,8 +9,8 @@ title: Foreign callers are declared actors with their own `call` scheme
 summary: A non-Bynk caller is a `Foreign` actor the callee declares; it signs as the actor under a deploy-minted secret, resolves to that actor and never to `Caller`, and `bynk deploy` prints the hand-off
 
 **Context.** The interop track's D2 (`design/tracks/interop.md` §8, §11 Q3,
-Q4, Q5) settled how code that is not Bynk calls a context. ADR
-`per-edge-call-signature` (I2) proves every caller by a per-edge signature, so
+Q4, Q5) settled how code that is not Bynk calls a context. ADR 0485
+(I2) proves every caller by a per-edge signature, so
 the mechanism exists. What a handler needs is to tell a foreign caller from a
 Bynk context in the type of its `by` binder. `CallerId` must stay `String` and
 `Caller` must keep its meaning, because both are Foundations-layer
@@ -92,7 +92,7 @@ Bynk context in the type of its `by` binder. `CallerId` must stay `String` and
   context's identity. That Worker can call only handlers that name its actor,
   and only once its operator holds the secret.
 - A foreign caller's replay window and body cap are the signature's, from ADR
-  `per-edge-call-signature`.
+  0485.
 - A lost minted value cannot be recovered. `bynk deploy --force` mints and
   prints a new one, and the foreign Worker must take it.
 - A generated TypeScript client (D3, #1970) and recording foreign callers in
