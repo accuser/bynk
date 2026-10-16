@@ -1,0 +1,4 @@
+# #1660: run by bynkc/tests/behaviour_fixtures.rs; see that file for the format.
+# #2010: every failure path of a `let … else` chain runs its undoing, and the
+# success path runs to the tail.
+passed=6 failed=0

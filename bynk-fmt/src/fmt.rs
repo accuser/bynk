@@ -2297,20 +2297,64 @@ impl<'a> Formatter<'a> {
     fn format_block_multiline(&mut self, b: &Block) {
         self.push("{");
         self.newline();
-        self.indented(|f| {
-            for stmt in &b.statements {
-                let trivia = statement_trivia(stmt);
-                f.emit_leading_comments(&trivia.leading);
-                f.format_statement(stmt);
-                f.emit_trailing_comment_or_newline(trivia.trailing.as_deref());
-            }
-            f.emit_leading_comments(&b.tail_leading_comments);
-            if !omit_unit_tail(b) {
-                f.format_expr(&b.tail);
-                f.newline();
-            }
-        });
+        self.indented(|f| f.format_block_body(b));
         self.push("}");
+    }
+
+    /// A block's statements and tail, one per line at the current indent.
+    /// #2010: a `let … else` reaches the formatter desugared — a hidden
+    /// binding, then a `match` tail whose first arm holds the rest of the
+    /// block — so it is printed back as the author wrote it, and the rest of
+    /// the block continues at this same indent.
+    fn format_block_body(&mut self, b: &Block) {
+        for stmt in &b.statements {
+            let trivia = statement_trivia(stmt);
+            self.emit_leading_comments(&trivia.leading);
+            if let Some((l, effectful, le)) = let_else_binding(stmt)
+                && let ExprKind::Match { arms, .. } = &b.tail.kind
+                && let Some(MatchBody::Block(rest)) = arms.first().map(|a| &a.body)
+            {
+                self.format_let_else(l, effectful, le, arms);
+                self.emit_trailing_comment_or_newline(trivia.trailing.as_deref());
+                self.format_block_body(rest);
+                return;
+            }
+            self.format_statement(stmt);
+            self.emit_trailing_comment_or_newline(trivia.trailing.as_deref());
+        }
+        self.emit_leading_comments(&b.tail_leading_comments);
+        if !omit_unit_tail(b) {
+            self.format_expr(&b.tail);
+            self.newline();
+        }
+    }
+
+    /// #2010: `let <pattern> (= | <-) <value> else <block>` or
+    /// `… else match { <arms> }`, from the hidden binding `l` and the arms of
+    /// the `match` it was desugared into (arm 0 is the pattern's).
+    fn format_let_else(&mut self, l: &LetStmt, effectful: bool, le: &LetElse, arms: &[MatchArm]) {
+        self.push("let ");
+        self.push(&let_pattern_src(&arms[0].pattern));
+        self.push(if effectful { " <- " } else { " = " });
+        let principal = l
+            .principal
+            .as_ref()
+            .map(|p| format!(" {}", call_site_actor_src(p)));
+        let reserve = principal.as_deref().map_or(0, |p| p.chars().count()) + " else {".len();
+        self.format_expr_at(&l.value, 0, reserve);
+        if let Some(principal) = principal {
+            self.push(&principal);
+        }
+        self.push(" else ");
+        match (le.form, arms.get(1).map(|a| &a.body)) {
+            (LetElseForm::Block, Some(MatchBody::Block(otherwise))) => self.format_block(otherwise),
+            _ => {
+                self.push("match {");
+                self.newline();
+                self.indented(|f| f.format_arms(&arms[1..]));
+                self.push("}");
+            }
+        }
     }
 
     fn format_statement(&mut self, s: &Statement) {
@@ -2772,25 +2816,28 @@ impl<'a> Formatter<'a> {
         self.format_expr_at(discriminant, 0, " {".len());
         self.push(" {");
         self.newline();
-        self.indented(|f| {
-            for arm in arms {
-                f.push(&pattern_to_string(&arm.pattern));
-                // ADR 0169: render an optional `if <guard>` before `=>`.
-                if let Some(guard) = &arm.guard {
-                    f.push(" if ");
-                    f.format_expr_at(guard, 0, " => ".len());
-                }
-                f.push(" => ");
-                // Every arm ends in a `,`, which counts against its budget.
-                match &arm.body {
-                    MatchBody::Expr(e) => f.format_expr_at(e, 0, 1),
-                    MatchBody::Block(b) => f.format_block_with_reserve(b, 1),
-                }
-                f.push(",");
-                f.newline();
-            }
-        });
+        self.indented(|f| f.format_arms(arms));
         self.push("}");
+    }
+
+    /// The arms of a `match` (or of a `let … else match`), one per line.
+    fn format_arms(&mut self, arms: &[MatchArm]) {
+        for arm in arms {
+            self.push(&pattern_to_string(&arm.pattern));
+            // ADR 0169: render an optional `if <guard>` before `=>`.
+            if let Some(guard) = &arm.guard {
+                self.push(" if ");
+                self.format_expr_at(guard, 0, " => ".len());
+            }
+            self.push(" => ");
+            // Every arm ends in a `,`, which counts against its budget.
+            match &arm.body {
+                MatchBody::Expr(e) => self.format_expr_at(e, 0, 1),
+                MatchBody::Block(b) => self.format_block_with_reserve(b, 1),
+            }
+            self.push(",");
+            self.newline();
+        }
     }
 }
 
@@ -3537,19 +3584,102 @@ fn format_block_oneline(b: &Block) -> String {
     } else {
         // Multi-line block — render with newlines and tab indentation.
         let mut out = String::from("{\n");
-        for stmt in &b.statements {
-            out.push('\t');
-            out.push_str(&stmt_to_string(stmt));
-            out.push('\n');
-        }
-        if !omit_unit_tail(b) {
-            out.push('\t');
-            out.push_str(&expr_with_prec(&b.tail, 0));
-            out.push('\n');
-        }
+        block_body_lines(b, &mut out);
         out.push('}');
         out
     }
+}
+
+/// The string form of [`Formatter::format_block_body`]: each statement and
+/// the tail on its own tab-indented line, a `let … else` printed back as
+/// written (#2010).
+fn block_body_lines(b: &Block, out: &mut String) {
+    for stmt in &b.statements {
+        if let Some((l, effectful, le)) = let_else_binding(stmt)
+            && let ExprKind::Match { arms, .. } = &b.tail.kind
+            && let Some(MatchBody::Block(rest)) = arms.first().map(|a| &a.body)
+        {
+            out.push('\t');
+            out.push_str(&let_else_to_string(l, effectful, le, arms));
+            out.push('\n');
+            block_body_lines(rest, out);
+            return;
+        }
+        out.push('\t');
+        out.push_str(&stmt_to_string(stmt));
+        out.push('\n');
+    }
+    if !omit_unit_tail(b) {
+        out.push('\t');
+        out.push_str(&expr_with_prec(&b.tail, 0));
+        out.push('\n');
+    }
+}
+
+/// #2010: the hidden binding a `let … else` desugars into, if `s` is one —
+/// with whether it was `<-` and the sugar's own marker.
+fn let_else_binding(s: &Statement) -> Option<(&LetStmt, bool, &LetElse)> {
+    match s {
+        Statement::Let(l) => l.let_else.as_ref().map(|le| (l, false, le)),
+        Statement::EffectLet(l) => l.let_else.as_ref().map(|le| (l, true, le)),
+        _ => None,
+    }
+}
+
+/// #2010: a `let … else` pattern as source. After `let`, a bare name is a
+/// binding, not a pattern (`let Missing | Late = p` would re-parse as a
+/// binding named `Missing`), so a pattern whose text opens with a name not
+/// followed by `(` or `.` keeps the parentheses its author had to write.
+fn let_pattern_src(p: &Pattern) -> String {
+    let src = pattern_to_string(p);
+    let name_len = src
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(src.len());
+    let opens_with_name = src.starts_with(|c: char| c.is_ascii_alphabetic());
+    let then = src[name_len..].chars().next();
+    if opens_with_name && !matches!(then, Some('(' | '.')) {
+        format!("({src})")
+    } else {
+        src
+    }
+}
+
+/// #2010: the single-line string form of a `let … else` (see
+/// [`Formatter::format_let_else`]).
+fn let_else_to_string(l: &LetStmt, effectful: bool, le: &LetElse, arms: &[MatchArm]) -> String {
+    let mut out = format!(
+        "let {} {} {}",
+        let_pattern_src(&arms[0].pattern),
+        if effectful { "<-" } else { "=" },
+        expr_with_prec(&l.value, 0)
+    );
+    if let Some(p) = &l.principal {
+        out.push_str(&format!(" {}", call_site_actor_src(p)));
+    }
+    match (le.form, arms.get(1).map(|a| &a.body)) {
+        (LetElseForm::Block, Some(MatchBody::Block(otherwise))) => {
+            out.push_str(&format!(" else {}", format_block_oneline(otherwise)));
+        }
+        _ => {
+            let rendered: Vec<String> = arms[1..]
+                .iter()
+                .map(|a| {
+                    let body = match &a.body {
+                        MatchBody::Expr(e) => expr_with_prec(e, 0),
+                        MatchBody::Block(b) => format_block_oneline(b),
+                    };
+                    let guard = a
+                        .guard
+                        .as_ref()
+                        .map(|g| format!(" if {}", expr_with_prec(g, 0)))
+                        .unwrap_or_default();
+                    format!("{}{guard} => {body}", pattern_to_string(&a.pattern))
+                })
+                .collect();
+            out.push_str(&format!(" else match {{ {} }}", rendered.join(", ")));
+        }
+    }
+    out
 }
 
 fn stmt_to_string(s: &Statement) -> String {

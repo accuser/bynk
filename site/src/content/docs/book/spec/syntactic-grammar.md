@@ -1153,6 +1153,38 @@ Well-formedness: §5.
 `let`, a binding name, an optional type annotation, `<-`, and an effect
 expression. Well-formedness: §5.
 
+### §4.8.4a let_else_stmt (#2010)
+
+{{#grammar let_else_stmt}}
+
+`let`, a pattern, `=` or `<-`, a value, an optional call-site actor clause
+([§4.9.6](#496-call_site_actor-v0182)), `else`, and either a block or a
+`let_else_match`:
+
+{{#grammar let_else_match}}
+
+The pattern MUST open as a pattern rather than a name: with a literal, with `(`,
+with `Ok`/`Err`/`Some`/`None`, or with a variant name followed by `(` or `.`
+(`Shipped(at)`, `Status.Done`):
+
+{{#grammar _let_pattern}}
+
+{{#grammar _let_variant_pattern}}
+
+An or-pattern after `let` opens the same way, its later alternatives being any
+pattern:
+
+{{#grammar _let_or_pattern}}
+
+A bare name after `let`, capitalised or not, is always a binding (§4.8.3). A
+nullary variant is written qualified (`let Status.Done = s else …`) or in
+parentheses (`let (Done) = s else …`). A pattern `let` carries no type
+annotation (`bynk.parse.let_pattern_annotation`) and MUST have its `else`
+(`bynk.parse.let_pattern_without_else`); an `else` after a plain binding is
+`bynk.parse.let_else_on_binding`. If the value ends in an `if` with no `else`,
+the `else` belongs to that `if`, so parenthesise such a value. Meaning and
+well-formedness: §5.6.
+
 ### §4.8.5 effect_send_stmt
 
 {{#grammar effect_send_stmt}}

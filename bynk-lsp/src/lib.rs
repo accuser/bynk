@@ -1111,10 +1111,47 @@ impl Backend {
         offset: usize,
     ) -> Vec<CompletionItem> {
         let Some(scrut_off) = match_scrutinee_offset(text, offset) else {
-            return Vec::new();
+            return self.let_else_match_completions(uri, text, offset).await;
         };
         self.scrutinee_variant_completions(uri, text, scrut_off)
             .await
+    }
+
+    /// #2010: at an arm-pattern-start inside `let <pattern> (= | <-) <value>
+    /// else match { … }`, the variants of the value's type (its `Effect`
+    /// payload for `<-`) that the `let` pattern leaves for the arms to cover.
+    async fn let_else_match_completions(
+        &self,
+        uri: &Url,
+        text: &str,
+        offset: usize,
+    ) -> Vec<CompletionItem> {
+        let Some(head) = let_else_match_head(text, offset) else {
+            return Vec::new();
+        };
+        // Just past the value's last character: an offset *on* it would also
+        // sit at the end of its innermost sub-expression (the `o` in
+        // `Effect.pure(o)`), which `type_at_offset` prefers as the smaller span.
+        let Some((ty, tys)) = self
+            .type_receiver(uri, text.to_string(), head.value_end + 1)
+            .await
+        else {
+            return Vec::new();
+        };
+        let ty = if head.effectful {
+            match &*tys.get(ty) {
+                bynk_check::checker::Ty::Effect(inner) => *inner,
+                _ => return Vec::new(),
+            }
+        } else {
+            ty
+        };
+        let files = self.project_content(uri).await;
+        completion::variants_for_ty(ty, &tys, text, files.as_deref())
+            .into_iter()
+            .filter(|c| head.covered.as_deref() != Some(c.label.as_str()))
+            .map(to_completion_item)
+            .collect()
     }
 
     /// The variants of the scrutinee whose last character is at `scrut_off` — the
@@ -4115,6 +4152,100 @@ fn match_head_scrutinee_offset(before: &str, brace: usize) -> Option<usize> {
     Some(head.len() - 1)
 }
 
+/// #2010: what `let_else_match_completions` needs from the head of a
+/// `let <pattern> (= | <-) <value> else match {` — read from text, like the
+/// other pattern-position scanners here, so it works on a half-typed buffer.
+#[derive(Debug, PartialEq, Eq)]
+struct LetElseMatchHead {
+    /// The offset of the value expression's last character.
+    value_end: usize,
+    /// `<-`: the value is an `Effect`, whose payload the arms match.
+    effectful: bool,
+    /// The variant the `let` pattern matches outright (`Ok(x)`, `Some(_)`,
+    /// `P.Late`), which the arms never need; `None` when the pattern only
+    /// covers part of a variant (`Err(Missing)`) or is not a variant.
+    covered: Option<String>,
+}
+
+/// #2010: the [`LetElseMatchHead`] when the cursor is at an arm-pattern-start
+/// inside a `let … else match { … }`.
+fn let_else_match_head(text: &str, cursor: usize) -> Option<LetElseMatchHead> {
+    let before = text.get(..cursor)?;
+    let brace = innermost_open_brace(before)?;
+    let arm = before.get(arm_start_offset(before, brace)..)?;
+    if arm.contains("=>")
+        || !arm
+            .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
+            .trim()
+            .is_empty()
+    {
+        return None;
+    }
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    let strip_word = |s: &'_ str, word: &str| -> Option<usize> {
+        let rest = s.strip_suffix(word)?;
+        (!rest.ends_with(is_ident)).then_some(rest.trim_end().len())
+    };
+    let head = before.get(..brace)?.trim_end();
+    let head = &head[..strip_word(head, "match")?];
+    let head = &head[..strip_word(head, "else")?];
+    let value_end = head.len().checked_sub(1)?;
+    // The statement's own `let`: the last one at the start of a word.
+    let let_at = head
+        .match_indices("let")
+        .map(|(i, _)| i)
+        .filter(|&i| {
+            !head[..i].ends_with(is_ident) && head[i + 3..].starts_with(char::is_whitespace)
+        })
+        .last()?;
+    let rest = &head[let_at + 3..];
+    // The first `=` (not `==`/`=>`) or `<-` outside brackets ends the pattern.
+    let mut depth = 0i32;
+    let mut split = None;
+    let bytes = rest.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'<' if depth == 0 && bytes.get(i + 1) == Some(&b'-') => {
+                split = Some((i, true));
+                break;
+            }
+            b'=' if depth == 0
+                && !matches!(bytes.get(i + 1), Some(b'=' | b'>'))
+                && !matches!(
+                    i.checked_sub(1).map(|j| bytes[j]),
+                    Some(b'=' | b'!' | b'<' | b'>')
+                ) =>
+            {
+                split = Some((i, false));
+                break;
+            }
+            _ => {}
+        }
+    }
+    let (at, effectful) = split?;
+    let pattern = rest[..at].trim();
+    let (name, payload) = match pattern.split_once('(') {
+        Some((name, payload)) => (name, Some(payload.trim_end_matches(')'))),
+        None => (pattern, None),
+    };
+    let name = name.rsplit('.').next()?.trim();
+    let whole_variant = name.starts_with(char::is_uppercase)
+        && payload.is_none_or(|p| {
+            p.split(',').all(|part| {
+                let binder = part.rsplit(':').next().unwrap_or(part).trim();
+                binder == "_"
+                    || binder.starts_with(char::is_lowercase) && binder.chars().all(is_ident)
+            })
+        });
+    Some(LetElseMatchHead {
+        value_end,
+        effectful,
+        covered: whole_variant.then(|| name.to_string()),
+    })
+}
+
 /// The offset (relative to `arm`) of the innermost `(` left unclosed in `arm` — a
 /// `(`-only balance scan, the payload paren the cursor sits in — or `None` if
 /// every `(` is closed.
@@ -5728,6 +5859,44 @@ mod tests {
     // v0.128: the `match <expr> { <arm-start>` scrutinee-offset detection that
     // feeds match-arm variant completion.
     #[test]
+    fn let_else_match_head_reads_the_value_and_the_covered_variant() {
+        // #2010: the first arm, right after the brace.
+        let t = "  let Ok(n) = load(r) else match {\n    ";
+        let h = let_else_match_head(t, t.len()).expect("at an arm-start");
+        assert_eq!(&t[h.value_end..h.value_end + 1], ")"); // last char of `load(r)`
+        assert!(!h.effectful);
+        assert_eq!(h.covered.as_deref(), Some("Ok"));
+
+        // `<-`, a later arm, a partial pattern typed.
+        let t = "let Some(x) <- find(k) else match {\n  None => 0,\n  Er";
+        let h = let_else_match_head(t, t.len()).expect("at a later arm-start");
+        assert!(h.effectful);
+        assert_eq!(&t[h.value_end..h.value_end + 1], ")");
+        assert_eq!(h.covered.as_deref(), Some("Some"));
+
+        // A pattern that covers only part of a variant leaves it offerable.
+        let t = "let Err(Missing) = r else match {\n  ";
+        assert_eq!(let_else_match_head(t, t.len()).unwrap().covered, None);
+
+        // A qualified nullary variant is covered whole.
+        let t = "let Status.Done = s else match {\n  ";
+        assert_eq!(
+            let_else_match_head(t, t.len()).unwrap().covered.as_deref(),
+            Some("Done")
+        );
+
+        // An `==` in the value is not the binding `=`.
+        let t = "let Ok(b) = check(a == 1) else match {\n  ";
+        let h = let_else_match_head(t, t.len()).unwrap();
+        assert_eq!(&t[h.value_end..h.value_end + 1], ")");
+
+        // Not a let-else: a plain `match`, or an arm body.
+        assert!(let_else_match_head("match c {\n  ", 11).is_none());
+        let t = "let Ok(n) = r else match {\n  Err(e) => ";
+        assert!(let_else_match_head(t, t.len()).is_none());
+    }
+
+    #[test]
     fn match_scrutinee_offset_locates_the_scrutinee() {
         // First arm, cursor right after the opening brace.
         let t = "match order.status {\n  ";
@@ -6762,6 +6931,40 @@ mod tests {
         assert!(
             labels.contains(&"entries".to_string()),
             "the Map query accessors: {labels:?}"
+        );
+    }
+
+    /// #2010: inside `let <pattern> … else match { … }`, arm-start completion
+    /// offers the value's variants minus the one the pattern already matches —
+    /// through the real `Backend::completion`, for `=` and for `<-` (whose
+    /// `Effect` payload is what the arms match).
+    #[tokio::test]
+    async fn let_else_match_offers_the_residual_variants() {
+        let src = "context shop\n\nfn f(r: Result[Int, String]) -> Int {\n  let Ok(n) = r else match {\n    Err(e) => 0,\n  }\n  n\n}\n\nfn g(o: Option[Int]) -> Effect[Int] {\n  let Some(m) <- Effect.pure(o) else match {\n    None => 0,\n  }\n  m\n}\n";
+        let s = scratch_project(
+            "let_else_match_residual",
+            &[
+                ("bynk.toml", "[project]\nname=\"shop\"\n"),
+                ("src/shop.bynk", src),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let uri = file_uri(&s.0, "src/shop.bynk");
+        open(&backend, &uri, src).await;
+        backend.run_round().await;
+
+        let labels = complete_at(&backend, &uri, src, "r else match {\n    ").await;
+        assert!(labels.contains(&"Err".to_string()), "{labels:?}");
+        assert!(
+            !labels.contains(&"Ok".to_string()),
+            "`Ok(n)` covers `Ok`: {labels:?}"
+        );
+
+        let labels = complete_at(&backend, &uri, src, "pure(o) else match {\n    ").await;
+        assert!(labels.contains(&"None".to_string()), "{labels:?}");
+        assert!(
+            !labels.contains(&"Some".to_string()),
+            "`Some(m)` covers `Some`: {labels:?}"
         );
     }
 

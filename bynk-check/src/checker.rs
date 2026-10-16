@@ -3234,24 +3234,28 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                     }
                 };
                 if l.name.name != "_" {
-                    // v0.27 (ADR 0056): an annotation-absent binding gets an
-                    // inferred-type inlay hint at the binding name.
-                    if l.type_annot.is_none() {
-                        ctx.hints
-                            .record(l.name.span, format!(": {}", final_ty.display(tys)));
+                    // #2010: a `let … else`'s hidden binder is not the author's
+                    // name, so it gets no inlay hint and no entry in the locals.
+                    if !is_generated_binding(&l.name.name) {
+                        // v0.27 (ADR 0056): an annotation-absent binding gets an
+                        // inferred-type inlay hint at the binding name.
+                        if l.type_annot.is_none() {
+                            ctx.hints
+                                .record(l.name.span, format!(": {}", final_ty.display(tys)));
+                        }
+                        // v0.31: in scope from after this statement to block end.
+                        ctx.locals.record(
+                            l.name.name.clone(),
+                            l.name.span,
+                            crate::locals::LocalKind::Let,
+                            final_ty.display(tys),
+                            Span {
+                                file: l.span.file,
+                                start: l.span.end,
+                                end: block.span.end,
+                            },
+                        );
                     }
-                    // v0.31: in scope from after this statement to block end.
-                    ctx.locals.record(
-                        l.name.name.clone(),
-                        l.name.span,
-                        crate::locals::LocalKind::Let,
-                        final_ty.display(tys),
-                        Span {
-                            file: l.span.file,
-                            start: l.span.end,
-                            end: block.span.end,
-                        },
-                    );
                     ctx.bind(l.name.name.clone(), final_ty);
                 }
             }
@@ -3362,21 +3366,25 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                     // v0.27 (ADR 0056): as for `let =`, but `final_ty` here
                     // is the peeled `Effect[T]` payload — the binding's
                     // actual type, which is what the hint must show.
-                    if l.type_annot.is_none() {
-                        ctx.hints
-                            .record(l.name.span, format!(": {}", final_ty.display(tys)));
+                    // #2010: a `let … else`'s hidden binder is not the author's
+                    // name, so it gets no inlay hint and no entry in the locals.
+                    if !is_generated_binding(&l.name.name) {
+                        if l.type_annot.is_none() {
+                            ctx.hints
+                                .record(l.name.span, format!(": {}", final_ty.display(tys)));
+                        }
+                        ctx.locals.record(
+                            l.name.name.clone(),
+                            l.name.span,
+                            crate::locals::LocalKind::Let,
+                            final_ty.display(tys),
+                            Span {
+                                file: l.span.file,
+                                start: l.span.end,
+                                end: block.span.end,
+                            },
+                        );
                     }
-                    ctx.locals.record(
-                        l.name.name.clone(),
-                        l.name.span,
-                        crate::locals::LocalKind::Let,
-                        final_ty.display(tys),
-                        Span {
-                            file: l.span.file,
-                            start: l.span.end,
-                            end: block.span.end,
-                        },
-                    );
                     ctx.bind(l.name.name.clone(), final_ty);
                 }
             }

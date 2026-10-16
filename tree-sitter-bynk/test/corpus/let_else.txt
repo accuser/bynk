@@ -1,0 +1,243 @@
+================================================================================
+let else: a block fallback with each binding arrow
+================================================================================
+
+fn f(r: Result[Int, P]) -> Effect[Int] {
+  let Ok(n) <- load(r) else { 0 }
+  let Some(m) = find(n) else {
+    do log("none")
+    1
+  }
+  n + m
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (fn_decl
+    (identifier)
+    (param
+      (identifier)
+      (generic_type_ref
+        (builtin_type)
+        (base_type)
+        (identifier)))
+    (generic_type_ref
+      (builtin_type)
+      (base_type))
+    (block
+      (let_else_stmt
+        (variant_pattern
+          (identifier)
+          (variant_pattern
+            (identifier)))
+        (call
+          (identifier)
+          (identifier))
+        (block
+          (number_literal)))
+      (let_else_stmt
+        (variant_pattern
+          (identifier)
+          (variant_pattern
+            (identifier)))
+        (call
+          (identifier)
+          (identifier))
+        (block
+          (do_stmt
+            (call
+              (identifier)
+              (string_literal)))
+          (number_literal)))
+      (binary_expr
+        (identifier)
+        (identifier)))))
+
+================================================================================
+let else: an else match over the residual
+================================================================================
+
+fn f(r: Result[Int, P]) -> Int {
+  let Ok(n) = r else match {
+    Err(Missing) => 0,
+    Err(e) if e == Broken => 1,
+  }
+  n
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (fn_decl
+    (identifier)
+    (param
+      (identifier)
+      (generic_type_ref
+        (builtin_type)
+        (base_type)
+        (identifier)))
+    (base_type)
+    (block
+      (let_else_stmt
+        (variant_pattern
+          (identifier)
+          (variant_pattern
+            (identifier)))
+        (identifier)
+        (let_else_match
+          (match_arm
+            (variant_pattern
+              (identifier)
+              (variant_pattern
+                (identifier)))
+            (number_literal))
+          (match_arm
+            (variant_pattern
+              (identifier)
+              (variant_pattern
+                (identifier)))
+            (binary_expr
+              (identifier)
+              (identifier))
+            (number_literal))))
+      (identifier))))
+
+================================================================================
+let else: literal, qualified, parenthesised and or patterns
+================================================================================
+
+fn f(n: Int, p: P, r: Result[Int, Int]) -> Int {
+  let 0 = n else { 1 }
+  let -1 = n else { 1 }
+  let P.Late = p else { 2 }
+  let (A | B) = p else { 3 }
+  let Ok(x) | Err(x) = r else { 4 }
+  x
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (fn_decl
+    (identifier)
+    (param
+      (identifier)
+      (base_type))
+    (param
+      (identifier)
+      (identifier))
+    (param
+      (identifier)
+      (generic_type_ref
+        (builtin_type)
+        (base_type)
+        (base_type)))
+    (base_type)
+    (block
+      (let_else_stmt
+        (literal_pattern
+          (number_literal))
+        (identifier)
+        (block
+          (number_literal)))
+      (let_else_stmt
+        (literal_pattern
+          (number_literal))
+        (identifier)
+        (block
+          (number_literal)))
+      (let_else_stmt
+        (variant_pattern
+          (identifier)
+          (identifier))
+        (identifier)
+        (block
+          (number_literal)))
+      (let_else_stmt
+        (paren_pattern
+          (or_pattern
+            (variant_pattern
+              (identifier))
+            (variant_pattern
+              (identifier))))
+        (identifier)
+        (block
+          (number_literal)))
+      (let_else_stmt
+        (or_pattern
+          (variant_pattern
+            (identifier)
+            (variant_pattern
+              (identifier)))
+          (variant_pattern
+            (identifier)
+            (variant_pattern
+              (identifier))))
+        (identifier)
+        (block
+          (number_literal)))
+      (identifier))))
+
+================================================================================
+let else: a call-site actor before the else
+================================================================================
+
+fn f() -> Effect[Int] {
+  let Ok(v) <- api.get(1) by User("bob") else { 0 }
+  v
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (fn_decl
+    (identifier)
+    (generic_type_ref
+      (builtin_type)
+      (base_type))
+    (block
+      (let_else_stmt
+        (variant_pattern
+          (identifier)
+          (variant_pattern
+            (identifier)))
+        (method_call
+          (identifier)
+          (identifier)
+          (number_literal))
+        (call_site_actor
+          (identifier)
+          (string_literal))
+        (block
+          (number_literal)))
+      (identifier))))
+
+================================================================================
+let else: a plain let's if keeps its own else
+================================================================================
+
+fn f(c: Bool) -> Int {
+  let k = if c { 1 } else { 2 }
+  k
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (fn_decl
+    (identifier)
+    (param
+      (identifier)
+      (base_type))
+    (base_type)
+    (block
+      (let_stmt
+        (identifier)
+        (if_expr
+          (identifier)
+          (block
+            (number_literal))
+          (block
+            (number_literal))))
+      (identifier))))

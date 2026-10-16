@@ -58,6 +58,68 @@ commons demo {
 If `Reps.of(n)` is `Err(e)`, `doubled` returns `Err(e)` immediately; otherwise
 `r` is the unwrapped value.
 
+## Sequence fallible steps with `let … else` {#let-else}
+
+`?` hands an `Err` straight back to the caller. When a failure needs handling
+first, such as undoing an earlier step or choosing a response, matching each
+result in turn pushes every later step one level deeper:
+
+```bynk
+commons demo {
+  type Problem = enum { NoAddress, NoRoute }
+
+  fn quote(address: Option[String], km: Result[Int, Problem]) -> Int {
+    match address {
+      None => 0,
+      Some(a) => match km {
+        Err(_) => 0,
+        Ok(d) => d * 2,
+      },
+    }
+  }
+}
+```
+
+`let <pattern> = <value> else { … }` keeps the steps flat. When the value
+matches the pattern, its names are bound for the rest of the block; when it
+does not, the `else` block is what the block produces instead:
+
+```bynk
+commons demo {
+  type Problem = enum { NoAddress, NoRoute }
+
+  fn quote(address: Option[String], km: Result[Int, Problem]) -> Int {
+    let Some(a) = address else { 0 }
+    let Ok(d) = km else { 0 }
+    d * 2
+  }
+}
+```
+
+To use the value that failed to match, write `else match` with arms for the
+cases the pattern leaves:
+
+```bynk
+commons demo {
+  type Problem = enum { NoAddress, NoRoute }
+
+  fn quote(km: Result[Int, Problem]) -> Int {
+    let Ok(d) = km else match {
+      Err(NoAddress) => 0,
+      Err(NoRoute) => 10,
+    }
+    d * 2
+  }
+}
+```
+
+The `else` stands in for the rest of **its own block**, so it must have the
+type that block produces. It is not a `return`: inside an `if` branch it gives
+that branch's value, and the function carries on. In an effectful body, use
+`<-` to match an effect's result: `let Ok(id) <- Orders.open(cart) else { … }`.
+See [Undo earlier steps when a later one fails](/book/guides/program-structure/consume-services/#undo-earlier-steps-when-a-later-one-fails)
+for that form undoing calls to other contexts.
+
 ## Related
 
 - [Pattern-match with `match`](/book/guides/type-system/match/) ·

@@ -858,6 +858,39 @@ They are never in scope in the right operand of `||` or past the `if`
 
 {{#grammar-semantics match_expr}}
 
+**`let … else`** (#2010, [§4.8.4a](/book/spec/syntactic-grammar/#484a-let_else_stmt-2010)).
+A `let` whose left side is a pattern, followed by the statements `S…` and the
+tail `t` of its block, means exactly
+
+```bynk,ignore
+let v <- e               -- or `let v = e`
+match v { P => { S… t }, _ => E }
+```
+
+for `let P <- e else E`, where `v` is a name the program cannot write; for
+`let P <- e else match { arms }` the arms replace `_ => E`. So:
+
+- `E` is the value of the **enclosing block** when `e` does not match `P`,
+  not of the enclosing function. It MUST have the type the rest of the block
+  produces (`bynk.types.match_arm_mismatch`). A `?` inside `E` still returns
+  from the function, as a `?` anywhere does.
+- `P`'s names are in scope from the end of the statement to the end of the
+  block, like a `let` binding's.
+- The `else match` arms MUST cover the values `P` does not
+  (`bynk.types.non_exhaustive_match`) and MUST NOT be unreachable, which
+  includes an arm `P` already covers (`bynk.types.unreachable_arm`,
+  `bynk.types.duplicate_variant_arm`).
+- If `P` matches every value of `e`'s type, the `else` can never run, which is
+  `bynk.types.unreachable_arm`. Bind the value with a plain `let` instead.
+- `<-` follows the `effect_let_stmt` rules (§5.5): the body MUST be effectful,
+  and `P` matches the `Effect`'s payload.
+
+Each statement nests the rest of its block one level, as the `match` it stands
+for does, so a single block holds at most as many steps as the nesting limit
+allows (`bynk.parse.nesting_too_deep`).
+
+{{#grammar-semantics let_else_stmt}}
+
 ## §5.7 Handlers
 
 A `service` MUST be declared inside a context (`bynk.service.outside_context`) and

@@ -1,0 +1,48 @@
+suite shop.orders {
+  case "a placed order is confirmed and holds its stock" {
+    let r <- place.call("a", 2, 7)
+    expect r is Ok("placed 14")
+    let s <- status.call("a")
+    expect s == "placed"
+    let left <- stock.call()
+    expect left == 3
+  }
+
+  case "the same order cannot be placed twice" {
+    let first <- place.call("b", 1, 7)
+    expect first is Ok(_)
+    let second <- place.call("b", 1, 7)
+    expect second is Err(Taken)
+    let left <- stock.call()
+    expect left == 4
+  }
+
+  case "too little stock rejects the order and holds nothing" {
+    let r <- place.call("c", 9, 7)
+    expect r is Err(NoStock)
+    let s <- status.call("c")
+    expect s == "rejected"
+    let left <- stock.call()
+    expect left == 5
+  }
+
+  case "a declined card releases the stock and rejects the order" {
+    let r <- place.call("d", 2, 0)
+    expect r is Err(Declined)
+    let s <- status.call("d")
+    expect s == "rejected"
+    let left <- stock.call()
+    expect left == 5
+  }
+
+  case "an else exits only its own block" {
+    expect label(None) == "n=0"
+    expect label(Some(4)) == "n=5"
+  }
+
+  case "a question mark in an else returns from the function" {
+    expect pick(Ok(1), Ok(0)) == Ok(2)
+    expect pick(Err(Taken), Ok(3)) == Ok(30)
+    expect pick(Err(Taken), Err(NoStock)) == Err(NoStock)
+  }
+}

@@ -1,0 +1,1 @@
+bynk.types.unreachable_arm this `else` can never run — `Only(_)` matches every `One`

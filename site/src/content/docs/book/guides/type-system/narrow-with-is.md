@@ -123,4 +123,6 @@ identifier, a field access, or a call result.
 ## Related
 
 - For exhaustive multi-way branching, use [`match`](/book/guides/type-system/match/).
+- To bind a payload for the rest of a block, and say what happens when it is
+  absent, use [`let … else`](/book/guides/type-system/result-and-optionals/#let-else).
 - [Write tests and stub collaborators](/book/guides/testing/write-tests/).

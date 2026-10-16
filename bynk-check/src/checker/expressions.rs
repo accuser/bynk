@@ -3367,6 +3367,13 @@ pub(crate) fn check_match(
         ));
         return None;
     };
+    // #2010: a `match` the parser built from `let P <- e else …` scrutinises
+    // its hidden binder. Its arms are the pattern's (the rest of the block)
+    // and the `else`'s, so its diagnostics are worded in those terms.
+    let let_else = matches!(
+        &discriminant.kind,
+        ExprKind::Ident(i) if i.name.starts_with(LET_ELSE_BINDER_PREFIX)
+    );
     let mut arm_types: Vec<(TyId, Span)> = Vec::new();
     let mut saw_wildcard = false;
     // Unguarded, refutable patterns already seen — structural duplicate
@@ -3376,13 +3383,19 @@ pub(crate) fn check_match(
     // #1656: every earlier unguarded arm's pattern, for the usefulness check.
     // A guarded arm never covers (its guard may fail), so it is not recorded.
     let mut covering: Vec<&Pattern> = Vec::new();
-    for arm in arms {
+    for (index, arm) in arms.iter().enumerate() {
         ctx.push_scope();
         // Validate the pattern against the scrutinee and bind its names,
         // recursing through nested payload patterns (ADR 0169).
         let errors_before = ctx.errors.len();
         check_pattern(&arm.pattern, disc_ty, ctx);
         let pattern_ok = ctx.errors.len() == errors_before;
+        // #2010: a `let … else` pattern's names are the author's `let`
+        // bindings, in scope for the rest of the block: they get the inlay
+        // hints and locals entries a `let` gets (a `match` arm's do not).
+        if let_else && index == 0 && pattern_ok {
+            record_let_else_bindings(arm, ctx);
+        }
         let mut duplicate_reported = false;
         // Structural duplicate detection over unguarded, refutable patterns —
         // `Err(A)` and `Err(B)` are distinct, `Ok(_)` twice is a duplicate.
@@ -3419,7 +3432,9 @@ pub(crate) fn check_match(
             && !duplicate_reported
             && pattern_covered(&covering, &arm.pattern, disc_ty, ctx)
         {
-            ctx.errors.push(if saw_wildcard {
+            ctx.errors.push(if let_else {
+                let_else_unreachable(arms, index, disc_ty, ctx)
+            } else if saw_wildcard {
                 CompileError::new(
                     "bynk.types.unreachable_arm",
                     arm.span,
@@ -3499,6 +3514,20 @@ pub(crate) fn check_match(
                         );
                         continue;
                     }
+                    if let_else {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.types.non_exhaustive_match",
+                                let_else_arms_span(arms).unwrap_or(span),
+                                format!(
+                                    "this `else match` does not cover `{}` — the `let` pattern does not match it either",
+                                    witness
+                                ),
+                            )
+                            .with_note("add an arm for it to the `else match`, or end it with a wildcard `_` arm"),
+                        );
+                        continue;
+                    }
                     ctx.errors.push(
                         CompileError::new(
                             "bynk.types.non_exhaustive_match",
@@ -3552,6 +3581,23 @@ pub(crate) fn check_match(
     for (t, span) in arm_types.iter().skip(1) {
         match join_ty(acc, *t, tys) {
             Some(joined) => acc = joined,
+            None if let_else => {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.types.match_arm_mismatch",
+                        *span,
+                        format!(
+                            "this `else` produces `{}`, but the rest of the block after the `let` produces `{}`",
+                            t.display(tys),
+                            acc.display(tys)
+                        ),
+                    )
+                    .with_note(
+                        "the `else` stands in for the rest of its block when the pattern does not match, so both must have the same type",
+                    ),
+                );
+                return None;
+            }
             None => {
                 ctx.errors.push(
                     CompileError::new(
@@ -3572,6 +3618,67 @@ pub(crate) fn check_match(
         }
     }
     Some(acc)
+}
+
+/// #2010: the unreachable-arm report for a `match` desugared from
+/// `let P <- e else …`. Arm 0 is the pattern's; a later arm is the `else`'s.
+fn let_else_unreachable(arms: &[MatchArm], index: usize, disc_ty: TyId, ctx: &Ctx) -> CompileError {
+    let pattern = describe_pattern(&arms[0].pattern);
+    let arm = &arms[index];
+    if arms.len() == 2 && matches!(arm.pattern, Pattern::Wildcard(_)) {
+        CompileError::new(
+            "bynk.types.unreachable_arm",
+            arm.span,
+            format!(
+                "this `else` can never run — `{pattern}` matches every `{}`",
+                disc_ty.display(ctx.tys)
+            ),
+        )
+        .with_note(
+            "bind the value with a plain `let` instead, or check the pattern is the one you meant",
+        )
+    } else {
+        CompileError::new(
+            "bynk.types.unreachable_arm",
+            arm.span,
+            format!(
+                "this `else match` arm is unreachable — every value `{}` matches is already matched by the `let` pattern `{pattern}` or by an earlier arm",
+                describe_pattern(&arm.pattern)
+            ),
+        )
+        .with_note("remove the arm: the `let` pattern runs the rest of the block for these values")
+    }
+}
+
+/// #2010: hints and locals for the names a `let … else` pattern binds, which
+/// [`check_pattern`] has just put in scope with their types.
+fn record_let_else_bindings(arm: &MatchArm, ctx: &mut Ctx) {
+    let tys = ctx.tys;
+    for id in arm.pattern.bound_names() {
+        let Some(ty) = ctx.lookup(&id.name) else {
+            continue;
+        };
+        let shown = ty.display(tys);
+        ctx.hints.record(id.span, format!(": {shown}"));
+        ctx.locals.record(
+            id.name.clone(),
+            id.span,
+            crate::locals::LocalKind::Let,
+            shown,
+            arm.body.span(),
+        );
+    }
+}
+
+/// #2010: the span of a desugared `let … else`'s own arms (all but the
+/// pattern's, which holds the rest of the block).
+fn let_else_arms_span(arms: &[MatchArm]) -> Option<Span> {
+    let first = arms.get(1)?;
+    Some(
+        arms[1..]
+            .iter()
+            .fold(first.span, |acc, a| acc.merge(a.span)),
+    )
 }
 
 /// Validate `pat` against scrutinee type `ty`, binding names into the current

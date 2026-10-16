@@ -1,0 +1,8 @@
+commons demo
+
+type One = | Only(n: Int)
+
+fn f(o: One) -> Int {
+  let Only(n) = o else { 0 }
+  n
+}
