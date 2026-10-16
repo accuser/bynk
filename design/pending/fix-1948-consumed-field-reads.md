@@ -21,7 +21,8 @@ checked.
 
 **Decision.** A field read on a value whose checked type is an `exports
 opaque` type of a consumed context is `bynk.context.opaque_inspection`,
-however the value was bound. A field read on a value of a type the consumer's
+however the value was bound. (`.raw` on an opaque newtype stays
+`bynk.types.opaque_raw_outside`, which the checker reports first.) A field read on a value of a type the consumer's
 table lacks falls back to `checker::projected_types` (#1941): the consumer's
 table plus each consumed context's types that every declaring context agrees
 on. The field's own type resolves against the same projection, so an unknown
