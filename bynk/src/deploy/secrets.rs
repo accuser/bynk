@@ -23,6 +23,10 @@ pub(crate) enum Origin {
     Read,
     /// The user named it. The compiler knows nothing about it either way.
     Supplied,
+    /// #2004: the deployment's call secret, [`bynk_emit::CALL_SECRET_BINDING`].
+    /// Every Worker gets it, and `deploy` mints its value unless the user
+    /// supplies one ([`decide_call_secret`]).
+    Managed,
 }
 
 impl Origin {
@@ -34,7 +38,7 @@ impl Origin {
     /// `None` the program may be entirely happy about — erroring on it would
     /// break a legal program.
     pub(crate) fn required(self) -> bool {
-        matches!(self, Origin::Declared)
+        matches!(self, Origin::Declared | Origin::Managed)
     }
 
     pub(crate) fn label(self) -> &'static str {
@@ -42,6 +46,7 @@ impl Origin {
             Origin::Declared => "declared",
             Origin::Read => "read",
             Origin::Supplied => "supplied",
+            Origin::Managed => "managed",
         }
     }
 }
@@ -172,6 +177,9 @@ pub(crate) fn wanted_secrets(
     for name in declared {
         marks.insert(name.clone(), Origin::Declared);
     }
+    // #2004: the call secret is handled apart (`decide_call_secret`), a value
+    // supplied for it included: it is not the user's to spread or skip.
+    marks.remove(bynk_emit::CALL_SECRET_BINDING);
     marks
         .into_iter()
         .map(|(name, origin)| WantedSecret { name, origin })
@@ -227,11 +235,120 @@ fn value_from(name: &str, source: &SecretSource, from_env: Option<String>) -> Op
     source.file.get(name).cloned().or(from_env)
 }
 
+/// Whether `deploy` could see the call secret on one Worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Presence {
+    Present,
+    Absent,
+    /// The account could not be asked, about a Worker that has been live.
+    Unknown,
+}
+
+/// Presence of `name` on one Worker, from [`list_secrets`]' answer. A Worker
+/// the ledger has never pushed has no secrets, whatever the answer was.
+pub(crate) fn presence_of(
+    name: &str,
+    listed: Option<&BTreeSet<String>>,
+    first_deploy: bool,
+) -> Presence {
+    match listed {
+        _ if first_deploy => Presence::Absent,
+        Some(names) if names.contains(name) => Presence::Present,
+        Some(_) => Presence::Absent,
+        None => Presence::Unknown,
+    }
+}
+
+/// What this run does with the deployment's call secret (#2004).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CallSecret {
+    /// Every Worker in the run already holds one: leave it.
+    Keep,
+    /// Put this value on every Worker in the run: where it is absent, or on
+    /// every one when `overwrite` holds.
+    Set { value: String, overwrite: bool },
+}
+
+/// Decide the call secret for one run. Pure, so the rule is tested without an
+/// account; `mint` is only called when a fresh value is wanted.
+///
+/// Every Worker in a deployment must hold the **same** value, and Cloudflare
+/// never returns one, so a value already set cannot be copied onto a Worker
+/// that lacks it. The ledger is committed, so it cannot hold the value either
+/// (ADR 0195 D1). That leaves three cases:
+///
+/// - The user supplies the value (`--secrets-file` or the environment): set it
+///   where it is absent, and everywhere under `--force`.
+/// - Every Worker in the run already holds one, and `--force` is off: keep it.
+///   An unknown answer about a Worker that has been live counts as holding
+///   it, as for any other secret (`tolerate_unresolvable`).
+/// - Otherwise, and only when the run deploys the whole project: mint a fresh
+///   value and put it on every Worker, replacing any it had. That is a first
+///   deploy, a project upgraded from before the secret existed, a context
+///   added to a live deployment, or `--force` (a rotation). A `--context` run
+///   cannot do this, since the Workers outside it would keep the old value,
+///   so it is refused before anything is pushed.
+pub(crate) fn decide_call_secret(
+    supplied: Option<String>,
+    presence: &[Presence],
+    whole_project: bool,
+    force: bool,
+    mint: impl FnOnce() -> Result<String, String>,
+) -> Result<CallSecret, String> {
+    let name = bynk_emit::CALL_SECRET_BINDING;
+    if let Some(value) = supplied {
+        if value.is_empty() {
+            return Err(format!(
+                "the supplied {name} is empty — every internal call would be refused"
+            ));
+        }
+        return Ok(CallSecret::Set {
+            value,
+            overwrite: force,
+        });
+    }
+    if !force && presence.iter().all(|p| *p != Presence::Absent) {
+        return Ok(CallSecret::Keep);
+    }
+    if !whole_project {
+        return Err(format!(
+            "this deployment's call secret ({name}) must be set on a Worker this run deploys, \
+             but Cloudflare never returns its value, so `--context` cannot copy it from the others.\n  \
+             Deploy the whole project (`bynk deploy`) to mint a new one for every context, \
+             or supply the current value in --secrets-file or as {name} in the environment."
+        ));
+    }
+    Ok(CallSecret::Set {
+        value: mint()?,
+        overwrite: true,
+    })
+}
+
+/// A fresh call secret: 32 random bytes, hex-encoded.
+pub(crate) fn mint_call_secret() -> Result<String, String> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|e| format!("could not generate a call secret: {e}"))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The call secret's value as the user supplied it, by the same precedence as
+/// any other secret: the file, then the environment. Never prompted for: the
+/// usual answer is to let `deploy` mint one.
+pub(crate) fn supplied_call_secret(source: &SecretSource) -> Option<String> {
+    let name = bynk_emit::CALL_SECRET_BINDING;
+    value_from(name, source, std::env::var(name).ok())
+}
+
 /// Everything the secret step needs, threaded as one value rather than as four
 /// more parameters on an already-long list.
 pub(crate) struct Secrets<'a> {
     pub(crate) source: &'a SecretSource,
     pub(crate) force: bool,
+    /// #2004: what [`decide_call_secret`] decided for this run.
+    pub(crate) call_secret: &'a CallSecret,
+    /// #2004: each Worker's `secret list` answer, asked once before the loop
+    /// (the call secret is decided over every Worker at once) and reused here.
+    pub(crate) listed: &'a BTreeMap<String, Option<BTreeSet<String>>>,
     /// Values resolved earlier in this run, so two contexts wanting the same
     /// name prompt once rather than once each.
     ///
@@ -272,17 +389,26 @@ pub(crate) fn prepare_secrets(
             "bynk: `{worker}` reads at least one secret whose name the compiler cannot see (a computed `Secrets.get` name, or an adapter binding given `Secrets`), so the list below is not everything it reads."
         );
     }
-    if wanted.is_empty() {
-        return Ok(Vec::new());
-    }
     // Asked live, never recorded: presence is the only observable Cloudflare
     // offers (it does not return values), and a recorded answer could only ever
     // be a stale one (ADR 0195 D1/D4). Asked *before* the push on both paths —
     // our own `wrangler deploy` does not change which secrets are set, so one
     // answer serves the whole step, and `secret list` has no draft-Worker path
-    // to trip over on a first deploy.
-    let present = list_secrets(provenance, worker_dir, environment);
+    // to trip over on a first deploy. #2004: the run asks once per Worker
+    // before the loop, so this reuses that answer.
+    let present = match secrets.listed.get(worker) {
+        Some(listed) => listed.clone(),
+        None => list_secrets(provenance, worker_dir, environment),
+    };
     let mut prepared = Vec::new();
+    // #2004: the call secret first, so a Worker never runs a moment without it
+    // that it could have had.
+    if let CallSecret::Set { value, overwrite } = secrets.call_secret {
+        let name = bynk_emit::CALL_SECRET_BINDING;
+        if *overwrite || presence_of(name, present.as_ref(), first_deploy) != Presence::Present {
+            prepared.push((name.to_string(), value.clone()));
+        }
+    }
     for want in &wanted {
         match secret_action(&want.name, present.as_ref(), secrets.force) {
             SecretAction::SkipPresent => {
@@ -404,7 +530,7 @@ fn missing_secret_message(name: &str, origin: Origin, worker: &str) -> String {
         // Reached only when a read is *required*, which it never is — kept
         // total rather than unreachable!(), since the compiler cannot know that
         // and a panic here would be a poor way to learn otherwise.
-        Origin::Read | Origin::Supplied => format!(
+        Origin::Read | Origin::Supplied | Origin::Managed => format!(
             "the secret `{name}` was named but no value was supplied — \
              set {name} in the environment, or give it a value in --secrets-file."
         ),
@@ -709,5 +835,135 @@ WITH_EQUALS=a=b
             !text.to_ascii_lowercase().contains("secret"),
             "the ledger records no secret at all — not even its presence: {text}"
         );
+    }
+
+    // ---- #2004: the deployment's call secret --------------------------------
+
+    use Presence::{Absent, Present, Unknown};
+
+    fn minted() -> Result<String, String> {
+        Ok("minted".to_string())
+    }
+
+    fn never() -> Result<String, String> {
+        panic!("a run that keeps or is given the call secret must not mint one")
+    }
+
+    fn set(value: &str, overwrite: bool) -> Result<CallSecret, String> {
+        Ok(CallSecret::Set {
+            value: value.to_string(),
+            overwrite,
+        })
+    }
+
+    #[test]
+    fn a_first_deploy_mints_the_call_secret_for_every_worker() {
+        assert_eq!(
+            decide_call_secret(None, &[Absent, Absent], true, false, minted),
+            set("minted", true)
+        );
+    }
+
+    #[test]
+    fn a_redeploy_keeps_the_call_secret_every_worker_holds() {
+        assert_eq!(
+            decide_call_secret(None, &[Present, Present], true, false, never),
+            Ok(CallSecret::Keep)
+        );
+        // `--context` too: nothing needs copying.
+        assert_eq!(
+            decide_call_secret(None, &[Present], false, false, never),
+            Ok(CallSecret::Keep)
+        );
+        // An unknown answer about a live Worker is read as holding it, as for
+        // any other secret (`tolerate_unresolvable`).
+        assert_eq!(
+            decide_call_secret(None, &[Present, Unknown], true, false, never),
+            Ok(CallSecret::Keep)
+        );
+    }
+
+    #[test]
+    fn a_worker_without_the_call_secret_rotates_it_for_the_whole_project() {
+        // A context added to a live deployment, or a project from before the
+        // secret: the value the others hold cannot be read back, so all of
+        // them get a fresh one.
+        assert_eq!(
+            decide_call_secret(None, &[Present, Absent], true, false, minted),
+            set("minted", true)
+        );
+        // `--force` rotates even when every Worker holds one.
+        assert_eq!(
+            decide_call_secret(None, &[Present, Present], true, true, minted),
+            set("minted", true)
+        );
+    }
+
+    #[test]
+    fn a_context_run_cannot_mint_a_call_secret_the_others_would_not_share() {
+        for (presence, force) in [(vec![Absent], false), (vec![Present], true)] {
+            let refused = decide_call_secret(None, &presence, false, force, never)
+                .expect_err("a --context run that needs a value it does not have is refused");
+            assert!(refused.contains("BYNK_CALL_SECRET"), "{refused}");
+            assert!(
+                refused.contains("bynk deploy"),
+                "names the remedy: {refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_supplied_call_secret_is_used_and_overwrites_only_under_force() {
+        let supplied = || Some("theirs".to_string());
+        assert_eq!(
+            decide_call_secret(supplied(), &[Present, Absent], false, false, never),
+            set("theirs", false)
+        );
+        assert_eq!(
+            decide_call_secret(supplied(), &[Present], true, true, never),
+            set("theirs", true)
+        );
+        assert!(
+            decide_call_secret(Some(String::new()), &[Absent], true, false, never).is_err(),
+            "an empty value would refuse every internal call"
+        );
+    }
+
+    #[test]
+    fn call_secret_presence_reads_a_never_deployed_worker_as_absent() {
+        let listed: BTreeSet<String> = ["BYNK_CALL_SECRET".to_string()].into_iter().collect();
+        let name = "BYNK_CALL_SECRET";
+        assert_eq!(presence_of(name, Some(&listed), false), Present);
+        assert_eq!(presence_of(name, Some(&BTreeSet::new()), false), Absent);
+        assert_eq!(presence_of(name, None, false), Unknown);
+        assert_eq!(presence_of(name, None, true), Absent);
+        assert_eq!(presence_of(name, Some(&listed), true), Absent);
+    }
+
+    #[test]
+    fn a_minted_call_secret_is_64_hex_digits_and_fresh() {
+        let a = mint_call_secret().expect("the OS has randomness");
+        let b = mint_call_secret().expect("the OS has randomness");
+        // Checked without ever printing a value, even on failure: a minted
+        // secret is never logged, test output included.
+        assert!(a.len() == 64, "a minted call secret is 64 characters");
+        assert!(
+            a.chars().all(|c| c.is_ascii_hexdigit()),
+            "a minted call secret is hex"
+        );
+        assert!(a != b, "two mints differ");
+    }
+
+    #[test]
+    fn a_supplied_call_secret_is_not_spread_as_a_user_secret() {
+        let src = source(&[("BYNK_CALL_SECRET", "v"), ("OTHER", "w")], &[]);
+        let wanted = wanted_secrets(&[], &[], &src);
+        assert_eq!(
+            wanted.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(),
+            vec!["OTHER"],
+            "the call secret is decided apart, by `decide_call_secret`"
+        );
+        assert!(Origin::Managed.required());
+        assert_eq!(Origin::Managed.label(), "managed");
     }
 }

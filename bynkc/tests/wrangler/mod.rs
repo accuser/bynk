@@ -23,6 +23,18 @@
 /// The `npx` package spec every workerd smoke provisions.
 pub const SPEC: &str = "wrangler@4";
 
+/// #2004: the `--var` every workerd smoke passes `wrangler dev`, so its Worker
+/// holds the local call secret `bynk dev` gives it and admits internal
+/// (`/_bynk/call/`, `/_bynk/event/`) requests stamped with it.
+#[allow(dead_code)]
+pub fn call_secret_var() -> String {
+    format!(
+        "{}:{}",
+        bynk_emit::CALL_SECRET_BINDING,
+        bynk_emit::LOCAL_CALL_SECRET
+    )
+}
+
 /// A spawned `npx -y wrangler@4 dev`, stopped together with **every process
 /// under it** when it drops (#1686).
 ///

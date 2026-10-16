@@ -175,6 +175,20 @@ pub const TYPESCRIPT_MAJOR_FLOOR: u32 = 5;
 /// than it as untested.
 pub const TYPESCRIPT_MAJOR_TESTED: u32 = 7;
 
+/// #2004: the secret every Worker in a deployment shares, under which each
+/// internal request (`/_bynk/call/`, `/_bynk/event/`) is admitted. The runtime
+/// reads it as `CALL_SECRET_BINDING` (`runtime/src/boundary.ts`); `bynk deploy`
+/// mints it and sets it on every Worker it pushes.
+pub const CALL_SECRET_BINDING: &str = "BYNK_CALL_SECRET";
+
+/// #2004: the call secret off the deployed path: `bynk dev` passes it to every
+/// `wrangler dev`, and the generated test harnesses put it in every
+/// participant's `env`. Fixed rather than random so two `bynk dev --context`
+/// sessions run side by side still admit each other's calls. It guards
+/// nothing, so it must never reach a deployed Worker: `bynk deploy` mints its
+/// own, and it is never written into a generated `wrangler.toml`.
+pub const LOCAL_CALL_SECRET: &str = "bynk-local-call-secret";
+
 pub use emitter::wrangler::{
     COMPATIBILITY_DATE, DEFAULT_COMPATIBILITY_FLAGS, WRANGLER_MIN, compatibility_flags,
 };

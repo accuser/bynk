@@ -155,7 +155,10 @@ t("WorkersService.send: sends over env[binding], not the network, and reads the 
     throw new Error("the global fetch must not be used");
   };
   try {
-    const res = await new WorkersService({ SERVICE_BILLING: billing }, "SERVICE_BILLING").send(
+    // The deployment's call secret (#2004) is on `env` beside the binding, and
+    // must never travel to a Worker outside the project.
+    const env = { SERVICE_BILLING: billing, BYNK_CALL_SECRET: "deployment-secret" };
+    const res = await new WorkersService(env, "SERVICE_BILLING").send(
       serviceRequest({ method: Method.Post, contentType: Some("text/plain"), body: Some("a") }),
     );
     assert.equal(res.tag, "Ok");
@@ -170,6 +173,8 @@ t("WorkersService.send: sends over env[binding], not the network, and reads the 
   assert.equal(billing.sent[0].url, "https://legacy-billing/charge");
   assert.equal(billing.sent[0].headers["content-type"], "text/plain");
   assert.equal(billing.sent[0].body, "a");
+  assert.equal(billing.sent[0].headers["x-bynk-call-secret"], undefined);
+  assert.ok(!JSON.stringify(billing.sent[0]).includes("deployment-secret"));
 });
 
 t("WorkersService.send: a status the Worker returns, 5xx included, is Ok", async () => {

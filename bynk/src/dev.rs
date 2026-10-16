@@ -941,10 +941,23 @@ fn passthrough_has(args: &[String], flag: &str) -> bool {
 /// under `--inspect` (slice 3, ADR 0104), so a JavaScript debugger can attach and
 /// `.bynk` breakpoints resolve through the emitted source maps.
 ///
-/// Empty for a lone worker without `--base-port` or `--inspect` — byte-for-byte
-/// the pre-#552 invocation, so that path keeps its `-- --port N` passthrough.
+/// A lone worker without `--base-port` or `--inspect` gets no port flag — the
+/// pre-#552 invocation, so that path keeps its `-- --port N` passthrough.
+///
+/// #2004: and always the local call secret, as a `--var` rather than a file:
+/// every Worker refuses an internal request (`/_bynk/call/`, `/_bynk/event/`)
+/// without the deployment's secret, and a lone context still delivers its own
+/// events to itself. The fixed [`bynk_emit::LOCAL_CALL_SECRET`], so two `bynk
+/// dev --context` sessions run side by side admit each other's calls.
 fn serve_args(s: &Serving) -> Vec<String> {
-    let mut args = Vec::new();
+    let mut args = vec![
+        "--var".to_string(),
+        format!(
+            "{}:{}",
+            bynk_emit::CALL_SECRET_BINDING,
+            bynk_emit::LOCAL_CALL_SECRET
+        ),
+    ];
     if let Some(port) = s.port {
         args.push("--port".to_string());
         args.push(port.to_string());
@@ -1057,12 +1070,20 @@ mod tests {
         }
     }
 
+    /// #2004: every `wrangler dev` gets the local call secret first.
+    fn with_secret(rest: &[&str]) -> Vec<String> {
+        let mut args = names(&["--var", "BYNK_CALL_SECRET:bynk-local-call-secret"]);
+        args.extend(names(rest));
+        args
+    }
+
     #[test]
     fn inspect_injects_the_inspector_port() {
         let off = DevOptions::default();
         let lone = allocate(&names(&["links"]), None, &off);
-        assert!(
-            serve_args(&lone[0]).is_empty(),
+        assert_eq!(
+            serve_args(&lone[0]),
+            with_secret(&[]),
             "a lone worker without --inspect keeps the pre-#552 invocation"
         );
 
@@ -1074,7 +1095,7 @@ mod tests {
         let lone = allocate(&names(&["links"]), None, &on);
         assert_eq!(
             serve_args(&lone[0]),
-            vec!["--inspector-port".to_string(), "9229".to_string()]
+            with_secret(&["--inspector-port", "9229"])
         );
     }
 
@@ -1143,7 +1164,7 @@ mod tests {
         );
         assert_eq!(
             serve_args(&serving[1]),
-            names(&["--port", "8788", "--inspector-port", "9230"])
+            with_secret(&["--port", "8788", "--inspector-port", "9230"])
         );
     }
 
@@ -1162,7 +1183,7 @@ mod tests {
         // reaches wrangler (a repeated --port is a hard error, not last-wins).
         let serving = allocate(&names(&["links"]), None, &DevOptions::default());
         assert_eq!(serving[0].port, None);
-        assert!(serve_args(&serving[0]).is_empty());
+        assert_eq!(serve_args(&serving[0]), with_secret(&[]));
         // …but an explicit --base-port is honoured even for one context.
         let pinned = allocate(&names(&["links"]), Some(8900), &DevOptions::default());
         assert_eq!(pinned[0].port, Some(8900));
@@ -1183,7 +1204,7 @@ mod tests {
         );
         assert_eq!(
             serve_args(&serving[1]),
-            names(&["--port", "8788", "--inspector-port", "9230"])
+            with_secret(&["--port", "8788", "--inspector-port", "9230"])
         );
         // `--inspect-port` moves that allocation even without `--inspect`…
         let moved = DevOptions {

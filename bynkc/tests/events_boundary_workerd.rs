@@ -188,6 +188,18 @@ fn http_status(
     path: &str,
     body: Option<&str>,
 ) -> Result<(u16, String), String> {
+    http_status_as(method, port, path, body, Some(bynk_emit::LOCAL_CALL_SECRET))
+}
+
+/// [`http_status`] with the call-secret header (#2004) chosen by the caller:
+/// `None` sends none, as a forged request from outside the deployment would.
+fn http_status_as(
+    method: &str,
+    port: u16,
+    path: &str,
+    body: Option<&str>,
+    call_secret: Option<&str>,
+) -> Result<(u16, String), String> {
     let addr = format!("127.0.0.1:{port}");
     let mut stream = std::net::TcpStream::connect_timeout(
         &addr.parse().map_err(|e| format!("{e}"))?,
@@ -198,6 +210,9 @@ fn http_status(
         .set_read_timeout(Some(Duration::from_secs(20)))
         .map_err(|e| e.to_string())?;
     let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n");
+    if let Some(secret) = call_secret {
+        request.push_str(&format!("X-Bynk-Call-Secret: {secret}\r\n"));
+    }
     if let Some(b) = body {
         request.push_str("Content-Type: application/json\r\n");
         request.push_str(&format!("Content-Length: {}\r\n", b.len()));
@@ -290,6 +305,8 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
                 "-y",
                 WRANGLER,
                 "dev",
+                "--var",
+                &wrangler::call_secret_var(),
                 "--port",
                 &port.to_string(),
                 "--inspector-port",
@@ -337,6 +354,35 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
 
     // Baseline: nothing has been delivered yet.
     assert_eq!(read_trace(), "", "trace must start empty");
+
+    // (0) #2004: a well-formed event sent from outside the deployment, with
+    // no call secret or a wrong one, is refused with a bare 401 before the
+    // body is read, and never reaches the handler. The route is reachable
+    // on the Worker's public address, so the path alone admits nothing.
+    let forged_body = format!(r#"{{"payload":{{"tag":"forged"}},{}}}"#, valid_envelope());
+    for secret in [None, Some("not-the-secret")] {
+        let (status, resp_body) = http_status_as(
+            "POST",
+            port,
+            "/_bynk/event/OnTick",
+            Some(&forged_body),
+            secret,
+        )
+        .expect("POST forged event");
+        assert_eq!(
+            status, 401,
+            "an event without the call secret must be refused, got body: {resp_body}"
+        );
+        assert!(
+            resp_body.contains("Unauthorized") && !resp_body.contains('{'),
+            "a refusal carries no detail, got body: {resp_body}"
+        );
+    }
+    assert_eq!(
+        read_trace(),
+        "",
+        "a forged event must never reach the handler"
+    );
 
     // (1) A malformed payload (wrong field type) must be rejected with 400,
     // and — the half a generated-code assertion alone cannot show — the
@@ -460,6 +506,8 @@ fn events_boundary_field_default_cross_context_on_workerd() {
                 "-y",
                 WRANGLER,
                 "dev",
+                "--var",
+                &wrangler::call_secret_var(),
                 "--port",
                 &port.to_string(),
                 "--inspector-port",

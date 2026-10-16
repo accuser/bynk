@@ -432,6 +432,8 @@ fn per_publisher_fifo_on_workerd() {
                     "-y",
                     WRANGLER,
                     "dev",
+                    "--var",
+                    &wrangler::call_secret_var(),
                     "--port",
                     &port.to_string(),
                     "--inspector-port",
