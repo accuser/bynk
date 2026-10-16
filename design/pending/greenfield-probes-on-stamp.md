@@ -38,3 +38,15 @@ pending file that names a probe it doesn't actually move is harmless (the
 stamp rewrites the row to its live value) but should be caught in review. The
 table on `main` can lag a merge by one stamp run, as the changelog and version
 already do.
+
+Accepted on purpose: because acknowledgement is read from every pending file in
+the tree, a merged increment's `probes` also covers the *same* probe on other
+PRs' merge refs until its stamp lands (minutes). An unintended move of that
+probe in another PR merged inside that window would pass the gate, and the
+stamp would write the combined reading. Closing the window would need the gate
+to tell a PR's own pending files from `main`'s, which is brittle across shallow
+and local checkouts; the exposure is one probe for a few minutes, and the
+combined reading still shows up in the stamp commit's diff. The stamp does
+refuse to absorb any move that none of the increments it consumes names, so
+drift that reaches `main` any other way fails the stamp with nothing written
+rather than disappearing into the table.

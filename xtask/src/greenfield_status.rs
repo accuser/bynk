@@ -3039,6 +3039,51 @@ pub fn refresh_gated_rows(committed: &str, probes: &[Probe]) -> Result<String, S
     }
 }
 
+/// The stamp's refreshed table: [`refresh_gated_rows`], but only if every gated
+/// probe whose live reading differs from `committed` is named by one of the
+/// increments being stamped (`acknowledged` — the union of their `probes`).
+///
+/// Rewriting every gated row unconditionally would silently absorb a move that
+/// reached `main` with no acknowledgement (a bypass push, say): after the stamp
+/// the table would match by construction, and nothing downstream could notice.
+/// Refusing instead keeps the invariant the gate enforces on PRs — a gated probe
+/// never moves unacknowledged — true on `main` too. The stamp computes this
+/// before applying, so a refusal leaves nothing written and the pending files
+/// in place.
+pub fn refresh_for_stamp(
+    committed: &str,
+    probes: &[Probe],
+    acknowledged: &BTreeSet<String>,
+) -> Result<String, String> {
+    let unnamed: Vec<String> = probes
+        .iter()
+        .filter(|p| p.gated && !acknowledged.contains(p.name))
+        .filter_map(|p| {
+            let prefix = format!("| `{}` | yes | ", p.name);
+            let committed_reads = committed
+                .lines()
+                .find(|l| l.starts_with(&prefix))?
+                .strip_prefix(&prefix)?
+                .strip_suffix(" |")?;
+            (committed_reads != p.reads).then(|| {
+                format!(
+                    "  {}: committed {committed_reads:?}, live {:?}",
+                    p.name, p.reads
+                )
+            })
+        })
+        .collect();
+    if !unnamed.is_empty() {
+        return Err(format!(
+            "gated greenfield-status probe(s) moved without being named by any increment being \
+             stamped — refusing to absorb them into the table. Acknowledge them in a pending \
+             file or regenerate the table in a PR:\n{}",
+            unnamed.join("\n")
+        ));
+    }
+    refresh_gated_rows(committed, probes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3079,6 +3124,36 @@ mod tests {
         assert!(out.contains("| `wildcard_arms` | no (trend) | 355 |\n"));
         assert!(out.ends_with("\nfooter\n"));
         assert_eq!(out.lines().count(), committed.lines().count());
+    }
+
+    const STAMP_TABLE: &str = "| Probe | Gated | Reads |\n|---|---|---|\n\
+                               | `ts_writes` | yes | 850 |\n\
+                               | `ts_any` | yes | 26 |\n";
+
+    #[test]
+    fn stamp_refresh_rewrites_named_moves() {
+        let ack: BTreeSet<String> = ["ts_writes".to_string()].into();
+        let out = refresh_for_stamp(
+            STAMP_TABLE,
+            &[gated("ts_writes", "851"), gated("ts_any", "26")],
+            &ack,
+        )
+        .unwrap();
+        assert!(out.contains("| `ts_writes` | yes | 851 |"));
+        assert!(out.contains("| `ts_any` | yes | 26 |"));
+    }
+
+    #[test]
+    fn stamp_refresh_refuses_an_unnamed_move() {
+        let ack: BTreeSet<String> = ["ts_writes".to_string()].into();
+        let err = refresh_for_stamp(
+            STAMP_TABLE,
+            &[gated("ts_writes", "851"), gated("ts_any", "27")],
+            &ack,
+        )
+        .unwrap_err();
+        assert!(err.contains("ts_any"), "{err}");
+        assert!(!err.contains("ts_writes"), "{err}");
     }
 
     #[test]

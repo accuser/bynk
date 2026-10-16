@@ -207,7 +207,7 @@ type Frontmatter = (Option<Level>, Option<String>, Vec<String>, Vec<String>);
 
 /// Parse and validate the `---`-delimited header. Pushes errors; returns the
 /// fields when present and well-formed (`closes_rule` and `probes` default to
-/// empty rather than `Option` — it's genuinely optional, unlike `level`/`changelog`). Returns
+/// empty rather than `Option` — they're genuinely optional, unlike `level`/`changelog`). Returns
 /// `None` only when the frontmatter block itself is missing/unterminated
 /// (nothing to recover).
 fn parse_frontmatter(content: &str, errors: &mut Vec<String>) -> Option<Frontmatter> {
@@ -1192,6 +1192,55 @@ mod tests {
         )
         .unwrap();
         root
+    }
+
+    #[test]
+    fn acknowledged_probes_is_the_union_across_pending_files() {
+        let dir = rule_fixture("ack-union", "");
+        let pending = dir.join("design/pending");
+        fs::write(
+            pending.join("a.md"),
+            "---\nlevel: patch\nchangelog: a\nprobes: ts_writes, ts_any\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            pending.join("b.md"),
+            "---\nlevel: patch\nchangelog: b\nprobes: ts_any, diagnostic_coverage\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            pending.join("c.md"),
+            "---\nlevel: patch\nchangelog: c\n---\n",
+        )
+        .unwrap();
+        fs::write(pending.join("README.md"), "not a pending file").unwrap();
+        let ack: Vec<String> = acknowledged_probes(&dir).into_iter().collect();
+        assert_eq!(ack, ["diagnostic_coverage", "ts_any", "ts_writes"]);
+    }
+
+    #[test]
+    fn acknowledged_probes_is_empty_when_any_pending_file_is_invalid() {
+        let dir = rule_fixture("ack-invalid", "");
+        let pending = dir.join("design/pending");
+        fs::write(
+            pending.join("a.md"),
+            "---\nlevel: patch\nchangelog: a\nprobes: ts_writes\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            pending.join("b.md"),
+            "---\nlevel: nope\nchangelog: b\n---\n",
+        )
+        .unwrap();
+        assert!(acknowledged_probes(&dir).is_empty());
+    }
+
+    #[test]
+    fn acknowledged_probes_is_empty_without_a_pending_dir() {
+        let dir = std::env::temp_dir().join("xtask-ack-no-pending-dir");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        assert!(acknowledged_probes(&dir).is_empty());
     }
 
     #[test]

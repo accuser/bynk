@@ -135,18 +135,24 @@ fn stamp(apply: bool) -> ExitCode {
     }
 
     // Compute the refreshed greenfield-status table *before* applying, so a
-    // table that can't be refreshed (a lost row) fails the stamp with nothing
-    // written. The probes read Rust sources and fixtures, none of which the
-    // stamp touches, so the pre-apply reading is the post-apply one. Done on
-    // every stamp, not only when an increment names `probes`: it is cheap (the
-    // gated probes only, no clippy) and keeps `main`'s table exact.
+    // table that can't be refreshed fails the stamp with nothing written. The
+    // probes read Rust sources and fixtures, none of which the stamp touches, so
+    // the pre-apply reading is the post-apply one. Only moves named by the
+    // increments being stamped are written; any other drift refuses the stamp
+    // rather than being silently absorbed (see `refresh_for_stamp`).
+    let acknowledged: std::collections::BTreeSet<String> = plan
+        .increments
+        .iter()
+        .flat_map(|inc| inc.probes.iter().cloned())
+        .collect();
     let table_path = xtask::greenfield_status::table_path(&root);
     let refreshed_table = match std::fs::read_to_string(&table_path)
         .map_err(|e| format!("cannot read {}: {e}", table_path.display()))
         .and_then(|committed| {
-            xtask::greenfield_status::refresh_gated_rows(
+            xtask::greenfield_status::refresh_for_stamp(
                 &committed,
                 &xtask::greenfield_status::run_gated(&root),
+                &acknowledged,
             )
         }) {
         Ok(t) => t,
