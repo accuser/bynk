@@ -156,7 +156,7 @@ The online Book's source lives in [`site/`](site/). Build it locally with
 
 A separate, print-first narrative manuscript, *Architecture that compiles*, is
 being developed in
-[accuser/architecture-that-compiles](https://github.com/accuser/architecture-that-compiles).
+[bynk-lang/architecture-that-compiles](https://github.com/bynk-lang/architecture-that-compiles).
 It draws on the documentation as research but does not share its prose or replace
 the online guide and reference. Its example programs are compile-tested against a
 published Bynk release, so a diagnostic rename here can invalidate a listing
