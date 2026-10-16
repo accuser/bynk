@@ -1,0 +1,5 @@
+context demo
+
+service echo {
+  on call(x: Int) -> Effect[Int] by c: Caller { x }
+}

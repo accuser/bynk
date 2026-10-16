@@ -74,6 +74,7 @@ pub fn lower_test_case_body(
     test_services: HashSet<String>,
     test_service_handlers: HashMap<String, Vec<bynk_ir::IrHandlerKind>>,
     test_agents: HashSet<String>,
+    settle_sends: bool,
     source: &str,
     rel_path: &str,
     runtime_use: &RuntimeUse,
@@ -96,6 +97,7 @@ pub fn lower_test_case_body(
                 observation_trace: Some("__obs".to_string()),
                 test_services,
                 test_service_handlers,
+                settle_sends,
             },
         )
         .with_source_map(Some(&smb));
@@ -2461,6 +2463,17 @@ fn lower_method_call(
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.is_test_service(&id.name)
     {
+        // #1994: a target whose handlers send with `~>` settles each addressed
+        // call — awaits the promises the handler handed `deps.__exec.waitUntil`
+        // — so the case's expectations see the sends' effects.
+        let settles = cx.test_settles_sends();
+        let settle = |call: String| {
+            if settles {
+                format!("__bynkSettle(deps, {call})")
+            } else {
+                call
+            }
+        };
         // P7.2: deferred, not narrowed. `identity` is the raw lowered call-site value
         // (e.g. `"bob"`), with no reachable identity type at this `cx` — resolving
         // one needs the addressed actor's own identity type threaded through from
@@ -2482,7 +2495,7 @@ fn lower_method_call(
             let rest: Vec<String> = args[1..].iter().map(|a| pre.lower(a, cx)).collect();
             let mut all = rest;
             all.push(deps_expr);
-            return pre.finish(format!("{}.{}({})", id.name, key, all.join(", ")));
+            return pre.finish(settle(format!("{}.{}({})", id.name, key, all.join(", "))));
         }
         // cron/queue address: the emitted key is position-indexed among the
         // service's same-kind handlers, so recover the index from the handler
@@ -2507,7 +2520,7 @@ fn lower_method_call(
                 let rest: Vec<String> = args[1..].iter().map(|a| pre.lower(a, cx)).collect();
                 let mut all = rest;
                 all.push(deps_expr);
-                return pre.finish(format!("{}.{}({})", id.name, key, all.join(", ")));
+                return pre.finish(settle(format!("{}.{}({})", id.name, key, all.join(", "))));
             }
             if method.name == "message"
                 && handlers
@@ -2520,14 +2533,19 @@ fn lower_method_call(
                 let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
                 let mut all = args_lowered;
                 all.push(deps_expr);
-                return pre.finish(format!("{}.{}({})", id.name, key, all.join(", ")));
+                return pre.finish(settle(format!("{}.{}({})", id.name, key, all.join(", "))));
             }
         }
         // `svc.call(args)` and other (non-http) forms: pass args through with deps.
         let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
         let mut all = args_lowered;
         all.push(deps_expr);
-        return pre.finish(format!("{}.{}({})", id.name, method.name, all.join(", ")));
+        return pre.finish(settle(format!(
+            "{}.{}({})",
+            id.name,
+            method.name,
+            all.join(", ")
+        )));
     }
     // v0.9.2: inline agent invocation. Source form is
     // `Agent(<key>).method(args)`; receiver parses as

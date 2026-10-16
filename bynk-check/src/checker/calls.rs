@@ -3094,7 +3094,7 @@ fn untyped_outcome_receiver(receiver: &Expr, method: &Ident) -> CompileError {
         ),
     )
     .with_note(
-        "a case does not type a service call's outcome. Matching an `HttpResult` variant binds a payload of fixed type (`Raw(body, contentType)` binds `Bytes` and `String`, a message or redirect variant binds `String`), but any other value drawn from the outcome, such as `v` in `Ok(v)`, has no type. Call the method in a source function the case calls, or compare the value instead",
+        "a case does not type the outcome of an http, cron, or queue address (a `svc.call(…)` outcome takes its handler's declared type). Matching an `HttpResult` variant binds a payload of fixed type (`Raw(body, contentType)` binds `Bytes` and `String`, a message or redirect variant binds `String`), but any other value drawn from the outcome, such as `v` in `Ok(v)`, has no type. Call the method in a source function the case calls, or compare the value instead",
     )
 }
 
@@ -3150,8 +3150,19 @@ fn check_test_service_address(
             return None;
         };
         let params = handler.params.clone();
+        let return_type = handler.return_type.clone();
         check_address_args(&id.name, "call", &params, args, method.span, ctx);
-        return None;
+        // #1979 (reopens ADR 0203's deferred question): the outcome takes the
+        // handler's declared type, so `expect r == Ok("a")` types its `Ok`
+        // from `r` and lowers to the structural equality `r`'s type selects.
+        // An `on call` handler declares `Effect[T]`; a bare `T` is lifted. A
+        // type the test cannot resolve stays loose, as before.
+        let tys = ctx.tys;
+        let ret = resolve_type_ref(&return_type, &ctx.input.types, tys)?;
+        return Some(match &*tys.get(ret) {
+            Ty::Effect(_) => ret,
+            _ => tys.intern(Ty::Effect(ret)),
+        });
     }
 
     // `svc.<VERB>("/path", …)` — an http route. The first argument is the route
@@ -3718,9 +3729,70 @@ pub(crate) fn check_effect_let_principal(
                 .with_note("append a call-site actor, e.g. `... by User(\"alice\")`"),
             ),
         },
+        // #1978: an `on call` handler that binds its caller (`by c: Caller`)
+        // reads `deps.identity`, the calling context's name. A test has no
+        // calling context, so the case must name one with `by Caller("…")`;
+        // without it the emitted call carries no identity and fails `tsc`.
+        (Some(ActorIdentity::CallerString), principal) if handler_binds_caller(&handler, ctx) => {
+            match principal {
+                None => ctx.errors.push(
+                    CompileError::new(
+                        "bynk.test.actor_identity_required",
+                        value.span,
+                        "this handler binds its caller's identity (`by <binder>: Caller`), so the case must name the calling context with `by Caller(\"...\")`",
+                    )
+                    .with_note("append a call-site actor, e.g. `... by Caller(\"orders\")`"),
+                ),
+                Some(p) => match resolve_actor_identity(&p.actor.name, ctx) {
+                    ActorIdentity::CallerString if p.identity.is_none() => {
+                        ctx.errors.push(CompileError::new(
+                            "bynk.test.actor_identity_required",
+                            p.span,
+                            format!(
+                                "this handler binds its caller's identity, so write `by {}(\"...\")` naming the calling context",
+                                p.actor.name
+                            ),
+                        ))
+                    }
+                    ActorIdentity::Unit => {
+                        ctx.errors.push(CompileError::new(
+                            "bynk.test.principal_identity_mismatch",
+                            p.span,
+                            format!(
+                                "this handler binds its caller's identity, but `by {}` supplies none — write `by Caller(\"...\")`",
+                                p.actor.name
+                            ),
+                        ));
+                        if let Some(idv) = &p.identity {
+                            let _ = type_of(idv, None, ctx);
+                        }
+                    }
+                    _ => report_principal_actor(p, ctx),
+                },
+            }
+        }
         (_, Some(p)) => report_principal_actor(p, ctx),
         (_, None) => {}
     }
+}
+
+/// #1978: whether an `on call` handler binds the prelude `Caller`'s identity
+/// (`by c: Caller`) — the test-side mirror of [`crate::actors::caller_binder_for`],
+/// which decides whether the emitted handler's `deps` requires `identity`.
+fn handler_binds_caller(handler: &TestHandler, ctx: &Ctx) -> bool {
+    use crate::actors::{Identity, prelude_actor};
+    let Some(by) = &handler.by_clause else {
+        return false;
+    };
+    let Some(binder) = &by.binder else {
+        return false;
+    };
+    let name = &by.primary().name;
+    matches!(handler.kind, bynk_syntax::ast::HandlerKind::Call)
+        && !by.is_sum()
+        && !ctx.test_actors.contains_key(name)
+        && prelude_actor(name).map(|c| c.identity) == Some(Identity::CallerId)
+        && !handler.params.iter().any(|p| p.name.name == binder.name)
 }
 
 /// Resolve a call-site principal actor for its own diagnostics (v0.182).

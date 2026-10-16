@@ -1,0 +1,20 @@
+context tally
+
+consumes bynk { Logger }
+
+agent Counter {
+	key id: String
+	store n: Cell[Int] = 0
+	on call bump() -> Effect[()] { n := 1 }
+	on call read() -> Effect[Int] { n }
+}
+
+service api from http {
+	-- #1994: a `~>` send in a route handler needs `deps.__exec`; the test
+	-- harness supplies one and settles its promises after the call.
+	on GET("/") () -> Effect[HttpResult[String]] by v: Visitor given Logger {
+		~> Logger.info("hi")
+		~> Counter("a").bump()
+		Ok("hi")
+	}
+}

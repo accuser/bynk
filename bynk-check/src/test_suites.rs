@@ -1770,6 +1770,7 @@ fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::T
                     kind: h.kind.clone(),
                     params: h.params.clone(),
                     by_clause: h.by_clause.clone(),
+                    return_type: h.return_type.clone(),
                     span: h.span,
                 })
                 .collect();
