@@ -709,10 +709,11 @@ claim predicates (`hasClaim`, `claimEquals`). Well-formedness: §5.
 {{#grammar scheme}}
 
 The closed authentication-scheme set. `None`, `Internal`, `Bearer`,
-`Signature` (v0.51), and `Oidc` (v0.151) are supported. The authenticated schemes
+`Signature` (v0.51), `Oidc` (v0.151) and `Foreign` (#1971) are supported. The authenticated schemes
 carry a keyed-args config — `Bearer(secret = "<ENV>")`, `Signature(secret =
 "<ENV>", header = "<Header>", (timestamp = "<Header>", tolerance = <seconds>)?)`,
-and `Oidc(issuer = "<url>", audience = "<aud>", jwks = "<url>")` — parsed by the
+`Oidc(issuer = "<url>", audience = "<aud>", jwks = "<url>")` and
+`Foreign(secret = "<ENV>", (worker = "<name>")?)` — parsed by the
 `scheme_config` production (string- or integer-valued args; the checker validates
 which keys each scheme admits). Unlike `Bearer`/`Signature`, an `Oidc` config
 names **no secret**: its trust root is the provider's public JWKS. Well-formedness: §5.

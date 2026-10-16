@@ -1593,6 +1593,7 @@ service Api {
                 .collect(),
             return_type: handler.return_type.clone(),
             span: handler.span,
+            foreign_callers: Vec::new(),
         };
         let normal_form = crate::contract::service_normal_form(&svc, &types);
 

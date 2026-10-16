@@ -408,6 +408,10 @@ pub enum ActorSeamIr {
     None,
     /// `by who: A | B` — an ordered sum of peer actors, first-wins.
     Sum(Vec<bynk_check::actors::SumMember>),
+    /// I3 (#1971): an `on call` handler's sum, `by who: Caller | Legacy`.
+    /// The call is already authenticated; the sum names which verified
+    /// caller it was (`bynk_check::actors::call_admission_for`).
+    CallSum(Vec<bynk_check::actors::CallSumMember>),
     Bearer(bynk_check::actors::BearerSeam),
     Oidc(bynk_check::actors::OidcSeam),
     /// A cross-context `on call … by c: Caller` handler's own binder name —

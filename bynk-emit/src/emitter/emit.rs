@@ -2846,9 +2846,9 @@ pub(crate) fn emit_service(
             ActorSeamIr::Caller(binder) => Some(binder.clone()),
             ActorSeamIr::Bearer(s) => s.binder.clone(),
             ActorSeamIr::Oidc(s) => s.binder.clone(),
-            ActorSeamIr::Sum(_) | ActorSeamIr::None => None,
+            ActorSeamIr::Sum(_) | ActorSeamIr::CallSum(_) | ActorSeamIr::None => None,
         };
-        let actor_sum_binder = if matches!(seam, ActorSeamIr::Sum(_)) {
+        let actor_sum_binder = if matches!(seam, ActorSeamIr::Sum(_) | ActorSeamIr::CallSum(_)) {
             handler
                 .by_clause
                 .as_ref()
@@ -3026,6 +3026,11 @@ pub(crate) fn emit_service(
                     .collect::<Vec<_>>()
                     .join(" | ");
                 append_deps_field(&mut deps_members, "who", bynk_ts::TsType::named(union));
+            }
+            // I3 (#1971): a `call` sum. `Caller` carries the calling context's
+            // name; a foreign caller is its actor alone.
+            ActorSeamIr::CallSum(members) => {
+                append_deps_field(&mut deps_members, "who", call_sum_ts_type(members));
             }
             // A binder-less Bearer/Oidc, or no seam at all — nothing to widen.
             ActorSeamIr::Bearer(_) | ActorSeamIr::Oidc(_) | ActorSeamIr::None => {}
@@ -3718,10 +3723,14 @@ pub(crate) fn any_service_binds_caller<'a>(
     services: impl IntoIterator<Item = &'a ServiceDecl>,
     actors: &HashMap<String, ActorDecl>,
 ) -> bool {
+    // I3 (#1971): a `call` sum names its caller too (`who`), and in bundle
+    // mode every caller is a context.
     services.into_iter().any(|s| {
-        s.handlers
-            .iter()
-            .any(|h| bynk_check::actors::caller_binder_for(h, actors).is_some())
+        s.handlers.iter().any(|h| {
+            bynk_check::actors::caller_binder_for(h, actors).is_some()
+                || bynk_check::actors::call_admission_for(h, actors)
+                    .is_some_and(|a| a.sum.is_some())
+        })
     })
 }
 
@@ -3818,7 +3827,51 @@ pub(crate) fn emit_make_surface(
             .collect();
         // A Caller-binding handler's `deps.identity` is the caller name the
         // compose root threaded in; every other handler forwards `deps` verbatim.
-        let deps_arg = if binds_caller(h) {
+        //
+        // I3 (#1971): in bundle mode every caller is a context, never a
+        // foreign caller, so a `call` sum resolves to `Caller` with that name,
+        // and a handler that admits only foreign callers is never admitted.
+        let admission = bynk_check::actors::call_admission_for(h, &ctx.actors);
+        if admission.as_ref().is_some_and(|a| !a.contexts) {
+            entries.push(bynk_ts::TsObjectEntry::Method {
+                name: s.name.name.clone(),
+                is_async,
+                generics: Vec::new(),
+                params: method_params,
+                return_type: Some(ts_type_ref_to_ts_type(&h.return_type, None)),
+                doc: None,
+                inline: false,
+                body: vec![bynk_ts::TsStmt::throw_stmt(
+                    bynk_ts::TsExpr::New {
+                        callee: Box::new(bynk_ts::TsExpr::Ident("globalThis.Error".to_string())),
+                        args: vec![bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(format!(
+                            "`{}` admits only foreign callers, and a context is not one",
+                            s.name.name
+                        )))],
+                    },
+                    None,
+                )],
+            });
+            continue;
+        }
+        let deps_arg = if admission.is_some_and(|a| a.sum.is_some()) {
+            bynk_ts::TsExpr::object_entries(vec![
+                bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident("deps".to_string())),
+                bynk_ts::TsObjectEntry::Prop(
+                    "who".to_string(),
+                    bynk_ts::TsExpr::object(vec![
+                        (
+                            "tag".to_string(),
+                            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str("Caller".to_string())),
+                        ),
+                        (
+                            "identity".to_string(),
+                            bynk_ts::TsExpr::Ident("__caller".to_string()),
+                        ),
+                    ]),
+                ),
+            ])
+        } else if binds_caller(h) {
             bynk_ts::TsExpr::object_entries(vec![
                 bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident("deps".to_string())),
                 bynk_ts::TsObjectEntry::Prop(
@@ -4044,7 +4097,14 @@ pub(crate) fn lower_workers_cross_context_call(
             // text, not `escape_ts_string`'s own pre-escaped output —
             // `TsLit::Str`'s own renderer applies the identical escaping
             // itself (documented byte-for-byte match, #1388).
-            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(cx.commons().commons.name.joined())),
+            //
+            // I3 (#1971): a system test case that calls `by <ForeignActor>`
+            // the service admits signs as that foreign caller instead, under
+            // the secret the harness gives it.
+            bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(match cx.call_site_actor.as_ref() {
+                Some(actor) if svc.foreign_callers.contains(actor) => actor.clone(),
+                _ => cx.commons().commons.name.joined(),
+            })),
             bynk_ts::TsExpr::Lit(bynk_ts::TsLit::Str(contract)),
             // I2 (#1971): the calling Worker's `env`, which holds the key for
             // the edge to the callee, and the callee's qualified name, which
@@ -8293,4 +8353,21 @@ context demo {
             "{ts}"
         );
     }
+}
+
+/// I3 (#1971): the TypeScript type of a `call` handler's resolved actor sum
+/// (`deps.who`): `Caller` carries the calling context's name, a foreign
+/// caller is its actor alone. Opaque text, as the HTTP sum's union is.
+pub(crate) fn call_sum_ts_type(members: &[bynk_check::actors::CallSumMember]) -> bynk_ts::TsType {
+    let union = members
+        .iter()
+        .map(|m| match m {
+            bynk_check::actors::CallSumMember::Caller => {
+                "{ tag: \"Caller\", identity: string }".to_string()
+            }
+            bynk_check::actors::CallSumMember::Foreign(f) => format!("{{ tag: \"{}\" }}", f.actor),
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    bynk_ts::TsType::named(union)
 }

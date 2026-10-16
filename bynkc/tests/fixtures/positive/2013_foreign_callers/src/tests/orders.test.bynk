@@ -1,0 +1,14 @@
+suite shop.orders {
+  case "a context calls the sum" {
+    let r <- status.call("a") by Caller("shop.front")
+    expect r is Ok("a for shop.front")
+  }
+  case "legacy calls the sum" {
+    let r <- status.call("a") by Legacy
+    expect r is Ok("a for legacy")
+  }
+  case "legacy calls ping" {
+    let r <- ping.call(3) by Legacy
+    expect r == 3
+  }
+}

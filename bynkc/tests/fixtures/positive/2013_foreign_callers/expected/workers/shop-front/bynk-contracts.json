@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "ask": "fe199362421ea3b3"
+  },
+  "expects": {
+    "shop.orders": {
+      "status": "226b9939f85e69ea"
+    }
+  }
+}
