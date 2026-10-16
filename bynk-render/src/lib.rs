@@ -888,6 +888,32 @@ mod tests {
         assert!(rendered.contains("Note: on a long line"), "{rendered}");
     }
 
+    /// #1956: a label in another file whose text has non-ASCII before it is
+    /// headed by its own line and column. ariadne 0.6's byte-index mode looked
+    /// the label's char offset up as a byte offset for that header — naming an
+    /// earlier line, or panicking when the offset split a codepoint, as it does
+    /// here (`bynk.bynk`, where first-party labels point, is full of `—`).
+    #[test]
+    fn a_label_in_another_file_after_non_ascii_text_is_headed_by_its_own_position() {
+        let primary = "context app\n\n\nservice api {}\n";
+        let sibling = "context app\n-- ———\nservice api {} -- é\n";
+        let at = |text: &str| text.find("api").unwrap();
+        let err = CompileError::new("bynk.test", Span::new(at(primary), at(primary) + 3), "msg")
+            .with_label(
+                Span::new(at(sibling), at(sibling) + 3),
+                "previously declared here",
+            );
+        let homes = [LabelHome::File {
+            filename: "a.bynk",
+            source: sibling,
+        }];
+        let rendered = render_error_in_plain(&err, primary, "z.bynk", &homes);
+        let (z, a) = rendered.split_once("─[ a.bynk:3:9 ]").expect(&rendered);
+        assert!(z.contains("─[ z.bynk:4:9 ]"), "{rendered}");
+        assert!(a.contains(" 3 │ service api {} -- é"), "{rendered}");
+        assert!(a.contains("previously declared here"), "{rendered}");
+    }
+
     /// A long primary line is cut (#1666) even when a label lies in another
     /// file: the report heads with the primary span's column in the file, not
     /// in the cut text, and the sibling's snippet keeps its own header.

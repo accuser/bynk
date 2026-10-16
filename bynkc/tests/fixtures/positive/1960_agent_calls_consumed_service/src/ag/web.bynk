@@ -1,0 +1,50 @@
+context ag.web
+
+consumes ag.doubler as Doubler
+
+-- #1960: an agent handler calls a consumed context's service and constructs
+-- another agent. On Workers both go through the DO's own `env` (the Service
+-- Binding, the agent's namespace): the caller's `deps.env` does not survive
+-- the DO's JSON wire.
+agent Calls {
+  key id: String
+
+  store n: Cell[Int]
+
+  on call bump() -> Effect[Int] {
+    let _ <- n.update((c) => c + 1)
+    n
+  }
+}
+
+agent Acc {
+  key id: String
+
+  store total: Cell[Int]
+
+  on call add(n: Int) -> Effect[Int] {
+    let d <- Doubler.double(n)
+    let _ <- total.update((t) => t + d)
+    let _ <- Calls(self.id).bump()
+    total
+  }
+}
+
+service add {
+  on call(n: Int) -> Effect[Int] {
+    Acc("a").add(n)
+  }
+}
+
+service calls {
+  on call() -> Effect[Int] {
+    Calls("a").bump()
+  }
+}
+
+service api from http {
+  on POST("/add/:n") (n: String) -> Effect[HttpResult[Int]] by Visitor {
+    let t <- Acc("a").add(21)
+    Ok(t)
+  }
+}

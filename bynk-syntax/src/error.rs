@@ -212,6 +212,21 @@ impl CompileError {
             && source.is_char_boundary(span.end)
     }
 
+    /// `span`'s byte range in `source` as the char range ariadne indexes by.
+    /// An offset inside a codepoint counts from that codepoint's start; one
+    /// past the end stays past it by the same amount, so ariadne still sees an
+    /// out-of-bounds span as out of bounds.
+    fn char_range(source: &str, span: &Span) -> std::ops::Range<usize> {
+        let at = |byte: usize| {
+            if byte > source.len() {
+                source.chars().count() + (byte - source.len())
+            } else {
+                source[..source.floor_char_boundary(byte)].chars().count()
+            }
+        };
+        at(span.start)..at(span.end)
+    }
+
     fn report_with_config<'a>(
         &'a self,
         filename: &'a str,
@@ -219,7 +234,7 @@ impl CompileError {
         homes: &[LabelHome<'a>],
         config: Config,
     ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
-        let primary_span = (filename, self.span.range());
+        let primary_span = (filename, Self::char_range(source, &self.span));
         // ADR 0117: a warning-severity diagnostic must render as a warning, not
         // an error — `report_with_config` is the only `ReportKind` in the
         // workspace, so this is the one place that decides it.
@@ -227,11 +242,15 @@ impl CompileError {
             Severity::Error => ReportKind::Error,
             Severity::Warning => ReportKind::Warning,
         };
-        // Spans are byte offsets into the UTF-8 source; ariadne 0.6 defaults
-        // to character indexing, which misplaces the underline on any line
-        // with non-ASCII text before the span.
+        // Spans are byte offsets into the UTF-8 source, but ariadne is handed
+        // char offsets ([`Self::char_range`]), each converted against the text
+        // its span lies in. Its `IndexType::Byte` mode is wrong for a label in
+        // another file: ariadne 0.6 heads that file's snippet by looking the
+        // label's *char* offset up as a byte offset, so the header names the
+        // wrong line and column after any non-ASCII text — and panics when
+        // that offset splits a codepoint (#1956: `bynk.bynk` is full of `—`).
         let mut builder = Report::build(kind, primary_span.clone())
-            .with_config(config.with_index_type(IndexType::Byte))
+            .with_config(config.with_index_type(IndexType::Char))
             .with_code(self.category)
             .with_message(&self.message)
             .with_label(
@@ -257,7 +276,7 @@ impl CompileError {
                 continue;
             }
             builder = builder.with_label(
-                Label::new((label_file, span.range()))
+                Label::new((label_file, Self::char_range(label_source, span)))
                     .with_message(label)
                     .with_color(Color::Yellow),
             );

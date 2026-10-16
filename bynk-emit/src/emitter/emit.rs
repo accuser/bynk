@@ -3425,7 +3425,13 @@ fn build_deps_object_ty_with_surface(
         .collect();
     match target {
         BuildTarget::Bundle => {
-            if cx.cross_context_used() {
+            // #1960: an agent method this body calls may itself call a
+            // consumed service, reading the `surface` this body hands it —
+            // the bundle counterpart of the whole `env` a Workers body
+            // threads whenever it constructs an agent.
+            if cx.cross_context_used()
+                || (cx.agents_instantiated() && has_consumed_service(cross_context))
+            {
                 members.push(bynk_ts::TsTypeMember::prop(
                     "surface",
                     surface_ty(cross_context),
@@ -5507,7 +5513,15 @@ pub(crate) fn emit_agent(
         .handlers
         .iter()
         .any(|h| bynk_ir::block_uses_emit(&h.body, &commons.callees));
-    let needs_env_ctor = given_deps_expr.is_some() || agent_uses_emit;
+    // #1960: likewise `deps.env` itself — its Service Bindings and DO
+    // namespaces are dead plain objects once the caller's deps cross the
+    // wire, so an agent whose handlers call a consumed context's service or
+    // construct an agent reads them from its own `env` instead.
+    let agent_reaches_env = ctx.target == BuildTarget::Workers
+        && a.handlers
+            .iter()
+            .any(|h| bynk_ir::block_reaches_worker_env(&h.body, &commons.callees));
+    let needs_env_ctor = given_deps_expr.is_some() || agent_uses_emit || agent_reaches_env;
     if needs_env_ctor {
         writeln!(out, "  private __env: unknown;").unwrap();
         writeln!(
@@ -5971,6 +5985,10 @@ pub(crate) fn emit_agent(
             .unwrap_or_else(|| "call".to_string());
         let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
         module.in_bynk_unit = ctx.commons_name == "bynk";
+        // #1960: the body lowers for the build target, as a service body
+        // does, so a cross-context call reads the Service Binding its `deps`
+        // type names.
+        module.target = ctx.target;
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
         let mut cx = LowerCtx::new(
@@ -6331,7 +6349,7 @@ pub(crate) fn emit_agent(
             "...__decodeAgentArgs({}, methodName, args)",
             agent_wire_name(&a.name.name)
         ));
-        let result_expr = if given_deps_expr.is_some() || agent_uses_emit {
+        let result_expr = if needs_env_ctor {
             // #527: the wire deps are JSON — any capability provider in them
             // is a dead plain object (its methods did not survive
             // serialisation). Rebuild this agent's `given` deps in-process,
@@ -6436,6 +6454,9 @@ pub(crate) fn emit_agent(
                 entries.push(bynk_ts::TsObjectEntry::Spread(bynk_ts::TsExpr::Ident(
                     "__eventsDeps".to_string(),
                 )));
+            }
+            if agent_reaches_env {
+                entries.push(bynk_ts::TsObjectEntry::Shorthand("env".to_string()));
             }
             // P7.2: `methodName` is read from `url.pathname` at runtime, so no
             // static type can name which handler this is — a callable

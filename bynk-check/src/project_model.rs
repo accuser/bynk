@@ -192,9 +192,10 @@ impl ErrorSink {
 /// error's own file when its span has the primary span's `FileId`, carries no
 /// file identity (`FileId::UNKNOWN`, a span built without one), or names the
 /// error's own `source_path`. One naming another registered file is
-/// [`LabelFile::Other`]; one naming a file never registered (a toolchain-injected
-/// unit) is [`LabelFile::Unavailable`], so it is never drawn against the
-/// primary file's text.
+/// [`LabelFile::Other`]; one naming a toolchain-injected unit's reserved id is
+/// [`LabelFile::FirstParty`] (#1956), carrying that unit's own source; any other
+/// is [`LabelFile::Unavailable`]. Neither is ever drawn against the primary
+/// file's text.
 fn attribute_labels(files: &HashMap<FileId, PathBuf>, errors: &mut [AttributedError]) {
     for ae in errors {
         let primary = ae.error.span.file;
@@ -209,7 +210,13 @@ fn attribute_labels(files: &HashMap<FileId, PathBuf>, errors: &mut [AttributedEr
                 match files.get(&span.file) {
                     Some(path) if Some(path) == ae.source_path.as_ref() => LabelFile::Primary,
                     Some(path) => LabelFile::Other(path.clone()),
-                    None => LabelFile::Unavailable,
+                    None => match firstparty_unit_for(span.file) {
+                        Some(unit) => LabelFile::FirstParty {
+                            identity_path: unit.identity_path,
+                            source: unit.source,
+                        },
+                        None => LabelFile::Unavailable,
+                    },
                 }
             })
             .collect();
@@ -373,6 +380,28 @@ pub fn check_discovered_files(
 pub const FIRSTPARTY_ID_BLOCK: u32 = 1_000_000;
 pub const FIRSTPARTY_ID_BASE: u32 = 1_000_000_000;
 
+/// #1956: the first `FileId` reserved for first-party synthetic units. Each
+/// unit's spans carry `FIRSTPARTY_FILE_ID_BASE + id_block` ([`firstparty_file_id`]),
+/// fixed for the same reason as its `ExprId` block: the parse is cached per
+/// process, so the id can't come from any one project's interner. The range
+/// sits just below `FileId::UNKNOWN` (`u32::MAX`), far above any id
+/// `parse_cache::file_id_for` hands a real file. Without an identity of their
+/// own, a first-party span counted as the error's own file, and a "declared
+/// here" label into `bynk.bynk` was drawn at the same offsets in the user's.
+pub const FIRSTPARTY_FILE_ID_BASE: u32 = 0xFFFF_0000;
+
+/// The `FileId` every span of first-party `unit` carries.
+pub fn firstparty_file_id(unit: &firstparty::Unit) -> FileId {
+    FileId(FIRSTPARTY_FILE_ID_BASE + unit.id_block)
+}
+
+/// The first-party unit whose spans carry `file`, if any.
+fn firstparty_unit_for(file: FileId) -> Option<&'static firstparty::Unit> {
+    firstparty::UNITS
+        .iter()
+        .find(|unit| firstparty_file_id(unit) == file)
+}
+
 pub fn firstparty_parsed(
     cache: &'static OnceLock<Result<ParsedFile, Vec<CompileError>>>,
     identity_path: &'static str,
@@ -389,10 +418,13 @@ pub fn firstparty_parsed(
     // (`firstparty::Unit::id_block`), so first-party units can never collide
     // with each other either, however many of them one project injects.
     id_base: u32,
+    // #1956: the unit's reserved `FileId` ([`firstparty_file_id`]), stamped on
+    // every span so a label into it is never taken for the user's file.
+    file: FileId,
 ) -> Result<ParsedFile, Vec<CompileError>> {
     cache
         .get_or_init(|| {
-            lexer::tokenize(src)
+            lexer::tokenize_in(src, file)
                 .map_err(|e| vec![e])
                 .and_then(|toks| {
                     parser::parse_unit_with_warnings_from(&toks, src, &mut { id_base })
@@ -583,6 +615,7 @@ fn inject_firstparty(parsed: &mut Vec<ParsedFile>, errors: &mut ErrorSink) -> In
                 unit.source,
                 kind,
                 FIRSTPARTY_ID_BASE + unit.id_block * FIRSTPARTY_ID_BLOCK,
+                firstparty_file_id(unit),
             );
             reached[i] = Some(match parse {
                 Ok(pf) => Some(pf),
@@ -4700,7 +4733,7 @@ mod label_attribution_tests {
         .with_label(Span::new_in(own, 0, 1), "same id")
         .with_label(Span::new(0, 1), "no id")
         .with_label(Span::new_in(sibling, 21, 24), "sibling")
-        .with_label(Span::new_in(injected, 0, 1), "injected");
+        .with_label(Span::new_in(injected, 0, 1), "unregistered");
         sink.push_for(Some(Path::new("src/app/z_more.bynk")), error);
         let all = sink.into_all();
         assert_eq!(
@@ -4711,6 +4744,34 @@ mod label_attribution_tests {
                 LabelFile::Other(PathBuf::from("src/app/a_web.bynk")),
                 LabelFile::Unavailable,
             ]
+        );
+    }
+
+    /// #1956: a label into a first-party unit carries that unit's reserved
+    /// `FileId`, so it is attributed to the unit — with its own source — never
+    /// taken for the error's file.
+    #[test]
+    fn a_label_in_a_firstparty_unit_is_attributed_to_that_unit() {
+        let unit = firstparty::unit("bynk").expect("the `bynk` unit is registered");
+        let own = FileId(30);
+        let mut sink = ErrorSink::new();
+        sink.register_file(own, PathBuf::from("src/app/web.bynk"));
+        let error = CompileError::new(
+            "bynk.resolve.missing_field",
+            Span::new_in(own, 0, 7),
+            "missing required field `headers` for record `Request`",
+        )
+        .with_label(
+            Span::new_in(firstparty_file_id(unit), 0, 7),
+            "field declared here",
+        );
+        sink.push_for(Some(Path::new("src/app/web.bynk")), error);
+        assert_eq!(
+            sink.into_all()[0].label_files,
+            vec![LabelFile::FirstParty {
+                identity_path: unit.identity_path,
+                source: unit.source,
+            }]
         );
     }
 
@@ -5042,7 +5103,11 @@ mod shadowed_import_tests {
 
 #[cfg(test)]
 mod firstparty_injection_tests {
-    use super::{ErrorSink, ParsedFile, UnitKind, firstparty, inject_firstparty, lexer, parser};
+    use super::{
+        ErrorSink, ParsedFile, UnitKind, firstparty, firstparty_file_id, inject_firstparty, lexer,
+        parser,
+    };
+    use bynk_syntax::span::FileId;
     use std::collections::BTreeSet;
     use std::path::PathBuf;
 
@@ -5057,6 +5122,31 @@ mod firstparty_injection_tests {
         "uses bynk.locale",
         "uses bynk.locale.types",
     ];
+
+    /// #1956: every injected first-party unit's spans carry its reserved
+    /// `FileId` — distinct per unit and never `FileId::UNKNOWN` — so a label
+    /// into one is never taken for the user's file.
+    #[test]
+    fn injected_units_carry_their_reserved_file_id() {
+        let ids: BTreeSet<FileId> = firstparty::UNITS.iter().map(firstparty_file_id).collect();
+        assert_eq!(ids.len(), firstparty::UNITS.len());
+        assert!(!ids.contains(&FileId::UNKNOWN));
+        let mut parsed = project((1 << REFS.len()) - 1);
+        let injected = inject_firstparty(&mut parsed, &mut ErrorSink::new());
+        assert!(!injected.is_empty());
+        for unit in injected {
+            let pf = parsed
+                .iter()
+                .find(|pf| pf.identity_path() == std::path::Path::new(unit.identity_path))
+                .expect("an injected unit is in `parsed`");
+            assert_eq!(
+                pf.unit().span().file,
+                firstparty_file_id(unit),
+                "{}",
+                unit.name
+            );
+        }
+    }
 
     /// A one-file project whose context makes the references `mask` selects.
     fn project(mask: u32) -> Vec<ParsedFile> {
