@@ -1,0 +1,17 @@
+suite tally
+
+case "a route that sends answers" {
+	let r <- api.GET("/")
+	expect r is Ok(_)
+}
+
+case "the send has run before the expectations" {
+	let _ <- api.GET("/")
+	let n <- Counter("a").read()
+	expect n == 1
+}
+
+case "the route answers at the integration tier" as integration {
+	let r <- api.GET("/")
+	expect r is Ok(_)
+}

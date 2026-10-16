@@ -1,0 +1,2 @@
+bynk.test.actor_identity_required
+this handler binds its caller's identity (`by <binder>: Caller`), so the case must name the calling context with `by Caller("...")`

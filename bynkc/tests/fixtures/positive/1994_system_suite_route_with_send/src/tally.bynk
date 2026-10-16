@@ -1,0 +1,12 @@
+context tally
+
+consumes bynk { Logger }
+
+service api from http {
+	-- #1994: a `~>` send makes the Worker's `fetch` take the execution
+	-- context; the system-tier harness supplies one and settles it.
+	on GET("/") () -> Effect[HttpResult[String]] by v: Visitor given Logger {
+		~> Logger.info("hi")
+		Ok("hi")
+	}
+}

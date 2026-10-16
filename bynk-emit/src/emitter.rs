@@ -4102,6 +4102,10 @@ pub(crate) enum BodyMode {
         /// (P6.24a's own pure, unconditional mirror), not the raw AST
         /// `HandlerKind` this field used to store.
         test_service_handlers: HashMap<String, Vec<bynk_ir::IrHandlerKind>>,
+        /// #1994: the target has a handler that sends with `~>`, so `deps`
+        /// carries the `__exec` double and each addressed service call is
+        /// wrapped in `__bynkSettle(deps, …)`.
+        settle_sends: bool,
     },
     /// An integration test `case` body (`lower_integration_case_body`).
     IntegrationCase {
@@ -4623,6 +4627,18 @@ impl<'a> LowerCtx<'a> {
             BodyMode::TestCase { test_services, .. } => test_services.contains(name),
             _ => false,
         }
+    }
+
+    /// #1994: whether an addressed test-service call settles the `~>` sends
+    /// its handler handed `deps.__exec`.
+    pub(crate) fn test_settles_sends(&self) -> bool {
+        matches!(
+            &self.mode,
+            BodyMode::TestCase {
+                settle_sends: true,
+                ..
+            }
+        )
     }
 
     /// v0.182 (#664): the ordered handler kinds of the test service `name`.
