@@ -2,7 +2,8 @@
 
 - **Status:** Settling. Opened 2026-10-16. D1–D4 (§8) and every §11 question
   were closed with the maintainer on 2026-10-16: the recommended option
-  wherever the draft gave one, and the option its analysis favours elsewhere. §3.3's live defect is being fixed outside the track (§11 Q1).
+  wherever the draft gave one, and the option its analysis favours
+  elsewhere. §3.3's live defect is being fixed outside the track (§11 Q1).
 - **Realises:** `design/bynk-design-notes.md`'s bounded-context model at the
   edge of a deployment: a context is a Worker, and a team adopting Bynk keeps
   its other Workers. Also ADR 0092's named extension ("signed caller headers
@@ -213,8 +214,8 @@ So the forgery #1971 describes is reachable two ways:
 1. **From a Worker holding a Service Binding** (the issue's case). Granting a
    binding grants every context's identity.
 2. **From the public internet**, for any context whose Worker is publicly
-   routable, by a plain HTTP request to the call prefix. The contract hash is not a secret: it is in `bynk-contracts.json`, and a
-   wrong one is echoed back in the 409 body.
+   routable, by a plain HTTP request to the call prefix. The contract hash
+   is not a secret: it is in `bynk-contracts.json`, and a wrong one is echoed back in the 409 body.
 
 Case 2 needs no interop at all, so it is a defect in today's boundary rather
 than a feature of this track. It is recorded here because D2's design has to
@@ -345,11 +346,14 @@ versions side by side.
     prose cannot drift from the emitter.
   - *Clean-up before freezing:* fix or deliberately keep each rough edge in
     §3.1–3.2: `POST` only (405 otherwise), malformed JSON as 400
-    `MalformedJson` rather than 500, the caller header checked before the
-    body is read, D2's signature verified after the raw bytes are read (under
-    a body-size cap, 413 above it, since §3.1 has no limit today) but before
-    `JSON.parse` and the codec decode, inline field refinements hashed and validated,
-    and the `Duration` field guard. `Option`'s lenient decode stays: ADR 0450
+    `MalformedJson` rather than 500, inline field refinements hashed and
+    validated, and the `Duration` field guard. The callee's order becomes:
+    method; read the raw body under a size cap (413 above it, since §3.1 has
+    no limit today); verify D2's signature (401); then the unknown-service
+    404 and the `ContractMismatch` 409; then `JSON.parse` and the codec
+    decode. Verifying first means an unauthenticated sender learns nothing
+    about which services exist, gets no hash echoed back, and cannot write
+    the #1826 skew log line. `Option`'s lenient decode stays: ADR 0450
     adopted it precisely so non-Bynk JSON decodes, so it is part of the
     format, and a foreign caller may send either form.
   - *Stability rule for 1.x:* additive only within wire version 1. A new
@@ -366,8 +370,7 @@ versions side by side.
 
 **SETTLED 2026-10-16: (c).** Versioned independently of the compiler, with
 an `X-Bynk-Wire` version header the callee accepts a range of (§11 Q2). It
-is the floor for D3 and for any non-Bynk caller,
-and it costs the codegen nothing beyond the clean-up list: like ADR 0310's
+is the floor for D3 and for any non-Bynk caller, and it costs the codegen nothing beyond the clean-up list: like ADR 0310's
 emit ABI, it is a small enumerated surface beside a codegen that stays free
 (I-6).
 
@@ -382,8 +385,10 @@ emit ABI, it is a small enumerated surface beside a codegen that stays free
   hashes). They land before version 1 is declared, as ordinary pre-1.0
   increments. Changing the hash normal form forces one redeploy of every
   context (ADR 0200's flag day, once).
-- `spec/runtime-library.md:190` is corrected, and ADR 0092's "rejected
-  before the body" becomes true (settled with D1's clean-up).
+- `spec/runtime-library.md:190` is corrected. ADR 0092's "rejected before
+  the body" is restated by D2's ADR: the caller is rejected before the body
+  is *decoded*, after its bytes are read under the cap, because the
+  signature covers them.
 
 ### D2 — A non-Bynk caller's identity (#1971)
 
@@ -412,16 +417,22 @@ that only refuses requests no Bynk caller sends.
   fixed in I3's proposal). A handler admits it through the existing `by`
   sum, `by c: Caller | Legacy`, and the body `match`es the resolved actor,
   so "a Bynk context" and "the foreign caller `Legacy`" are distinct in the
-  type of `c` without restructuring `CallerId`. *Weakness:* by itself it is still a header claim; it
-  needs (c) or a channel proof to stop a foreign Worker from claiming
+  type of `c` without restructuring `CallerId`. *Weakness:* by itself it is
+  still a header claim; it needs (c) or a channel proof to stop a foreign Worker from claiming
   `shop.orders`.
 - **(c) A signed caller header.** Every caller signs
-  `(caller, method, full path, contract, wire version, timestamp, body digest)`
-  with HMAC-SHA256 under a per-binding secret. Every header the callee acts
-  on is in the tuple, so an unsigned `X-Bynk-Wire` cannot make the callee
-  decode the same bytes under another version's rules. The callee reads the
-  raw body under a size cap, verifies in constant time before decoding
-  the body and refuses unsigned, stale or mis-signed calls with 401. This is
+  `(caller, callee, method, path, contract, wire version, timestamp, body
+  digest)` with HMAC-SHA256 under a per-binding secret. Every header the
+  callee acts on is in the tuple, so an unsigned `X-Bynk-Wire` cannot make
+  the callee decode the same bytes under another version's rules. The
+  signing input is canonical on both sides: an absent `X-Bynk-Wire` is
+  signed as `1`; `path` is the URL pathname exactly as sent, with no query
+  string and no percent-normalisation (service names are identifiers, so
+  there is nothing to normalise); `callee` is the callee's qualified context
+  name, so a signature stays bound to one callee even under the interim
+  shared secret (d), where the key alone does not. The callee reads the raw
+  body under a size cap and verifies in constant time before any other
+  check (D1's order), and refuses unsigned, stale or mis-signed calls with 401. This is
   ADR 0092's named "multi-trust-domain integrity" extension. *Cost:* one secret
   per (caller, callee) edge, provisioned by `bynk deploy` through the secrets
   manifest; a crypto dependency on Web Crypto (the standard-library track's
@@ -614,7 +625,7 @@ thin in practice; (a) does not foreclose it.
 
 ## 9. Candidate slice decomposition
 
-Provisional until this doc settles. Each slice becomes an increment proposal,
+Settled with §8 and §11. Each slice becomes an increment proposal,
 filed as a sub-issue of the spine. Platform-capability work (I5, D4) never
 shares an increment with language or emitter work (ADR 0023).
 
@@ -719,8 +730,10 @@ resolved on the option this doc's own analysis favours, as stated.
   Q8). `on call` handlers are not idempotent in general, so a captured call
   can be replayed inside the window. A handler with side effects should use
   the Idempotency capability (#921) for that, and the reference note says so.
-  Verification is constant-time and runs before the body is decoded, so an
-  unauthenticated sender cannot reach the codec. The body is read under a
+  Verification is constant-time and runs before every other check (D1's
+  order), so an unauthenticated sender reaches neither the codec nor the
+  dispatcher: it cannot enumerate services (404 against 409), have a hash
+  echoed, or write the skew log line. The body is read under a
   size cap before it is hashed, so such a sender cannot make the callee
   buffer and hash an unbounded body either.
 - **D4.** A `Service` capability reaches only the Worker named in the
