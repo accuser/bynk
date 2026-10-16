@@ -56,10 +56,11 @@ pub fn instance_binding_name(prefix: &str, capability: &str) -> String {
 /// it on Workers (#1950, `bynk_emit::emitter::wrangler::handler_bindings`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingSource {
-    /// A `[[services]]` Service Binding to another context's Worker: one the
-    /// context consumes, or one subscribing to an event it publishes.
-    /// Handlers see a consumed context's binding when that context has
-    /// services; never a subscriber's, which only the events fan-out calls.
+    /// A `[[services]]` Service Binding to another context's Worker: a
+    /// consumed context whose services the context calls (#1961 — consuming
+    /// one for its types or events alone binds nothing), or one subscribing to
+    /// an event it publishes. Handlers see a called context's binding; never a
+    /// subscriber's, which only the events fan-out calls.
     Service { context: String },
     /// The `[[kv_namespaces]]` binding the cloudflare adapter's `Kv` reads.
     /// Never seen by handlers: they reach KV through the `WorkersKv` provider,

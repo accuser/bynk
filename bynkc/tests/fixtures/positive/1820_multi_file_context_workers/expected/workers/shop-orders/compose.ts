@@ -6,7 +6,6 @@ import * as handlers from "./handlers.js";
 import * as handlers_shop_fees from "../shop-fees/handlers.js";
 
 export interface Env {
-  SHOP_FEES: __ServiceBinding;
   SHOP_PAYMENT: __ServiceBinding;
   BOOK: __DurableObjectNamespace;
   TALLY: __DurableObjectNamespace;

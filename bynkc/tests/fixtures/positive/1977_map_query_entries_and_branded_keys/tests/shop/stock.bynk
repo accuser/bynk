@@ -1,0 +1,47 @@
+suite shop.stock
+
+case "an empty box totals zero" {
+  let n <- Box("b").total()
+  expect n == 0
+}
+
+case "a box totals its entries" {
+  let b = Box("t")
+  let _ <- b.add("x", 2)
+  let _ <- b.add("y", 3)
+  let n <- b.total()
+  let m <- b.totalEff()
+  expect n == 5
+  expect m == 5
+}
+
+case "opaque keys collect" {
+  let k <- ByKey("a").keys()
+  expect k.count() == 0
+}
+
+case "opaque keys round-trip" {
+  let b = ByKey("r")
+  let _ <- b.add("p", 1)
+  let _ <- b.add("q", 4)
+  let ks <- b.keys()
+  let s <- b.stale()
+  let c <- b.keyCount()
+  let h <- b.has("q")
+  let v <- b.qty("q")
+  expect ks.count() == 2
+  expect s.count() == 1
+  expect c == 2
+  expect h
+  expect v == Some(4)
+}
+
+case "refined keys decode" {
+  let l = Ledger("l")
+  let _ <- l.open(7, 10)
+  let _ <- l.open(3, 1)
+  let a <- l.accounts()
+  let s <- l.sum()
+  expect a.count() == 2
+  expect s == 21
+}

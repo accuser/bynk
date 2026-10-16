@@ -1,0 +1,16 @@
+context ev.emitter
+
+consumes bynk { Events }
+
+exports transparent { Pinged }
+
+event Pinged = {
+  n: Int,
+}
+
+service api from http {
+  on POST("/ping/:n") (n: String) -> Effect[HttpResult[String]] by Visitor given Events {
+    let _ <- Events.emit[Pinged](Pinged { n: 7 })
+    Created("sent")
+  }
+}
