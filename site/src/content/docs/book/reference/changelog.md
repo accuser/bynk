@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.338**.
+written against **v0.339**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.339.0** | `let <pattern> = value else { … }` (and `<-` for an effect's result) binds a pattern's names for the rest of the block, and yields the `else` block, or the arms of `else match { … }`, when the value does not match, so a chain of fallible steps reads top to bottom with each failure handled beside its step |
 | **v0.338.0** | The cross-context call format is published as [wire format version 1](/book/reference/wire-format/), generated from the compiler and versioned on its own, and callers now send `X-Bynk-Wire: 1`. A `/_bynk/call/` request that is not a `POST` gets `405`, malformed JSON gets `400 MalformedJson` instead of a `500`, and an unsupported `X-Bynk-Wire` gets `400 UnsupportedWireVersion`. A record field's inline refinement (`qty: Int where Positive`) is now checked when the record is decoded, at a call boundary or in an HTTP body, and is part of the contract hash; a `Duration` field must be a whole number of milliseconds, and sending a `Duration` or `Instant` outside the safe-integer range now faults in the sender (as an `Int` already did) instead of being passed on. **Breaking for deployed projects:** contracts with an inline field refinement change hash, so redeploy the whole project once. Tightening an inline field refinement later also makes stored records that break it fail to load |
 | **v0.337.0** | An `as integration` case runs a consumed adapter's real binding, its own `given` capabilities taking the tier's doubles and stubs; a `suite` on an adapter runs the binding at every tier; and a case can call a capability it reaches directly (`let s <- Greeter.hello("ann")`) |
 | **v0.336.0** | 'A test case''s service call is typed by its handler''s return type, so `Ok(v)` binds `v` with the handler''s result type and its methods check (#1934). A `system`-tier call with a `Wire(…)` argument, `by Nobody`, or a method with no handler yields the new `HttpOutcome[T]` (`Rejected(…)` before the handler ran, `Handled(…)` after), whose kinds are checked and whose body and path rejections carry a `detail` string. A queue verdict is matchable (`Retry(reason)`), and `bynk.test.untyped_outcome` is retired' |

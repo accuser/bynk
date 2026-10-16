@@ -1,12 +1,6 @@
----
-level: minor
-probes: diagnostic_coverage
-changelog: `let <pattern> = value else { … }` (and `<-` for an effect's result) binds a pattern's names for the rest of the block, and yields the `else` block, or the arms of `else match { … }`, when the value does not match, so a chain of fallible steps reads top to bottom with each failure handled beside its step
----
+# 0484 — `let <pattern> … else …` is the `match` it stands for, scoped to its block
 
-## ADR: let-else-is-a-block-scoped-match
-title: `let <pattern> … else …` is the `match` it stands for, scoped to its block
-summary: `let P <- e else E` followed by the rest of the block means `match` on `e` with `P => { rest }` and `_ => E`; the parser builds that `match`, so it adds no control flow, and the `else` has the enclosing block's type
+- **Status:** Accepted (v0.339)
 
 **Context.** A handler that runs several fallible steps, each of which must undo
 earlier work or choose a response when it fails, could only be written as a
