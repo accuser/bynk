@@ -1,0 +1,2 @@
+bynk.boundary.ambiguous_type cannot read field `inner` of a `Wrap`: its type names `Amount`
+# exact
