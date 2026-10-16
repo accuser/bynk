@@ -1,7 +1,7 @@
 ---
 level: minor
 probes: emit_diagnostics, diagnostic_coverage
-changelog: 'A test case''s service call is typed by its handler''s return type, so `Ok(v)` binds `v` with the handler''s result type and its methods check (#1934). A `system`-tier call with a `Wire(…)` argument, `by Nobody`, or a method with no handler yields the new `HttpOutcome[T]` (`Rejected(BoundaryRejection) | Handled(HttpResult[T])`), whose kinds are checked and whose body and path rejections carry a `detail` string. A queue verdict is matchable (`Retry(reason)`), and `bynk.test.untyped_outcome` is retired'
+changelog: 'A test case''s service call is typed by its handler''s return type, so `Ok(v)` binds `v` with the handler''s result type and its methods check (#1934). A `system`-tier call with a `Wire(…)` argument, `by Nobody`, or a method with no handler yields the new `HttpOutcome[T]` (`Rejected(…)` before the handler ran, `Handled(…)` after), whose kinds are checked and whose body and path rejections carry a `detail` string. A queue verdict is matchable (`Retry(reason)`), and `bynk.test.untyped_outcome` is retired'
 ---
 
 ## ADR: case-outcome-typed-by-handler
@@ -75,7 +75,8 @@ and the wrong-method driver decode an `HttpOutcome` (`Rejected(…)` or
   is the auth seam's `401` to a request with no credential. `MethodNotAllowed`
   is the router's `405` fall-through.
 
-  Neither type can be named in source. They exist only as what a case's service
+  Neither type can be named or constructed in source: they are
+  scrutinised only, with `is` and `match`. They exist only as what a case's service
   address yields, so a type annotation has nothing to name. Nameability can be
   added later without changing what any case means.
 - **The outcome type is tier-independent.** `Wire` and `by Nobody` are already
