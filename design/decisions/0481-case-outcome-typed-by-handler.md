@@ -1,12 +1,6 @@
----
-level: minor
-probes: emit_diagnostics, diagnostic_coverage
-changelog: 'A test case''s service call is typed by its handler''s return type, so `Ok(v)` binds `v` with the handler''s result type and its methods check (#1934). A `system`-tier call with a `Wire(…)` argument, `by Nobody`, or a method with no handler yields the new `HttpOutcome[T]` (`Rejected(…)` before the handler ran, `Handled(…)` after), whose kinds are checked and whose body and path rejections carry a `detail` string. A queue verdict is matchable (`Retry(reason)`), and `bynk.test.untyped_outcome` is retired'
----
+# 0481 — A case's service call is typed by its handler, and a call past the handler's types by the wire
 
-## ADR: case-outcome-typed-by-handler
-title: A case's service call is typed by its handler, and a call past the handler's types by the wire
-summary: Settles ADR 0203's re-openable point, extending ADR 0476 to every address. A test-service address has its handler's return type; `Wire`, `by Nobody` and a wrong method yield `HttpOutcome[T]`
+- **Status:** Accepted (v0.336)
 
 - **Relates:** [[0203]] (the loose outcome, re-openable), [[0476]] (`svc.call` typed by its handler, http/cron/queue left open), #1931 (fixed payloads typed), #1934.
 

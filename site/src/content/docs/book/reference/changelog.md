@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.335**.
+written against **v0.336**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.336.0** | 'A test case''s service call is typed by its handler''s return type, so `Ok(v)` binds `v` with the handler''s result type and its methods check (#1934). A `system`-tier call with a `Wire(…)` argument, `by Nobody`, or a method with no handler yields the new `HttpOutcome[T]` (`Rejected(…)` before the handler ran, `Handled(…)` after), whose kinds are checked and whose body and path rejections carry a `detail` string. A queue verdict is matchable (`Retry(reason)`), and `bynk.test.untyped_outcome` is retired' |
 | **v0.335.1** | Experimental `bynk.cloudflare` `Service` calls a Worker outside the project over a Service Binding, `capability Billing = Service @worker("legacy-billing")` (bound as `SERVICE_BILLING`); `bynk deploy` binds it without provisioning and warns when the Worker is missing from the account, and `bynk dev` binds a local stand-in unless `--local-worker legacy-billing` names it. `bynk deploy --format json` gains a per-context `foreign_services` list (additive) |
 | **v0.335.0** | Every cross-context call and event delivery now carries the deployment's call secret `BYNK_CALL_SECRET` in an `X-Bynk-Call-Secret` header, and a Worker refuses a `/_bynk/call/` or `/_bynk/event/` request without it (`401`, before anything else), because those paths answered on the Worker's public `workers.dev` address and anyone could call an `on call` service claiming any caller. `bynk deploy` mints the secret and sets it on every context, `bynk dev` and `bynk test` use a fixed local value. **Breaking for deployed projects:** redeploy the whole project once (`bynk deploy`, not `--context`), since until every Worker holds the secret, calls between old and new Workers fail |
 | **v0.334.0** | In a test case, a `svc.call(…)` outcome takes the handler's declared type, so `expect r == Ok("a")` checks; a `by c: Caller` handler called without `by Caller("…")` is `bynk.test.actor_identity_required`; and a handler that sends with `~>` runs at every tier, its sends awaited before the case's expectations |
