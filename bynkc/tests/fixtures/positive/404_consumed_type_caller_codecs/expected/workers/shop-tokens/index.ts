@@ -27,9 +27,10 @@ export default {
               globalThis.console.error("ContractMismatch shop.tokens call issue", { service: "issue", expected: "096e27188255617a", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "issue", expected: "096e27188255617a", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
+            const __text = await request.text();
             let args: __JsonValue;
             try {
-              args = globalThis.JSON.parse(await request.text()) as __JsonValue;
+              args = globalThis.JSON.parse(__text) as __JsonValue;
             } catch {
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
             }

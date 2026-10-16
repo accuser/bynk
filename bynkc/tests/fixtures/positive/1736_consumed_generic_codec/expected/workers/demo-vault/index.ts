@@ -27,9 +27,10 @@ export default {
               globalThis.console.error("ContractMismatch demo.vault call many", { service: "many", expected: "2487ff1b622fbaa9", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "many", expected: "2487ff1b622fbaa9", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
+            const __text = await request.text();
             let args: __JsonValue;
             try {
-              args = globalThis.JSON.parse(await request.text()) as __JsonValue;
+              args = globalThis.JSON.parse(__text) as __JsonValue;
             } catch {
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
             }
@@ -47,9 +48,10 @@ export default {
               globalThis.console.error("ContractMismatch demo.vault call open", { service: "open", expected: "57700891e7302936", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "open", expected: "57700891e7302936", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
+            const __text = await request.text();
             let args: __JsonValue;
             try {
-              args = globalThis.JSON.parse(await request.text()) as __JsonValue;
+              args = globalThis.JSON.parse(__text) as __JsonValue;
             } catch {
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
             }
@@ -67,9 +69,10 @@ export default {
               globalThis.console.error("ContractMismatch demo.vault call read", { service: "read", expected: "b797903bbb7dffed", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "read", expected: "b797903bbb7dffed", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
+            const __text = await request.text();
             let args: __JsonValue;
             try {
-              args = globalThis.JSON.parse(await request.text()) as __JsonValue;
+              args = globalThis.JSON.parse(__text) as __JsonValue;
             } catch {
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
             }
@@ -87,9 +90,10 @@ export default {
               globalThis.console.error("ContractMismatch demo.vault call readBack", { service: "readBack", expected: "117e26b47336a282", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "readBack", expected: "117e26b47336a282", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
+            const __text = await request.text();
             let args: __JsonValue;
             try {
-              args = globalThis.JSON.parse(await request.text()) as __JsonValue;
+              args = globalThis.JSON.parse(__text) as __JsonValue;
             } catch {
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
             }
@@ -107,9 +111,10 @@ export default {
               globalThis.console.error("ContractMismatch demo.vault call settle", { service: "settle", expected: "d90380f9cd1937cf", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "settle", expected: "d90380f9cd1937cf", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
+            const __text = await request.text();
             let args: __JsonValue;
             try {
-              args = globalThis.JSON.parse(await request.text()) as __JsonValue;
+              args = globalThis.JSON.parse(__text) as __JsonValue;
             } catch {
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
             }
@@ -127,9 +132,10 @@ export default {
               globalThis.console.error("ContractMismatch demo.vault call wrapPlain", { service: "wrapPlain", expected: "93e4a0f8e9768f44", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "wrapPlain", expected: "93e4a0f8e9768f44", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
+            const __text = await request.text();
             let args: __JsonValue;
             try {
-              args = globalThis.JSON.parse(await request.text()) as __JsonValue;
+              args = globalThis.JSON.parse(__text) as __JsonValue;
             } catch {
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
             }

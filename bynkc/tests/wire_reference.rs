@@ -116,7 +116,7 @@ fn marker(check: CallCheck) -> String {
         CallCheck::WireVersion => format!("request.headers.get(\"{}\")", wf::WIRE_HEADER),
         CallCheck::UnknownService => "switch (servicePath)".to_string(),
         CallCheck::Contract => format!("request.headers.get(\"{}\")", wf::CONTRACT_HEADER),
-        CallCheck::MalformedJson => "globalThis.JSON.parse(await request.text())".to_string(),
+        CallCheck::MalformedJson => "globalThis.JSON.parse(__text)".to_string(),
         CallCheck::MissingCaller => format!("request.headers.get(\"{}\")", wf::CALLER_HEADER),
         CallCheck::Arguments => "const __r_".to_string(),
     }

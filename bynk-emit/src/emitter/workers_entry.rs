@@ -884,16 +884,18 @@ pub(crate) fn emit_worker_entry(
         // malformed JSON is the caller's fault (`400 MalformedJson`), not a
         // fault in this Worker (`500`). Reading the raw bytes first is also
         // what a body signature (the interop track's I2) will verify.
+        // The read is outside the `try`: a body stream that fails is this
+        // Worker's fault (`500`), not malformed JSON from the caller.
+        case_body.push(const_(
+            "__text",
+            await_expr(method_call(ident("request"), "text", vec![])),
+        ));
         case_body.push(let_typed("args", TsType::named("__JsonValue")));
         case_body.push(try_catch_stmt(
             vec![TsStmt::assign(
                 ident("args"),
                 as_expr(
-                    method_call(
-                        ident("globalThis.JSON"),
-                        "parse",
-                        vec![await_expr(method_call(ident("request"), "text", vec![]))],
-                    ),
+                    method_call(ident("globalThis.JSON"), "parse", vec![ident("__text")]),
                     TsType::named("__JsonValue"),
                 ),
                 None,

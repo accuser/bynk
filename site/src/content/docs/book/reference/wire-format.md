@@ -56,7 +56,7 @@ POST /_bynk/call/<service>
 | `X-Bynk-Call-Secret` | yes | The deployment's call secret (`BYNK_CALL_SECRET`). Compared in constant time. Its value, and this header, are replaced by a per-edge signature before non-Bynk callers are supported; see *Authentication* below. |
 | `X-Bynk-Contract` | yes | The caller's hash of the service's contract, 16 lowercase hex digits. Must equal the callee's; a missing header does not. |
 | `X-Bynk-Caller` | when the handler binds `by c: Caller` | The calling context's qualified name (`shop.orders`), which the handler reads as `c.identity`. Not authenticated beyond the call secret. |
-| `X-Bynk-Wire` | no | The wire version the caller speaks, as a decimal integer. Absent means `1`. |
+| `X-Bynk-Wire` | no | The wire version the caller speaks, exactly the decimal digits of an accepted version (`1`, not `01` or `+1`). Absent means `1`. |
 | `content-type` | no | Bynk callers send `application/json`. The callee does not check it. |
 
 **Body.** JSON, encoding the handler's parameters:
@@ -81,7 +81,7 @@ request.
 | 3 | `X-Bynk-Wire` is absent or names a version the callee accepts. | `400` | `{"kind":"UnsupportedWireVersion","accepted":[1]}` |
 | 4 | The path names a service of the callee's context with an `on call` handler. | `404` | text `Not found` |
 | 5 | `X-Bynk-Contract` equals the callee's hash of that service. | `409` | `{"kind":"ContractMismatch","service":"…","expected":"…","actual":"…"}` |
-| 6 | The body parses as JSON. | `400` | `{"kind":"MalformedJson","details":"Invalid request body"}` |
+| 6 | The body parses as JSON. (A body that cannot be read at all is a `500`.) | `400` | `{"kind":"MalformedJson","details":"Invalid request body"}` |
 | 7 | `X-Bynk-Caller` is present and non-empty. Checked only when the handler binds `by c: Caller`. | `401` | `{"kind":"Unauthorized","details":"missing caller identity"}` |
 | 8 | The body decodes as the handler's parameters (see *Encoding*). | `400` | a `StructuralMismatch` or `RefinementViolation` body |
 

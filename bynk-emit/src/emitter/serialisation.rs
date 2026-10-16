@@ -3205,26 +3205,29 @@ pub(crate) fn emit_generic_helpers_qualified(
                 // would derive for a non-generic declaration's own fields.
                 //
                 // #1969: the instantiation keeps each field's inline
-                // refinement, read off the declaration (`record_inst_fields`
-                // returns its fields in declaration order).
-                let declared: Vec<Vec<bynk_syntax::ast::PredKind>> =
+                // refinement, read off the declaration and paired by name, so
+                // a field the two lists disagree on panics rather than
+                // silently losing its check (the contract hash would still
+                // include it).
+                let declared: std::collections::HashMap<&str, Vec<bynk_syntax::ast::PredKind>> =
                     match types.get(name.as_str()).map(|d| &d.body) {
                         Some(bynk_syntax::ast::TypeBody::Record(r)) => r
                             .fields
                             .iter()
-                            .map(bynk_check::wire::field_predicates)
+                            .map(|f| (f.name.name.as_str(), bynk_check::wire::field_predicates(f)))
                             .collect(),
-                        _ => Vec::new(),
+                        _ => unreachable!("RecordInst `{name}` is not a resolved generic record"),
                     };
                 let fields: Vec<WireField> = fields
                     .into_iter()
-                    .enumerate()
-                    .map(|(i, (n, t))| WireField {
+                    .map(|(n, t)| WireField {
                         shape: wire_ref_of(&t),
+                        predicates: declared.get(n.as_str()).cloned().unwrap_or_else(|| {
+                            unreachable!("`{name}` has no declared field `{n}`")
+                        }),
                         path_segment: n.clone(),
                         name: n,
                         default: None,
-                        predicates: declared.get(i).cloned().unwrap_or_default(),
                     })
                     .collect();
                 // #1443 (Arc E slice 5): `emit_record_codec` itself now

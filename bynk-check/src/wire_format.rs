@@ -83,7 +83,7 @@ pub const HEADERS: &[Header] = &[
     Header {
         name: WIRE_HEADER,
         required: "no",
-        meaning: "The wire version the caller speaks, as a decimal integer. Absent means `1`.",
+        meaning: "The wire version the caller speaks, exactly the decimal digits of an accepted version (`1`, not `01` or `+1`). Absent means `1`.",
     },
     Header {
         name: "content-type",
@@ -170,7 +170,9 @@ impl CallCheck {
                 "The path names a service of the callee's context with an `on call` handler."
             }
             CallCheck::Contract => "`X-Bynk-Contract` equals the callee's hash of that service.",
-            CallCheck::MalformedJson => "The body parses as JSON.",
+            CallCheck::MalformedJson => {
+                "The body parses as JSON. (A body that cannot be read at all is a `500`.)"
+            }
             CallCheck::MissingCaller => {
                 "`X-Bynk-Caller` is present and non-empty. Checked only when the handler binds `by c: Caller`."
             }
