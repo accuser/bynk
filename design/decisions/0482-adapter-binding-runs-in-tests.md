@@ -1,12 +1,6 @@
----
-level: minor
-probes: ts_writes
-changelog: An `as integration` case runs a consumed adapter's real binding, its own `given` capabilities taking the tier's doubles and stubs; a `suite` on an adapter runs the binding at every tier; and a case can call a capability it reaches directly (`let s <- Greeter.hello("ann")`)
----
+# 0482 — An adapter's binding runs in an integration case and in a suite on the adapter
 
-## ADR: adapter-binding-runs-in-tests
-title: An adapter's binding runs in an integration case and in a suite on the adapter
-summary: Integration cases build consumed adapters' bindings; adapter suites test the binding; a case's capability call reaches its deps
+- **Status:** Accepted (v0.337)
 
 **Context.** A test module imported no binding module, so every external
 provider in `__makeTestDeps` was a placeholder (#1863). An `as integration` case
