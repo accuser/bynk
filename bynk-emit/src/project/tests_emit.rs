@@ -1420,6 +1420,13 @@ fn emit_integration_harness<'a>(
     for p in participants {
         let ns = test_ns(p);
         let env = format!("env_{ns}");
+        // #2004: every participant admits the others' calls and event
+        // deliveries under the local call secret, as under `bynk dev`.
+        body.push(TsStmt::assign(
+            member(ident(env.clone()), crate::CALL_SECRET_BINDING),
+            str_lit(crate::LOCAL_CALL_SECRET),
+            None,
+        ));
         for binding in bindings_of(p) {
             let value = match &binding.source {
                 // #1856: a context that is no participant has no Worker here.
@@ -1459,6 +1466,13 @@ fn emit_integration_harness<'a>(
         TsBindingName::Ident("rootEnv".to_string()),
         Some(TsType::named("any")),
         TsExpr::object(vec![]),
+        None,
+    ));
+    // #2004: the test cases call in through `rootEnv`, so it holds the
+    // secret their `__callService` stamps.
+    body.push(TsStmt::assign(
+        member(ident("rootEnv"), crate::CALL_SECRET_BINDING),
+        str_lit(crate::LOCAL_CALL_SECRET),
         None,
     ));
     for p in participants {

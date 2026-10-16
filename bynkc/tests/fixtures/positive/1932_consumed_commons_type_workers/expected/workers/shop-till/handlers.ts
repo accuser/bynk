@@ -8,9 +8,9 @@ import { __serialise_Amount, __deserialise_Amount, __serialise_Box, __deserialis
 
 export const total = {
   async call(deps: { env: { SHOP_QUOTES: __ServiceBinding } }): globalThis.Promise<number> {
-    const b = await __callService(deps.env.SHOP_QUOTES, "quote", {  }, __deserialise_Box, "shop.till", "f9cdf9e7922d5135");
-    const a = await __callService(deps.env.SHOP_QUOTES, "price", {  }, __deserialise_Amount, "shop.till", "13d2ae969f935116");
-    const paid = await __callService(deps.env.SHOP_QUOTES, "pay", __serialise_Amount(a), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "shop.till", "0a863ca09197a185");
+    const b = await __callService(deps.env.SHOP_QUOTES, "quote", {  }, __deserialise_Box, "shop.till", "f9cdf9e7922d5135", deps.env);
+    const a = await __callService(deps.env.SHOP_QUOTES, "price", {  }, __deserialise_Amount, "shop.till", "13d2ae969f935116", deps.env);
+    const paid = await __callService(deps.env.SHOP_QUOTES, "pay", __serialise_Amount(a), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "shop.till", "0a863ca09197a185", deps.env);
     return b.a.cents + paid;
   },
 };

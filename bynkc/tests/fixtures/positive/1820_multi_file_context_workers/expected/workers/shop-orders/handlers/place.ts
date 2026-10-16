@@ -17,7 +17,7 @@ export type Note = __CommonsNote & { readonly __ctxBrand?: "shop.orders" };
 
 export const place = {
   async call(line: Line, deps: { Fees: shop_fees.Fees; Stamp: Stamp; env: { SHOP_PAYMENT: __ServiceBinding; BOOK: __DurableObjectNamespace; TALLY: __DurableObjectNamespace } }): globalThis.Promise<number> {
-    const ok = await __callService(deps.env.SHOP_PAYMENT, "authorise", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(line.qty), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "shop.orders", "b5e747de6448afda");
+    const ok = await __callService(deps.env.SHOP_PAYMENT, "authorise", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(line.qty), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "shop.orders", "b5e747de6448afda", deps.env);
     const n = await __makeBook(line.sku, deps.env).add(line, deps);
     const h = await __makeTally("all", deps.env).hit(deps);
     return (ok ? n + h : 0);

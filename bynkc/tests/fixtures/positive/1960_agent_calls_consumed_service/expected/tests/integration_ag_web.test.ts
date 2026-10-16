@@ -31,10 +31,13 @@ function __bynkShow(v: unknown): string {
 function __makeHarness() {
   const env___ns_ag_web: any = {};
   const env___ns_ag_doubler: any = {};
+  env___ns_ag_web.BYNK_CALL_SECRET = "bynk-local-call-secret";
   env___ns_ag_web.AG_DOUBLER = { fetch: (req: globalThis.Request) => worker___ns_ag_doubler.fetch(req, env___ns_ag_doubler) } as __ServiceBinding;
   env___ns_ag_web.ACC = __makeIntegrationDoNamespace(__ns_ag_web.Acc, env___ns_ag_web);
   env___ns_ag_web.CALLS = __makeIntegrationDoNamespace(__ns_ag_web.Calls, env___ns_ag_web);
+  env___ns_ag_doubler.BYNK_CALL_SECRET = "bynk-local-call-secret";
   const rootEnv: any = {};
+  rootEnv.BYNK_CALL_SECRET = "bynk-local-call-secret";
   rootEnv.AG_WEB = { fetch: (req: globalThis.Request) => worker___ns_ag_web.fetch(req, env___ns_ag_web) } as __ServiceBinding;
   rootEnv.AG_DOUBLER = { fetch: (req: globalThis.Request) => worker___ns_ag_doubler.fetch(req, env___ns_ag_doubler) } as __ServiceBinding;
   return { env: rootEnv };
@@ -73,11 +76,11 @@ async function __sysdrive_wrongmethod_api(method: string, path: string) {
 async function test_an_agent_calls_a_consumed_context_s_service() {
   try {
     const deps = __makeHarness();
-    const a = await __callService(deps.env.AG_WEB, "add", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(1), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "ebb9d45e16f83e66");
+    const a = await __callService(deps.env.AG_WEB, "add", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(1), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "ebb9d45e16f83e66", deps.env);
     if (!(a === 2)) { throw __bynkExpectFailure("tests/web.bynk:7:12", 332, 338, "expect a == 2\n  expected: a == 2\n  actual:   " + __bynkShow((a)) + " == " + __bynkShow((2))); }
-    const b = await __callService(deps.env.AG_WEB, "add", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(20), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "ebb9d45e16f83e66");
+    const b = await __callService(deps.env.AG_WEB, "add", ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(20), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "ebb9d45e16f83e66", deps.env);
     if (!(b === 42)) { throw __bynkExpectFailure("tests/web.bynk:9:12", 378, 385, "expect b == 42\n  expected: b == 42\n  actual:   " + __bynkShow((b)) + " == " + __bynkShow((42))); }
-    const c = await __callService(deps.env.AG_WEB, "calls", {  }, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "10cef9e38f3c2b1d");
+    const c = await __callService(deps.env.AG_WEB, "calls", {  }, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "10cef9e38f3c2b1d", deps.env);
     if (!(c === 3)) { throw __bynkExpectFailure("tests/web.bynk:11:12", 425, 431, "expect c == 3\n  expected: c == 3\n  actual:   " + __bynkShow((c)) + " == " + __bynkShow((3))); }
     return { pass: true };
   } catch (e) {

@@ -27,7 +27,7 @@ export const enter = {
    * reached only inside the generated `deserialise_Result_Grant_TokenError`.
    */
   async call(seed: string, deps: { env: { SHOP_TOKENS: __ServiceBinding } }): globalThis.Promise<Result<void, GateError>> {
-    const g = await __callService(deps.env.SHOP_TOKENS, "issue", seed as __JsonValue, __deserialise_Result_Grant_TokenError, "shop.gate", "096e27188255617a");
+    const g = await __callService(deps.env.SHOP_TOKENS, "issue", seed as __JsonValue, __deserialise_Result_Grant_TokenError, "shop.gate", "096e27188255617a", deps.env);
     switch (g.tag) {
       case "Ok": {
         return Ok(undefined);
