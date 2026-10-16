@@ -199,6 +199,7 @@ dependencies = [
  "bynk-syntax",
  "bynk-testkit",
  "clap",
+ "getrandom",
  "libc",
  "serde",
  "serde_json",

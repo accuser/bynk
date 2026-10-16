@@ -14,7 +14,7 @@ export const ApiError = {
 
 export const tick = {
   async call(id: string, deps: { env: { DEMO_COUNTER: __ServiceBinding } }): globalThis.Promise<Result<number, ApiError>> {
-    const r = await __callService(deps.env.DEMO_COUNTER, "bump", id as __JsonValue, __deserialise_Result_Int_CounterError, "demo.api", "259d4828f5facab5");
+    const r = await __callService(deps.env.DEMO_COUNTER, "bump", id as __JsonValue, __deserialise_Result_Int_CounterError, "demo.api", "259d4828f5facab5", deps.env);
     switch (r.tag) {
       case "Ok": {
         const n = r.value;

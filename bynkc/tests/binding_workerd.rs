@@ -178,6 +178,8 @@ fn workers_kv_round_trips_on_workerd() {
                 "-y",
                 wrangler::SPEC,
                 "dev",
+                "--var",
+                &wrangler::call_secret_var(),
                 "--port",
                 &port.to_string(),
                 "--inspector-port",

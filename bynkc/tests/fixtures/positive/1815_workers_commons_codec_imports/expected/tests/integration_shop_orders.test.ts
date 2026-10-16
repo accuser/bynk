@@ -31,9 +31,12 @@ function __bynkShow(v: unknown): string {
 function __makeHarness() {
   const env___ns_shop_orders: any = {};
   const env___ns_shop_payment: any = {};
+  env___ns_shop_orders.BYNK_CALL_SECRET = "bynk-local-call-secret";
   env___ns_shop_orders.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker___ns_shop_payment.fetch(req, env___ns_shop_payment) } as __ServiceBinding;
   env___ns_shop_orders.ORDER = __makeIntegrationDoNamespace(__ns_shop_orders.Order, env___ns_shop_orders);
+  env___ns_shop_payment.BYNK_CALL_SECRET = "bynk-local-call-secret";
   const rootEnv: any = {};
+  rootEnv.BYNK_CALL_SECRET = "bynk-local-call-secret";
   rootEnv.SHOP_ORDERS = { fetch: (req: globalThis.Request) => worker___ns_shop_orders.fetch(req, env___ns_shop_orders) } as __ServiceBinding;
   rootEnv.SHOP_PAYMENT = { fetch: (req: globalThis.Request) => worker___ns_shop_payment.fetch(req, env___ns_shop_payment) } as __ServiceBinding;
   return { env: rootEnv };
@@ -42,7 +45,7 @@ function __makeHarness() {
 async function test_placing_crosses_the_payment_edge() {
   try {
     const deps = __makeHarness();
-    const ok = await __callService(deps.env.SHOP_ORDERS, "place", {  }, (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "3a1dda0cc2000672");
+    const ok = await __callService(deps.env.SHOP_ORDERS, "place", {  }, (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "3a1dda0cc2000672", deps.env);
     if (!(ok)) { throw __bynkExpectFailure("tests/place.bynk:8:12", 236, 238, "expect ok"); }
     return { pass: true };
   } catch (e) {
