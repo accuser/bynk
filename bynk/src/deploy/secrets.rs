@@ -944,9 +944,14 @@ WITH_EQUALS=a=b
     fn a_minted_call_secret_is_64_hex_digits_and_fresh() {
         let a = mint_call_secret().expect("the OS has randomness");
         let b = mint_call_secret().expect("the OS has randomness");
-        assert_eq!(a.len(), 64);
-        assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "{a}");
-        assert_ne!(a, b);
+        // Checked without ever printing a value, even on failure: a minted
+        // secret is never logged, test output included.
+        assert!(a.len() == 64, "a minted call secret is 64 characters");
+        assert!(
+            a.chars().all(|c| c.is_ascii_hexdigit()),
+            "a minted call secret is hex"
+        );
+        assert!(a != b, "two mints differ");
     }
 
     #[test]
