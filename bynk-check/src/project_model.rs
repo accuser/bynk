@@ -3372,11 +3372,20 @@ pub fn phase_secrets_computed_name(
             let SourceUnit::Context(ctx) = &parsed[i].unit() else {
                 continue;
             };
-            let handlers = ctx.items.iter().filter_map(|item| match item {
+            // #1976: agent handlers and provider bodies are this Worker's
+            // reads too, so a computed name in one is warned like any other.
+            let items = &ctx.items;
+            let handlers = items.iter().filter_map(|item| match item {
                 CommonsItem::Service(s) => Some(s.handlers.iter()),
+                CommonsItem::Agent(a) => Some(a.handlers.iter()),
                 _ => None,
             });
-            let (_, warnings) = crate::secrets::secret_reads_of(handlers.flatten(), flattened);
+            let providers = items.iter().filter_map(|item| match item {
+                CommonsItem::Provider(p) => Some(p),
+                _ => None,
+            });
+            let (_, mut warnings) = crate::secrets::secret_reads_of(handlers.flatten(), flattened);
+            warnings.extend(crate::secrets::provider_secret_reads_of(providers, flattened).1);
             let rel = parsed[i].identity_path();
             errors.extend_for(Some(&rel), warnings);
         }

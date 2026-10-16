@@ -20,9 +20,13 @@
 //! duplicating the walk (the same dual-use pattern P5.4 used for
 //! `bynk-check::test_suites`).
 
-use bynk_syntax::ast::{Block, Expr, ExprKind};
+use std::collections::{HashMap, HashSet};
+
+use bynk_syntax::ast::{Block, CapRef, Expr, ExprKind, ProviderDecl};
 use bynk_syntax::error::CompileError;
 use bynk_syntax::span::Span;
+
+use crate::symbols::UnitTable;
 
 /// The capability whose `get` names a platform secret. Matched against the
 /// capability a context actually resolved, never against the spelling — see
@@ -83,6 +87,117 @@ pub fn secret_reads_of<'a>(
         walk_block(&handler.body, &mut reads, &mut warnings);
     }
     (reads, warnings)
+}
+
+/// [`secret_reads_of`] over a provider's operation bodies — the per-file
+/// warning path's twin for `provides … given Secrets { … }` (#1976).
+pub fn provider_secret_reads_of<'a>(
+    providers: impl Iterator<Item = &'a ProviderDecl>,
+    flattened: &HashMap<String, String>,
+) -> (SecretReads, Vec<CompileError>) {
+    if !reads_secrets_of_bynk(flattened) {
+        return (SecretReads::none(), Vec::new());
+    }
+    let mut reads = SecretReads::none();
+    let mut warnings = Vec::new();
+    for op in providers.flat_map(|p| p.ops.iter()) {
+        walk_block(&op.body, &mut reads, &mut warnings);
+    }
+    (reads, warnings)
+}
+
+/// Everything a **Worker** reads through `bynk.Secrets`: its own handlers
+/// (services and agents) and every provider its composition root builds
+/// (#1976).
+///
+/// The provider set mirrors what `bynk-emit`'s `emit_worker_compose`
+/// instantiates — every local provider, every capability a handler or local
+/// provider is `given`, every derived instance — closed transitively over each
+/// provider's own `given`, resolved in the provider's **own** unit exactly as
+/// `instantiate_provider_ts_expr` resolves it. Walking only handler bodies
+/// missed a `Secrets.get("X")` one `given` away, while the manifest still said
+/// `read_complete: true`.
+///
+/// An *external* provider — an adapter's binding — `given` `bynk`'s `Secrets`
+/// reads names no pass can see: its body is TypeScript. Such a Worker's list
+/// is not a census, so `complete` goes false. No warning is raised for it:
+/// nothing is computed, the reads are simply out of the compiler's sight.
+pub fn worker_secret_reads(
+    context: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+) -> SecretReads {
+    let empty_flat = HashMap::new();
+    let flat_of = |unit: &str| unit_flattened.get(unit).unwrap_or(&empty_flat);
+    let Some(table) = unit_tables.get(context) else {
+        return SecretReads::none();
+    };
+    let handlers = table
+        .services
+        .values()
+        .flat_map(|s| s.handlers.iter())
+        .chain(table.agents.values().flat_map(|a| a.handlers.iter()));
+    let (mut reads, _) = secret_reads_of(handlers.clone(), flat_of(context));
+
+    // Where `unit`'s `given` capability is provided — `instantiate_provider_
+    // ts_expr`'s rule: a prefix names a consumed unit, a bare name is the
+    // unit it was flattened from, and either falls back to `unit` itself.
+    let resolve = |unit: &str, given: &CapRef| -> (String, String) {
+        let target = match &given.context {
+            Some(prefix) => crate::project_model::resolve_consume_prefix(
+                &prefix.joined(),
+                unit_consumes.get(unit).map(Vec::as_slice).unwrap_or(&[]),
+                unit_consumes_aliases.get(unit).unwrap_or(&HashMap::new()),
+            ),
+            None => flat_of(unit).get(&given.name.name).cloned(),
+        };
+        (
+            target.unwrap_or_else(|| unit.to_string()),
+            given.name.name.clone(),
+        )
+    };
+
+    let mut pending: Vec<(String, String)> = Vec::new();
+    pending.extend(
+        table
+            .providers
+            .keys()
+            .map(|cap| (context.to_string(), cap.clone())),
+    );
+    for given in handlers.flat_map(|h| h.given.iter()) {
+        pending.push(resolve(context, given));
+    }
+    for inst in table.derived.values() {
+        pending.push((inst.base_unit.clone(), inst.base_cap.clone()));
+    }
+
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    while let Some((unit, cap)) = pending.pop() {
+        if !seen.insert((unit.clone(), cap.clone())) {
+            continue;
+        }
+        let Some(provider) = unit_tables.get(&unit).and_then(|t| t.providers.get(&cap)) else {
+            continue;
+        };
+        let deps: Vec<(String, String)> =
+            provider.given.iter().map(|g| resolve(&unit, g)).collect();
+        if provider.external {
+            if deps
+                .iter()
+                .any(|(u, c)| u == crate::firstparty::BYNK_UNIT && c == SECRETS_CAPABILITY)
+            {
+                reads.complete = false;
+            }
+        } else {
+            let (found, _) = provider_secret_reads_of(std::iter::once(provider), flat_of(&unit));
+            reads.names.extend(found.names);
+            reads.complete &= found.complete;
+        }
+        pending.extend(deps);
+    }
+    reads
 }
 
 /// Every expression in a handler body.
@@ -271,6 +386,43 @@ mod tests {
         assert!(!reads_secrets_of_bynk(&to_someone_else));
 
         assert!(!reads_secrets_of_bynk(&std::collections::HashMap::new()));
+    }
+
+    fn parse_context_providers(src: &str) -> Vec<ProviderDecl> {
+        let tokens = bynk_syntax::lexer::tokenize(src).expect("lex");
+        let unit = bynk_syntax::parser::parse_unit(&tokens, src).expect("parse");
+        let bynk_syntax::ast::SourceUnit::Context(ctx) = unit else {
+            panic!("expected a context unit");
+        };
+        ctx.items
+            .into_iter()
+            .filter_map(|item| match item {
+                bynk_syntax::ast::CommonsItem::Provider(p) => Some(p),
+                _ => None,
+            })
+            .collect()
+    }
+
+    const PROVIDER_READS: &str = "context net.probe\n\nconsumes bynk { Secrets }\n\ncapability Mode {\n  fn current(key: String) -> Effect[Option[String]]\n}\n\nprovides Mode = SecretMode given Secrets {\n  fn current(key: String) -> Effect[Option[String]] {\n    let fixed <- Secrets.get(\"APP_MODE\")\n    Secrets.get(key)\n  }\n}\n";
+
+    #[test]
+    fn a_provider_body_is_walked_like_a_handler_body() {
+        // #1976: only handler bodies were walked, so a provider's literal read
+        // was missing from the manifest and its computed one went unwarned.
+        let providers = parse_context_providers(PROVIDER_READS);
+        let (reads, warnings) = provider_secret_reads_of(providers.iter(), &flattened_to_bynk());
+        assert_eq!(reads.names, ["APP_MODE".to_string()].into());
+        assert!(!reads.complete);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].category, "bynk.secrets.computed_name");
+
+        let elsewhere: HashMap<String, String> =
+            [(SECRETS_CAPABILITY.to_string(), "acme.vault".to_string())]
+                .into_iter()
+                .collect();
+        let (reads, warnings) = provider_secret_reads_of(providers.iter(), &elsewhere);
+        assert_eq!(reads, SecretReads::none());
+        assert!(warnings.is_empty());
     }
 
     #[test]
