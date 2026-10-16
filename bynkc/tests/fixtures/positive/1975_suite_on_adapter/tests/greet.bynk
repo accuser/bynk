@@ -12,3 +12,10 @@ case "the binding falls back without one" {
 	let s <- Greeter.hello("ann")
 	expect s == "hello, ann at 0"
 }
+
+-- A `stub` on the adapter's own capability overlays the real binding.
+case "a stub on the adapter's capability answers instead" {
+	stub Greeter.hello(_) returns "stubbed"
+	let s <- Greeter.hello("ann")
+	expect s == "stubbed"
+}

@@ -2027,9 +2027,9 @@ fn emit_test_module(
     );
     let has_integration_case = indices.iter().any(|&i| {
         parsed[i].test().is_some_and(|t| {
-            t.cases.iter().any(|c| {
-                super::case_effective_tier(c, t) == bynk_syntax::ast::TestTier::Integration
-            })
+            t.cases
+                .iter()
+                .any(|c| super::case_effective_tier(c, t) != bynk_syntax::ast::TestTier::Unit)
         })
     });
     let integration_factory = |name: &str| {
@@ -2281,13 +2281,17 @@ fn emit_test_module(
     if !stubs.is_empty() {
         stmts.push(TsStmt::raw(STUB_OVERLAY_TS.to_string(), None));
     }
-    let mut defined: BTreeSet<&String> = BTreeSet::new();
-    for (owner, cap, name) in deps
+    // Both factories may name the same double; define each once. Keyed on the
+    // whole `(owner, capability, name)`, so two owners' same-named doubles
+    // both emit and collide loudly at `tsc` rather than one being dropped.
+    let mut defined: BTreeSet<&(String, String, String)> = BTreeSet::new();
+    for double in deps
         .doubles
         .iter()
         .chain(integration_deps.iter().flat_map(|d| d.doubles.iter()))
     {
-        if !defined.insert(name) {
+        let (owner, cap, name) = double;
+        if !defined.insert(double) {
             continue;
         }
         if let Some(def) = platform_double(owner, cap, &test_ns(owner), name) {
@@ -2350,7 +2354,10 @@ fn emit_test_module(
             ));
             let tier = super::case_effective_tier(case, test_decl);
             let deps_factory =
-                if integration_deps.is_some() && tier == bynk_syntax::ast::TestTier::Integration {
+                // Every tier above `unit` runs real collaborators. (A `system`
+                // case sits in a `system` suite, emitted through the Worker
+                // harness, whose compose builds the binding itself.)
+                if integration_deps.is_some() && tier != bynk_syntax::ast::TestTier::Unit {
                     "__makeIntegrationDeps"
                 } else {
                     "__makeTestDeps"

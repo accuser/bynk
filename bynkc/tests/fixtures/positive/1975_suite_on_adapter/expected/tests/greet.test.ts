@@ -27,6 +27,30 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
+class __Stub_Greeter {
+  __case: string | undefined;
+  constructor(c?: string) {
+    this.__case = c;
+  }
+  __applies(op: string): boolean {
+    if (op === "hello") return this.__case === "a stub on the adapter's capability answers instead";
+    return true;
+  }
+  async hello(name: string): globalThis.Promise<string> {
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
+    if (this.__case === "a stub on the adapter's capability answers instead") {
+      return "stubbed";
+    }
+    throw new globalThis.Error("bynk: no stub clause matched for Greeter.hello");
+  }
+}
+
 class __Stub_Secrets {
   __case: string | undefined;
   constructor(c?: string) {
@@ -90,7 +114,7 @@ function __bynkTest_Secrets(): __ns_bynk.Secrets {
 function __makeTestDeps(__case?: string) {
   const __dep_Clock = __bynkTest_Clock();
   const __dep_Secrets = __bynkOverlay(__bynkTest_Secrets(), new __Stub_Secrets(__case), "Secrets") as __ns_bynk.Secrets;
-  return { Greeter: new greet__binding.PlainGreeter({ Clock: __dep_Clock, Secrets: __dep_Secrets }), Clock: __dep_Clock, Secrets: __dep_Secrets };
+  return { Greeter: __bynkOverlay(new greet__binding.PlainGreeter({ Clock: __dep_Clock, Secrets: __dep_Secrets }), new __Stub_Greeter(__case), "Greeter") as __ns_greet.Greeter, Clock: __dep_Clock, Secrets: __dep_Secrets };
 }
 
 // case tier: unit
@@ -137,10 +161,33 @@ async function test_the_binding_falls_back_without_one() {
   }
 }
 
+// case tier: unit
+async function test_a_stub_on_the_adapter_s_capability_answers_instead() {
+  try {
+    const deps = __makeTestDeps("a stub on the adapter's capability answers instead");
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = __ns_bynk;
+    type EventEnvelope = __ns_bynk.EventEnvelope;
+    type FetchError = __ns_bynk.FetchError;
+    type Method = __ns_bynk.Method;
+    type Request = __ns_bynk.Request;
+    type Response = __ns_bynk.Response;
+    type Uuid = __ns_bynk.Uuid;
+    const s = await deps.Greeter.hello("ann");
+    if (!(s === "stubbed")) { throw __bynkExpectFailure("tests/greet.bynk:20:9", 621, 635, "expect s == \"stubbed\"\n  expected: s == \"stubbed\"\n  actual:   " + __bynkShow((s)) + " == " + __bynkShow(("stubbed"))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
   if (want("the binding reads its secret")) results.push({ name: "the binding reads its secret", ...(await test_the_binding_reads_its_secret()) });
   if (want("the binding falls back without one")) results.push({ name: "the binding falls back without one", ...(await test_the_binding_falls_back_without_one()) });
+  if (want("a stub on the adapter's capability answers instead")) results.push({ name: "a stub on the adapter's capability answers instead", ...(await test_a_stub_on_the_adapter_s_capability_answers_instead()) });
   return results;
 }
