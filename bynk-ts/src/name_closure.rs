@@ -20,12 +20,13 @@
 //! it, and a destructuring pattern binds every identifier in it. Each
 //! approximation can only hide a defect, never invent one.
 //!
-//! **Opaque text is a blind spot.** `Raw` and `Verbatim` statements and
-//! `VerbatimExpr` expressions are pre-rendered TypeScript. A name they
+//! **Opaque text is mostly a blind spot.** `Raw` and `Verbatim` statements
+//! and `VerbatimExpr` expressions are pre-rendered TypeScript. A name they
 //! *declare* or *import* is found line by line (a line starting `import`,
-//! `type`, `interface`, `class`, `enum`, `function`, `const`, `let` or `var`),
-//! so opaque text never causes a false report. A name they *use* is not
-//! checked. Measured over the positive corpus at #1831, opaque text was 0% of
+//! `type`, `interface`, `class`, `enum`, `function`, `const`, `let` or `var`).
+//! Of the names they *use*, only a generic type application (`Name<…>`) is
+//! checked (#1977: a kernel helper's parameter types are opaque text); any
+//! other use is not. Measured over the positive corpus at #1831, opaque text was 0% of
 //! `index.ts`/`compose.ts`, about 14% of unit modules and about 26% of
 //! `handlers.ts` and test modules: chiefly service handler bodies, which
 //! `bynk-emit` still renders to text. That part of a module stays `tsc`'s
@@ -316,6 +317,65 @@ impl Walk {
         }
     }
 
+    /// Opaque text: the names it declares or imports, and the generic types
+    /// it applies.
+    fn opaque(&mut self, text: &str) {
+        self.bind_opaque(text);
+        self.use_opaque_generics(text);
+    }
+
+    /// #1977: the one *use* of a name opaque text is checked for — a generic
+    /// type application, a capitalised identifier immediately followed by `<`
+    /// (`MapEntry<string, number>` in a kernel helper's parameter types). That
+    /// shape is a type in every position the emitter writes it, and it never
+    /// collides with a comparison (`a < b` is spaced, its operands lower-case).
+    /// An identifier after a `.` is a member or the tail of a qualified or
+    /// inline-import spelling (`globalThis.Promise<T>`, `import("./m").T<U>`),
+    /// whose head, if any, is not this identifier; text inside string,
+    /// template and comment literals is skipped. Wider checks of opaque text
+    /// (an annotation `x: T`, a bare value use) collide with object keys,
+    /// locals and ternaries, so they stay `tsc`'s job.
+    fn use_opaque_generics(&mut self, text: &str) {
+        let bytes = text.as_bytes();
+        let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+        let mut i = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            match b {
+                b'"' | b'\'' | b'`' => {
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b {
+                        i += if bytes[i] == b'\\' { 2 } else { 1 };
+                    }
+                    i += 1;
+                }
+                b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                    while i < bytes.len() && bytes[i] != b'\n' {
+                        i += 1;
+                    }
+                }
+                b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                    i += 2;
+                    while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    i += 2;
+                }
+                _ if ident(b) => {
+                    let start = i;
+                    while i < bytes.len() && ident(bytes[i]) {
+                        i += 1;
+                    }
+                    let after_dot = start > 0 && bytes[start - 1] == b'.';
+                    if !after_dot && b.is_ascii_uppercase() && bytes.get(i) == Some(&b'<') {
+                        self.used_types.insert(text[start..i].to_string());
+                    }
+                }
+                _ => i += 1,
+            }
+        }
+    }
+
     fn ty(&mut self, t: &TsType) {
         match t {
             TsType::Named { name, type_args } => {
@@ -402,7 +462,7 @@ impl Walk {
 
     fn stmt(&mut self, stmt: &TsStmt) {
         match &stmt.kind {
-            TsStmtKind::Verbatim { text, .. } | TsStmtKind::Raw(text) => self.bind_opaque(text),
+            TsStmtKind::Verbatim { text, .. } | TsStmtKind::Raw(text) => self.opaque(text),
             TsStmtKind::Decl(decl) => self.decl(decl),
             TsStmtKind::Const { name, ty, init } => {
                 self.binding(name);
@@ -579,7 +639,7 @@ impl Walk {
         match expr {
             TsExpr::Ident(name) => self.use_value(name),
             TsExpr::Lit(_) => {}
-            TsExpr::VerbatimExpr(text, _) => self.bind_opaque(text),
+            TsExpr::VerbatimExpr(text, _) => self.opaque(text),
             TsExpr::Member { object, .. } | TsExpr::OptionalMember { object, .. } => {
                 self.expr(object)
             }
@@ -885,6 +945,34 @@ mod tests {
             codec("__serialise_Note", "Note", "__serialise_Base"),
         ]);
         assert_eq!(unbound_names(&p), ["Note"]);
+    }
+
+    #[test]
+    fn a_generic_type_applied_in_opaque_text_must_be_bound() {
+        // #1977's shape: a kernel helper typed with a generic record the
+        // module never imports.
+        let p = program(vec![TsStmt::raw(
+            "return ((__xs: readonly MapEntry<string, number>[], __acc: number) => __acc)(all, 0);",
+            None,
+        )]);
+        assert_eq!(unbound_names(&p), ["MapEntry"]);
+    }
+
+    #[test]
+    fn opaque_generics_skip_members_comparisons_globals_and_literals() {
+        let p = program(vec![
+            import(&["type Page"]),
+            TsStmt::raw(
+                "const a: globalThis.Promise<void> = f();\n\
+                 const b: import(\"./m.js\").Note<string> = g();\n\
+                 const c = __i < __xs.length && N < 3;\n\
+                 const d: Record<string, Page<number>> = {};\n\
+                 const e = \"Missing<T>\" + `Other<${x}>`; // Gone<T>\n\
+                 /* Absent<T> */",
+                None,
+            ),
+        ]);
+        assert!(unbound_names(&p).is_empty(), "{:?}", unbound_names(&p));
     }
 
     #[test]
