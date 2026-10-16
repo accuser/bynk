@@ -60,6 +60,7 @@ pub mod unit_signature;
 pub mod websocket;
 pub mod wire;
 pub mod wire_default;
+pub mod wire_format;
 pub mod worker_bindings;
 
 pub use firstparty::Platform;

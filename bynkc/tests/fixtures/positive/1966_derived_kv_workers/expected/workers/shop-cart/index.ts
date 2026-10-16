@@ -16,7 +16,10 @@ export default {
     let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
+        if (method !== "POST") return new globalThis.Response(null, { status: 405, headers: { allow: "POST" } });
         if (!(await __verifyCallSecret(request, env))) return new globalThis.Response("Unauthorized", { status: 401 });
+        const __wire = request.headers.get("X-Bynk-Wire");
+        if (__wire !== null && __wire !== "1") return new globalThis.Response(globalThis.JSON.stringify({ kind: "UnsupportedWireVersion", accepted: [1] }), { status: 400, headers: { "content-type": "application/json" } });
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "peek": {
@@ -26,7 +29,13 @@ export default {
               globalThis.console.error("ContractMismatch shop.cart call peek", { service: "peek", expected: "d04643a3654747fc", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "peek", expected: "d04643a3654747fc", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
-            const args = await request.json() as __JsonValue;
+            const __text = await request.text();
+            let args: __JsonValue;
+            try {
+              args = globalThis.JSON.parse(__text) as __JsonValue;
+            } catch {
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            }
             const __r_k = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(args);
             if (__r_k.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_k.error), { status: 400, headers: { "content-type": "application/json" } });
             const k = __r_k.value;
@@ -41,7 +50,13 @@ export default {
               globalThis.console.error("ContractMismatch shop.cart call price", { service: "price", expected: "242d1fc1c3d4f12c", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "price", expected: "242d1fc1c3d4f12c", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
-            const args = await request.json() as __JsonValue;
+            const __text = await request.text();
+            let args: __JsonValue;
+            try {
+              args = globalThis.JSON.parse(__text) as __JsonValue;
+            } catch {
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            }
             const __r_sku = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(args);
             if (__r_sku.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_sku.error), { status: 400, headers: { "content-type": "application/json" } });
             const sku = __r_sku.value;
@@ -56,7 +71,13 @@ export default {
               globalThis.console.error("ContractMismatch shop.cart call remember", { service: "remember", expected: "611a7e83835ed4e7", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "remember", expected: "611a7e83835ed4e7", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
-            const args = await request.json() as __JsonValue;
+            const __text = await request.text();
+            let args: __JsonValue;
+            try {
+              args = globalThis.JSON.parse(__text) as __JsonValue;
+            } catch {
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            }
             if (typeof args !== "object" || args === null || globalThis.Array.isArray(args)) return new globalThis.Response(globalThis.JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
             const argsObj = args as { [k: string]: __JsonValue };
             const __r_k = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$.k", expected: "string", actual: typeof __v } as __BoundaryError))(argsObj["k"]);
@@ -76,7 +97,13 @@ export default {
               globalThis.console.error("ContractMismatch shop.cart call touch", { service: "touch", expected: "068e2c1f9d3449fa", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "touch", expected: "068e2c1f9d3449fa", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
-            const args = await request.json() as __JsonValue;
+            const __text = await request.text();
+            let args: __JsonValue;
+            try {
+              args = globalThis.JSON.parse(__text) as __JsonValue;
+            } catch {
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            }
             const __r_id = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(args);
             if (__r_id.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_id.error), { status: 400, headers: { "content-type": "application/json" } });
             const id = __r_id.value;

@@ -14,7 +14,10 @@ export default {
     let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
+        if (method !== "POST") return new globalThis.Response(null, { status: 405, headers: { allow: "POST" } });
         if (!(await __verifyCallSecret(request, env))) return new globalThis.Response("Unauthorized", { status: 401 });
+        const __wire = request.headers.get("X-Bynk-Wire");
+        if (__wire !== null && __wire !== "1") return new globalThis.Response(globalThis.JSON.stringify({ kind: "UnsupportedWireVersion", accepted: [1] }), { status: 400, headers: { "content-type": "application/json" } });
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "users": {
@@ -24,7 +27,13 @@ export default {
               globalThis.console.error("ContractMismatch shop.api call users", { service: "users", expected: "4609d108b9d32be2", actual: globalThis.String(__contract).slice(0, 16) });
               return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "users", expected: "4609d108b9d32be2", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
-            const args = await request.json() as __JsonValue;
+            const __text = await request.text();
+            let args: __JsonValue;
+            try {
+              args = globalThis.JSON.parse(__text) as __JsonValue;
+            } catch {
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            }
             const __r_page = handlers.__deserialise_Paginated_User(args, "$");
             if (__r_page.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_page.error), { status: 400, headers: { "content-type": "application/json" } });
             const page = __r_page.value;

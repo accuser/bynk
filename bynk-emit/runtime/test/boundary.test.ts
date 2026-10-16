@@ -7,6 +7,8 @@ import {
   deserialiseEventEnvelope,
   rehydrationViolation,
   verifyCallSecret,
+  WIRE_VERSION,
+  WIRE_VERSION_HEADER,
   type BoundaryError,
   type ServiceBinding,
 } from "../src/boundary.ts";
@@ -294,6 +296,22 @@ test("callService: stamps the call secret", async () => {
   };
   await callService(binding, "svc", null, deser<number, string>(), "ctx.Caller", "", ENV);
   assert.equal(seen, "s3cret");
+});
+
+test("callService: states the wire version it speaks, as a POST", async () => {
+  let version: string | null = null;
+  let method = "";
+  const binding: ServiceBinding = {
+    fetch: async (req) => {
+      version = req.headers.get(WIRE_VERSION_HEADER);
+      method = req.method;
+      return new Response(JSON.stringify({ ok: 1 }));
+    },
+  };
+  await callService(binding, "svc", null, deser<number, string>(), "ctx.Caller", "", ENV);
+  assert.equal(version, WIRE_VERSION);
+  assert.equal(version, "1");
+  assert.equal(method, "POST");
 });
 
 test("callService: refuses to send without a call secret, naming the binding", async () => {

@@ -14,17 +14,26 @@ export default {
     let __route: string = "request";
     try {
       if (path.startsWith("/_bynk/call/")) {
+        if (method !== "POST") return new globalThis.Response(null, { status: 405, headers: { allow: "POST" } });
         if (!(await __verifyCallSecret(request, env))) return new globalThis.Response("Unauthorized", { status: 401 });
+        const __wire = request.headers.get("X-Bynk-Wire");
+        if (__wire !== null && __wire !== "1") return new globalThis.Response(globalThis.JSON.stringify({ kind: "UnsupportedWireVersion", accepted: [1] }), { status: 400, headers: { "content-type": "application/json" } });
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "authorise": {
             __route = "call authorise";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "938adff5c562387b") {
-              globalThis.console.error("ContractMismatch commerce.payment call authorise", { service: "authorise", expected: "938adff5c562387b", actual: globalThis.String(__contract).slice(0, 16) });
-              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "authorise", expected: "938adff5c562387b", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "d7dff23f6fd4c9e4") {
+              globalThis.console.error("ContractMismatch commerce.payment call authorise", { service: "authorise", expected: "d7dff23f6fd4c9e4", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "authorise", expected: "d7dff23f6fd4c9e4", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
-            const args = await request.json() as __JsonValue;
+            const __text = await request.text();
+            let args: __JsonValue;
+            try {
+              args = globalThis.JSON.parse(__text) as __JsonValue;
+            } catch {
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            }
             const __r_amount = handlers.__deserialise_Money(args, "$");
             if (__r_amount.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_amount.error), { status: 400, headers: { "content-type": "application/json" } });
             const amount = __r_amount.value;

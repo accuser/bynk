@@ -244,10 +244,8 @@ context's closure, so the config always matches what the code actually reaches:
   `Fetch` to a URL goes over the public internet even when the URL is another
   Worker on the same account, followed by any flags the project lists in
   [`bynk.toml`'s `[workers]`](/docs/manifest/#workers) table.
-- **`[[services]]`** — one Service Binding per consumed context whose services the
-  context calls, plus one per context subscribing to an event it publishes. A
-  context consumed only for its types, events or capabilities is not bound. The
-  binding name is the bound context uppercased with dots replaced by underscores
+- **`[[services]]`** — one Service Binding per consumed context. The binding name is
+  the consumed context uppercased with dots replaced by underscores
   (`commerce.payment` → `COMMERCE_PAYMENT`).
 - **`[[kv_namespaces]]`** — emitted only if the closure reaches the `bynk.cloudflare`
   KV adapter. The `id` is a deploy-time placeholder.
@@ -302,9 +300,12 @@ records who called, and the callee does not verify it.
 What the callee does verify is the deployment's call secret (#2004).
 `callService` also stamps `BYNK_CALL_SECRET`, from the calling Worker's `env`, in an
 `X-Bynk-Call-Secret` header. Every Worker refuses a `/_bynk/call/` or `/_bynk/event/`
-request without it (`401`, before anything else is checked), because those paths
-answer on the Worker's public address too. Every holder shares the one secret, so
-it admits members of the deployment without telling them apart.
+request without it (`401`, checked straight after the method), because those
+paths answer on the Worker's public address too. Every holder shares the one
+secret, so it admits members of the deployment without telling them apart.
+
+The whole request and response format of `/_bynk/call/`, with its own version
+(`X-Bynk-Wire`), is published in the [wire format reference](/book/reference/wire-format/).
 
 ## Actor authentication
 

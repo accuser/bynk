@@ -60,7 +60,7 @@ export const placement = {
    * contexts can integrate without coupling to HTTP status semantics.
    */
   async call(total: Money, deps: { env: { COMMERCE_PAYMENT: __ServiceBinding } }): globalThis.Promise<Result<void, OrderError>> {
-    const auth = await __callService(deps.env.COMMERCE_PAYMENT, "authorise", __serialise_Money(total), __deserialise_Result_AuthId_PaymentError, "commerce.orders", "938adff5c562387b", deps.env);
+    const auth = await __callService(deps.env.COMMERCE_PAYMENT, "authorise", __serialise_Money(total), __deserialise_Result_AuthId_PaymentError, "commerce.orders", "d7dff23f6fd4c9e4", deps.env);
     switch (auth.tag) {
       case "Ok": {
         return Ok(undefined);
@@ -94,7 +94,7 @@ export const orders = {
    */
   async http_POST_orders(body: CreateOrderRequest, deps: { env: { COMMERCE_PAYMENT: __ServiceBinding } }): globalThis.Promise<HttpResult<OrderView>> {
     const total = { minorUnits: body.amountMinor, currency: body.currency };
-    const auth = await __callService(deps.env.COMMERCE_PAYMENT, "authorise", __serialise_Money(total), __deserialise_Result_AuthId_PaymentError, "commerce.orders", "938adff5c562387b", deps.env);
+    const auth = await __callService(deps.env.COMMERCE_PAYMENT, "authorise", __serialise_Money(total), __deserialise_Result_AuthId_PaymentError, "commerce.orders", "d7dff23f6fd4c9e4", deps.env);
     switch (auth.tag) {
       case "Ok": {
         return HttpResult.Created({ status: "placed", totalMinor: body.amountMinor });
@@ -140,6 +140,9 @@ export function __deserialise_CreateOrderRequest(json: __JsonValue, path: string
     return Err({ kind: "StructuralMismatch", path: `${path}.amountMinor`, expected: "safe integer", actual: String(obj["amountMinor"]) });
   }
   const __amountMinor = obj["amountMinor"];
+  if (!(__amountMinor >= 0)) {
+    return Err({ kind: "RefinementViolation", path: `${path}.amountMinor`, violation: { field: "amountMinor", message: "must be non-negative", value: __amountMinor } });
+  }
   const __r_currency = __deserialise_CurrencyCode(obj["currency"], `${path}.currency`);
   if (__r_currency.tag === "Err") return __r_currency;
   const __currency = __r_currency.value;
