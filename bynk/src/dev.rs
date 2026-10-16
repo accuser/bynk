@@ -279,6 +279,14 @@ pub fn run(
     // and the wranglers share the terminal's foreground process group, so a
     // Ctrl-C SIGINT reaches them all — we must not bail before reaping; we reap
     // in the watch loop and propagate the first exit code (ADR 0096 §Exit).
+    //
+    // #1955: a SIGINT or SIGTERM sent to `bynk dev` *alone* (a CI step, a test
+    // harness) used to kill it outright and strand every wrangler and its
+    // `workerd`s. Record it instead, and let the watch loop stop the contexts.
+    // Installed before the spawns, so there is no window in which a child is
+    // up and the driver still dies of the default action; the children
+    // themselves get the default back at `exec`.
+    crate::stop::install();
     let mut children: Vec<(String, Served)> = Vec::new();
     for s in &serving {
         let Some(mut cmd) = wrangler_command(&probe.provenance, "dev") else {
@@ -314,32 +322,7 @@ pub fn run(
     // under a keystroke-to-glance.
     eprintln!("bynk dev: watching for source changes (edit `.bynk` files to rebuild)");
     let mut fingerprint = watch_fingerprint(project_root);
-    loop {
-        // Any worker exiting ends the session: the survivors' bindings now
-        // point at a context that is gone, so a half-served project would fail
-        // in a way that looks like a code bug. Stop them and propagate the
-        // first exit code.
-        for i in 0..children.len() {
-            let status = match children[i].1.child.try_wait() {
-                Ok(status) => status,
-                Err(e) => {
-                    eprintln!("bynk: could not poll wrangler: {e}");
-                    terminate(&mut children, &workers_dir);
-                    return ExitCode::FAILURE;
-                }
-            };
-            if let Some(status) = status {
-                // Dropped here. On Windows that stops its job (#1762), and
-                // with it the `workerd`s the exited wrangler left running.
-                let (name, _) = children.remove(i);
-                if !children.is_empty() {
-                    eprintln!("bynk dev: `{name}` exited — stopping the other contexts.");
-                }
-                terminate(&mut children, &workers_dir);
-                return ExitCode::from(exit_status_byte(&status));
-            }
-        }
-        std::thread::sleep(Duration::from_millis(500));
+    let code = supervise(&mut children, &workers_dir, || {
         let now = watch_fingerprint(project_root);
         if now != fingerprint {
             fingerprint = now;
@@ -350,6 +333,56 @@ pub fn run(
             // On failure the diagnostics are already rendered; keep serving
             // the last good build and keep watching.
         }
+    });
+    ExitCode::from(code)
+}
+
+/// The watch loop: every 500ms, end the session if it was asked to stop or a
+/// worker exited, and otherwise run `tick` (the rebuild check). Returns the
+/// session's exit byte once every child is stopped and reaped.
+fn supervise(
+    children: &mut Vec<(String, Served)>,
+    workers_dir: &Path,
+    mut tick: impl FnMut(),
+) -> u8 {
+    loop {
+        // #1955: a SIGINT/SIGTERM recorded by `stop::install`. Checked before
+        // the children, so a Ctrl-C — which reaches the wranglers too — reads
+        // as the stop it is rather than as a worker exiting.
+        if let Some(sig) = crate::stop::received() {
+            eprintln!(
+                "bynk dev: received {} — stopping the contexts.",
+                crate::stop::name(sig)
+            );
+            terminate(children, workers_dir);
+            return crate::stop::exit_byte(sig);
+        }
+        // Any worker exiting ends the session: the survivors' bindings now
+        // point at a context that is gone, so a half-served project would fail
+        // in a way that looks like a code bug. Stop them and propagate the
+        // first exit code.
+        for i in 0..children.len() {
+            let status = match children[i].1.child.try_wait() {
+                Ok(status) => status,
+                Err(e) => {
+                    eprintln!("bynk: could not poll wrangler: {e}");
+                    terminate(children, workers_dir);
+                    return 1;
+                }
+            };
+            if let Some(status) = status {
+                // Dropped here. On Windows that stops its job (#1762), and
+                // with it the `workerd`s the exited wrangler left running.
+                let (name, _) = children.remove(i);
+                if !children.is_empty() {
+                    eprintln!("bynk dev: `{name}` exited — stopping the other contexts.");
+                }
+                terminate(children, workers_dir);
+                return exit_status_byte(&status);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        tick();
     }
 }
 
@@ -940,6 +973,67 @@ mod tests {
         assert!(!needs_wrangler_warmup(&Provenance::Npx, 1));
         let installed = Provenance::Path(PathBuf::from("/usr/bin/wrangler"));
         assert!(!needs_wrangler_warmup(&installed, 2));
+    }
+
+    /// #1955: a SIGTERM sent to `bynk dev` alone stops its contexts and what
+    /// they started. `sh` stands in for wrangler and its `sleep`s for the
+    /// `workerd`s: the `sh` dies of the SIGTERM `terminate` sends and orphans
+    /// them, as a wrangler resolved via npx does, and the sweep must stop them.
+    #[cfg(unix)]
+    #[test]
+    fn a_sigterm_to_the_driver_stops_every_context_and_its_children() {
+        use std::process::{Command, Stdio};
+        let root = std::env::temp_dir().join(format!("bynk-dev-sigterm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut children = Vec::new();
+        for ctx in ["api", "worker"] {
+            let dir = root.join(ctx);
+            std::fs::create_dir_all(&dir).unwrap();
+            let child = Command::new("sh")
+                .args(["-c", "sleep 300 & sleep 300 & wait"])
+                .current_dir(&dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("sh spawns");
+            children.push((ctx.to_string(), Served::new(child)));
+        }
+        let started = std::time::Instant::now();
+        while crate::sweep::stragglers(&root).len() < 6 {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "the stand-ins never started their sleeps"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // What a CI step's `kill -TERM <bynk dev>` does. Without the handler
+        // this would end the test binary.
+        crate::stop::install();
+        let sent = Command::new("kill")
+            .args(["-TERM", &std::process::id().to_string()])
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(sent, "kill(1) runs");
+        let started = std::time::Instant::now();
+        while crate::stop::received().is_none() {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "the SIGTERM was never recorded"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let code = supervise(&mut children, &root, || {
+            panic!("a recorded stop must end the session before any rebuild")
+        });
+        crate::stop::reset();
+        let left = crate::sweep::stragglers(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(code, 143, "a SIGTERM stop exits 128 + 15");
+        assert!(children.is_empty());
+        assert!(left.is_empty(), "processes survived the stop: {left:?}");
     }
 
     #[test]
