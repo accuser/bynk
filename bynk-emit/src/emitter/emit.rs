@@ -3924,6 +3924,57 @@ pub(crate) fn emit_make_surface(
     stmts
 }
 
+/// #2039: whether `t` names any type in `renames`, at any depth.
+fn type_ref_names_any(t: &TypeRef, renames: &HashMap<String, String>) -> bool {
+    match t {
+        TypeRef::Named(id) => renames.contains_key(&id.name),
+        TypeRef::Option(inner, _) | TypeRef::List(inner, _) | TypeRef::Effect(inner, _) => {
+            type_ref_names_any(inner, renames)
+        }
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            type_ref_names_any(a, renames) || type_ref_names_any(b, renames)
+        }
+        _ => false,
+    }
+}
+
+/// #2039, #2043: whether a cross-context argument holds a part the checker
+/// typed as the callee's type rather than the caller's: a literal it may
+/// have admitted to the callee's refined type, or a `List.empty()` /
+/// `Map.empty()` typed from the parameter. Either sits at the argument
+/// itself or in a `Some`/`Ok`/`Err` payload, list element or record field.
+pub(crate) fn holds_callee_typed(e: &Expr, cx: &LowerCtx) -> bool {
+    match &e.kind {
+        ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } | ExprKind::StrLit(_) => matches!(
+            cx.commons().expr_ty(e.id).as_deref(),
+            Some(Ty::Named {
+                kind: NamedKind::Refined(_),
+                ..
+            })
+        ),
+        ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } => {
+            method.name == "empty"
+                && args.is_empty()
+                && matches!(&receiver.kind, ExprKind::Ident(id) if id.name == "List" || id.name == "Map")
+        }
+        ExprKind::Paren(inner)
+        | ExprKind::Some(inner)
+        | ExprKind::Ok(inner)
+        | ExprKind::Err(inner) => holds_callee_typed(inner, cx),
+        ExprKind::ListLit(items) => items.iter().any(|i| holds_callee_typed(i, cx)),
+        ExprKind::RecordConstruction { fields, .. } => fields
+            .iter()
+            .filter_map(|f| f.value.as_ref())
+            .any(|v| holds_callee_typed(v, cx)),
+        _ => false,
+    }
+}
+
 /// Lower a cross-context call in workers mode to a `callService(...)`
 /// invocation. The argument types are looked up in the consumed context's
 /// service signature so we know which serialise/deserialise helpers to
@@ -4013,20 +4064,12 @@ pub(crate) fn lower_workers_cross_context_call(
         let mut lowered = pre.lower(a, cx);
         let (_, param_ty) = &svc.params[i];
         let wire_ty = renamed(param_ty);
-        // #2025: a literal passed straight to a refined parameter is admitted
-        // to the callee's type, but lowers with the brand of the caller's
-        // name for it. Where the caller doesn't name the callee's type (it
-        // was renamed above), cast it to what the codec takes.
-        let param_renamed = matches!(
-            param_ty,
-            TypeRef::Named(id) if renames.is_some_and(|r| r.contains_key(&id.name))
-        );
-        if param_renamed
-            && matches!(
-                a.kind,
-                ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } | ExprKind::StrLit(_)
-            )
-        {
+        // #2025, #2039: a literal in a cross-context argument (directly, or
+        // nested in a payload, list or record field) is admitted to the
+        // callee's type, but lowers with the brand of the caller's name for
+        // it. Where the caller doesn't name the callee's type (it was renamed
+        // above), cast the argument to what the codec takes.
+        if renames.is_some_and(|r| type_ref_names_any(param_ty, r)) && holds_callee_typed(a, cx) {
             let codec = bynk_ts::print_expr(&crate::emitter::serialisation::serialise_ref_via(
                 &wire_ty,
                 &ns,
@@ -4206,6 +4249,9 @@ pub(crate) fn param_cast(
     method: &Ident,
     idx: usize,
     arg: String,
+    // #2039: whether the argument holds a part typed as the callee's type
+    // ([`holds_callee_typed`]).
+    callee_typed: bool,
     in_test_scaffold: bool,
 ) -> String {
     let Some(svcs) = info.consumed_services.get(consumed) else {
@@ -4246,7 +4292,47 @@ pub(crate) fn param_cast(
             ),
         )));
     }
+    // #2039: a literal nested in a composite argument (`Some(250)` for
+    // `Option[Cents]`) carries the caller's brand for the refined type the
+    // checker admitted it to; cast the argument to the consumed context's
+    // type, every name qualified under its namespace.
+    if callee_typed {
+        let mut names = HashSet::new();
+        type_ref_names(ptype_ref, &mut names);
+        if !names.is_empty() {
+            let ns = if in_test_scaffold {
+                test_scaffold_ns(consumed)
+            } else {
+                qualified_to_ns(consumed)
+            };
+            let ty = crate::emitter::ts_type_ref_qualified_ts_type(ptype_ref, &names, &ns);
+            return bynk_ts::print_expr(&bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::As {
+                expr: Box::new(bynk_ts::TsExpr::As {
+                    expr: Box::new(bynk_ts::TsExpr::Ident(arg)),
+                    ty: bynk_ts::TsType::named("unknown"),
+                }),
+                ty,
+            })));
+        }
+    }
     arg
+}
+
+/// #2039: the user type names `r` mentions, at any depth.
+fn type_ref_names(r: &TypeRef, out: &mut HashSet<String>) {
+    match r {
+        TypeRef::Named(id) => {
+            out.insert(id.name.clone());
+        }
+        TypeRef::Option(inner, _) | TypeRef::List(inner, _) | TypeRef::Effect(inner, _) => {
+            type_ref_names(inner, out)
+        }
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            type_ref_names(a, out);
+            type_ref_names(b, out);
+        }
+        _ => {}
+    }
 }
 
 /// If the type-ref names a single user type at its root, return that name.

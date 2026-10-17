@@ -1,0 +1,23 @@
+-- #2039: nested literals from a caller declaring its own `Cents`, run over
+-- the wire.
+suite t.shadow as system {
+	case "an Option payload from a caller with its own Cents" {
+		let r <- t.shadow.optional() by Caller("t.other")
+		expect r == 250
+	}
+
+	case "list elements from a caller with its own Cents" {
+		let r <- t.shadow.listed() by Caller("t.other")
+		expect r == 30
+	}
+
+	case "empty constructors from a caller with its own Cents" {
+		let r <- t.shadow.empties() by Caller("t.other")
+		expect r == 0
+	}
+
+	case "a Result payload from a caller with its own Cents" {
+		let r <- t.shadow.settled() by Caller("t.other")
+		expect r == 9
+	}
+}

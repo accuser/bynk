@@ -149,6 +149,7 @@ pub(crate) fn check_fn(
         callees,
         scopes: vec![param_scope],
         is_binding_cache: HashMap::new(),
+        admitted_literals: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
         return_ty_span: f.return_type.span(),
@@ -252,6 +253,7 @@ fn check_static_initialiser(
             callees,
             scopes: vec![HashMap::new()],
             is_binding_cache: HashMap::new(),
+            admitted_literals: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: field_ty,
             return_ty_span: init.span,
@@ -4283,16 +4285,13 @@ fn check_cross_context_capability_call(
             .unwrap_or(tys.intern(Ty::Unit));
         let param_ty = substitute(param_ty, &subst, tys);
         // #2025: against the parameter's type; see `type_cross_context_arg`.
-        let (arg_ty, admitted) =
-            type_cross_context_arg(arg, param_ty, &consumed_types, consumed, ctx);
+        let (arg_ty, crosses) =
+            type_cross_context_arg(arg, param_ty, &caller_types, &consumed_types, consumed, ctx);
         let Some(arg_ty) = arg_ty else {
             all_ok = false;
             continue;
         };
-        if admitted {
-            continue;
-        }
-        if !structurally_compatible(arg_ty, param_ty, &caller_types, &consumed_types, tys) {
+        if !crosses {
             let mut err = CompileError::new(
                 "bynk.boundary.structural_mismatch",
                 arg.span,
@@ -4366,48 +4365,181 @@ fn rebranded_return_mismatch(
     )
 }
 
-/// #2025: type one cross-context argument against its parameter's type,
-/// returning the type and whether the argument was a literal admitted
-/// straight to that type.
+/// #2025, #2039: type one cross-context argument against its parameter's
+/// type, returning the type and whether the argument crosses the boundary.
 ///
-/// A literal passed directly to a refined parameter is admitted against the
-/// parameter type's own declaration, from the consumed context's table: it
-/// is checked against the callee's predicate, whether or not the caller
-/// `uses` the declaring commons and whatever the caller binds under that
-/// name. Such an argument is the callee's type by construction, so the
-/// caller skips the structural check for it.
+/// A literal at a refined position in the parameter's type is admitted
+/// against that type's own declaration, from the consumed context's table.
+/// This covers a literal passed directly (`t.pay.charge(250)`) and one
+/// nested in an `Option`/`Result` payload, a list element, or a record field
+/// (`t.pay.maybe(Some(250))`). It is checked against the callee's predicate,
+/// whether or not the caller `uses` the declaring commons and whatever the
+/// caller binds under that name. Such a literal is the callee's type by
+/// construction, so it needs no structural check; neither does a `None` or
+/// an empty list, which take the parameter's type as their hint.
 ///
-/// Any other argument is typed with the parameter's type as its hint (so
-/// `None` takes `Option[Cents]`), in the caller's own scope, and the
-/// structural check decides whether it crosses. A literal nested inside it
-/// (`Some(250)`) is admitted against the caller's declaration, as at a local
-/// call.
+/// Every other part of the argument is a *leaf*, typed in the caller's own
+/// scope with its position's type as the hint, and the structural check
+/// decides whether each leaf crosses. An argument with no admitted literal
+/// is checked whole, as before.
 fn type_cross_context_arg(
     arg: &Expr,
     param_ty: TyId,
+    caller_types: &HashMap<String, Arc<TypeDecl>>,
     consumed_types: &HashMap<String, Arc<TypeDecl>>,
     consumed: &str,
     ctx: &mut Ctx,
 ) -> (Option<TyId>, bool) {
-    if matches!(
-        arg.kind,
-        ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } | ExprKind::StrLit(_)
-    ) {
+    let tys = ctx.tys;
+    let mut literals: Vec<(&Expr, TyId)> = Vec::new();
+    let mut leaves: Vec<(&Expr, TyId)> = Vec::new();
+    collect_crossing_positions(
+        arg,
+        param_ty,
+        caller_types,
+        consumed_types,
+        tys,
+        &mut literals,
+        &mut leaves,
+    );
+    for (lit, pos) in literals {
         let before = ctx.errors.len();
-        if let Some(ty) = admit_refined_literal_in(arg, Some(param_ty), consumed_types, ctx) {
-            let tys = ctx.tys;
-            for err in &mut ctx.errors[before..] {
-                err.notes.push(format!(
-                    "`{}` is the parameter's type, as `{consumed}` declares it",
-                    ty.display(tys)
-                ));
+        match admit_refined_literal_in(lit, Some(pos), consumed_types, ctx) {
+            Some(ty) => {
+                for err in &mut ctx.errors[before..] {
+                    err.notes.push(format!(
+                        "`{}` is the type at this position of the parameter, as `{consumed}` declares it",
+                        ty.display(tys)
+                    ));
+                }
+                ctx.admitted_literals.insert(lit.id, ty);
             }
-            ctx.expr_types
-                .insert(arg.id, TypedExpr { span: arg.span, ty });
-            return (Some(ty), true);
+            // Not a literal of the refined type's base: an ordinary leaf.
+            None => leaves.push((lit, pos)),
         }
     }
-    (type_of(arg, Some(param_ty), ctx), false)
+    let arg_ty = type_of(arg, Some(param_ty), ctx);
+    let Some(ty) = arg_ty else {
+        return (None, false);
+    };
+    let crosses = leaves.iter().all(|(leaf, pos)| {
+        // A leaf `type_of` did not record is checked through the whole
+        // argument instead.
+        match ctx.expr_types.get(&leaf.id) {
+            Some(t) => structurally_compatible(t.ty, *pos, caller_types, consumed_types, tys),
+            None => structurally_compatible(ty, param_ty, caller_types, consumed_types, tys),
+        }
+    });
+    (arg_ty, crosses)
+}
+
+/// #2039: walk a cross-context argument alongside its parameter's type,
+/// collecting the literals at refined positions and the leaves the
+/// structural check still has to decide. Each is paired with the type at its
+/// position, named in the consumed context's table.
+///
+/// The walk follows `Some`/`Ok`/`Err` payloads, list elements, and the
+/// fields of a record literal whose type is the very declaration the
+/// callee's parameter names (the same commons type); anything else is a
+/// leaf.
+fn collect_crossing_positions<'e>(
+    e: &'e Expr,
+    pos: TyId,
+    caller_types: &HashMap<String, Arc<TypeDecl>>,
+    consumed_types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
+    literals: &mut Vec<(&'e Expr, TyId)>,
+    leaves: &mut Vec<(&'e Expr, TyId)>,
+) {
+    let node = tys.get(pos);
+    let walk = |inner: &'e Expr, at: TyId, literals: &mut Vec<_>, leaves: &mut Vec<_>| {
+        collect_crossing_positions(
+            inner,
+            at,
+            caller_types,
+            consumed_types,
+            tys,
+            literals,
+            leaves,
+        )
+    };
+    match (&e.kind, &*node) {
+        (
+            ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } | ExprKind::StrLit(_),
+            Ty::Named {
+                kind: NamedKind::Refined(_),
+                ..
+            },
+        ) => literals.push((e, pos)),
+        (ExprKind::Paren(inner), _) => walk(inner, pos, literals, leaves),
+        // Typed from the hint: the parameter's own type at this position.
+        (ExprKind::None, Ty::Option(_)) => {}
+        (ExprKind::ListLit(items), Ty::List(_)) if items.is_empty() => {}
+        // #2043: `List.empty()` / `Map.empty()`, likewise.
+        (
+            ExprKind::MethodCall {
+                receiver,
+                method,
+                type_args,
+                args,
+            },
+            Ty::List(_) | Ty::Map(..),
+        ) if method.name == "empty"
+            && type_args.is_empty()
+            && args.is_empty()
+            && matches!(
+                &receiver.kind,
+                ExprKind::Ident(id)
+                    if id.name == if matches!(&*node, Ty::List(_)) { "List" } else { "Map" }
+            ) => {}
+        (ExprKind::Some(inner), Ty::Option(t)) => walk(inner, *t, literals, leaves),
+        (ExprKind::Ok(inner), Ty::Result(t, _)) => walk(inner, *t, literals, leaves),
+        (ExprKind::Err(inner), Ty::Result(_, t)) => walk(inner, *t, literals, leaves),
+        (ExprKind::ListLit(items), Ty::List(t)) => {
+            for item in items {
+                walk(item, *t, literals, leaves);
+            }
+        }
+        (
+            ExprKind::RecordConstruction { type_name, fields },
+            Ty::Named {
+                name,
+                kind: NamedKind::Record,
+                args,
+            },
+        ) if args.is_empty() && type_name.name == *name => {
+            let Some(decl) = consumed_types.get(name) else {
+                return leaves.push((e, pos));
+            };
+            let same_decl = caller_types.get(name).is_some_and(|c| Arc::ptr_eq(c, decl));
+            let TypeBody::Record(record) = &decl.body else {
+                return leaves.push((e, pos));
+            };
+            // A shorthand field has no expression of its own to walk.
+            if !same_decl
+                || !decl.type_params.is_empty()
+                || fields.iter().any(|f| f.value.is_none())
+            {
+                return leaves.push((e, pos));
+            }
+            let mut field_positions = Vec::new();
+            for f in fields {
+                let Some(field_ty) = record
+                    .fields
+                    .iter()
+                    .find(|d| d.name.name == f.name.name)
+                    .and_then(|d| resolve_type_ref(&d.type_ref, consumed_types, tys))
+                else {
+                    return leaves.push((e, pos));
+                };
+                field_positions.push((f.value.as_ref().expect("checked above"), field_ty));
+            }
+            for (value, field_ty) in field_positions {
+                walk(value, field_ty, literals, leaves);
+            }
+        }
+        _ => leaves.push((e, pos)),
+    }
 }
 
 fn check_cross_context_call(
@@ -4526,16 +4658,13 @@ fn check_cross_context_call(
             resolve_type_ref(ptype_ref, &consumed_types, tys).unwrap_or(tys.intern(Ty::Unit));
         // Type-check the argument in the caller's context (#2025: against
         // the parameter's type; see `type_cross_context_arg`).
-        let (arg_ty, admitted) =
-            type_cross_context_arg(arg, param_ty, &consumed_types, consumed, ctx);
+        let (arg_ty, crosses) =
+            type_cross_context_arg(arg, param_ty, &caller_types, &consumed_types, consumed, ctx);
         let Some(arg_ty) = arg_ty else {
             all_ok = false;
             continue;
         };
-        if admitted {
-            continue;
-        }
-        if !structurally_compatible(arg_ty, param_ty, &caller_types, &consumed_types, tys) {
+        if !crosses {
             let mut err = CompileError::new(
                     "bynk.boundary.structural_mismatch",
                     arg.span,

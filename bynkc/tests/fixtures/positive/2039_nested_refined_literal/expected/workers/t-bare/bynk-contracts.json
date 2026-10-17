@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "provides": {
+    "empties": "4f13368f5b68f575",
+    "listed": "f7febdbbf05f2a13",
+    "optional": "dd672d33f8960d4c",
+    "placed": "e09b92e804722c23",
+    "settled": "ade64568b6210661"
+  },
+  "expects": {
+    "t.pay": {
+      "many": "c785c4ac35bc6a9d",
+      "maybe": "160020c3334955d4",
+      "place": "b3f990d552f03b49",
+      "settle": "548ff3eb8deb0e3f",
+      "total": "d52d2030f5c25d29"
+    }
+  }
+}

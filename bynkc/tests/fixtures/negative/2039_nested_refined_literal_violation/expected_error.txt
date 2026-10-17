@@ -1,0 +1,5 @@
+bynk.refine.literal_violates literal 5000 does not satisfy `InRange` required by type `Cents`
+bynk.refine.literal_violates literal 5000 does not satisfy `InRange` required by type `Cents`
+bynk.refine.literal_violates literal 0 does not satisfy `InRange` required by type `Cents`
+bynk.boundary.structural_mismatch cross-context argument 1 to `t.pay.maybe` has type `Option[Cents]` in `t.shadow`, but parameter `cents` expects `Option[Cents]` in `t.pay`
+# exact

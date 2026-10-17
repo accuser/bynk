@@ -1,0 +1,23 @@
+context t.shadow
+
+consumes t.pay
+
+-- #2039: a nested literal is checked against `t.pay`'s `Cents`, not the
+-- caller's own, so 5000 is refused although the caller's admits it.
+type Cents = Int where InRange(1, 5000)
+
+service optional {
+	on call() -> Effect[Int] by c: Caller { t.pay.maybe(Some(5000)) }
+}
+
+service listed {
+	on call() -> Effect[Int] by c: Caller { t.pay.total([1, 5000]) }
+}
+
+-- A value of the caller's own `Cents` is still a different type.
+service own {
+	on call() -> Effect[Int] by c: Caller {
+		let mine: Cents = 250
+		t.pay.maybe(Some(mine))
+	}
+}
