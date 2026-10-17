@@ -28,6 +28,9 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.349.3** | On `workers`, a cross-context call argument of a named type is cast to the callee's type, so a caller's own commons values built into it, such as `Map.empty()` in a field of a consumed record, pass `tsc` |
+| **v0.349.2** | A test case's `Json.encode`/`Json.decode[T]` on a consumed context's type now runs, its generated codecs naming the type through that context, instead of failing `tsc` |
+| **v0.349.1** | A test case that names a consumed context's nullary variant bare (`Domestic` for `Region.Domestic`) now runs, as the same name does in a handler, instead of failing `tsc` |
 | **v0.349.0** | A test case delivers an event to a `from Events(E)` service with `svc.event(e)` or `svc.event(e, env)`, honouring its pattern filter and `via schema(N)` guard |
 | **v0.348.1** | A literal set on a consumed context's refined field (`Item { code: 1, … }` for `ev.store`'s `Code`) is now cast to `ev_store.Code` under the namespace the module already imports, instead of a bare `Code` it never imported, which failed `tsc` with `TS2304` |
 | **v0.348.0** | A refined literal in a field of a generic record passed to a cross-context call (`Page { items: [250] }` for a `Page[Cents]` parameter), or in a record literal that also has a shorthand field, is admitted against the callee's own declaration, as other nested literals are, so it crosses from a caller with its own type of that name; a shorthand field is checked by its binding's type |

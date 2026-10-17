@@ -32,7 +32,7 @@ export const placeOrder = {
    * anti-corruption-layer pattern).
    */
   async call(total: Money, deps: { env: { COMMERCE_PAYMENT: __ServiceBinding } }): globalThis.Promise<Result<void, OrderError>> {
-    const auth = await __callService(deps.env.COMMERCE_PAYMENT, "authorise", __serialise_Money(total), __deserialise_Result_AuthId_PaymentError, "commerce.orders", "d7dff23f6fd4c9e4", deps.env, "commerce.payment");
+    const auth = await __callService(deps.env.COMMERCE_PAYMENT, "authorise", __serialise_Money((total as unknown as commerce_payment.Money)), __deserialise_Result_AuthId_PaymentError, "commerce.orders", "d7dff23f6fd4c9e4", deps.env, "commerce.payment");
     switch (auth.tag) {
       case "Ok": {
         return Ok(undefined);

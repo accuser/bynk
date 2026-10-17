@@ -1,0 +1,10 @@
+commons cs.values
+
+-- #2035: commons types a caller builds into a consumed context's argument.
+type Qty = Int where InRange(1, 100)
+
+type Line = { qty: Qty, note: String }
+
+type Page[T] = { items: List[T] }
+
+type Pair = { left: Line, right: Option[Line] }

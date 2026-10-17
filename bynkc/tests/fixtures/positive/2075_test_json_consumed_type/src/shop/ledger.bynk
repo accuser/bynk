@@ -1,0 +1,16 @@
+-- #2075: a target that consumes `shop.order`, whose types a case encodes and decodes.
+context shop.ledger
+
+consumes shop.order
+
+service domestic {
+  on call(id: String) -> Effect[Order] {
+    Order { id: id, region: Domestic }
+  }
+}
+
+service isDomestic {
+  on call(o: Order) -> Effect[Bool] {
+    o.region == Domestic
+  }
+}

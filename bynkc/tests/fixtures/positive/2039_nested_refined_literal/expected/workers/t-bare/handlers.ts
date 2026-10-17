@@ -64,7 +64,7 @@ export const parenthesised = {
 
 export const placed = {
   async call(deps: { env: { T_PAY: __ServiceBinding }; identity: string }): globalThis.Promise<number> {
-    return __callService(deps.env.T_PAY, "place", __serialise_Order({ cents: (40 as Cents), note: "n" }), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "t.bare", "b3f990d552f03b49", deps.env, "t.pay");
+    return __callService(deps.env.T_PAY, "place", __serialise_Order(({ cents: (40 as Cents), note: "n" } as unknown as t_pay.Order)), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "t.bare", "b3f990d552f03b49", deps.env, "t.pay");
   },
 };
 

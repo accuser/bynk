@@ -2138,21 +2138,27 @@ fn attackable_contracts(
 }
 
 /// #917: the type-only namespace qualifier every named type reachable from
-/// `target_name` (or one of its `uses`) renders through inside the test module
-/// that targets it — a test module imports the target/`uses` commons only as
-/// a namespace (`import * as orders from …`), never inlining their
-/// declarations the way a `uses`r module's own production emission does, so
-/// *every* name here is foreign and needs one. The target's own name wins a
-/// collision against a `uses`d one, matching `synthetic_typed_commons_for_target`'s
-/// merge precedence.
+/// `target_name` renders through inside the test module that targets it. A
+/// test module imports the target, the contexts it consumes and its `uses`
+/// commons only as namespaces (`import * as orders from …`), never inlining
+/// their declarations the way a `uses`r module's own production emission does,
+/// so *every* name here is foreign and needs one.
+///
+/// #2075: the precedence is `synthetic_typed_commons_for_target`'s, so a name
+/// qualifies through the declaration the case was checked against: the
+/// target's own type, then a consumed unit's (#2062: a consumed *context*'s
+/// too, whose codecs a `Json.decode[Order]` in a case now generates), then a
+/// `uses`d commons'. A consumed type that collides with a `uses`d one never
+/// reaches here: the checker refuses that unit (`bynk.consumes.name_conflict`).
 fn json_codec_qual_for_target(
     target_name: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
 ) -> HashMap<String, String> {
     let mut qual = HashMap::new();
-    if let Some(used) = unit_uses.get(target_name) {
-        for u in used {
+    let mut qualify = |units: Option<&Vec<String>>| {
+        for u in units.into_iter().flatten() {
             let ns = test_ns(u);
             if let Some(table) = unit_tables.get(u) {
                 for n in table.types.keys() {
@@ -2160,13 +2166,11 @@ fn json_codec_qual_for_target(
                 }
             }
         }
-    }
-    let target_ns = test_ns(target_name);
-    if let Some(table) = unit_tables.get(target_name) {
-        for n in table.types.keys() {
-            qual.insert(n.clone(), format!("{target_ns}."));
-        }
-    }
+    };
+    // Highest precedence first; `or_insert` keeps the first claim.
+    qualify(Some(&vec![target_name.to_string()]));
+    qualify(unit_consumes.get(target_name));
+    qualify(unit_uses.get(target_name));
     qual
 }
 
@@ -2204,6 +2208,7 @@ fn emit_test_module(
         target_name,
         unit_tables,
         unit_uses,
+        unit_consumes,
     ));
     let _ = exports_visibility;
     let ext = import_ext.as_str();
