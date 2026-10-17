@@ -344,6 +344,22 @@ pub(crate) fn admit_refined_literal(
     expected: Option<TyId>,
     ctx: &mut Ctx,
 ) -> Option<TyId> {
+    let input = ctx.input;
+    admit_refined_literal_in(expr, expected, &input.types, ctx)
+}
+
+/// [`admit_refined_literal`] against an explicit declaration table: the one
+/// that declares `expected`'s names. #2025: a cross-context argument's
+/// parameter type is named in the consumed context's table, so a literal
+/// passed straight to it is checked against the callee's declaration, not
+/// whatever the caller binds under that name (or nothing, when the caller
+/// has no `uses` of the declaring commons).
+pub(crate) fn admit_refined_literal_in(
+    expr: &Expr,
+    expected: Option<TyId>,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    ctx: &mut Ctx,
+) -> Option<TyId> {
     let tys = ctx.tys;
     let expected = match expected.map(|e| tys.get(e)).as_deref() {
         Some(Ty::Effect(inner)) => Some(*inner),
@@ -362,7 +378,7 @@ pub(crate) fn admit_refined_literal(
     if !literal_matches_base(&lit, *base) {
         return None;
     }
-    let decl = ctx.input.types.get(name)?.clone();
+    let decl = types.get(name)?.clone();
     if let Some(refinement) = type_decl_refinement(&decl)
         && let Some(failed) = first_failed_predicate(refinement, &lit)
     {
