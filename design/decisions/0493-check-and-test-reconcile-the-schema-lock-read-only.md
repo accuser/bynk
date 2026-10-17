@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A non-additive event change now fails `bynkc check` and `bynkc test` (and `bynk check`/`bynk test`) with `bynk.event.non_additive_schema_change`, as it already failed `bynkc compile`, `bynk dev` and `bynk deploy`: both reconcile events against the committed `bynk.schema.lock` read-only and never write it, so an additive change passes and the next build records it (#2078).
----
+# 0493 — `check` and `test` reconcile events against `bynk.schema.lock`, read-only
 
-## ADR: check-and-test-reconcile-the-schema-lock-read-only
-title: `check` and `test` reconcile events against `bynk.schema.lock`, read-only
-summary: The schema registry is consulted by every CLI command that judges a project, and written only by a build
+- **Status:** Accepted (v0.346.10)
 
 **Context.** `bynk.schema.lock` records each event's field shape, and a build refuses a non-additive change with `bynk.event.non_additive_schema_change`. Only the building paths turned the registry on (`bynkc compile`'s directory branch, `bynk dev`, `bynk deploy`). `check_project` hardcoded `SchemaLock::Off`, as ADR 0321 recorded, and `bynkc test` built with the default `Off`. So a CI gate of format, check and test, such as `bynk-lang/bynk-ci`, stayed green on a breaking event change, and the break surfaced only at deploy (#2078).
 

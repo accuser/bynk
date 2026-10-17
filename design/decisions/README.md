@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0493](0493-check-and-test-reconcile-the-schema-lock-read-only.md) | **`check` and `test` reconcile events against `bynk.schema.lock`, read-only** (v0.346.10) — The schema registry is consulted by every CLI command that judges a project, and written only by a build | Accepted (v0.346.10) |
 | [0492](0492-secrets-with-first-upload.md) | **A new Worker's secrets are uploaded with its first version** (v0.346.9) — Supersedes ADR 0195 (F) for a first deploy: `wrangler deploy --secrets-file`, not a post-push `secret put` | Accepted (v0.346.9) |
 | [0491](0491-callee-side-contract-skew-gate.md) | **The deploy contract-skew gate checks the callee side too, under the same code** (v0.346.8) — `--context` holds the pushed Worker's new `provides` to every other live Worker's recorded `expects`; an unrecorded caller warns | Accepted (v0.346.8) |
 | [0490](0490-contract-mismatch-body-keeps-expected.md) | **The 409 ContractMismatch body keeps `expected`, because only an authenticated caller can reach it** (v0.346.4) — The signature check precedes the contract check on every internal path; the published 409 body is unchanged | Accepted (v0.346.4) |
