@@ -90,7 +90,7 @@ fn record(
                     .into_iter()
                     .map(|n| format!("{n} (type-only, TS1361)")),
             );
-            unbound.extend(cross_worker_value_imports(path, program));
+            unbound.extend(cross_worker_value_imports(source, path, program));
             if !unbound.is_empty() {
                 reports.insert(
                     (source.to_string(), target_name(target), module_key(path)),
@@ -133,7 +133,11 @@ fn missing_members(
 /// callee's companion, and the `import * as handlers_<ns>` of a
 /// cross-context capability provider, which the caller instantiates (a
 /// namespace import, which this check does not inspect).
-fn cross_worker_value_imports(path: &Path, program: &bynk_ts::TsProgram) -> Vec<String> {
+fn cross_worker_value_imports(
+    source: &str,
+    path: &Path,
+    program: &bynk_ts::TsProgram,
+) -> Vec<String> {
     let worker_of = |p: &Path| -> Option<String> {
         let mut comps = p.components().map(|c| c.as_os_str().to_string_lossy());
         (comps.next()? == "workers").then(|| comps.next().map(|c| c.to_string()))?
@@ -148,15 +152,18 @@ fn cross_worker_value_imports(path: &Path, program: &bynk_ts::TsProgram) -> Vec<
                 .as_deref()
                 .and_then(worker_of)
                 .is_some_and(|other| other != own)
-                && !CONSUMED_METHOD_TYPES.contains(&name.as_str())
+                && !CONSUMED_METHOD_TYPES.contains(&(source, name.as_str()))
         })
         .map(|(from, name)| format!("value import {from}::{name}"))
         .collect()
 }
 
-/// #2045: consumed types the corpus calls an attached method on, imported as
-/// values by design (see [`cross_worker_value_imports`]).
-const CONSUMED_METHOD_TYPES: &[&str] = &[];
+/// #2045: `(source, type)` for each consumed type a fixture calls an attached
+/// method on, imported as a value by design (see
+/// [`cross_worker_value_imports`]). Scoped to its fixture, so the same name
+/// imported as a value anywhere else is still reported.
+const CONSUMED_METHOD_TYPES: &[(&str, &str)] =
+    &[("2045_consumed_method_value_import_workers", "Batch")];
 
 /// The emitted module a relative specifier names from `from_module`
 /// (`./handlers.js` from `workers/x/compose.ts` is `workers/x/handlers.ts`).
