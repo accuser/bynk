@@ -310,6 +310,40 @@ fn agent_calls_use_the_boundary_codec_on_workerd() {
     );
 }
 
+/// #2016 (standard-library K1): every `Bytes` operation runs on workerd, whose
+/// `btoa`/`atob` and typed arrays the helpers rely on.
+const BYTES_OPS_SOURCE: &str = r#"context smoke
+
+service api from http {
+  on GET("/bytes") () -> Effect[HttpResult[String]] by v: Visitor {
+    let b = Bytes.fromUtf8("v1:").concat(Bytes.fromUtf8("hi"))
+    let hex = b.slice(-2, 99).toHex()
+    let url = Bytes.fromUtf8("fo").toBase64Url()
+    let back = match Bytes.fromBase64Url(url) {
+      Some(x) => x == Bytes.fromUtf8("fo")
+      None => false
+    }
+    let parsed = match Bytes.fromHex("807f") {
+      Some(x) => x.slice(0, 1).compare(x.slice(1, 2))
+      None => 0
+    }
+    Ok("hex=\(hex) url=\(url) back=\(back) order=\(parsed)")
+  }
+}
+"#;
+
+#[test]
+fn bytes_operations_run_on_workerd() {
+    let Some(served) = serve_smoke(BYTES_OPS_SOURCE, "bytes", 10000) else {
+        return;
+    };
+    let body = fetch(&served.url, "/bytes").expect("GET /bytes runs the Bytes operations");
+    assert!(
+        body.contains("hex=6869 url=Zm8 back=true order=1"),
+        "each operation gives the same answer on workerd as under Node: {body}"
+    );
+}
+
 /// #1820: a context split across files. On Workers each file used to be
 /// written to `handlers.ts` in turn, each overwriting the last, so the Worker
 /// kept only one file's declarations. Each file is now its own module, which

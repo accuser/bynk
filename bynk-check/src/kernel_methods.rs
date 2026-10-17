@@ -273,11 +273,17 @@ pub const INSTANT_METHODS: &[KernelMethod] = &[
 ];
 
 /// The `Bytes` kernel (v0.110, ADR 0142). Equality is an operator (D4, content
-/// compare); the kernel is length plus the String-interop bridge (D3). No
-/// ordering/arithmetic/concat/slice in v1 (deferred follow-ons).
+/// compare); the kernel is length plus the String-interop bridge (D3). #2016
+/// (standard-library K1) adds `concat`, `slice`, `compare` (a method: `Bytes`
+/// stays unorderable), hex and base64url.
 pub const BYTES_METHODS: &[KernelMethod] = &[
     m("length", "length() -> Int"),
+    m("concat", "concat(other: Bytes) -> Bytes"),
+    m("slice", "slice(start: Int, end: Int) -> Bytes"),
+    m("compare", "compare(other: Bytes) -> Int"),
+    m("toHex", "toHex() -> String"),
     m("toBase64", "toBase64() -> String"),
+    m("toBase64Url", "toBase64Url() -> String"),
     m("decodeUtf8", "decodeUtf8() -> Option[String]"),
 ];
 

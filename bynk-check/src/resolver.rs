@@ -2977,8 +2977,15 @@ fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
                     "Instant" => &["fromEpochMillis"],
                     // v0.100: `Stream.of(xs)`.
                     "Stream" => &["of"],
-                    // v0.110 (ADR 0142): `Bytes.fromUtf8(s)`/`fromBase64(s)`/`empty()`.
-                    "Bytes" => &["fromUtf8", "fromBase64", "empty"],
+                    // v0.110 (ADR 0142): `Bytes.fromUtf8(s)`/`fromBase64(s)`/`empty()`;
+                    // #2016: `fromHex(s)`/`fromBase64Url(s)`.
+                    "Bytes" => &[
+                        "fromUtf8",
+                        "fromBase64",
+                        "fromHex",
+                        "fromBase64Url",
+                        "empty",
+                    ],
                     _ => &["parse"],
                 };
                 let only = allowed.join("`/`");

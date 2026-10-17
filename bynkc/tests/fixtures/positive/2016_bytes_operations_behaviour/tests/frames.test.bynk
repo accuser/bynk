@@ -1,0 +1,45 @@
+-- #2016: the `Bytes` operations run in a source module (through `frames`) and
+-- directly in a test-case body, whose runtime import list is built apart.
+suite frames {
+  case "concat joins in order" {
+    expect frame(Bytes.fromUtf8("v1:"), Bytes.fromUtf8("hi")) == Bytes.fromUtf8("v1:hi")
+    expect Bytes.empty().concat(Bytes.empty()).length() == 0
+  }
+
+  case "slice clamps like String.slice" {
+    let b = Bytes.fromUtf8("abcdef")
+    expect b.slice(1, 3) == Bytes.fromUtf8("bc")
+    expect b.slice(-5, 2) == Bytes.fromUtf8("ab")
+    expect b.slice(4, 99) == Bytes.fromUtf8("ef")
+    expect b.slice(3, 1).length() == 0
+  }
+
+  case "compare is unsigned lexicographic" {
+    let lo = Bytes.fromUtf8("a")
+    let hi = Bytes.fromUtf8("b")
+    expect lo.compare(hi) == -1
+    expect hi.compare(lo) == 1
+    expect lo.compare(Bytes.fromUtf8("a")) == 0
+    expect lo.compare(Bytes.fromUtf8("aa")) == -1
+    expect unsignedOrder() == 1
+  }
+
+  case "hex is lowercase out and either case in" {
+    expect hexOf("hi") == "6869"
+    expect Bytes.fromHex("6869") is Some(_)
+    expect Bytes.fromHex("6A6b") is Some(_)
+    expect Bytes.fromHex("abc") is None
+    expect Bytes.fromHex("0x00") is None
+    expect hexRoundTrips(Bytes.fromUtf8("héllo"))
+    expect hexRoundTrips(Bytes.empty())
+  }
+
+  case "base64url is unpadded out and padding-optional in" {
+    expect Bytes.fromUtf8("fo").toBase64Url() == "Zm8"
+    expect Bytes.fromBase64Url("Zm8") is Some(_)
+    expect Bytes.fromBase64Url("Zm8=") is Some(_)
+    expect Bytes.fromBase64Url("+/8=") is None
+    expect Bytes.fromBase64Url("Z") is None
+    expect urlRoundTrips(Bytes.fromUtf8("héllo wörld"))
+  }
+}

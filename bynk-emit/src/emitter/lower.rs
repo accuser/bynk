@@ -2175,6 +2175,17 @@ fn lower_method_call(
                 cx.note_bytes();
                 return pre.finish(format!("__bynkBytesFromBase64({s})"));
             }
+            // #2016: the guarded hex and base64url decodes, `None` on bad input.
+            ("fromHex", 1) => {
+                let s = pre.lower(&args[0], cx);
+                cx.note_bytes_ops();
+                return pre.finish(format!("__bynkBytesFromHex({s})"));
+            }
+            ("fromBase64Url", 1) => {
+                let s = pre.lower(&args[0], cx);
+                cx.note_bytes_ops();
+                return pre.finish(format!("__bynkBytesFromBase64Url({s})"));
+            }
             ("empty", 0) => {
                 return pre.finish("new globalThis.Uint8Array()".to_string());
             }
@@ -4248,6 +4259,39 @@ fn lower_bytes_kernel(
             let recv = pre.lower(receiver, cx);
             cx.note_bytes();
             Some(format!("__bynkBytesDecodeUtf8({recv})"))
+        }
+        // #2016 (standard-library K1). `slice` clamps negative indices to 0 as
+        // `String.slice` does, and `Uint8Array.slice` copies, so a slice never
+        // aliases a buffer a binding may still hold.
+        ("slice", [lo, hi]) => {
+            let recv = pre.lower(receiver, cx);
+            let lo = pre.lower(lo, cx);
+            let hi = pre.lower(hi, cx);
+            Some(format!(
+                "({recv}).slice(globalThis.Math.max(0, {lo}), globalThis.Math.max(0, {hi}))"
+            ))
+        }
+        ("concat", [other]) => {
+            let recv = pre.lower(receiver, cx);
+            let other = pre.lower(other, cx);
+            cx.note_bytes_ops();
+            Some(format!("__bynkBytesConcat({recv}, {other})"))
+        }
+        ("compare", [other]) => {
+            let recv = pre.lower(receiver, cx);
+            let other = pre.lower(other, cx);
+            cx.note_bytes_ops();
+            Some(format!("__bynkBytesCompare({recv}, {other})"))
+        }
+        ("toHex", []) => {
+            let recv = pre.lower(receiver, cx);
+            cx.note_bytes_ops();
+            Some(format!("__bynkBytesToHex({recv})"))
+        }
+        ("toBase64Url", []) => {
+            let recv = pre.lower(receiver, cx);
+            cx.note_bytes_ops();
+            Some(format!("__bynkBytesToBase64Url({recv})"))
         }
         _ => None,
     };

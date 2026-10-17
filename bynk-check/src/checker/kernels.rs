@@ -1540,6 +1540,10 @@ pub(crate) fn check_instant_kernel_method(
 /// (`None` on an invalid UTF-8 sequence). Equality is an operator (D4, content
 /// compare); the statics `Bytes.fromUtf8`/`fromBase64`/`empty` (the
 /// build-from-`String` direction) are resolved separately as type statics.
+///
+/// #2016 (standard-library K1): `concat`, `slice` (clamped like
+/// `String.slice`), `compare` (unsigned lexicographic, `-1`/`0`/`1`; `Bytes`
+/// stays unorderable), `toHex` and `toBase64Url`.
 pub(crate) fn check_bytes_kernel_method(
     method: &Ident,
     args: &[Expr],
@@ -1547,10 +1551,18 @@ pub(crate) fn check_bytes_kernel_method(
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     let tys = ctx.tys;
+    let bytes = Ty::Base(BaseType::Bytes);
+    let int = Ty::Base(BaseType::Int);
     let sig: Option<(Vec<TyId>, Ty)> = match method.name.as_str() {
-        "length" => Some((vec![], Ty::Base(BaseType::Int))),
-        "toBase64" => Some((vec![], Ty::Base(BaseType::String))),
+        "length" => Some((vec![], int.clone())),
+        "toBase64" | "toBase64Url" | "toHex" => Some((vec![], Ty::Base(BaseType::String))),
         "decodeUtf8" => Some((vec![], Ty::Option(tys.intern(Ty::Base(BaseType::String))))),
+        "concat" => Some((vec![tys.intern(bytes.clone())], bytes)),
+        "slice" => Some((
+            vec![tys.intern(int.clone()), tys.intern(int.clone())],
+            bytes,
+        )),
+        "compare" => Some((vec![tys.intern(bytes)], int)),
         _ => None,
     };
     let Some((params, ret)) = sig else {
@@ -1558,7 +1570,8 @@ pub(crate) fn check_bytes_kernel_method(
             "bynk.types.method_not_found",
             method.span,
             format!(
-                "the built-in `Bytes` type has no method `{}` — the kernel is `length`, `toBase64`, `decodeUtf8`",
+                "the built-in `Bytes` type has no method `{}` — the kernel is `length`, \
+                 `concat`, `slice`, `compare`, `toHex`, `toBase64`, `toBase64Url`, `decodeUtf8`",
                 method.name
             ),
         ));
@@ -1583,6 +1596,9 @@ pub(crate) fn check_bytes_kernel_method(
             let _ = type_of(a, None, ctx);
         }
         return None;
+    }
+    for (a, p) in args.iter().zip(&params) {
+        check_arg(a, *p, &format!("the `Bytes.{}` argument", method.name), ctx);
     }
     Some(tys.intern(ret))
 }
@@ -2497,6 +2513,7 @@ pub(crate) fn check_instant_static(
 /// build a `Bytes` (no source literal). `fromUtf8(s)` is total (the UTF-8
 /// encoding of a string); `fromBase64(s)` is partial (`None` on invalid
 /// base64); `empty()` is the zero value (the empty octet sequence).
+/// #2016: `fromHex(s)` and `fromBase64Url(s)` are partial in the same way.
 pub(crate) fn check_bytes_static(
     method: &Ident,
     args: &[Expr],
@@ -2512,6 +2529,10 @@ pub(crate) fn check_bytes_static(
             Ty::Base(BaseType::Bytes),
         )),
         "fromBase64" => Some((
+            vec![tys.intern(Ty::Base(BaseType::String))],
+            Ty::Option(tys.intern(Ty::Base(BaseType::Bytes))),
+        )),
+        "fromHex" | "fromBase64Url" => Some((
             vec![tys.intern(Ty::Base(BaseType::String))],
             Ty::Option(tys.intern(Ty::Base(BaseType::Bytes))),
         )),

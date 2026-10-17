@@ -90,6 +90,10 @@ use bynk_check::checker::TyId;
 #[derive(Default)]
 pub(crate) struct RuntimeUse {
     bytes: Cell<bool>,
+    /// #2016: the module references the `Bytes` operation helpers (`concat`,
+    /// `compare`, hex, base64url), a group apart from `bytes` so a module that
+    /// only builds or compares `Bytes` keeps its import list.
+    bytes_ops: Cell<bool>,
     /// #1652: the module references `__bynkEq` (structural `==`).
     eq: Cell<bool>,
     /// #1657: the module references the `Int` domain traps (`__bynkIntDiv`,
@@ -127,6 +131,11 @@ impl RuntimeUse {
     /// Record that the module references the `Bytes` runtime helpers.
     pub fn note_bytes(&self) {
         self.bytes.set(true);
+    }
+
+    /// Record that the module references the `Bytes` operation helpers (#2016).
+    pub fn note_bytes_ops(&self) {
+        self.bytes_ops.set(true);
     }
 
     /// Record that the module references `__bynkEq`, the structural-equality
@@ -199,6 +208,11 @@ impl RuntimeUse {
     /// Whether the `Bytes` helpers must be imported.
     pub fn bytes(&self) -> bool {
         self.bytes.get()
+    }
+
+    /// Whether the `Bytes` operation helpers must be imported (#2016).
+    pub fn bytes_ops(&self) -> bool {
+        self.bytes_ops.get()
     }
 
     /// Whether `__bynkEq` must be imported (#1652).

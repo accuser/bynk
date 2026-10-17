@@ -11,7 +11,7 @@ title: Type system
 | `Bool` | `true`, `false` | `boolean` |
 | `Duration` | unit literals (`5.minutes`, `30.seconds`) | `number` (millis) |
 | `Instant` | no literal — `Clock.now()` / `Instant.fromEpochMillis(n)` | `number` (epoch millis) |
-| `Bytes` | no literal — `Bytes.fromUtf8(s)` / `Bytes.fromBase64(s)` / `Bytes.empty()` | `Uint8Array` |
+| `Bytes` | no literal — `Bytes.fromUtf8(s)` / `Bytes.fromBase64(s)` / `Bytes.fromHex(s)` / `Bytes.fromBase64Url(s)` / `Bytes.empty()` | `Uint8Array` |
 
 The unit type is written `()`. `Int` and `Float` are **distinct and
 incompatible** — there is no implicit coercion (`bynk.types.no_numeric_coercion`).
@@ -59,19 +59,42 @@ one base type that does **not** emit to `number`: a `Bytes` erases to a host
 - `Bytes.fromUtf8(s: String) -> Bytes` — the UTF-8 encoding of a string (total).
 - `Bytes.fromBase64(s: String) -> Option[Bytes]` — decode base64; `None` on an
   invalid string.
+- `Bytes.fromHex(s: String) -> Option[Bytes]` — decode hex. Either case, an even
+  number of digits and nothing else: a `0x` prefix, whitespace or separators give
+  `None`. `""` decodes to `Bytes.empty()`.
+- `Bytes.fromBase64Url(s: String) -> Option[Bytes]` — decode base64url (RFC 4648
+  §5, the `-`/`_` alphabet), with no padding or exactly the padding the length
+  needs. A standard-alphabet `+` or `/`, wrong padding or an impossible length
+  gives `None`.
 - `Bytes.empty() -> Bytes` — the zero value (the empty sequence).
 
-The usable surface is `b.length() -> Int` (the octet count), `b.toBase64() ->
-String` (total), and `b.decodeUtf8() -> Option[String]` (`None` on an invalid
-UTF-8 sequence). Encoding (text → bytes) is total; decoding (bytes → text) is
-partial and surfaced as `Option`, never hidden.
+The methods:
+
+| Method | Returns | |
+|---|---|---|
+| `b.length()` | `Int` | the octet count |
+| `b.concat(other: Bytes)` | `Bytes` | `b`'s octets, then `other`'s |
+| `b.slice(start: Int, end: Int)` | `Bytes` | clamped like `String.slice`: a negative index is `0`, an end past the length is the length, and `start >= end` is empty |
+| `b.compare(other: Bytes)` | `Int` | `-1`, `0` or `1` in unsigned lexicographic order; a proper prefix sorts first |
+| `b.toHex()` | `String` | lowercase, two digits per octet |
+| `b.toBase64()` | `String` | standard base64, padded |
+| `b.toBase64Url()` | `String` | base64url, unpadded (the JWT form) |
+| `b.decodeUtf8()` | `Option[String]` | `None` on an invalid UTF-8 sequence |
+
+Encoding is total; decoding is partial and surfaced as `Option`, never hidden.
+Every decoder round-trips its encoder: `Bytes.fromHex(b.toHex())` is `Some(b)`
+for every `b`, and likewise for base64 and base64url.
+
+`compare` and `==` are **not constant-time**: they stop at the first differing
+octet, so their timing reveals how much of two values matches. Never use them to
+check a signature, MAC or token against a secret.
 
 `==`/`!=` compare **by content**, byte for byte — so two independently-built
 `Bytes` with the same octets are equal (unlike the number-erased base types, a
 `Bytes` is not compared by host reference). Equality is structural throughout,
-so a record carrying a `Bytes` field compares that field by content too. `Bytes` is **not orderable** (no `<` / `sortBy` key) and **not
-`Map`-keyable** — key on `b.toBase64()` (a `String`) instead. It has no
-arithmetic, concatenation, or slicing in v1.
+so a record carrying a `Bytes` field compares that field by content too. `Bytes` is **not orderable** (no `<` / `sortBy` key; use
+`b.compare(other)`) and **not `Map`-keyable** — key on `b.toBase64()` (a
+`String`) instead. It has no arithmetic.
 
 On the wire a `Bytes` **serialises as a base64 JSON string** (and deserialising
 requires a valid base64 string), so it round-trips through any record or `store`
