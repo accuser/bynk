@@ -15,15 +15,15 @@
 //!
 //! **Provenance.** [`bynk_check::wire::Provenance`] distinguishes a type this
 //! module owns from one reached through another unit. `ContextBoundaryInfo`'s
-//! `types` table is `combined_types_for(unit, …)` — *this* unit's own type
-//! namespace, own declarations plus its `uses` targets' — the exact table
-//! `own_contract_hashes` (`bynk-emit/src/project.rs`) hashes a service's
-//! contract through. Every name resolvable through it is therefore this
-//! unit's *own* view of its boundary: `Provenance::Owned` throughout. A
-//! genuinely `Consumed` type (reached through a `consumes <other context>`,
-//! not a `uses <commons>`) never appears here — that is a *caller's* view of
-//! another unit's boundary, not this handler's own, and is out of scope for
-//! a peek that answers "what does this handler send and receive".
+//! `types` table is `contract_types_for(unit, …)` — *this* unit's own type
+//! namespace: own declarations, its `uses` targets', and (#2073) the types of
+//! the contexts it consumes, which its own signatures may name — the exact
+//! table `own_contract_hashes` (`bynk-emit/src/project.rs`) hashes a
+//! service's contract through. Every name resolvable through it is this
+//! unit's *own* view of its boundary, so the peek reports
+//! `Provenance::Owned` throughout, a borrowed consumed type included. A
+//! caller's view of another unit's boundary is out of scope for a peek that
+//! answers "what does this handler send and receive".
 //!
 //! **Scope.** Service handlers only. An agent's `on call` handler crosses a
 //! Durable-Object RPC boundary too, but the issue's worked examples (an HTTP

@@ -1,0 +1,29 @@
+-- #2073 review: borrowed records whose fields name a `Region` declared in
+-- three contexts cross the wire with their own context's `Region`, bare and
+-- inside `List` and `Option`.
+suite shop.ledger as system {
+  case "a borrowed record keeps its own context's field types" {
+    let o <- shop.order.place("o1")
+    let id <- shop.ledger.orderId(o)
+    expect id == "o1"
+    let p <- shop.post.send("p1")
+    let r <- shop.ledger.parcelRef(p)
+    expect r == "p1"
+  }
+
+  case "a borrowed record crosses inside a list and an option" {
+    let o <- shop.order.place("o2")
+    let os <- shop.ledger.echo([o, o])
+    expect os.length() == 2
+    let f <- shop.ledger.first(os)
+    expect f is Some(_)
+    let p <- shop.post.send("p2")
+    let has <- shop.ledger.present(Some(p))
+    expect has
+  }
+
+  case "the target's own same-named type is its own" {
+    let h <- shop.ledger.here()
+    expect h == Region.Here
+  }
+}

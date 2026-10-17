@@ -1917,13 +1917,20 @@ fn emit_consumed_context_helpers(
         // which the caller consumes too (the checker refuses the call
         // otherwise). Its codecs keep `c`'s renamed names, which the call sites
         // share.
+        // A key `contract_types_for` qualified (`shop_order__Region`) is named in
+        // TS by its declaration's own name (`shop_order.Region`).
         let owners = info.consumed_type_owners.get(c);
+        let declared = info.consumed_types.get(c);
         for (renamed, original) in &hidden {
             let owner_ns = owners
                 .and_then(|o| o.get(original))
                 .map(|owner| format!("{}.", qualified_to_ns(owner)))
                 .unwrap_or_else(|| ns.clone());
-            qual.insert(renamed.clone(), format!("{owner_ns}{original}"));
+            let ts_name = declared
+                .and_then(|t| t.get(original))
+                .map(|d| d.name.name.as_str())
+                .unwrap_or(original.as_str());
+            qual.insert(renamed.clone(), format!("{owner_ns}{ts_name}"));
         }
         // #1736: a generic type the callee owns reaches the closure only as the
         // base of an instantiation (`Envelope[Int]`), never as a plain name, so

@@ -1,0 +1,15 @@
+-- #2073 review: a second consumed context whose unexported `Region` has
+-- other variants.
+context shop.post
+
+exports transparent { Parcel }
+
+type Region = enum { North, South }
+
+type Parcel = { ref: String, region: Region }
+
+service send {
+  on call(ref: String) -> Effect[Parcel] {
+    Parcel { ref: ref, region: Region.South }
+  }
+}

@@ -700,7 +700,15 @@ fn emit_integration_module(
             let mut names: Vec<String> = t
                 .types
                 .keys()
-                .filter(|n| view.types.contains_key(*n) && !harness_bound.contains(*n))
+                // The view keeps the first participant's declaration of a
+                // name (`integration_view`), so only that one binds it.
+                .filter(|n| {
+                    !harness_bound.contains(*n)
+                        && view.types.get(*n).is_some_and(|d| {
+                            let mine = &t.types[*n];
+                            Arc::ptr_eq(d, mine) || d.span == mine.span
+                        })
+                })
                 .cloned()
                 .collect();
             names.sort();
@@ -857,12 +865,40 @@ fn emit_integration_module(
 }
 
 /// #2073: whether the lowered TypeScript `src` names the identifier `name`,
-/// as a whole word outside a member access (`x.Region` names a property).
+/// as a whole word outside a member access (`x.Region` names a property) and
+/// outside a string literal (an `expect`'s failure message quotes the source).
+/// A template literal's `${…}` holes are code, but the lowering never puts a
+/// type's name in one, so a template is skipped whole.
 fn names_ident(src: &str, name: &str) -> bool {
     let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
-    src.match_indices(name).any(|(i, _)| {
-        let before = src[..i].chars().next_back();
-        let after = src[i + name.len()..].chars().next();
+    let bytes = src.as_bytes();
+    let mut code = String::with_capacity(src.len());
+    let mut quote: Option<u8> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match quote {
+            Some(q) => {
+                if b == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if b == q {
+                    quote = None;
+                }
+                code.push(' ');
+            }
+            None if b == b'"' || b == b'\'' || b == b'`' => {
+                quote = Some(b);
+                code.push(' ');
+            }
+            None => code.push(b as char),
+        }
+        i += 1;
+    }
+    code.match_indices(name).any(|(i, _)| {
+        let before = code[..i].chars().next_back();
+        let after = code[i + name.len()..].chars().next();
         !before.is_some_and(|c| is_ident(c) || c == '.') && !after.is_some_and(is_ident)
     })
 }

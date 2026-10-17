@@ -1,0 +1,15 @@
+-- #2073 review: `Region` is `shop.order`'s own and unexported; `shop.post`
+-- and `shop.ledger` each declare a different `Region`.
+context shop.order
+
+exports transparent { Order }
+
+type Region = enum { Domestic, International }
+
+type Order = { id: String, region: Region }
+
+service place {
+  on call(id: String) -> Effect[Order] {
+    Order { id: id, region: Region.International }
+  }
+}

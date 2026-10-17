@@ -133,7 +133,7 @@ use crate::project_model::{
     compose_unit_symbols, merge_consumed_exports, normalize_service_defaults,
 };
 use crate::requirements::{FileRequirements, RequirementSink};
-use crate::symbols::{assemble_index, build_cross_context_info, combined_types_for};
+use crate::symbols::{assemble_index, build_cross_context_info};
 use bynk_project::{AttributedError, Roots, SchemaLock, UnitKind};
 use bynk_syntax::ast::{AgentDecl, ServiceDecl, TypeDecl};
 
@@ -154,10 +154,10 @@ pub struct ContextSequenceInfo {
 /// sequence-diagram classifier). Moved verbatim (Decision C, #1115).
 #[derive(Debug, Clone, Default)]
 pub struct ContextBoundaryInfo {
-    /// `combined_types_for`: the unit's own declared types plus the types of
-    /// every commons it `uses` — the same table `own_contract_hashes` hashes
-    /// through, so the peek's hash and the emitted `X-Bynk-Contract` constant
-    /// cannot disagree.
+    /// `contract_types_for` (#2073): the unit's own declared types, the types
+    /// of every commons it `uses` and those of the contexts it consumes — the
+    /// same table `own_contract_hashes` hashes through, so the peek's hash and
+    /// the emitted `X-Bynk-Contract` constant cannot disagree.
     pub types: HashMap<String, Arc<TypeDecl>>,
     pub services: HashMap<String, ServiceDecl>,
     pub agents: HashMap<String, AgentDecl>,
@@ -765,7 +765,14 @@ pub fn analyse_project_with_policy(
         boundary_info.insert(
             name.clone(),
             ContextBoundaryInfo {
-                types: combined_types_for(name, &unit_tables, &unit_uses),
+                // #2073: the table `own_contract_hashes` hashes through.
+                types: crate::symbols::contract_types_for(
+                    name,
+                    &unit_tables,
+                    &unit_uses,
+                    &unit_consumes,
+                )
+                .0,
                 services: table.services.clone(),
                 agents,
             },

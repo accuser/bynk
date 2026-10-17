@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError, __bynkEq } from "../../runtime.js";
 
-import { Order, Region } from "../shop-order/handlers.js";
+import { type Order, type Region } from "../shop-order/handlers.js";
 
 import type * as shop_order from "../shop-order/handlers.js";
 
@@ -11,19 +11,19 @@ export { type Order, type Region };
 
 export const domestic = {
   async call(id: string, deps: {}): globalThis.Promise<Order> {
-    return { id: id, region: Region.Domestic };
+    return { id: id, region: ({ tag: "Domestic" } as Region) };
   },
 };
 
 export const isDomestic = {
   async call(o: Order, deps: {}): globalThis.Promise<boolean> {
-    return __bynkEq(o.region, Region.Domestic);
+    return __bynkEq(o.region, ({ tag: "Domestic" } as Region));
   },
 };
 
 export const isHome = {
   async call(r: Region, deps: {}): globalThis.Promise<boolean> {
-    return __bynkEq(r, Region.Domestic);
+    return __bynkEq(r, ({ tag: "Domestic" } as Region));
   },
 };
 

@@ -76,8 +76,6 @@ async function test_places_a_bound_line() {
 async function test_compares_a_record_structurally() {
   try {
     const deps = __makeHarness();
-    const { Line } = __ns_shop_orders;
-    type Line = __ns_shop_orders.Line;
     const l = await __callService(deps.env.SHOP_ORDERS, "echo", __ns_shop_orders.__serialise_Line({ sku: ("o3" as any), qty: 4 }), __ns_shop_orders.__deserialise_Line, "integration", "9be80b6bc6ae95b2", deps.env, "shop.orders");
     if (!(__bynkEq(l, { sku: ("o3" as any), qty: 4 }))) { throw __bynkExpectFailure("tests/orders.bynk:17:12", 497, 528, "expect l == Line { sku: \"o3\", qty: 4 }\n  expected: l == Line { sku: \"o3\", qty: 4 }\n  actual:   " + __bynkShow((l)) + " == " + __bynkShow(({ sku: ("o3" as any), qty: 4 }))); }
     return { pass: true };

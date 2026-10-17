@@ -5548,6 +5548,15 @@ fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCt
         cx.note_http_result();
         return pre.finish(format!("HttpResult.{}", field.name));
     }
+    // #2073 (with #2045): a qualified nullary variant of a consumed context's
+    // sum (`Region.Domestic`), on `workers`, is built inline as its bare form
+    // is, so the callee's module stays a type-only import.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && !cx.is_local(&id.name)
+        && let Some(lit) = consumed_variant_literal(e, &id.name, &field.name, &[], cx)
+    {
+        return pre.finish(lit);
+    }
     // Agent-handler `self.<key>` rewrite.
     if cx.in_agent_handler()
         && let ExprKind::Ident(id) = &receiver.kind

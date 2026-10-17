@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "provides": {
+    "echo": "fc383d49727e0872",
+    "first": "be279a2fb1d69294",
+    "here": "8636e891054e2b67",
+    "orderId": "1d4af87f575402de",
+    "parcelRef": "b746cfae2a013a6d",
+    "present": "2b93d2b79eaa3765"
+  },
+  "expects": {}
+}

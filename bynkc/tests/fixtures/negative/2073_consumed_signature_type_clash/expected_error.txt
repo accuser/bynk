@@ -1,0 +1,1 @@
+bynk.consumes.name_conflict context `shop.ledger` consumes `shop.post` which exports type `Order`, but a type of the same name is already in scope

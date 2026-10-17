@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "send": "856befaf27902680"
+  },
+  "expects": {}
+}

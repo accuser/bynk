@@ -1,0 +1,5 @@
+context shop.post
+
+exports transparent { Order }
+
+type Order = { ref: Int }

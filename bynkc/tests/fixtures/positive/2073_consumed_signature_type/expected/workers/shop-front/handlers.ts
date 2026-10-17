@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
-import { Order, Region } from "../shop-order/handlers.js";
+import { type Order, type Region } from "../shop-order/handlers.js";
 
 import type * as shop_ledger from "../shop-ledger/handlers.js";
 import type * as shop_order from "../shop-order/handlers.js";
@@ -12,7 +12,7 @@ export { type Order, type Region };
 
 export const check = {
   async call(id: string, deps: { env: { SHOP_LEDGER: __ServiceBinding } }): globalThis.Promise<boolean> {
-    return __callService(deps.env.SHOP_LEDGER, "isDomestic", __serialise_shop_ledger__Order({ id: id, region: Region.Domestic }), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "shop.front", "18d7709789670052", deps.env, "shop.ledger");
+    return __callService(deps.env.SHOP_LEDGER, "isDomestic", __serialise_shop_ledger__Order({ id: id, region: ({ tag: "Domestic" } as Region) }), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "shop.front", "18d7709789670052", deps.env, "shop.ledger");
   },
 };
 
