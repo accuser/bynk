@@ -517,12 +517,16 @@ order commerce-payment-staging → commerce-orders-staging
 The plan and the deploy take these names from the same place: the
 environment's section of the generated config states the Worker's `name`
 (`commerce-orders-staging`) rather than leaving it to Wrangler's default, which
-is the same name. The `--context` refusal for a binding target that has never
-been deployed, and the list of contexts a failed run did not reach, name
-Workers the same way.
+is the same name. Every message the deploy prints names Workers the same way,
+and a command it suggests repeats your `--env`: under `--env staging`, the
+`--context` refusal reads "`commerce-orders-staging` binds to
+`commerce-payment-staging`, which has never been deployed" and suggests
+`bynk deploy --env staging`.
 
 In `--format json`, `orphans.workers` and `orphans.queues` hold these
-account names too (`gone-staging`, `old-jobs-staging`). `orphans.kv` does not:
+account names too. With the [orphans](#orphans) example's removed `payment`
+context and its `old-jobs` queue, under `--env staging` they are
+`payment-staging` and `old-jobs-staging`. `orphans.kv` does not:
 each entry's `worker` is the Worker's ledger key, its bare name, alongside the
 `binding` (absent for the bare `Kv`), because that pair is what the ledger
 records the namespace under.
