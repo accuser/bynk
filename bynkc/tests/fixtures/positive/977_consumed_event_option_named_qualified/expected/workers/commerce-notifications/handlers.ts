@@ -8,6 +8,8 @@ import { type PaymentConfirmed } from "../commerce-order/handlers.js";
 import * as bynk from "../../bynk.js";
 import type * as commerce_order from "../commerce-order/handlers.js";
 
+export { type PaymentConfirmed };
+
 export const OnPayment = {
   async event(e: PaymentConfirmed, deps: { Logger: bynk.Logger }): globalThis.Promise<void> {
     return deps.Logger.info(e.orderId);
