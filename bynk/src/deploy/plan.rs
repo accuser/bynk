@@ -327,19 +327,10 @@ pub fn run(
             &opts.environment,
         );
         if !skews.is_empty() {
-            eprintln!(
-                "bynk: `{worker}` was compiled against a contract its live dependencies no longer provide ({CONTRACT_SKEW}):"
+            eprint!(
+                "{}",
+                contract_skew_refusal(&opts.environment, worker, &skews)
             );
-            for s in &skews {
-                eprintln!(
-                    "  {}.{} — compiled against {}, live is {}",
-                    s.dependency, s.service, s.expected, s.live
-                );
-            }
-            eprintln!(
-                "  Deploying this would ship a caller its callee rejects (409 ContractMismatch) on every call."
-            );
-            eprintln!("  Deploy the whole project (`bynk deploy`) so both sides move together.");
             return ExitCode::FAILURE;
         }
     }
@@ -525,7 +516,8 @@ pub fn run(
     // `--context` run does not deploy. Asked before the KV ids are
     // materialised and any `[env.<name>]` table is synthesised: wrangler loads
     // that config (a placeholder id included) and addresses the same Worker
-    // either way, since the synthesised table sets no `name`.
+    // either way, since the `name` the synthesised table sets (#2028) is the
+    // one Wrangler's `--env` default gives a table without one.
     let in_run: BTreeSet<&str> = order.iter().map(String::as_str).collect();
     let edges: Vec<Edge> = project_edges(&resources)
         .into_iter()
@@ -565,9 +557,9 @@ pub fn run(
             // #2004 review: name the Workers whose answer could not be read,
             // since the decision counts them as holding the key.
             if p == Presence::Unknown {
-                eprintln!(
-                    "bynk: could not ask Cloudflare whether `{worker}` holds {key}; assuming it does. If it does not, the edge {} refuses every call — `bynk deploy --force` sets a fresh key on every edge.",
-                    edge.describe()
+                eprint!(
+                    "{}",
+                    unknown_edge_key_notice(&opts.environment, worker, &key, edge)
                 );
             }
             p
@@ -581,6 +573,7 @@ pub fn run(
             both_in_run,
             opts.force,
             &mut mint_edge_key,
+            &opts.environment,
         ) {
             Ok(decision) => {
                 edge_keys.insert(edge.clone(), decision);
@@ -611,9 +604,9 @@ pub fn run(
                     foreign_keys.insert((worker.clone(), caller.binding.clone()), decision);
                 }
                 Err(e) => {
-                    eprintln!(
-                        "bynk: `{}` (the foreign caller `{}` of `{worker}`): {e}",
-                        caller.binding, caller.actor
+                    eprint!(
+                        "{}",
+                        foreign_binding_refusal(&opts.environment, worker, caller, &e)
                     );
                     return ExitCode::FAILURE;
                 }
@@ -625,7 +618,10 @@ pub fn run(
     let mut resolved_secrets = BTreeMap::new();
     for (i, worker) in order.iter().enumerate() {
         if order.len() > 1 {
-            eprintln!("bynk: deploying `{worker}` ({}/{})…", i + 1, order.len());
+            eprint!(
+                "{}",
+                deploying_notice(&opts.environment, worker, i + 1, order.len())
+            );
         }
         match deploy_one(
             &probe.provenance,
@@ -633,6 +629,7 @@ pub fn run(
             &workers_dir,
             worker,
             &resources[worker],
+            &resources,
             &mut lock,
             &lock_path,
             &mut attempted_queues,
@@ -678,7 +675,10 @@ pub fn run(
                         minted: true,
                     }) = foreign_keys.get(&(worker.clone(), caller.binding.clone()))
                     {
-                        eprint!("{}", foreign_hand_off(worker, caller, value));
+                        eprint!(
+                            "{}",
+                            foreign_hand_off(&opts.environment, worker, caller, value)
+                        );
                     }
                 }
                 // #1883, slice 1b: and the static files it now serves.
@@ -688,9 +688,14 @@ pub fn run(
                     served_assets(&workers_dir.join(worker)),
                 );
                 if let Err(e) = write_lock(&lock_path, &lock) {
-                    eprintln!(
-                        "bynk: deployed `{worker}` but could not record it in {}: {e}",
-                        lock_path.display()
+                    eprint!(
+                        "{}",
+                        unrecorded_deploy_failure(
+                            &opts.environment,
+                            worker,
+                            &lock_path.display().to_string(),
+                            &e.to_string()
+                        )
                     );
                     return ExitCode::FAILURE;
                 }
@@ -714,7 +719,9 @@ pub fn run(
                 // its two ends leaves them refusing each other. The next plain
                 // run sees a key on each end and keeps both, so say how to
                 // repair it.
-                if let Some(hint) = interrupted_rotation_hint(&edge_keys, &order[..i]) {
+                if let Some(hint) =
+                    interrupted_rotation_hint(&opts.environment, &edge_keys, &order[..i])
+                {
                     eprint!("{hint}");
                 }
                 // I3 (#1971): a secret minted for this context's foreign
@@ -726,11 +733,14 @@ pub fn run(
                         minted: true,
                     }) = foreign_keys.get(&(worker.clone(), caller.binding.clone()))
                     {
-                        eprintln!(
-                            "bynk: `{worker}` may already hold the {} minted for its foreign caller `{}`. If `wrangler secret list` shows it, hand this off; if not, the next deploy mints another.",
-                            caller.binding, caller.actor
+                        eprint!(
+                            "{}",
+                            foreign_binding_maybe_set_notice(&opts.environment, worker, caller)
                         );
-                        eprint!("{}", foreign_hand_off(worker, caller, value));
+                        eprint!(
+                            "{}",
+                            foreign_hand_off(&opts.environment, worker, caller, value)
+                        );
                     }
                 }
                 // Wrangler's own code, not a flat 1 (slice 0's contract).
@@ -808,6 +818,7 @@ pub(crate) fn foreign_worker_warnings(
 /// can: each end may hold a different key, and a plain rerun keeps both.
 /// `None` when no such edge was left incomplete.
 pub(crate) fn interrupted_rotation_hint(
+    environment: &str,
     edge_keys: &BTreeMap<Edge, EdgeKey>,
     completed: &[String],
 ) -> Option<String> {
@@ -818,16 +829,118 @@ pub(crate) fn interrupted_rotation_hint(
             matches!(key, EdgeKey::Set { rotating: true, .. })
                 && !(done(&edge.caller) && done(&edge.callee))
         })
-        .map(|(edge, _)| edge.describe())
+        .map(|(edge, _)| edge.describe(environment))
         .collect();
     if split.is_empty() {
         return None;
     }
     Some(format!(
         "bynk: this run was setting new keys on {} and stopped before both ends of each were deployed, so each end may hold a different key and calls along it are refused.\n  \
-         Rerun `bynk deploy --force` (the whole project) to set one key on both ends; a plain rerun would keep both.\n",
-        split.join(", ")
+         Rerun `{} --force` (the whole project) to set one key on both ends; a plain rerun would keep both.\n",
+        split.join(", "),
+        deploy_command(environment)
     ))
+}
+
+/// v0.177 (#643): the `--context` refusal for a Worker compiled against a
+/// contract its live dependencies no longer provide. The Worker by its
+/// [`deployed_worker_name`], the remedy repeating the run's `--env` (#2047).
+/// Each skew names a contract (`<context>.<service>`), not a Worker.
+pub(crate) fn contract_skew_refusal(
+    environment: &str,
+    worker: &str,
+    skews: &[ContractSkew],
+) -> String {
+    let mut out = format!(
+        "bynk: `{}` was compiled against a contract its live dependencies no longer provide ({CONTRACT_SKEW}):\n",
+        deployed_worker_name(environment, worker)
+    );
+    for s in skews {
+        out.push_str(&format!(
+            "  {}.{} — compiled against {}, live is {}\n",
+            s.dependency, s.service, s.expected, s.live
+        ));
+    }
+    out.push_str(
+        "  Deploying this would ship a caller its callee rejects (409 ContractMismatch) on every call.\n",
+    );
+    out.push_str(&format!(
+        "  Deploy the whole project (`{}`) so both sides move together.\n",
+        deploy_command(environment)
+    ));
+    out
+}
+
+/// #2004 review: an end of `edge` whose secrets could not be listed, counted
+/// as holding `key`. The Worker and the edge by their deployed names, the
+/// remedy repeating the run's `--env` (#2047).
+pub(crate) fn unknown_edge_key_notice(
+    environment: &str,
+    worker: &str,
+    key: &str,
+    edge: &Edge,
+) -> String {
+    format!(
+        "bynk: could not ask Cloudflare whether `{}` holds {key}; assuming it does. If it does not, the edge {} refuses every call — `{} --force` sets a fresh key on every edge.\n",
+        deployed_worker_name(environment, worker),
+        edge.describe(environment),
+        deploy_command(environment)
+    )
+}
+
+/// The progress line of a multi-context run: `n` of `total`, the Worker by
+/// its [`deployed_worker_name`] (#2047).
+pub(crate) fn deploying_notice(environment: &str, worker: &str, n: usize, total: usize) -> String {
+    format!(
+        "bynk: deploying `{}` ({n}/{total})…\n",
+        deployed_worker_name(environment, worker)
+    )
+}
+
+/// A push that landed but could not be written to the ledger at `lock_path`.
+/// The Worker by its [`deployed_worker_name`] (#2047).
+pub(crate) fn unrecorded_deploy_failure(
+    environment: &str,
+    worker: &str,
+    lock_path: &str,
+    error: &str,
+) -> String {
+    format!(
+        "bynk: deployed `{}` but could not record it in {lock_path}: {error}\n",
+        deployed_worker_name(environment, worker)
+    )
+}
+
+/// I3 (#1971): the run could not decide `caller`'s binding on `worker`
+/// (`reason`, from `decide_foreign_key`). The Worker by its
+/// [`deployed_worker_name`] (#2047).
+pub(crate) fn foreign_binding_refusal(
+    environment: &str,
+    worker: &str,
+    caller: &ForeignCaller,
+    reason: &str,
+) -> String {
+    format!(
+        "bynk: `{}` (the foreign caller `{}` of `{}`): {reason}\n",
+        caller.binding,
+        caller.actor,
+        deployed_worker_name(environment, worker)
+    )
+}
+
+/// I3 (#1971): a failed push may have set a secret minted for `caller`. The
+/// Worker by its [`deployed_worker_name`], which the suggested `wrangler
+/// secret list` names too, so it asks about the right Worker (#2047).
+pub(crate) fn foreign_binding_maybe_set_notice(
+    environment: &str,
+    worker: &str,
+    caller: &ForeignCaller,
+) -> String {
+    let worker = deployed_worker_name(environment, worker);
+    format!(
+        "bynk: `{worker}` may already hold the {} minted for its foreign caller `{}`. If `wrangler secret list --name {worker}` shows it, hand this off; if not, the next deploy mints another.\n",
+        caller.binding, caller.actor
+    )
 }
 
 /// #1796: the refusal a deploy gets when a context it pushes declares a
@@ -882,14 +995,15 @@ pub(crate) fn absent_dependencies_refusal(
     absent: &[String],
 ) -> String {
     format!(
-        "bynk: `{}` binds to {}, which {} never been deployed — a Service Binding to a Worker that does not exist fails at upload.\n  Deploy the whole project once (`bynk deploy`) to bring the topology up.\n",
+        "bynk: `{}` binds to {}, which {} never been deployed — a Service Binding to a Worker that does not exist fails at upload.\n  Deploy the whole project once (`{}`) to bring the topology up.\n",
         deployed_worker_name(environment, worker),
         absent
             .iter()
             .map(|a| format!("`{}`", deployed_worker_name(environment, a)))
             .collect::<Vec<_>>()
             .join(", "),
-        if absent.len() == 1 { "has" } else { "have" }
+        if absent.len() == 1 { "has" } else { "have" },
+        deploy_command(environment)
     )
 }
 
@@ -906,7 +1020,7 @@ pub(crate) fn stopped_report(environment: &str, rest: &[String]) -> String {
         return String::new();
     }
     format!(
-        "bynk: stopping — {} not deployed: {}. Re-run `bynk deploy` to resume; what already landed is kept.\n",
+        "bynk: stopping — {} not deployed: {}. Re-run `{}` to resume; what already landed is kept.\n",
         if rest.len() == 1 {
             "1 more context was".to_string()
         } else {
@@ -915,7 +1029,8 @@ pub(crate) fn stopped_report(environment: &str, rest: &[String]) -> String {
         rest.iter()
             .map(|worker| deployed_worker_name(environment, worker))
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(", "),
+        deploy_command(environment)
     )
 }
 
@@ -1167,7 +1282,10 @@ pub(crate) fn derive_plan<'a>(
 ///   `shop`'s bare namespace under `--env staging` and its `capability
 ///   Staging` in the default environment are both `shop-staging`. A namespace
 ///   already recorded here is not created, so it cannot fail; that clash is
-///   refused by the other environment's deploy instead.
+///   refused by the other environment's deploy instead. A recorded namespace
+///   whose id has gone from the account is created again, and that is only
+///   known once the deploy fetches the live ids, so `deploy_one` runs
+///   [`cross_environment_title_clash`] again at that point (#2059).
 ///
 /// Checked across the whole project, not just `--context`'s selection, since
 /// titles are account-wide. The ledger records ids, not titles, so a recorded
@@ -1195,19 +1313,48 @@ pub(crate) fn kv_title_collision(
     }
 
     // What this deploy creates: each declared namespace with no recorded id.
+    let creates: Vec<(&str, &str)> = resources
+        .iter()
+        .flat_map(|(worker, declared)| {
+            kv_bindings(declared).map(move |binding| (worker.as_str(), binding))
+        })
+        .filter(|(worker, binding)| {
+            recorded_kv_binding(lock, worker, binding, environment).is_none()
+        })
+        .collect();
+    cross_environment_title_clash(resources, lock, environment, &creates, None)
+}
+
+/// The cross-environment half of [`kv_title_collision`]: does any of
+/// `creates`, the `(worker, binding)` namespaces about to be created under
+/// `environment`, take a title another environment the ledger knows holds or
+/// would create? The message names both namespaces and both environments.
+///
+/// Also run by `deploy_one` at the moment it decides to create (#2059), since
+/// that is the only point that knows a recorded id has gone from the account
+/// and its namespace is about to be created again. There `live_kv_ids` is the
+/// account's live ids, when fetched: another environment's recorded namespace
+/// whose id is not among them no longer holds its title (though one this
+/// source declares there still counts, since that deploy would create it).
+/// `None` counts every recorded namespace, which is always the case at plan
+/// time: [`kv_title_collision`] runs before the live ids are fetched, so the
+/// relaxation applies only to the deploy-time re-check.
+pub(crate) fn cross_environment_title_clash(
+    resources: &BTreeMap<String, Resources>,
+    lock: &DeployLock,
+    environment: &str,
+    creates: &[(&str, &str)],
+    live_kv_ids: Option<&BTreeSet<String>>,
+) -> Option<String> {
+    if creates.is_empty() {
+        return None;
+    }
+    let is_live = |id: &str| live_kv_ids.is_none_or(|live| live.contains(id));
     let declared = || {
         resources.iter().flat_map(|(worker, declared)| {
             kv_bindings(declared).map(move |binding| (worker.as_str(), binding))
         })
     };
-    let creates: Vec<(&str, &str)> = declared()
-        .filter(|(worker, binding)| {
-            recorded_kv_binding(lock, worker, binding, environment).is_none()
-        })
-        .collect();
-    if creates.is_empty() {
-        return None;
-    }
     for (other, recorded) in &lock.environments {
         if other == environment {
             continue;
@@ -1216,8 +1363,9 @@ pub(crate) fn kv_title_collision(
         // ledger records first, then what this source declares.
         let held = recorded
             .kv
-            .keys()
-            .map(|worker| {
+            .iter()
+            .filter(|(_, kv)| is_live(&kv.id))
+            .map(|(worker, _)| {
                 (
                     worker.as_str(),
                     bynk_emit::emitter::wrangler::KV_BINDING_NAME,
@@ -1229,8 +1377,9 @@ pub(crate) fn kv_title_collision(
                     .iter()
                     .flat_map(|(worker, instances)| {
                         instances
-                            .keys()
-                            .map(move |binding| (worker.as_str(), binding.as_str()))
+                            .iter()
+                            .filter(|(_, kv)| is_live(&kv.id))
+                            .map(move |(binding, _)| (worker.as_str(), binding.as_str()))
                     }),
             );
         let mut taken: BTreeMap<String, (&str, &str)> = BTreeMap::new();
@@ -1239,7 +1388,7 @@ pub(crate) fn kv_title_collision(
                 .entry(kv_title(worker, binding, other))
                 .or_insert((worker, binding));
         }
-        for &(worker, binding) in &creates {
+        for &(worker, binding) in creates {
             let title = kv_title(worker, binding, environment);
             if let Some(&(other_worker, other_binding)) = taken.get(&title) {
                 return Some(format!(
@@ -2031,7 +2180,7 @@ queue = "jobs"
         .into_iter()
         .collect();
         // `commerce-payment` finished; `commerce-orders` did not.
-        let hint = interrupted_rotation_hint(&keys, &names(&["commerce-payment"]))
+        let hint = interrupted_rotation_hint("default", &keys, &names(&["commerce-payment"]))
             .expect("a rotation was interrupted");
         assert!(
             hint.contains("`commerce-orders` → `commerce-payment`"),
@@ -2045,7 +2194,11 @@ queue = "jobs"
         assert!(!hint.contains("minted-value"), "never the value: {hint}");
         // Both ends finished, so nothing was split.
         assert_eq!(
-            interrupted_rotation_hint(&keys, &names(&["commerce-payment", "commerce-orders"])),
+            interrupted_rotation_hint(
+                "default",
+                &keys,
+                &names(&["commerce-payment", "commerce-orders"])
+            ),
             None
         );
     }
