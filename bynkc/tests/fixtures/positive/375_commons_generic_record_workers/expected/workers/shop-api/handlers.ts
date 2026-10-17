@@ -17,14 +17,14 @@ export const users = {
 
 export { __serialise_User, __deserialise_User };
 
-export function __serialise_Paginated_User(value: Paginated<User>): __JsonValue {
+export function __serialise_Paginated_User(value: __CommonsPaginated<__CommonsUser>): __JsonValue {
   return {
     items: __serialise_List_User(value.items),
     cursor: __serialise_Option_String(value.cursor),
   };
 }
 
-export function __deserialise_Paginated_User(json: __JsonValue, path: string = "$"): Result<Paginated<User>, __BoundaryError> {
+export function __deserialise_Paginated_User(json: __JsonValue, path: string = "$"): Result<__CommonsPaginated<__CommonsUser>, __BoundaryError> {
   if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
   }
@@ -35,24 +35,24 @@ export function __deserialise_Paginated_User(json: __JsonValue, path: string = "
   const __r_cursor = __deserialise_Option_String(obj["cursor"], `${path}.cursor`);
   if (__r_cursor.tag === "Err") return __r_cursor;
   const __cursor = __r_cursor.value;
-  return Ok({ items: __items, cursor: __cursor } as Paginated<User>);
+  return Ok({ items: __items, cursor: __cursor } as __CommonsPaginated<__CommonsUser>);
 }
 
-export function __serialise_List_User(value: readonly User[]): __JsonValue {
+export function __serialise_List_User(value: readonly __CommonsUser[]): __JsonValue {
   return value.map((v) => __serialise_User(v));
 }
 
-export function __deserialise_List_User(json: __JsonValue, path: string = "$"): Result<readonly User[], __BoundaryError> {
+export function __deserialise_List_User(json: __JsonValue, path: string = "$"): Result<readonly __CommonsUser[], __BoundaryError> {
   if (!globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "array", actual: typeof json });
   }
-  const out: User[] = [];
+  const out: __CommonsUser[] = [];
   for (let i = 0; i < json.length; i++) {
   const item = json[i];
   const __r_el = __deserialise_User(item, `${path}[${i}]`);
   if (__r_el.tag === "Err") return __r_el;
   const __el = __r_el.value;
-  out.push(__el as User);
+  out.push(__el as __CommonsUser);
   }
   return Ok(out);
 }
@@ -98,12 +98,12 @@ export function __deserialise_Option_String(json: __JsonValue, path: string = "$
   return __b;
 }
 
-export function __serialise_Result_Paginated_User_Unit(value: Result<Paginated<User>, void>): __JsonValue {
+export function __serialise_Result_Paginated_User_Unit(value: Result<__CommonsPaginated<__CommonsUser>, void>): __JsonValue {
   if (value.tag === "Ok") return { kind: "Ok", value: __serialise_Paginated_User(value.value) };
   return { kind: "Err", error: null };
 }
 
-export function __deserialise_Result_Paginated_User_Unit(json: __JsonValue, path: string = "$"): Result<Result<Paginated<User>, void>, __BoundaryError> {
+export function __deserialise_Result_Paginated_User_Unit(json: __JsonValue, path: string = "$"): Result<Result<__CommonsPaginated<__CommonsUser>, void>, __BoundaryError> {
   if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
   }
@@ -112,10 +112,10 @@ export function __deserialise_Result_Paginated_User_Unit(json: __JsonValue, path
   const __r_v = __deserialise_Paginated_User(obj["value"], `${path}.value`);
   if (__r_v.tag === "Err") return __r_v;
   const __v = __r_v.value;
-    return Ok(Ok(__v) as Result<Paginated<User>, void>);
+    return Ok(Ok(__v) as Result<__CommonsPaginated<__CommonsUser>, void>);
   } else if (obj["kind"] === "Err") {
   const __e = undefined;
-    return Ok(Err(__e) as Result<Paginated<User>, void>);
+    return Ok(Err(__e) as Result<__CommonsPaginated<__CommonsUser>, void>);
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }
