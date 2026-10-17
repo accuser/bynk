@@ -135,3 +135,32 @@ fn a_staging_plan_names_the_staging_workers_bindings_and_queues() {
         "{text}"
     );
 }
+
+/// #2038: `--context` refuses a context whose binding target has never been
+/// deployed, and names both Workers as the plan does: `-staging` under
+/// `--env staging`, bare in the default environment. The gate runs before the
+/// dry run stops, so a fresh project with no ledger reaches it.
+#[test]
+fn a_context_refusal_names_the_deployed_workers() {
+    if !on_path("wrangler") && !on_path("npx") {
+        eprintln!("\n!!! DEPLOY ENV SKIPPED !!!\nneither `wrangler` nor `npx` is on PATH\n");
+        return;
+    }
+    let dir = scratch("deploy-env-context-refusal");
+
+    let (ok, text, err) = dry_run(&dir, &["--env", "staging", "--context", "shop.orders"]);
+    assert!(!ok, "a never-deployed target refuses:\n{text}{err}");
+    assert!(
+        err.contains(
+            "bynk: `shop-orders-staging` binds to `shop-payment-staging`, which has never been deployed"
+        ),
+        "{err}"
+    );
+
+    let (ok, text, err) = dry_run(&dir, &["--context", "shop.orders"]);
+    assert!(!ok, "a never-deployed target refuses:\n{text}{err}");
+    assert!(
+        err.contains("bynk: `shop-orders` binds to `shop-payment`, which has never been deployed"),
+        "{err}"
+    );
+}

@@ -495,7 +495,15 @@ order commerce-payment-staging → commerce-orders-staging
 The plan and the deploy take these names from the same place: the
 environment's section of the generated config states the Worker's `name`
 (`commerce-orders-staging`) rather than leaving it to Wrangler's default, which
-is the same name.
+is the same name. The `--context` refusal for a binding target that has never
+been deployed, and the list of contexts a failed run did not reach, name
+Workers the same way.
+
+In `--format json`, `orphans.workers` and `orphans.queues` hold these
+account names too (`gone-staging`, `old-jobs-staging`). `orphans.kv` does not:
+each entry's `worker` is the Worker's ledger key, its bare name, alongside the
+`binding` (absent for the bare `Kv`), because that pair is what the ledger
+records the namespace under.
 
 KV's identity is the namespace id Cloudflare hands back, already kept apart per
 environment in `bynk.deploy.lock`. A namespace's title takes the suffix too,
