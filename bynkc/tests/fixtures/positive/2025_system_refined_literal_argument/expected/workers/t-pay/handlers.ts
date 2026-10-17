@@ -40,7 +40,7 @@ export const api = {
 
 export { __serialise_Cents, __deserialise_Cents };
 
-export function __serialise_Option_Cents(value: Option<Cents>): __JsonValue {
+export function __serialise_Option_Cents(value: Option<__CommonsCents>): __JsonValue {
   if (value.tag === "Some") return { kind: "Some", value: __serialise_Cents(value.value) };
   return { kind: "None" };
 }
@@ -52,27 +52,27 @@ function __option_value_Cents(raw: __JsonValue, at: string): Result<unknown, __B
   return Ok(__v);
 }
 
-export function __deserialise_Option_Cents(json: __JsonValue, path: string = "$"): Result<Option<Cents>, __BoundaryError> {
+export function __deserialise_Option_Cents(json: __JsonValue, path: string = "$"): Result<Option<__CommonsCents>, __BoundaryError> {
   if (json === undefined || json === null) {
-    return Ok(None as Option<Cents>);
+    return Ok(None as Option<__CommonsCents>);
   }
   if (typeof json === "object" && !globalThis.Array.isArray(json)) {
     const obj = json as { [k: string]: __JsonValue };
     const __keys = globalThis.Object.keys(obj);
     if (obj["kind"] === "None" && __keys.length === 1) {
-      return Ok(None as Option<Cents>);
+      return Ok(None as Option<__CommonsCents>);
     }
     if (obj["kind"] === "Some" && __keys.length === 2 && "value" in obj) {
       const __t = __option_value_Cents(obj["value"], `${path}.value`);
       if (__t.tag === "Err") {
         return __t;
       }
-      return Ok(Some(__t.value as Cents) as Option<Cents>);
+      return Ok(Some(__t.value as __CommonsCents) as Option<__CommonsCents>);
     }
   }
   const __b = __option_value_Cents(json, path);
   if (__b.tag === "Ok") {
-    return Ok(Some(__b.value as Cents) as Option<Cents>);
+    return Ok(Some(__b.value as __CommonsCents) as Option<__CommonsCents>);
   }
   if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
     return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });

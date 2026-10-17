@@ -432,6 +432,31 @@ mod tests {
         out.push_str("\n# --format json, the same rename\n");
         out.push_str(&plan_report(&renamed, DeployFormat::Json));
 
+        // #2028: under `--env staging` every Worker, binding target and queue
+        // is named as the push creates it, `-staging`; the bare `KV`'s
+        // namespace title is not.
+        out.push_str("\n# --env staging: several contexts and a queue, first deploy\n");
+        let staging_resources = project(vec![
+            (
+                "commerce-orders",
+                Resources::default()
+                    .binds(&["commerce-payment"])
+                    .consumes(&["job-intake"]),
+            ),
+            ("commerce-payment", Resources::default().needs_kv()),
+        ]);
+        let staging = derive_plan(
+            &chain_order,
+            &staging_resources,
+            &DeployLock::default(),
+            &SecretSource::default(),
+            false,
+            "staging",
+        );
+        out.push_str(&plan_report(&staging, DeployFormat::Short));
+        out.push_str("\n# --format json, the same plan under --env staging\n");
+        out.push_str(&plan_report(&staging, DeployFormat::Json));
+
         out.push_str("\n# S4b: a removed context's bare namespace and instance, both orphans\n");
         out.push_str(&plan_report(
             &plan_of(

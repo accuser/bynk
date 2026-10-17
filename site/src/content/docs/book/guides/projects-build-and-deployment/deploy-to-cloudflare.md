@@ -479,14 +479,23 @@ Omit `--env` and nothing changes from before — it is the same as
 > deploy to something other than the default. You never write it yourself,
 > and it never survives a rebuild you didn't ask `bynk deploy` to make.
 
-Queue names and Service Binding targets pick up a `-<env>` suffix under a
-non-default environment, so `staging` and `production` never collide on the
-same physical queue or bind to each other's Workers:
+Under a non-default environment, each Worker, Service Binding target and queue
+name takes a `-<env>` suffix. So `staging` and `production` are separate
+Workers on the same account, and never share a queue or bind to each other's
+Workers. The plan names them as the deploy creates them, in text and in
+`--format json` (`order`, each context's `worker` and `binds_to`, and its
+queues):
 
 ```
 queue create job-intake-staging
 deploy commerce-orders-staging
+order commerce-payment-staging → commerce-orders-staging
 ```
+
+The plan and the deploy take these names from the same place: the
+environment's section of the generated config states the Worker's `name`
+(`commerce-orders-staging`) rather than leaving it to Wrangler's default, which
+is the same name.
 
 KV's identity is the namespace id Cloudflare hands back, already kept apart per
 environment in `bynk.deploy.lock`. The bare `Kv`'s namespace keeps its plain
