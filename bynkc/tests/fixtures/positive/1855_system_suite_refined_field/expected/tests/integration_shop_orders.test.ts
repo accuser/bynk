@@ -47,7 +47,7 @@ function __makeHarness() {
 async function test_places() {
   try {
     const deps = __makeHarness();
-    const n = await __callService(deps.env.SHOP_ORDERS, "place", __ns_shop_orders.__serialise_Line({ sku: ("o1" as any), qty: 2 }), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "f717b344c20d2ecb", deps.env, "shop.orders");
+    const n = await __callService(deps.env.SHOP_ORDERS, "place", __ns_shop_orders.__serialise_Line(({ sku: ("o1" as any), qty: 2 } as unknown as __ns_shop_orders.Line)), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "f717b344c20d2ecb", deps.env, "shop.orders");
     if (!(n)) { throw __bynkExpectFailure("tests/orders.bynk:4:12", 118, 119, "expect n"); }
     return { pass: true };
   } catch (e) {
@@ -62,7 +62,7 @@ async function test_places_a_bound_line() {
   try {
     const deps = __makeHarness();
     const l = { sku: ("o2" as any), qty: 3 };
-    const n = await __callService(deps.env.SHOP_ORDERS, "place", __ns_shop_orders.__serialise_Line(l), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "f717b344c20d2ecb", deps.env, "shop.orders");
+    const n = await __callService(deps.env.SHOP_ORDERS, "place", __ns_shop_orders.__serialise_Line((l as unknown as __ns_shop_orders.Line)), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "f717b344c20d2ecb", deps.env, "shop.orders");
     if (!(n)) { throw __bynkExpectFailure("tests/orders.bynk:10:12", 240, 241, "expect n"); }
     return { pass: true };
   } catch (e) {
@@ -76,7 +76,7 @@ async function test_places_a_bound_line() {
 async function test_compares_a_record_structurally() {
   try {
     const deps = __makeHarness();
-    const l = await __callService(deps.env.SHOP_ORDERS, "echo", __ns_shop_orders.__serialise_Line({ sku: ("o3" as any), qty: 4 }), __ns_shop_orders.__deserialise_Line, "integration", "9be80b6bc6ae95b2", deps.env, "shop.orders");
+    const l = await __callService(deps.env.SHOP_ORDERS, "echo", __ns_shop_orders.__serialise_Line(({ sku: ("o3" as any), qty: 4 } as unknown as __ns_shop_orders.Line)), __ns_shop_orders.__deserialise_Line, "integration", "9be80b6bc6ae95b2", deps.env, "shop.orders");
     if (!(__bynkEq(l, { sku: ("o3" as any), qty: 4 }))) { throw __bynkExpectFailure("tests/orders.bynk:17:12", 497, 528, "expect l == Line { sku: \"o3\", qty: 4 }\n  expected: l == Line { sku: \"o3\", qty: 4 }\n  actual:   " + __bynkShow((l)) + " == " + __bynkShow(({ sku: ("o3" as any), qty: 4 }))); }
     return { pass: true };
   } catch (e) {

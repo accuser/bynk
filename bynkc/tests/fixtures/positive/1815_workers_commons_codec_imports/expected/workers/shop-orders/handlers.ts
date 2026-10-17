@@ -4,12 +4,16 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __DurableObjectState, type __DurableObjectNamespace, __StateRegistry, __makeAgent, type __AgentWire, __decodeAgentArgs, __encodeAgentResult, __rehydrationViolation, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
 import { Line as __CommonsLine, priced } from "../../shop/model.js";
-import { CustomerId as __CommonsCustomerId, someone } from "../../shop/values.js";
+import { Cents as __CommonsCents, CustomerId as __CommonsCustomerId, someone } from "../../shop/values.js";
 
 import type * as shop_payment from "../shop-payment/handlers.js";
 import { __serialise_CustomerId, __deserialise_CustomerId } from "../../shop/values.js";
 import { __serialise_Cents, __deserialise_Cents } from "../../shop/values.js";
 
+export type Cents = __CommonsCents & { readonly __ctxBrand?: "shop.orders" };
+export const Cents = {
+  of(value: number): Result<Cents, ValidationError> { return __CommonsCents.of(value); },
+};
 export type CustomerId = __CommonsCustomerId & { readonly __ctxBrand?: "shop.orders" };
 export const CustomerId = {
   of(value: string): Result<CustomerId, ValidationError> { return __CommonsCustomerId.of(value); },
@@ -84,7 +88,7 @@ export function __makeOrder(key: string, env?: { ORDER?: __DurableObjectNamespac
 export const place = {
   async call(deps: { env: { SHOP_PAYMENT: __ServiceBinding; ORDER: __DurableObjectNamespace } }): globalThis.Promise<boolean> {
     await __makeOrder("o1", deps.env).begin(someone(), deps);
-    return __callService(deps.env.SHOP_PAYMENT, "authorise", __serialise_Cents(priced().price), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "shop.orders", "64c4101e9bac5424", deps.env, "shop.payment");
+    return __callService(deps.env.SHOP_PAYMENT, "authorise", __serialise_Cents((priced().price as unknown as shop_payment.Cents)), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "shop.orders", "64c4101e9bac5424", deps.env, "shop.payment");
   },
 };
 
