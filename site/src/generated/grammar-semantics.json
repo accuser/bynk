@@ -209,7 +209,7 @@
     },
     {
       "code": "bynk.test.principal_identity_mismatch",
-      "summary": "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor."
+      "summary": "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor, or names no member of the handler's actor sum."
     },
     {
       "code": "bynk.test.principal_on_asset",
@@ -221,7 +221,7 @@
     },
     {
       "code": "bynk.test.principal_required",
-      "summary": "A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`."
+      "summary": "A test drives an identity-carrying handler, or one guarded by an actor sum, with no call-site `by <Actor>`."
     },
     {
       "code": "bynk.test.service_bad_address",
@@ -1106,6 +1106,12 @@
     {
       "code": "bynk.lex.unterminated_string",
       "summary": "A string literal is not terminated."
+    }
+  ],
+  "stub_clause": [
+    {
+      "code": "bynk.stub.at_system",
+      "summary": "A test `stub` is in a `system`-tier case, or at the scope of a `suite … as system` (or a suite whose cases run `as system`); each context runs as the Worker it deploys as, which builds its own capability providers, so there is no seam to override."
     }
   ],
   "suite_decl": [

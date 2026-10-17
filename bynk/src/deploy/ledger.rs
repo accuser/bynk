@@ -301,8 +301,9 @@ impl Orphans {
     /// These orphans as the account names them under `environment`, for the
     /// plan to show (#2028): a queue by the [`env_qualify`]d name `--prune`
     /// deletes, a Worker by its [`deployed_worker_name`]. A KV orphan keeps
-    /// its Worker's ledger key: its line names the ledger entry, and the bare
-    /// namespace's title is unqualified by design ([`kv_title`]).
+    /// its Worker's ledger key: its line names the ledger entry, not the
+    /// namespace's title ([`kv_title`]), which a namespace made before #2037
+    /// may not match.
     pub(crate) fn as_named_in(&self, environment: &str) -> Orphans {
         Orphans {
             kv: self
