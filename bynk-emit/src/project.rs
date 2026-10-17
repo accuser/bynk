@@ -2428,6 +2428,7 @@ fn run_checks(
         &mut emitted_barrels,
         &test_asset_files,
         &test_binding_modules,
+        &schema_effective_versions,
         &mut test_errors,
         &mut refs,
         tys,

@@ -165,6 +165,28 @@ trivially idempotent already and needs no `env` parameter at all.
 for the event (below) — verified against a declared `@schema(N)` annotation
 when one is present, or `1` for a brand-new event with neither.
 
+**Testing the idiom.** A test case delivers an event straight to a
+subscriber with `svc.event(e)` or `svc.event(e, env)`, at the `unit` or
+`integration` tier. It runs the subscriber's pattern filter and `via schema(N)`
+guard as delivery does, so delivering the same envelope twice checks the dedup:
+
+```bynk,fragment
+suite commerce.notifications {
+  case "a redelivered payment is handled once" {
+    let e = PaymentConfirmed { orderId: "o1" }
+    let env = EventEnvelope { eventId: "evt-1", publisherId: "commerce.order", emittedAt: Instant.fromEpochMillis(0), schemaVersion: 1 }
+    let _ <- OnPayment.event(e, env)
+    let _ <- OnPayment.event(e, env)
+    expect Idempotency.remember called once
+  }
+}
+```
+
+With no envelope, the case gets a fresh `eventId` on every call, the
+publishing context as `publisherId`, and the event's current schema version.
+A `system` case calls the handler that emits the event instead. See
+[Delivering an event](/book/reference/testing/#event-address).
+
 ## Evolving an event's shape with field defaults
 
 An event's fields can carry a default (`field: T = expr`), so a field added

@@ -774,7 +774,7 @@ pub fn phase_integration_bodies(
                 &view.hidden,
             ));
             for case in &d.cases {
-                let _ = typecheck_integration_case_body(
+                let (_, case_callees) = typecheck_integration_case_body(
                     &participants,
                     &view,
                     case,
@@ -785,6 +785,12 @@ pub fn phase_integration_bodies(
                     tys,
                 );
                 check_faults_tier(case, case_effective_tier(case, d), &mut body_errs);
+                check_event_address_tier(
+                    case,
+                    case_effective_tier(case, d),
+                    &case_callees,
+                    &mut body_errs,
+                );
                 // Slice C: `Wire(…)` is a `system`-only raw argument (it drives the
                 // real wire); in a non-`system` case it has no wire to be raw
                 // about, so lowering it would silently pass raw text to a direct
@@ -937,7 +943,10 @@ pub fn typecheck_integration_case_body(
         // Slice B: a `system` case addresses the target's own service (`api.POST`)
         // and names a principal (`by User(...)`), so the checker needs the
         // target's services and actors — the same resolution the unit tier does.
-        target_test_services(participants.first().and_then(|t| unit_tables.get(t))),
+        target_test_services(
+            participants.first().and_then(|t| unit_tables.get(t)),
+            unit_tables,
+        ),
         target_test_actors(participants.first().and_then(|t| unit_tables.get(t))),
         None,
         checker::CheckSinks {
@@ -1662,6 +1671,49 @@ fn faults_claims(block: &Block) -> Vec<&bynk_syntax::ast::FaultsExpr> {
     out
 }
 
+/// #2052: report a `system`-tier case that delivers an event with
+/// `svc.event(e)`. At `system` an event reaches a subscriber only through its
+/// publisher's fan-out, which emits to every subscriber of the event rather
+/// than addressing one service, over a per-edge signed request. A case-built
+/// delivery to one subscriber has no counterpart there, so the address is an
+/// in-process one: the case drives the emitting handler instead.
+fn check_event_address_tier(
+    case: &Case,
+    tier: bynk_syntax::ast::TestTier,
+    callees: &HashMap<ExprId, checker::Callee>,
+    errors: &mut Vec<CompileError>,
+) {
+    if tier != bynk_syntax::ast::TestTier::System {
+        return;
+    }
+    let mut services: Vec<&str> = callees
+        .values()
+        .filter_map(|c| match c {
+            checker::Callee::TestService { service, address } if address == "event" => {
+                Some(service.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    services.sort_unstable();
+    services.dedup();
+    for service in services {
+        errors.push(
+            CompileError::new(
+                "bynk.test.event_needs_in_process",
+                case.name_span,
+                format!(
+                    "case `\"{}\"` delivers an event with `{service}.event(…)`, but is a `system`-tier case",
+                    case.name
+                ),
+            )
+            .with_note(
+                "at `system` an event reaches a subscriber only through its publisher's fan-out; drive the handler that emits it, or deliver the event at `unit` or `integration`",
+            ),
+        );
+    }
+}
+
 /// #1706: report a `system`-tier case that claims a fault — see
 /// [`block_uses_faults`].
 ///
@@ -1788,11 +1840,20 @@ fn target_test_actors(table: Option<&UnitTable>) -> HashMap<String, bynk_syntax:
     table.map(|t| t.actors.clone()).unwrap_or_default()
 }
 
-fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::TestServiceSig> {
+fn target_test_services(
+    table: Option<&UnitTable>,
+    unit_tables: &HashMap<String, UnitTable>,
+) -> HashMap<String, checker::TestServiceSig> {
     use bynk_syntax::ast::ServiceProtocol;
     let Some(t) = table else {
         return HashMap::new();
     };
+    // #2052: every event the project declares, for an events service's
+    // `bynk.test.event_not_subscribed`.
+    let all_events: std::collections::BTreeSet<String> = unit_tables
+        .values()
+        .flat_map(|u| u.events.keys().cloned())
+        .collect();
     t.services
         .iter()
         .map(|(name, decl)| {
@@ -1815,7 +1876,19 @@ fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::T
                     span: h.span,
                 })
                 .collect();
-            (name.clone(), checker::TestServiceSig { protocol, handlers })
+            let known_events = if matches!(decl.protocol, ServiceProtocol::Events { .. }) {
+                all_events.clone()
+            } else {
+                Default::default()
+            };
+            (
+                name.clone(),
+                checker::TestServiceSig {
+                    protocol,
+                    handlers,
+                    known_events,
+                },
+            )
         })
         .collect()
 }
@@ -1965,7 +2038,7 @@ pub fn typecheck_case_body(
             given_entries: Vec::new(),
             given_anchor: None,
         },
-        target_test_services(unit_tables.get(target_name)),
+        target_test_services(unit_tables.get(target_name), unit_tables),
         target_test_actors(unit_tables.get(target_name)),
         None,
         checker::CheckSinks {
@@ -2979,7 +3052,7 @@ fn check_property_body(
             given_entries: Vec::new(),
             given_anchor: None,
         },
-        target_test_services(unit_tables.get(target_name)),
+        target_test_services(unit_tables.get(target_name), unit_tables),
         target_test_actors(unit_tables.get(target_name)),
         prop.forall.where_pred.as_ref(),
         checker::CheckSinks {

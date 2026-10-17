@@ -1388,7 +1388,7 @@ argument of a service address in a `system`-tier `case`
 which only a `system` case runs.
 
 A service address in a `case` (`svc.call(…)`, `svc.<VERB>("/path", …)`,
-`svc.schedule("…")`, `svc.message(m)`) has the addressed handler's declared
+`svc.schedule("…")`, `svc.message(m)`, `svc.event(e)`) has the addressed handler's declared
 return type, an `Effect[T]` (#1934). An http address that carries a `Wire(...)`
 argument, is driven `by Nobody`, or names a method the path declares no handler
 for has type `Effect[HttpOutcome[T]]` instead, where the handler returns
@@ -1399,6 +1399,18 @@ Handled(HttpResult[T])`, and `BoundaryRejection` is the built-in sum
 StructuralMismatch(detail: String) | Unauthorized | MethodNotAllowed`. Neither
 type can be named in source. An asset fetch (`svc.GET(asset)`) has type
 `Effect[HttpResult[()]]`.
+
+An event address `svc.event(e)` or `svc.event(e, env)` (#2052) MUST name a
+`from Events(E)` service (`bynk.test.service_bad_address`) and pass one or two
+arguments (`bynk.test.service_call_arity`). `e` MUST have type `E`: another
+declared event is `bynk.test.event_not_subscribed`, any other type
+`bynk.types.argument_mismatch`. `env` MUST have type `EventEnvelope`
+(`bynk.types.argument_mismatch`). The address MUST NOT occur in a `system`-tier
+`case` (`bynk.test.event_needs_in_process`). Delivery evaluates the service's
+pattern filter and `via schema(N)` guard as a fan-out delivery does. An omitted
+`env` is a fresh envelope: a new `eventId` per call, the declaring context of
+`E` as `publisherId`, `Instant.fromEpochMillis(0)` as `emittedAt`, and `E`'s
+current schema version.
 
 ### §5.9c Tiers (v0.118)
 

@@ -1,0 +1,63 @@
+-- #2052: a case delivers an event to a `from Events(E)` service with
+-- `svc.event(e)` or `svc.event(e, env)`. Delivery runs the service's pattern
+-- filter and `via schema(N)` guard, as the fan-out's delivery does.
+suite shop.ledger {
+  case "an event delivered twice is counted once" {
+    let e = Placed { id: "o1", region: Region.Domestic }
+    let env = EventEnvelope { eventId: "evt-1", publisherId: "shop.order", emittedAt: Instant.fromEpochMillis(0), schemaVersion: 1 }
+    let _ <- OnPlaced.event(e, env)
+    let _ <- OnPlaced.event(e, env)
+    let t <- Books("all").total()
+    expect t == 1
+    expect Idempotency.remember called once
+  }
+
+  case "dedup holds at integration too" as integration {
+    let e = Placed { id: "o1", region: Region.Domestic }
+    let env = EventEnvelope { eventId: "evt-1", publisherId: "shop.order", emittedAt: Instant.fromEpochMillis(0), schemaVersion: 1 }
+    let _ <- OnPlaced.event(e, env)
+    let _ <- OnPlaced.event(e, env)
+    let t <- Books("all").total()
+    expect t == 1
+  }
+
+  case "a default envelope is fresh on each delivery" {
+    let e = Placed { id: "o1", region: Region.Domestic }
+    let _ <- OnPlaced.event(e)
+    let _ <- OnPlaced.event(e)
+    let t <- Books("all").total()
+    expect t == 2
+    let p <- Books("publisher").publisherSeen()
+    expect p == "shop.order"
+  }
+
+  case "a default envelope carries the current schema version" {
+    let e = Placed { id: "o1", region: Region.Domestic }
+    let _ <- OnV1.event(e)
+    let _ <- OnV2.event(e)
+    let v1 <- Books("v1").total()
+    let v2 <- Books("v2").total()
+    expect v1 == 1
+    expect v2 == 0
+  }
+
+  case "the pattern filter is honoured" {
+    let _ <- OnDomestic.event(Placed { id: "o1", region: Region.International })
+    let before <- Books("domestic").total()
+    expect before == 0
+    let _ <- OnDomestic.event(Placed { id: "o2", region: Region.Domestic })
+    let after <- Books("domestic").total()
+    expect after == 1
+  }
+
+  case "the schema guard is honoured" as integration {
+    let e = Placed { id: "o1", region: Region.Domestic }
+    let env = EventEnvelope { eventId: "evt-2", publisherId: "shop.order", emittedAt: Instant.fromEpochMillis(0), schemaVersion: 2 }
+    let _ <- OnV1.event(e, env)
+    let _ <- OnV2.event(e, env)
+    let v1 <- Books("v1").total()
+    let v2 <- Books("v2").total()
+    expect v1 == 0
+    expect v2 == 1
+  }
+}

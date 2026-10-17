@@ -82,6 +82,10 @@ pub(crate) fn process_tests(
     // #1975: each user adapter's binding module, as an extensionless path
     // from the output root, for a test that builds the binding for real.
     binding_modules: &HashMap<String, String>,
+    // #2052: each event's effective schema version, keyed `<unit>.<Event>`
+    // (`emit_project`'s `schema_effective_versions`), for the default envelope
+    // of a `svc.event(e)` address.
+    schema_versions: &HashMap<String, i64>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     tys: &Arc<Types>,
@@ -145,6 +149,7 @@ pub(crate) fn process_tests(
                 asset_files,
             ),
             binding_modules,
+            schema_versions,
             tys,
         );
         if let Some((path, program, source_map, runnable)) = emit_out {
@@ -2060,6 +2065,7 @@ fn emit_test_module(
     // #1883, slice 3: `asset_harness`'s text, when the target ships assets.
     asset_harness: Option<String>,
     binding_modules: &HashMap<String, String>,
+    schema_versions: &HashMap<String, i64>,
     tys: &Arc<Types>,
 ) -> Option<(PathBuf, TsProgram, Option<String>, RunnableTest)> {
     // #914: the test-scaffold module's runtime import list is emitted below as a
@@ -2708,6 +2714,17 @@ fn emit_test_module(
         }
     }
 
+    // #2052: a delivery helper per events service some body addressed with
+    // `svc.event(e)`. Appended after every body has lowered, like the codec
+    // closure above; a plain `function` declaration hoists.
+    let event_services = runtime_use.test_event_services();
+    if !event_services.is_empty() {
+        stmts.push(TsStmt::raw(
+            event_delivery_helpers(target_name, &event_services, unit_tables, schema_versions),
+            None,
+        ));
+    }
+
     // Module-level runner. v0.127: `only` filters to a single case/property by
     // name (the per-case run lens); undefined runs every one.
     let mut dispatch_stmts: Vec<TsStmt> = Vec::new();
@@ -3117,6 +3134,96 @@ fn relative_import_for_test(target_dir: &Path) -> String {
 /// (slice 2, ADR 0104). The explicit form is equivalent and strip-clean.
 fn expectation_runtime_helpers() -> String {
     include_str!("../emitter/test_runtime/expectation.ts").to_string()
+}
+
+/// #2052: the `__bynkEvent_<svc>` helper behind each `svc.event(payload[,
+/// envelope])` address in a test module. It delivers as the Worker's
+/// `/_bynk/event/` route and the Bundle fan-out do: through the service's
+/// generated `event` method, whose prologue runs the subscription's pattern
+/// filter and `via schema(N)` guard, so the helper re-implements neither. The
+/// method takes the envelope only when the handler declares `env` or the
+/// service has a `via schema(N)` guard (`emit_event_wrapper`'s condition), so
+/// the helper forwards it only then.
+///
+/// An omitted envelope (`undefined`) is supplied as an emission would mint it:
+/// a fresh `eventId` per call (`test-event-<n>`, counted across the module), the
+/// publishing context as `publisherId`, the test clock's reading (`0`, the
+/// epoch) as `emittedAt`, and the event's current schema version.
+fn event_delivery_helpers(
+    target_name: &str,
+    services: &[String],
+    unit_tables: &HashMap<String, UnitTable>,
+    schema_versions: &HashMap<String, i64>,
+) -> String {
+    use bynk_syntax::ast::ServiceProtocol;
+    let ns = test_ns(target_name);
+    let mut out = String::new();
+    let mut counts = false;
+    for svc in services {
+        let Some(decl) = unit_tables
+            .get(target_name)
+            .and_then(|t| t.services.get(svc))
+        else {
+            continue;
+        };
+        let ServiceProtocol::Events {
+            event_type,
+            schema_dispatch,
+            ..
+        } = &decl.protocol
+        else {
+            continue;
+        };
+        let event = match event_type {
+            TypeRef::Named(id) => id.name.clone(),
+            _ => continue,
+        };
+        let takes_envelope = schema_dispatch.is_some()
+            || decl.handlers.iter().any(|h| {
+                matches!(h.kind, bynk_syntax::ast::HandlerKind::Event) && h.params.len() == 2
+            });
+        // The publisher is the context that declares the event: the target
+        // itself, or the context it consumes it from.
+        let mut owners: Vec<&String> = unit_tables
+            .iter()
+            .filter(|(_, t)| t.events.contains_key(&event))
+            .map(|(name, _)| name)
+            .collect();
+        owners.sort();
+        let owner = if unit_tables
+            .get(target_name)
+            .is_some_and(|t| t.events.contains_key(&event))
+        {
+            target_name.to_string()
+        } else {
+            owners.first().map(|o| o.to_string()).unwrap_or_default()
+        };
+        let version = schema_versions
+            .get(&format!("{owner}.{event}"))
+            .copied()
+            .or_else(|| {
+                unit_tables
+                    .get(&owner)
+                    .and_then(|t| t.events.get(&event))
+                    .map(|d| d.schema_version())
+            })
+            .unwrap_or(1);
+        if takes_envelope {
+            counts = true;
+            out.push_str(&format!(
+                "function __bynkEvent_{svc}(payload: unknown, envelope: unknown, deps: unknown) {{\n  const env = envelope ?? {{ eventId: `test-event-${{++__bynkEventSeq}}`, publisherId: {owner:?}, emittedAt: 0, schemaVersion: {version} }};\n  return {ns}.{svc}.event(payload as never, env as never, deps as never);\n}}\n"
+            ));
+        } else {
+            // The handler cannot observe an envelope, so a case's own is dropped.
+            out.push_str(&format!(
+                "function __bynkEvent_{svc}(payload: unknown, _envelope: unknown, deps: unknown) {{\n  return {ns}.{svc}.event(payload as never, deps as never);\n}}\n"
+            ));
+        }
+    }
+    if counts {
+        out.insert_str(0, "let __bynkEventSeq = 0;\n");
+    }
+    out
 }
 
 /// #1994: the test double for the Worker's `ExecutionContext` — a `waitUntil`
