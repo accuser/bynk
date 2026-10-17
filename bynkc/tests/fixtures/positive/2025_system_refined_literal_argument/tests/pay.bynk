@@ -1,0 +1,20 @@
+-- #2025: a literal passed straight to a context-path call is admitted to
+-- the parameter's refined type, as at a unit-tier call.
+suite t.pay as system {
+	uses t.values
+
+	case "a refined argument over the wire" {
+		let r <- t.pay.charge(250) by Caller("t.other")
+		expect r == 250
+	}
+
+	case "a pinned refined argument over the wire" {
+		let r <- t.pay.charge(Val[Cents](7)) by Caller("t.other")
+		expect r == 7
+	}
+
+	case "a hinted None over the wire" {
+		let r <- t.pay.maybe(None) by Caller("t.other")
+		expect r == 0
+	}
+}
