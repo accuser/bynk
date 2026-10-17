@@ -5,6 +5,13 @@
 //! #1815, #1818, #1823, #1829), where the emitter names a type or calls a codec
 //! the module never imports, without `tsc` on `PATH`.
 //!
+//! **Namespace members** (#2036). A module that names `handlers.Batch` binds
+//! `handlers`, so the name check passes even when `handlers.ts` exports no
+//! `Batch` (`TS2694`). Each member a module names through a namespace import
+//! of another emitted module is checked against that module's exports
+//! ([`bynk_ts::module_exports`], following `export *`), and a missing one is
+//! reported as `<specifier>::<member>`.
+//!
 //! **Both targets.** A project fixture is compiled for bundle *and* Workers,
 //! whatever its `target.txt` says. A fixture built only for bundle never had
 //! its Workers output type-checked, and that is where #1845 and #1846 were
@@ -57,7 +64,9 @@ fn module_key(path: &Path) -> String {
 
 type Reports = BTreeMap<(String, &'static str, String), Vec<String>>;
 
-/// Record every module of `out` with an unbound name.
+/// Record every module of `out` with an unbound name, or (#2036) a member
+/// named through a namespace import that the imported module does not
+/// export, reported as `<specifier>::<member>`.
 fn record(
     reports: &mut Reports,
     source: &str,
@@ -68,7 +77,8 @@ fn record(
     for (path, doc) in &out.artefacts.docs {
         if let bynkc::Document::Ts(program) = doc {
             modules += 1;
-            let unbound = bynk_ts::unbound_names(program);
+            let mut unbound = bynk_ts::unbound_names(program);
+            unbound.extend(missing_members(path, program, &out.artefacts.docs));
             if !unbound.is_empty() {
                 reports.insert(
                     (source.to_string(), target_name(target), module_key(path)),
@@ -78,6 +88,72 @@ fn record(
         }
     }
     modules
+}
+
+/// #2036: each `ns.member` `program` names through a namespace import of
+/// another emitted module that the module does not export: a `TS2694`
+/// (`Namespace 'handlers' has no exported member 'Batch'`) or `TS2339` that
+/// `unbound_names` cannot see, the namespace itself being bound. A specifier
+/// that resolves to no emitted TypeScript module is not checked.
+fn missing_members(
+    path: &Path,
+    program: &bynk_ts::TsProgram,
+    docs: &BTreeMap<PathBuf, bynkc::Document>,
+) -> Vec<String> {
+    bynk_ts::namespace_member_uses(program)
+        .into_iter()
+        .filter(|u| {
+            resolve(path, &u.from)
+                .and_then(|target| exports_of(&target, docs, 0))
+                .is_some_and(|names| !names.contains(&u.member))
+        })
+        .map(|u| format!("{}::{}", u.from, u.member))
+        .collect()
+}
+
+/// The emitted module a relative specifier names from `from_module`
+/// (`./handlers.js` from `workers/x/compose.ts` is `workers/x/handlers.ts`).
+fn resolve(from_module: &Path, specifier: &str) -> Option<PathBuf> {
+    if !specifier.starts_with('.') {
+        return None;
+    }
+    let spec = specifier.strip_suffix(".js").unwrap_or(specifier);
+    let mut out = from_module.parent().unwrap_or(Path::new("")).to_path_buf();
+    for seg in format!("{spec}.ts").split('/') {
+        match seg {
+            "." => {}
+            ".." => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            s => out.push(s),
+        }
+    }
+    Some(out)
+}
+
+/// Every name the emitted module at `path` exports, following its
+/// `export * from` re-exports. `None` when `path` is not an emitted
+/// TypeScript module.
+fn exports_of(
+    path: &Path,
+    docs: &BTreeMap<PathBuf, bynkc::Document>,
+    depth: usize,
+) -> Option<std::collections::BTreeSet<String>> {
+    let Some(bynkc::Document::Ts(program)) = docs.get(path) else {
+        return None;
+    };
+    let exports = bynk_ts::module_exports(program);
+    let mut names = exports.names;
+    if depth < 8 {
+        for from in &exports.star_from {
+            if let Some(more) = resolve(path, from).and_then(|p| exports_of(&p, docs, depth + 1)) {
+                names.extend(more);
+            }
+        }
+    }
+    Some(names)
 }
 
 /// The bundle programs whose host supplies a capability through
@@ -196,7 +272,8 @@ fn every_emitted_module_binds_every_name_it_uses() {
     assert!(
         unexpected.is_empty() && fixed.is_empty(),
         "{modules} modules checked.\n\
-         Modules using a name they never bind (each is a TS2304/TS2552 tsc would report):\n{}\n\
+         Modules using a name they never bind, or a namespace member the module does not \
+         export (each is a TS2304/TS2552/TS2694 tsc would report):\n{}\n\
          Known defects that no longer report (delete their `KNOWN` entries):\n{}",
         unexpected.join("\n"),
         fixed.join("\n"),

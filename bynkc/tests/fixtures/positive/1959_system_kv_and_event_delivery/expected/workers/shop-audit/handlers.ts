@@ -8,6 +8,8 @@ import { type Placed, type Tallied } from "../shop-order/handlers.js";
 import type * as shop_ledger from "../shop-ledger/handlers.js";
 import type * as shop_order from "../shop-order/handlers.js";
 
+export { type Placed, type Tallied };
+
 export const OnPlaced = {
   async event(e: Placed, deps: { env: { SHOP_LEDGER: __ServiceBinding } }): globalThis.Promise<void> {
     return __callService(deps.env.SHOP_LEDGER, "note", `placed:${String(e.id)}` as __JsonValue, (__j: __JsonValue) => Ok(undefined) as Result<void, __BoundaryError>, "shop.audit", "30a07120d171ca72", deps.env, "shop.ledger");

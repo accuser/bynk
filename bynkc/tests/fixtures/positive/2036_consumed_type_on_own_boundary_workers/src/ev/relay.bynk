@@ -1,0 +1,50 @@
+-- #2036: a consumed context's `Batch` on this context's own boundary, and no
+-- call to `ev.store` that would bring its codecs in. `compose.ts` names it
+-- `handlers.Batch`, so `handlers.ts` re-exports it; the entry decodes and
+-- encodes it through `handlers.__deserialise_Batch`/`__serialise_Batch`, so
+-- `handlers.ts` generates them. Each position: a parameter, a return, inside
+-- `List`/`Option`, an HTTP body, and an agent method and its stored state.
+context ev.relay
+
+consumes ev.store
+
+service relay {
+  on call(b: Batch) -> Effect[Int] {
+    Effect.pure(b.size)
+  }
+}
+
+service echo {
+  on call(id: String) -> Effect[Batch] {
+    Effect.pure(Batch { id: id, size: 1 })
+  }
+}
+
+service many {
+  on call(xs: List[Batch], o: Option[Batch]) -> Effect[Option[Batch]] {
+    Effect.pure(o)
+  }
+}
+
+service hooks from http {
+  on POST("/batches") (body: Batch) -> Effect[HttpResult[String]] by v: Visitor {
+    Created(body.id)
+  }
+}
+
+agent Shelf {
+  key id: String
+
+  store last: Cell[Option[Batch]]
+
+  on call put(b: Batch) -> Effect[Batch] {
+    last := Some(b)
+    Effect.pure(b)
+  }
+}
+
+service shelve {
+  on call(b: Batch) -> Effect[Batch] {
+    Shelf("one").put(b)
+  }
+}
