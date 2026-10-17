@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.349**.
+written against **v0.350**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.350.0** | A call to a consumed context's service whose signature names a type that context consumes (`isDomestic(o: Order)`, `Order` from a third context) now checks and runs for every caller, `system` suites included. A caller must consume every context that a called service's signature types reach (`bynk.consumes.signature_type_unconsumed`); this also refuses a call such as `shop.order.place`, returning `shop.order`'s own `Order` with a `shop.base` field, from a caller that does not consume `shop.base`. That call compiled on `bundle` but failed `tsc` on `workers`. The `X-Bynk-Contract` hash of every service whose signature names a consumed context's type now describes that type's shape, so it moves for services that already worked; redeploy both Workers of such a pair together, or the call answers `ContractMismatch` |
 | **v0.349.4** | On the bundle target, a cross-context argument at a generic parameter that names a user type, such as `List[Line]` or `Map[String, Line]`, is cast to the callee's type, so a caller's own commons values pass `tsc` |
 | **v0.349.3** | On `workers`, a cross-context call argument of a named type is cast to the callee's type, so a caller's own commons values built into it, such as `Map.empty()` in a field of a consumed record, pass `tsc` |
 | **v0.349.2** | A test case's `Json.encode`/`Json.decode[T]` on a consumed context's type now runs, its generated codecs naming the type through that context, instead of failing `tsc` |

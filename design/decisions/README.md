@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0496](0496-consumed-signature-types.md) | **A service's signature may name a type its context consumes, resolved in the declaring context** (v0.350) — Callers resolve, hash and codec a borrowed signature type through the context that declares it | Accepted (v0.350) |
 | [0495](0495-test-event-address.md) | **A test case delivers an event to a `from Events` service by address** (v0.349) — `svc.event(e[, env])` at `unit` and `integration`, through the generated `event` method; refused at `system` | Accepted (v0.349) |
 | [0494](0494-editor-reconciles-events-against-the-schema-lock.md) | **The language server reads `bynk.schema.lock` and hands it to the analysis, read-only** (v0.346.12) — The lock travels as a `SchemaLock` argument through `diagnose_project_with` and `analyse_project`; bynk-lsp owns the read and the cache | Accepted (v0.346.12) |
 | [0493](0493-check-and-test-reconcile-the-schema-lock-read-only.md) | **`check` and `test` reconcile events against `bynk.schema.lock`, read-only** (v0.346.10) — The schema registry is consulted by every CLI command that judges a project, and written only by a build | Accepted (v0.346.10) |

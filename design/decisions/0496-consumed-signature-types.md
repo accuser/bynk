@@ -1,12 +1,6 @@
----
-level: minor
-probes: diagnostic_coverage, emit_diagnostics, ts_writes
-changelog: A call to a consumed context's service whose signature names a type that context consumes (`isDomestic(o: Order)`, `Order` from a third context) now checks and runs for every caller, `system` suites included. A caller must consume every context that a called service's signature types reach (`bynk.consumes.signature_type_unconsumed`); this also refuses a call such as `shop.order.place`, returning `shop.order`'s own `Order` with a `shop.base` field, from a caller that does not consume `shop.base`. That call compiled on `bundle` but failed `tsc` on `workers`. The `X-Bynk-Contract` hash of every service whose signature names a consumed context's type now describes that type's shape, so it moves for services that already worked; redeploy both Workers of such a pair together, or the call answers `ContractMismatch`
----
+# 0496 — A service's signature may name a type its context consumes, resolved in the declaring context
 
-## ADR: consumed-signature-types
-title: A service's signature may name a type its context consumes, resolved in the declaring context
-summary: Callers resolve, hash and codec a borrowed signature type through the context that declares it
+- **Status:** Accepted (v0.350)
 
 **Context.** A service's signature can name a type that its context consumes
 from another context: `shop.ledger`'s `on call(o: Order)`, with `Order` from
