@@ -146,7 +146,7 @@ export function __deserialise_Point(json: __JsonValue, path: string = "$"): Resu
 }
 
 
-export function __serialise_Option_Line(value: Option<Line>): __JsonValue {
+export function __serialise_Option_Line(value: Option<__CommonsLine>): __JsonValue {
   if (value.tag === "Some") return { kind: "Some", value: __serialise_Line(value.value) };
   return { kind: "None" };
 }
@@ -158,27 +158,27 @@ function __option_value_Line(raw: __JsonValue, at: string): Result<unknown, __Bo
   return Ok(__v);
 }
 
-export function __deserialise_Option_Line(json: __JsonValue, path: string = "$"): Result<Option<Line>, __BoundaryError> {
+export function __deserialise_Option_Line(json: __JsonValue, path: string = "$"): Result<Option<__CommonsLine>, __BoundaryError> {
   if (json === undefined || json === null) {
-    return Ok(None as Option<Line>);
+    return Ok(None as Option<__CommonsLine>);
   }
   if (typeof json === "object" && !globalThis.Array.isArray(json)) {
     const obj = json as { [k: string]: __JsonValue };
     const __keys = globalThis.Object.keys(obj);
     if (obj["kind"] === "None" && __keys.length === 1) {
-      return Ok(None as Option<Line>);
+      return Ok(None as Option<__CommonsLine>);
     }
     if (obj["kind"] === "Some" && __keys.length === 2 && "value" in obj) {
       const __t = __option_value_Line(obj["value"], `${path}.value`);
       if (__t.tag === "Err") {
         return __t;
       }
-      return Ok(Some(__t.value as Line) as Option<Line>);
+      return Ok(Some(__t.value as __CommonsLine) as Option<__CommonsLine>);
     }
   }
   const __b = __option_value_Line(json, path);
   if (__b.tag === "Ok") {
-    return Ok(Some(__b.value as Line) as Option<Line>);
+    return Ok(Some(__b.value as __CommonsLine) as Option<__CommonsLine>);
   }
   if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
     return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });

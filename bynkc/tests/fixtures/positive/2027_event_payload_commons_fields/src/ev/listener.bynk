@@ -1,0 +1,8 @@
+context ev.listener
+
+uses ev.values
+consumes ev.emitter
+
+service OnPing from Events(Pinged) {
+  on event(e: Pinged) -> Effect[()] { () }
+}

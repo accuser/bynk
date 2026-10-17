@@ -1,0 +1,13 @@
+commons ev.values
+
+-- #2027: commons types a payload carries across contexts: a refined type, an
+-- opaque type, a record reaching both, and a generic record.
+type Qty = Int where InRange(1, 100)
+
+type Tag = opaque String where NonEmpty
+
+type Line = { qty: Qty, tag: Tag }
+
+type Page[T] = { items: List[T] }
+
+fn someTag() -> Tag { Tag.unsafe("t") }
