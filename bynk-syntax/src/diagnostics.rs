@@ -1903,6 +1903,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.store.unknown_op",
         "A storage-`Map`/`Set` operation is not a recognised entry/membership method.",
     ),
+    dg(
+        "bynk.stub.at_system",
+        "A test `stub` is in a `system`-tier case, or at the scope of a `suite … as system` (or a suite whose cases run `as system`); each context runs as the Worker it deploys as, which builds its own capability providers, so there is no seam to override.",
+        &["stub_clause"],
+    ),
     d(
         "bynk.stub.bad_sequence",
         "A `stub … returns each […]` sequence is malformed (e.g. empty).",
@@ -1979,7 +1984,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.test.principal_identity_mismatch",
-        "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor.",
+        "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor, or names no member of the handler's actor sum.",
         &["case"],
     ),
     dg(
@@ -1994,7 +1999,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.test.principal_required",
-        "A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`.",
+        "A test drives an identity-carrying handler, or one guarded by an actor sum, with no call-site `by <Actor>`.",
         &["case"],
     ),
     dg(

@@ -271,7 +271,13 @@ fn opaque_exports(text: &str, out: &mut BTreeSet<String>) {
         for prefix in ["declare ", "async "] {
             rest = rest.strip_prefix(prefix).unwrap_or(rest).trim_start();
         }
-        if let Some(list) = rest.strip_prefix('{') {
+        // `export type { A, B }` lists types, as `export { A, B }` lists names.
+        let list = rest
+            .strip_prefix("type ")
+            .map(str::trim_start)
+            .unwrap_or(rest)
+            .strip_prefix('{');
+        if let Some(list) = list {
             let inner = list.split('}').next().unwrap_or("");
             for spec in inner.split(',') {
                 let spec = spec.trim();
@@ -1185,7 +1191,7 @@ mod tests {
             ),
             codec("__serialise_Note", "Note", "__serialise_Name"),
             TsStmt::raw(
-                "export async function run() {}\nexport { x, type Y };\nconst hidden = 1;",
+                "export async function run() {}\nexport { x, type Y };\nexport type { A, B as C };\nexport type D = number;\nconst hidden = 1;",
                 None,
             ),
             TsStmt::decl(
@@ -1197,7 +1203,20 @@ mod tests {
         ]);
         let exports = module_exports(&p);
         let names: Vec<&str> = exports.names.iter().map(String::as_str).collect();
-        assert_eq!(names, ["Batch", "Y", "__serialise_Note", "b", "run", "x"]);
+        assert_eq!(
+            names,
+            [
+                "A",
+                "Batch",
+                "C",
+                "D",
+                "Y",
+                "__serialise_Note",
+                "b",
+                "run",
+                "x"
+            ]
+        );
         assert_eq!(exports.star_from, ["./handlers/a.js"]);
     }
 }
