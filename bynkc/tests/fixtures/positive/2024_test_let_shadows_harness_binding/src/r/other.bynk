@@ -1,0 +1,13 @@
+---
+#2024: a context the target consumes, so the runner binds its alias and its
+content-hashed asset in the case's scope.
+---
+context r.other
+
+asset badge = "assets/badge.svg"
+
+service fragment {
+  on call() -> Effect[String] {
+    Effect.pure(badge.url)
+  }
+}
