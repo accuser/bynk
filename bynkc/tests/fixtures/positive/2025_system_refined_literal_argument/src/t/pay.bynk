@@ -1,0 +1,20 @@
+context t.pay
+
+uses t.values
+
+service charge {
+	on call(cents: Cents) -> Effect[Int] by c: Caller { cents }
+}
+
+service maybe {
+	on call(cents: Option[Cents]) -> Effect[Int] by c: Caller {
+		match cents {
+			Some(c) => c,
+			None => 0,
+		}
+	}
+}
+
+service api from http {
+	on GET("/") () -> Effect[HttpResult[String]] by Visitor { Ok("ok") }
+}
