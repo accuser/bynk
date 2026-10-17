@@ -94,7 +94,7 @@ export function __resetAgents(): void {
 
 export { __serialise_CustomerId, __deserialise_CustomerId };
 
-export function __serialise_Option_CustomerId(value: Option<CustomerId>): __JsonValue {
+export function __serialise_Option_CustomerId(value: Option<__CommonsCustomerId>): __JsonValue {
   if (value.tag === "Some") return { kind: "Some", value: __serialise_CustomerId(value.value) };
   return { kind: "None" };
 }
@@ -106,27 +106,27 @@ function __option_value_CustomerId(raw: __JsonValue, at: string): Result<unknown
   return Ok(__v);
 }
 
-export function __deserialise_Option_CustomerId(json: __JsonValue, path: string = "$"): Result<Option<CustomerId>, __BoundaryError> {
+export function __deserialise_Option_CustomerId(json: __JsonValue, path: string = "$"): Result<Option<__CommonsCustomerId>, __BoundaryError> {
   if (json === undefined || json === null) {
-    return Ok(None as Option<CustomerId>);
+    return Ok(None as Option<__CommonsCustomerId>);
   }
   if (typeof json === "object" && !globalThis.Array.isArray(json)) {
     const obj = json as { [k: string]: __JsonValue };
     const __keys = globalThis.Object.keys(obj);
     if (obj["kind"] === "None" && __keys.length === 1) {
-      return Ok(None as Option<CustomerId>);
+      return Ok(None as Option<__CommonsCustomerId>);
     }
     if (obj["kind"] === "Some" && __keys.length === 2 && "value" in obj) {
       const __t = __option_value_CustomerId(obj["value"], `${path}.value`);
       if (__t.tag === "Err") {
         return __t;
       }
-      return Ok(Some(__t.value as CustomerId) as Option<CustomerId>);
+      return Ok(Some(__t.value as __CommonsCustomerId) as Option<__CommonsCustomerId>);
     }
   }
   const __b = __option_value_CustomerId(json, path);
   if (__b.tag === "Ok") {
-    return Ok(Some(__b.value as CustomerId) as Option<CustomerId>);
+    return Ok(Some(__b.value as __CommonsCustomerId) as Option<__CommonsCustomerId>);
   }
   if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
     return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });

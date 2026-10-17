@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "batch": "dfe34381a63b312b"
+  },
+  "expects": {}
+}

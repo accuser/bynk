@@ -1437,11 +1437,14 @@ fn emit_boundary_helpers(
             &commons.types,
             &agent_call_roots,
         );
-        stmts.extend(serialisation::decls_as_stmts(emit_generic_helpers(
-            &insts,
-            &commons.types,
-            &ctx.runtime_use,
-        )));
+        stmts.extend(serialisation::decls_as_stmts(
+            serialisation::emit_generic_helpers_qualified(
+                &insts,
+                &commons.types,
+                &unbranded_commons_qual(commons, ctx),
+                &ctx.runtime_use,
+            ),
+        ));
 
         // #661 (ADR 0199 Decision G discharged): the caller's own view of each
         // consumed context's boundary codecs, so a cross-context call reaches
@@ -1637,6 +1640,38 @@ fn commons_codec_imports(
         })
         .collect();
     (stmts, imported)
+}
+
+/// #2027: a whole-name [`serialisation`] `Qual` naming each `uses`-imported
+/// commons type by its unbranded import, `Line` as `__CommonsLine`, for a
+/// context's generic-instantiation codecs (`__serialise_List_Line`).
+///
+/// The context's own `Line` is rebranded (`emit_context_rebrands`), and so is
+/// every other context's. One instantiation codec serves both this context's
+/// values and, through a consumed context's codec (`value: ev_store.Batch`),
+/// the callee's, whose `Line` carries the callee's brand: named by the local
+/// rebrand, the codec rejected the callee's value (`TS2345`). The unbranded
+/// type accepts either, as the commons' own `__serialise_Line` does, and a
+/// decoded unbranded value is assignable to any context's optionally-branded
+/// type. Empty outside a context, which has no rebrands. `settle_implied`
+/// reads a spelled `__CommonsLine` as a use of `Line`, so its import and
+/// rebrand are emitted.
+fn unbranded_commons_qual(commons: &TypedCommons, ctx: &EmitProjectCtx) -> HashMap<String, String> {
+    if ctx.unit_kind != UnitKind::Context || ctx.owning_context.is_none() {
+        return HashMap::new();
+    }
+    commons
+        .types
+        .keys()
+        .filter(|n| {
+            bynk_check::resolver::compute_is_uses_commons_type(
+                &ctx.imported_from_kind,
+                &commons.types,
+                n,
+            )
+        })
+        .map(|n| (n.clone(), format!("__Commons{n}")))
+        .collect()
 }
 
 /// #661: emit the caller's own `serialise_*`/`deserialise_*` for every
@@ -1873,8 +1908,18 @@ fn emit_consumed_context_helpers(
         for i in &to_emit_insts {
             consumed_insts_out.push(i.ts_name());
         }
+        // #2027: a commons type argument is named unbranded, as the caller's
+        // own instantiations name it (`unbranded_commons_qual`); the callee's
+        // own types keep their namespace.
+        let mut inst_qual = unbranded_commons_qual(commons, ctx);
+        inst_qual.extend(qual);
         stmts.extend(serialisation::decls_as_stmts(
-            emit_generic_helpers_qualified(&to_emit_insts, types_table, &qual, &ctx.runtime_use),
+            emit_generic_helpers_qualified(
+                &to_emit_insts,
+                types_table,
+                &inst_qual,
+                &ctx.runtime_use,
+            ),
         ));
     }
 
@@ -2343,11 +2388,17 @@ impl ExternalReferences {
         let mut spelled: HashSet<String> = HashSet::new();
         for stmt in body {
             let text = bynk_ts::print_stmt(stmt, 0);
-            spelled.extend(
-                text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
-                    .filter(|w| !w.is_empty())
-                    .map(str::to_string),
-            );
+            for w in text
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+                .filter(|w| !w.is_empty())
+            {
+                // #2027: `__CommonsLine` (`unbranded_commons_qual`) is
+                // `Line`'s own import alias, so it spells `Line`.
+                if let Some(name) = w.strip_prefix("__Commons") {
+                    spelled.insert(name.to_string());
+                }
+                spelled.insert(w.to_string());
+            }
         }
         for (unit, names) in std::mem::take(&mut self.implied_by_commons) {
             let kept: HashSet<String> = names.intersection(&spelled).cloned().collect();
