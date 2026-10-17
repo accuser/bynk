@@ -545,6 +545,25 @@ compares the namespaces this deploy would create against every environment
 `bynk.deploy.lock` knows, both the namespaces recorded there and the ones that
 environment's next deploy would create.
 
+A namespace can also be created again during the deploy itself: one whose
+recorded id has gone from the account, deleted outside Bynk, is re-created
+under its current title. The plan can't see that, because it runs before
+the deploy fetches the account's live ids. So `bynk deploy` makes the same
+comparison at that point and stops with the same message before running
+`wrangler kv namespace create`.
+
+At that deploy-time check, and only there, another environment's recorded
+namespace whose id has gone from the account no longer holds its title,
+unless your source still declares it in that environment. The plan-time
+check runs before the live ids are fetched, so it counts every namespace
+the lock file records. If the plan refuses a title held by an orphan you
+already deleted outside Bynk, clear that stale entry. Either run
+`bynk deploy --prune` in the orphan's own environment (for example
+`bynk deploy --env staging --prune`), which counts a namespace that is
+already gone as deleted and drops it from `bynk.deploy.lock` after that
+environment's deploy pushes cleanly. Or remove the entry from
+`bynk.deploy.lock` by hand.
+
 `--env` is the driver's own flag; putting `--env` or `--environment` after
 `--` as well is rejected rather than silently resolved one way or the other:
 
