@@ -503,9 +503,13 @@ time ([§6.4](/book/spec/type-system/#64-admission--construction)) in these posi
 return (block tail), a `let` with a type annotation, an `Ok`/`Some`/`Err`
 payload, and a refined-typed call argument — including a cross-context call's
 (`t.pay.charge(250)`, from a consuming context or a `system` case). A literal
-passed directly as a cross-context argument is checked against the parameter
-type's own declaration, in the consumed context, so the caller need not `uses`
-its commons, and a type of the same name the caller declares plays no part. The
+in a cross-context argument, passed directly or nested in a `Some`/`Ok`/`Err`
+payload, a list element, or a field of a record literal of the callee's own
+type (`t.pay.maybe(Some(250))`), is checked against the declaration of the type
+at its position in the parameter's type, in the consumed context, so the
+caller need not `uses` its commons, and a type of the same name the caller
+declares plays no part. A `None`, `[]`, `List.empty()` or `Map.empty()` in
+such an argument takes its position's type the same way. The
 literal MUST satisfy the predicate, or it is rejected (`bynk.refine.literal_violates`); an admitted
 literal MUST be a compile-time literal, not an expression or identifier. A refined
 type is thus constructed at run time through `.of` alone and has **no** unchecked
