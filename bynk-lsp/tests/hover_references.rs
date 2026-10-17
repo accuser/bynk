@@ -702,3 +702,26 @@ fn derived_capability_hovers_as_an_instance_of_its_base() {
         "{op}"
     );
 }
+
+/// #2087: a service whose contract names a type `contract_types_for` filed
+/// under a qualified key (`shop_order__Code`, `shop.order`'s `Code`, borrowed
+/// into `shop.ledger`, which declares a `Code` of its own) shows it in the
+/// hover's contract by its declaration's own name.
+#[test]
+fn hover_shows_a_qualified_key_by_its_declarations_name() {
+    let (r, rel, text, root) = analysed(
+        "../bynkc/tests/fixtures/positive/2087_consumed_opaque_qualified_key",
+        "ledger.bynk",
+    );
+    let h = hover_at(
+        &r,
+        &rel,
+        &text,
+        &root,
+        at(&text, "service orderId", "orderId"),
+    )
+    .expect("hover on the service");
+    assert!(h.contains("Cross-context contract"), "{h}");
+    assert!(h.contains("Code"), "{h}");
+    assert!(!h.contains("shop_order__"), "a qualified key leaked: {h}");
+}

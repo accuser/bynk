@@ -454,7 +454,9 @@ fn wire_contract_body(model: &bynk_ide::wire_contract::WireContractModel) -> Str
         out.push_str(&format!(
             "**Cross-context contract** (hash `{}`) — change any of this and \
              already-deployed callers get a 409:\n\n```\n{}\n```\n\n",
-            contract.hash, contract.normal_form
+            contract.hash,
+            // #2087: each qualified key shown as its declaration's name.
+            bynk_check::symbols::display_type_names_in(&contract.normal_form)
         ));
     }
 

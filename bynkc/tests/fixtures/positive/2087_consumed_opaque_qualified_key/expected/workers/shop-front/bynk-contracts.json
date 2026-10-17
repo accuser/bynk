@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "provides": {
+    "check": "b26bd31d4e6619be"
+  },
+  "expects": {
+    "shop.ledger": {
+      "orderId": "70f6781a321de289"
+    },
+    "shop.order": {
+      "place": "4b90703efeeb1a66"
+    }
+  }
+}

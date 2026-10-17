@@ -1,0 +1,15 @@
+-- #2087: a value of `shop.order`'s opaque `Code`, inside its `Order`, crosses
+-- `shop.ledger`'s boundary as its own type.
+suite shop.ledger as system {
+  case "a borrowed opaque field matches its own type" {
+    let o <- shop.order.place("o1")
+    let id <- shop.ledger.orderId(o)
+    expect id == "o1"
+  }
+
+  case "a borrowed opaque field crosses back" {
+    let o <- shop.order.place("o2")
+    let back <- shop.ledger.echo(o)
+    expect back.id == "o2"
+  }
+}

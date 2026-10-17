@@ -1,0 +1,2 @@
+bynk.boundary.structural_mismatch cross-context argument 1 to `shop.ledger.take` has type `Ticket` in `shop.front`, but parameter `t` expects `Ticket` in `shop.ledger`
+# exact

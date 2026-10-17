@@ -379,7 +379,9 @@ fn wc_ref(r: &WireRef) -> WcRef {
             expected: expected_wire(expected),
         },
         WireRef::Bytes => WcRef::Bytes,
-        WireRef::Named { name } => WcRef::Named { name: name.clone() },
+        WireRef::Named { name } => WcRef::Named {
+            name: bynk_check::symbols::display_type_name(name).to_string(),
+        },
         WireRef::Inst { key } => WcRef::Inst { key: key.clone() },
         WireRef::Unit => WcRef::Unit,
         WireRef::Unchecked { reason } => WcRef::Unchecked {
@@ -483,12 +485,14 @@ fn wc_type(
     snapshots: &HashMap<PathBuf, String>,
     search_order: &[String],
 ) -> WcType {
+    // #2087: a qualified key reads, and resolves, as its declaration's name.
+    let name = bynk_check::symbols::display_type_name(&t.name);
     WcType {
-        name: t.name.clone(),
+        name: name.to_string(),
         codec_suffix: t.codec_suffix.clone(),
         provenance: provenance_wire(&t.provenance),
         body: wc_body(&t.body),
-        loc: resolve_type_loc(project_root, index, snapshots, search_order, &t.name),
+        loc: resolve_type_loc(project_root, index, snapshots, search_order, name),
     }
 }
 
@@ -622,7 +626,9 @@ pub fn to_wire(
         handler_line: model.handler_line,
         envelope: envelope_wire(&model.envelope),
         contract: model.contract.as_ref().map(|c| WcContractForm {
-            normal_form: c.normal_form.clone(),
+            // #2087: shown with each qualified key as its declaration's name;
+            // `hash` is still over the canonical form.
+            normal_form: bynk_check::symbols::display_type_names_in(&c.normal_form),
             hash: c.hash.clone(),
         }),
         types: wtypes

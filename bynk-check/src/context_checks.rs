@@ -1260,7 +1260,7 @@ fn type_ref_named(t: &TypeRef) -> Option<&str> {
 pub fn ts_type_ref_display(r: &TypeRef) -> String {
     match r {
         TypeRef::Base(b, _) => b.name().to_string(),
-        TypeRef::Named(id) => id.name.clone(),
+        TypeRef::Named(id) => crate::symbols::display_type_name(&id.name).to_string(),
         TypeRef::Result(t, e, _) => format!(
             "Result[{}, {}]",
             ts_type_ref_display(t),
@@ -1316,7 +1316,7 @@ pub fn ts_type_ref_display(r: &TypeRef) -> String {
 /// erased/emitted shape rather than what the author wrote.
 pub fn type_ref_to_display(t: &TypeRef) -> String {
     match t {
-        TypeRef::Named(id) => id.name.clone(),
+        TypeRef::Named(id) => crate::symbols::display_type_name(&id.name).to_string(),
         TypeRef::Base(b, _) => b.name().to_string(),
         other => format!("{other:?}"),
     }

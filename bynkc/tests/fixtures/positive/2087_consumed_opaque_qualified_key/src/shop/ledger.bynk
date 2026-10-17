@@ -1,0 +1,20 @@
+-- #2087: `shop.ledger` declares its own opaque `Code` and takes `shop.order`'s
+-- `Order`, whose `code` is `shop.order`'s `Code`, reached through the
+-- signature under a qualified key.
+context shop.ledger
+
+consumes shop.order
+
+type Code = opaque Int
+
+service orderId {
+  on call(o: Order) -> Effect[String] {
+    o.id
+  }
+}
+
+service echo {
+  on call(o: Order) -> Effect[Order] {
+    o
+  }
+}
