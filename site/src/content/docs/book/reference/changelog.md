@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.343**.
+written against **v0.344**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.344.0** | A `stub` in a `system`-tier case, or at the scope of a suite that runs `system` cases, is now `bynk.stub.at_system` instead of being accepted and ignored, since each context runs as the Worker it deploys as and builds its own capability providers; keep a case that needs a stubbed seam at `unit` or `integration` |
 | **v0.343.3** | On Workers, a context's codec for a list, option, map or generic record of a commons type names the type unbranded (`__CommonsLine`), so a subscriber's codec for an event like `{ lines: List[Line] }`, or a caller's codec for a consumed record with such a field, accepts the other context's `Line` and passes `tsc` |
 | **v0.343.2** | `bynk deploy --dry-run --env staging` names the Workers, Service Binding targets and queues a staging deploy creates (`deploy shop-orders-staging`, `order shop-payment-staging → shop-orders-staging`, `queue create job-intake-staging`), in text and in `--format json` (`order`, each context's `worker`, `binds_to` and `queues`, and orphaned queues and Workers), where it printed the bare names. The deploy itself already pushed `-<env>` Workers; it now states the Worker's `name` in the generated `[env.<env>]` block, from the same function the plan uses, rather than leaving it to Wrangler's default, which is the same name (#2028). |
 | **v0.343.1** | A test case's `let` named like a service, agent or asset of the unit under test (`let level <- Counter("a").bump()` beside `service level`), or re-binding a property's `for all` binder, now shadows it in the emitted test instead of redeclaring the runner's own binding and failing `tsc` (TS2451) (#2024) |
