@@ -443,6 +443,14 @@ deployed — a Service Binding to a Worker that does not exist fails at upload.
 Bring a fresh topology up with a whole-project `bynk deploy` first; use
 `--context` for iteration after that.
 
+`--context` also refuses a push that would leave two live Workers disagreeing
+about a contract (`bynk.deploy.contract_skew`). It refuses a context compiled
+against a contract its live dependencies no longer provide. It also refuses a
+context whose new build no longer provides what a live caller was compiled
+against, naming each caller, the service and both hashes. Either way, deploy
+the whole project so both sides move together. See
+[Contract skew](/book/guides/projects-build-and-deployment/contract-skew/#better-deploy-refuses-first).
+
 ### When a deploy fails part-way
 
 A multi-context deploy is **resumable, not transactional**. If the third context
@@ -564,7 +572,9 @@ it trusts them to three different degrees:
   same namespaces. The bare `Kv`'s are kept by Worker, under `kv`; each derived
   instance's by Worker and binding, under `kv_instances`.
 - **Which contexts have been deployed** — how `--context` knows whether the
-  contexts you bind to are actually live.
+  contexts you bind to are actually live. With each, the contract hashes it
+  provides (`contracts`) and the ones it was compiled against (`expects`), so
+  `--context` can refuse a push that would break a live caller or callee.
 - **Which queues have been created** — a note to itself, so the plan can say
   `create` or `reuse` without calling Cloudflare. Nothing depends on it being
   right: a queue is found by its name either way.

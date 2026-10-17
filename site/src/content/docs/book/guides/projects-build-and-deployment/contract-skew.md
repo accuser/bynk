@@ -98,6 +98,34 @@ bynk: `shop-orders` was compiled against a contract its live dependencies no
   Deploy the whole project (`bynk deploy`) so both sides move together.
 ```
 
+The same holds from the other side. `deploy` also records what each Worker
+expects of its dependencies, so pushing the *callee* alone:
+
+```bash
+bynk deploy --context shop.payment
+```
+
+compares the contract `payment`'s new build provides against what every other
+live Worker was compiled against, and stops before shipping a callee that would
+refuse its live callers:
+
+```
+bynk: `shop-payment` no longer provides the contract its live callers were
+      compiled against (bynk.deploy.contract_skew):
+  `shop-orders` calls shop.payment.authorise — compiled against 317bdd3de84d2176, this build provides 9f2c41ab73e05d18
+  Deploying this would ship a callee that rejects its live callers (409 ContractMismatch) on every call.
+  Deploy the whole project (`bynk deploy`) so both sides move together.
+```
+
+Both checks refuse before the plan is printed, so `--dry-run` shows them too.
+Under `--env staging`, the Workers are named `-staging` and the advice says
+`bynk deploy --env staging`. A whole-project `bynk deploy` is never refused this
+way, because it moves the callers with the callee.
+
+A caller deployed by a driver older than this check has no record of what it
+expects, so it can't be checked. `deploy` warns that it couldn't check that
+caller, and the next whole-project deploy records it.
+
 The runtime check stays regardless — it is the backstop for a `wrangler` push
 that bypassed the driver, or a deploy record that has drifted. But in normal use
 you should meet this at the command line, not in your logs.

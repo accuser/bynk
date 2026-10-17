@@ -1,0 +1,20 @@
+# one live caller on the old hash
+bynk: `shop-payment` no longer provides the contract its live callers were compiled against (bynk.deploy.contract_skew):
+  `shop-orders` calls shop.payment.authorise — compiled against febd15c2757b72e1, this build provides da0d725f3a004040
+  Deploying this would ship a callee that rejects its live callers (409 ContractMismatch) on every call.
+  Deploy the whole project (`bynk deploy`) so both sides move together.
+# two live callers, one service removed
+bynk: `shop-payment` no longer provides the contract its live callers were compiled against (bynk.deploy.contract_skew):
+  `shop-orders` calls shop.payment.authorise — compiled against febd15c2757b72e1, this build provides da0d725f3a004040
+  `shop-refunds` calls shop.payment.refund — compiled against 317bdd3de84d2176, this build provides <absent>
+  Deploying this would ship a callee that rejects its live callers (409 ContractMismatch) on every call.
+  Deploy the whole project (`bynk deploy`) so both sides move together.
+# --env staging: one live caller on the old hash
+bynk: `shop-payment-staging` no longer provides the contract its live callers were compiled against (bynk.deploy.contract_skew):
+  `shop-orders-staging` calls shop.payment.authorise — compiled against febd15c2757b72e1, this build provides da0d725f3a004040
+  Deploying this would ship a callee that rejects its live callers (409 ContractMismatch) on every call.
+  Deploy the whole project (`bynk deploy --env staging`) so both sides move together.
+# a live caller recorded before expectations were
+bynk: warning: could not check that `shop-payment` still provides what the live `shop-orders` was compiled against — its deploy record predates recorded expectations (bynk.deploy.contract_skew). A whole-project deploy (`bynk deploy`) records them.
+# --env staging: a live caller recorded before expectations were
+bynk: warning: could not check that `shop-payment-staging` still provides what the live `shop-orders-staging` was compiled against — its deploy record predates recorded expectations (bynk.deploy.contract_skew). A whole-project deploy (`bynk deploy --env staging`) records them.

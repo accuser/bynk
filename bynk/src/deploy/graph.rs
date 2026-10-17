@@ -202,6 +202,93 @@ pub(crate) fn contract_skews(
     out
 }
 
+/// One live caller service whose recorded contract the pushed callee's new
+/// build no longer provides (#2077).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct CalleeSkew {
+    /// The live caller, by its logical Worker name (`shop-orders`).
+    pub(crate) caller: String,
+    /// The pushed callee as the caller names it: its qualified context.
+    pub(crate) dependency: String,
+    pub(crate) service: String,
+    /// The hash the live caller stamps, as the ledger recorded it.
+    pub(crate) expected: String,
+    /// What the new build provides, `<absent>` for a removed service.
+    pub(crate) provided: String,
+}
+
+/// #2077: the callee half of the #643 gate.
+///
+/// [`contract_skews`] holds the *pushed* Worker's `expects` to its live
+/// dependencies' recorded `provides`. This holds the pushed Worker's new
+/// `provides` to every *other* live Worker's recorded `expects` in
+/// `environment`: pushing a callee whose contract changed under a live caller
+/// ships a callee that 409s that caller on every call, exactly as pushing a
+/// skewed caller does.
+///
+/// `worker_of` maps a qualified dependency name to its Worker, as in
+/// [`contract_skews`]. The pushed Worker's own record is skipped (it is being
+/// replaced). A caller whose record has no `expects` — pushed before they were
+/// recorded — yields no finding: silence is not a match
+/// ([`unrecorded_callers`] names those for a warning).
+pub(crate) fn callee_contract_skews(
+    worker: &str,
+    provides: &BTreeMap<String, String>,
+    lock: &DeployLock,
+    worker_of: impl Fn(&str) -> String,
+    environment: &str,
+) -> Vec<CalleeSkew> {
+    let mut out = Vec::new();
+    for (caller, expects) in lock.live_expects(environment) {
+        if caller == worker {
+            continue;
+        }
+        let Some(expects) = expects else { continue };
+        for (dependency, services) in expects {
+            if worker_of(dependency) != worker {
+                continue;
+            }
+            for (service, expected) in services {
+                let provided = match provides.get(service) {
+                    Some(actual) if actual == expected => continue,
+                    Some(actual) => actual.clone(),
+                    None => "<absent>".to_string(),
+                };
+                out.push(CalleeSkew {
+                    caller: caller.to_string(),
+                    dependency: dependency.clone(),
+                    service: service.clone(),
+                    expected: expected.clone(),
+                    provided,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// #2077: the live Workers that bind to `worker` in this build's `graph` but
+/// whose ledger record predates `expects`, so [`callee_contract_skews`] cannot
+/// check them. A warning, never a refusal: the gate reports only what it
+/// knows is skewed, and the next whole-project deploy records them.
+pub(crate) fn unrecorded_callers(
+    worker: &str,
+    graph: &BTreeMap<String, Vec<String>>,
+    lock: &DeployLock,
+    environment: &str,
+) -> Vec<String> {
+    lock.live_expects(environment)
+        .filter(|(caller, expects)| {
+            *caller != worker
+                && expects.is_none()
+                && graph
+                    .get(*caller)
+                    .is_some_and(|targets| targets.iter().any(|t| t == worker))
+        })
+        .map(|(caller, _)| caller.to_string())
+        .collect()
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
