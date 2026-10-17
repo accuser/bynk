@@ -1,0 +1,3 @@
+commons t.pages
+
+type Page[T] = { items: List[T], size: Int }

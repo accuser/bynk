@@ -1063,7 +1063,13 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
         if cx.in_test_scaffold() {
             return Lowered::bare(unchecked_construct_test(name, &raw, false));
         }
-        return Lowered::bare(unchecked_construct(name, &raw, false));
+        // #2058: a consumed context's refined type is named under its
+        // namespace; the module imports no bare name for it.
+        return Lowered::bare(unchecked_construct(
+            &cx.consumed_type_name(name),
+            &raw,
+            false,
+        ));
     }
     let mut pre = Pre::new();
     let expr = match &e.kind {
@@ -2613,6 +2619,31 @@ fn lower_method_call(
                 let mut all = args_lowered;
                 all.push(deps_expr);
                 return pre.finish(settle(format!("{}.{}({})", id.name, key, all.join(", "))));
+            }
+            // #2052: an event address delivers through the module's
+            // `__bynkEvent_<svc>` helper (`tests_emit::event_delivery_helper`),
+            // which supplies the default envelope and calls the service's
+            // generated `event` method, whose prologue runs the pattern filter
+            // and the `via schema(N)` guard as every real delivery does. An
+            // omitted envelope is passed as `undefined`.
+            if method.name == "event"
+                && handlers
+                    .iter()
+                    .any(|h| matches!(h, bynk_ir::IrHandlerKind::Event))
+            {
+                cx.runtime_use().note_test_event_service(&id.name);
+                let payload = args
+                    .first()
+                    .map(|a| pre.lower(a, cx))
+                    .unwrap_or_else(|| "undefined".to_string());
+                let envelope = args
+                    .get(1)
+                    .map(|a| pre.lower(a, cx))
+                    .unwrap_or_else(|| "undefined".to_string());
+                return pre.finish(settle(format!(
+                    "__bynkEvent_{}({payload}, {envelope}, {deps_expr})",
+                    id.name
+                )));
             }
         }
         // `svc.call(args)` and other (non-http) forms: pass args through with deps.

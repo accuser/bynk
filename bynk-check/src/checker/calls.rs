@@ -3402,16 +3402,42 @@ fn check_test_service_address(
         return handler_outcome(handler, ctx);
     }
 
+    // #2052: `svc.event(payload)` / `svc.event(payload, envelope)` — one
+    // delivery to a `from Events(E)` service's `on event` handler.
+    if method.name == "event"
+        && let Some(handler) = sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Event))
+    {
+        ctx.callees.insert(
+            expr_id,
+            Callee::TestService {
+                service: id.name.clone(),
+                address: "event".to_string(),
+            },
+        );
+        let handler = handler.clone();
+        check_event_address(sig, id, &handler, args, method.span, ctx);
+        return handler_outcome(&handler, ctx);
+    }
+
     // Not a recognised address form for this service.
     let proto = sig.protocol.as_deref().unwrap_or("call");
-    ctx.errors.push(CompileError::new(
+    let mut err = CompileError::new(
         "bynk.test.service_bad_address",
         method.span,
         format!(
             "`{}.{}` is not a way to address a `from {proto}` service in a test body",
             id.name, method.name
         ),
-    ));
+    );
+    if method.name == "event" {
+        err = err.with_note(
+            "only a `from Events(E)` service is addressed with `svc.event(e)`; it delivers one event to the service's `on event` handler",
+        );
+    }
+    ctx.errors.push(err);
     for a in args {
         let _ = type_of(a, None, ctx);
     }
@@ -3567,6 +3593,13 @@ fn resolve_test_address<'a>(
             .handlers
             .iter()
             .find(|h| matches!(&h.kind, HandlerKind::Message));
+    }
+    // #2052: the `on event` handler of a `from Events(E)` service.
+    if method == "event" {
+        return sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Event));
     }
     None
 }
@@ -4051,6 +4084,137 @@ fn check_address_args(
     }
 }
 
+/// #2052: arity and argument types of `svc.event(payload)` /
+/// `svc.event(payload, envelope)`. The payload is typed against the handler's
+/// first parameter, which `bynk.event.handler_param_type_mismatch` holds to the
+/// header's event type `E`; the envelope against `EventEnvelope`, whether or
+/// not the handler declares one (a `via schema(N)` guard reads it either way).
+fn check_event_address(
+    sig: &TestServiceSig,
+    id: &Ident,
+    handler: &TestHandler,
+    args: &[Expr],
+    err_span: Span,
+    ctx: &mut Ctx,
+) {
+    let tys = ctx.tys;
+    let svc = &id.name;
+    if args.is_empty() || args.len() > 2 {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.service_call_arity",
+                err_span,
+                format!(
+                    "`{svc}.event` takes the event and, optionally, an `EventEnvelope`, but {} argument(s) were given",
+                    args.len()
+                ),
+            )
+            .with_note("deliver an event with `svc.event(e)`, or `svc.event(e, env)` to choose its envelope"),
+        );
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return;
+    }
+    // #2052 review: a default envelope names the event's publisher, which must
+    // resolve to one context, as the service's header resolves `E`.
+    if args.len() == 1
+        && let Some(Err(candidates)) = &sig.event_publisher
+    {
+        let found = if candidates.is_empty() {
+            "no context the target declares or consumes declares it".to_string()
+        } else {
+            format!(
+                "it is declared by {}",
+                candidates
+                    .iter()
+                    .map(|c| format!("`{c}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.event_publisher_ambiguous",
+                err_span,
+                format!("`{svc}.event(e)` has no single publisher to name in its default envelope: {found}"),
+            )
+            .with_note("pass the envelope yourself: `svc.event(e, env)`"),
+        );
+    }
+    let payload = &args[0];
+    let expected = handler
+        .params
+        .first()
+        .and_then(|p| resolve_type_ref(&p.type_ref, &ctx.input.types, tys));
+    let arg_ty = type_of(payload, expected, ctx);
+    if let (Some(a), Some(p)) = (arg_ty, expected)
+        && !compatible(a, p, tys)
+    {
+        let other_event = match &*tys.get(a) {
+            Ty::Named { name, .. } if sig.known_events.contains(name) => Some(name.clone()),
+            _ => None,
+        };
+        let err = match other_event {
+            Some(other) => CompileError::new(
+                "bynk.test.event_not_subscribed",
+                payload.span,
+                format!(
+                    "`{svc}` subscribes to `{}`, not `{other}`",
+                    p.display(tys)
+                ),
+            )
+            .with_note(
+                "an event address delivers only the event the service's `from Events(E)` header names",
+            ),
+            None => CompileError::new(
+                "bynk.types.argument_mismatch",
+                payload.span,
+                format!(
+                    "argument 1 has type `{}`, but `{svc}.event` expects the event it subscribes to, `{}`",
+                    a.display(tys),
+                    p.display(tys)
+                ),
+            ),
+        };
+        ctx.errors.push(err);
+    }
+    let Some(envelope) = args.get(1) else {
+        return;
+    };
+    let envelope_ref = TypeRef::Named(Ident {
+        name: "EventEnvelope".to_string(),
+        span: envelope.span,
+    });
+    let expected = resolve_type_ref(&envelope_ref, &ctx.input.types, tys);
+    let env_ty = type_of(envelope, expected, ctx);
+    let Some(a) = env_ty else {
+        return;
+    };
+    // `EventEnvelope` is `bynk`'s; a suite names it only when its target
+    // consumes `bynk`, and no other value is one.
+    let mismatch = match expected {
+        Some(p) => !compatible(a, p, tys),
+        None => true,
+    };
+    if mismatch {
+        let mut err = CompileError::new(
+            "bynk.types.argument_mismatch",
+            envelope.span,
+            format!(
+                "argument 2 has type `{}`, but `{svc}.event` expects an `EventEnvelope`",
+                a.display(tys)
+            ),
+        );
+        if expected.is_none() {
+            err = err.with_note(
+                "`EventEnvelope` comes from `bynk`; the suite's target must `consumes bynk` to build one",
+            );
+        }
+        ctx.errors.push(err);
+    }
+}
+
 /// If `receiver` resolves to a consumed-context prefix (an alias or a
 /// dotted qualified name appearing in `consumes`), return the consumed
 /// context's qualified name. Otherwise None. Local bindings, types, and
@@ -4365,14 +4529,16 @@ fn rebranded_return_mismatch(
     )
 }
 
-/// #2025, #2039: type one cross-context argument against its parameter's
-/// type, returning the type and whether the argument crosses the boundary.
+/// #2025, #2039, #2072: type one cross-context argument against its
+/// parameter's type, returning the type and whether the argument crosses the
+/// boundary.
 ///
 /// A literal at a refined position in the parameter's type is admitted
 /// against that type's own declaration, from the consumed context's table.
 /// This covers a literal passed directly (`t.pay.charge(250)`) and one
-/// nested in an `Option`/`Result` payload, a list element, or a record field
-/// (`t.pay.maybe(Some(250))`). It is checked against the callee's predicate,
+/// nested in an `Option`/`Result` payload, a list element, or a field of a
+/// record literal, a generic one included (`t.pay.maybe(Some(250))`,
+/// `Page { items: [250] }`). It is checked against the callee's predicate,
 /// whether or not the caller `uses` the declaring commons and whatever the
 /// caller binds under that name. Such a literal is the callee's type by
 /// construction, so it needs no structural check; neither does a `None` or
@@ -4380,9 +4546,11 @@ fn rebranded_return_mismatch(
 ///
 /// Every other part of the argument is a *leaf*, typed in the caller's own
 /// scope with its position's type as the hint, and the structural check
-/// decides whether each leaf crosses. An argument with no literal or empty
-/// constructor in it is a single leaf, so it is checked whole, as before;
-/// a leaf `type_of` did not record falls back to the whole argument too.
+/// decides whether each leaf crosses. A shorthand record field (`{ cents }`)
+/// is a leaf too, checked by its binding's type. An argument with no literal
+/// or empty constructor in it is a single leaf, so it is checked whole, as
+/// before; a leaf `type_of` did not record falls back to the whole argument
+/// too.
 fn type_cross_context_arg(
     arg: &Expr,
     param_ty: TyId,
@@ -4392,17 +4560,13 @@ fn type_cross_context_arg(
     ctx: &mut Ctx,
 ) -> (Option<TyId>, bool) {
     let tys = ctx.tys;
-    let mut literals: Vec<(&Expr, TyId)> = Vec::new();
-    let mut leaves: Vec<(&Expr, TyId)> = Vec::new();
-    collect_crossing_positions(
-        arg,
-        param_ty,
-        caller_types,
-        consumed_types,
-        tys,
-        &mut literals,
-        &mut leaves,
-    );
+    let mut found = CrossingPositions::default();
+    collect_crossing_positions(arg, param_ty, caller_types, consumed_types, tys, &mut found);
+    let CrossingPositions {
+        literals,
+        mut leaves,
+        bindings,
+    } = found;
     for (lit, pos) in literals {
         let before = ctx.errors.len();
         match admit_refined_literal_in(lit, Some(pos), consumed_types, ctx) {
@@ -4423,46 +4587,55 @@ fn type_cross_context_arg(
     let Some(ty) = arg_ty else {
         return (None, false);
     };
-    let crosses = leaves.iter().all(|(leaf, pos)| {
+    let whole = || structurally_compatible(ty, param_ty, caller_types, consumed_types, tys);
+    let leaves_cross = leaves.iter().all(|(leaf, pos)| {
         // A leaf `type_of` did not record is checked through the whole
         // argument instead.
         match ctx.expr_types.get(&leaf.id) {
             Some(t) => structurally_compatible(t.ty, *pos, caller_types, consumed_types, tys),
-            None => structurally_compatible(ty, param_ty, caller_types, consumed_types, tys),
+            None => whole(),
         }
     });
-    (arg_ty, crosses)
+    let bindings_cross = bindings.iter().all(|(name, pos)| match ctx.lookup(name) {
+        Some(t) => structurally_compatible(t, *pos, caller_types, consumed_types, tys),
+        None => whole(),
+    });
+    (arg_ty, leaves_cross && bindings_cross)
+}
+
+/// #2039: what [`collect_crossing_positions`] finds in a cross-context
+/// argument, each paired with the type at its position, named in the
+/// consumed context's table.
+#[derive(Default)]
+struct CrossingPositions<'e> {
+    /// Literals at refined positions, admitted against the callee.
+    literals: Vec<(&'e Expr, TyId)>,
+    /// Parts the structural check still has to decide.
+    leaves: Vec<(&'e Expr, TyId)>,
+    /// #2072: shorthand record fields, by the binding each one reads.
+    bindings: Vec<(&'e str, TyId)>,
 }
 
 /// #2039: walk a cross-context argument alongside its parameter's type,
 /// collecting the literals at refined positions and the leaves the
-/// structural check still has to decide. Each is paired with the type at its
-/// position, named in the consumed context's table.
+/// structural check still has to decide.
 ///
 /// The walk follows `Some`/`Ok`/`Err` payloads, list elements, and the
 /// fields of a record literal whose type is the very declaration the
-/// callee's parameter names (the same commons type); anything else is a
-/// leaf.
+/// callee's parameter names (the same commons type). #2072: for a generic
+/// record, its type arguments are substituted into the field types, and a
+/// shorthand field is collected by its binding. Anything else is a leaf.
 fn collect_crossing_positions<'e>(
     e: &'e Expr,
     pos: TyId,
     caller_types: &HashMap<String, Arc<TypeDecl>>,
     consumed_types: &HashMap<String, Arc<TypeDecl>>,
     tys: &Types,
-    literals: &mut Vec<(&'e Expr, TyId)>,
-    leaves: &mut Vec<(&'e Expr, TyId)>,
+    found: &mut CrossingPositions<'e>,
 ) {
     let node = tys.get(pos);
-    let walk = |inner: &'e Expr, at: TyId, literals: &mut Vec<_>, leaves: &mut Vec<_>| {
-        collect_crossing_positions(
-            inner,
-            at,
-            caller_types,
-            consumed_types,
-            tys,
-            literals,
-            leaves,
-        )
+    let walk = |inner: &'e Expr, at: TyId, found: &mut CrossingPositions<'e>| {
+        collect_crossing_positions(inner, at, caller_types, consumed_types, tys, found)
     };
     // A compile-time literal, negated ones (`-3`) included.
     if const_literal(e).is_some()
@@ -4474,10 +4647,10 @@ fn collect_crossing_positions<'e>(
             }
         )
     {
-        return literals.push((e, pos));
+        return found.literals.push((e, pos));
     }
     match (&e.kind, &*node) {
-        (ExprKind::Paren(inner), _) => walk(inner, pos, literals, leaves),
+        (ExprKind::Paren(inner), _) => walk(inner, pos, found),
         // Typed from the hint: the parameter's own type at this position.
         (ExprKind::None, Ty::Option(_)) => {}
         (ExprKind::ListLit(items), Ty::List(_)) if items.is_empty() => {}
@@ -4498,12 +4671,12 @@ fn collect_crossing_positions<'e>(
                 ExprKind::Ident(id)
                     if id.name == if matches!(&*node, Ty::List(_)) { "List" } else { "Map" }
             ) => {}
-        (ExprKind::Some(inner), Ty::Option(t)) => walk(inner, *t, literals, leaves),
-        (ExprKind::Ok(inner), Ty::Result(t, _)) => walk(inner, *t, literals, leaves),
-        (ExprKind::Err(inner), Ty::Result(_, t)) => walk(inner, *t, literals, leaves),
+        (ExprKind::Some(inner), Ty::Option(t)) => walk(inner, *t, found),
+        (ExprKind::Ok(inner), Ty::Result(t, _)) => walk(inner, *t, found),
+        (ExprKind::Err(inner), Ty::Result(_, t)) => walk(inner, *t, found),
         (ExprKind::ListLit(items), Ty::List(t)) => {
             for item in items {
-                walk(item, *t, literals, leaves);
+                walk(item, *t, found);
             }
         }
         (
@@ -4513,39 +4686,67 @@ fn collect_crossing_positions<'e>(
                 kind: NamedKind::Record,
                 args,
             },
-        ) if args.is_empty() && type_name.name == *name => {
-            let Some(decl) = consumed_types.get(name) else {
-                return leaves.push((e, pos));
+        ) if type_name.name == *name => {
+            let Some(field_positions) =
+                record_field_positions(name, args, fields, caller_types, consumed_types, tys)
+            else {
+                return found.leaves.push((e, pos));
             };
-            let same_decl = caller_types.get(name).is_some_and(|c| Arc::ptr_eq(c, decl));
-            let TypeBody::Record(record) = &decl.body else {
-                return leaves.push((e, pos));
-            };
-            // A shorthand field has no expression of its own to walk.
-            if !same_decl
-                || !decl.type_params.is_empty()
-                || fields.iter().any(|f| f.value.is_none())
-            {
-                return leaves.push((e, pos));
-            }
-            let mut field_positions = Vec::new();
-            for f in fields {
-                let Some(field_ty) = record
-                    .fields
-                    .iter()
-                    .find(|d| d.name.name == f.name.name)
-                    .and_then(|d| resolve_type_ref(&d.type_ref, consumed_types, tys))
-                else {
-                    return leaves.push((e, pos));
-                };
-                field_positions.push((f.value.as_ref().expect("checked above"), field_ty));
-            }
-            for (value, field_ty) in field_positions {
-                walk(value, field_ty, literals, leaves);
+            for (f, field_ty) in field_positions {
+                match &f.value {
+                    Some(value) => walk(value, field_ty, found),
+                    // #2072: a shorthand field reads the same-named binding.
+                    None => found.bindings.push((f.name.name.as_str(), field_ty)),
+                }
             }
         }
-        _ => leaves.push((e, pos)),
+        _ => found.leaves.push((e, pos)),
     }
+}
+
+/// #2039, #2072: the type of each field a record literal sets, in the
+/// consumed context's table, when the literal's type is the very
+/// declaration the callee names (the same commons type). A generic record's
+/// type arguments are substituted into its field types. `None` when the
+/// record is not the callee's declaration, or a field is not one it
+/// declares: the record is then checked whole.
+fn record_field_positions<'f>(
+    name: &str,
+    args: &[TyId],
+    fields: &'f [FieldInit],
+    caller_types: &HashMap<String, Arc<TypeDecl>>,
+    consumed_types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
+) -> Option<Vec<(&'f FieldInit, TyId)>> {
+    let decl = consumed_types.get(name)?;
+    if !caller_types.get(name).is_some_and(|c| Arc::ptr_eq(c, decl)) {
+        return None;
+    }
+    let TypeBody::Record(record) = &decl.body else {
+        return None;
+    };
+    if decl.type_params.len() != args.len() {
+        return None;
+    }
+    let vars: HashSet<String> = decl
+        .type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .collect();
+    let subst: HashMap<String, TyId> = decl
+        .type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .zip(args.iter().copied())
+        .collect();
+    fields
+        .iter()
+        .map(|f| {
+            let declared = record.fields.iter().find(|d| d.name.name == f.name.name)?;
+            let ty = resolve_type_ref_in(&declared.type_ref, consumed_types, &vars, tys)?;
+            Some((f, substitute(ty, &subst, tys)))
+        })
+        .collect()
 }
 
 fn check_cross_context_call(

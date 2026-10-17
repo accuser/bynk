@@ -1,0 +1,2 @@
+bynk.test.event_publisher_ambiguous `OnPlaced.event(e)` has no single publisher to name in its default envelope: it is declared by `shop.archive`, `shop.order`
+bynk.consumes.name_conflict

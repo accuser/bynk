@@ -1,0 +1,2 @@
+bynk.test.nobody_needs_secured_route
+# exact

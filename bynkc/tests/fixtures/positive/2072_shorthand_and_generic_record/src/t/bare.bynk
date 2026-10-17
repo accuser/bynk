@@ -1,0 +1,20 @@
+context t.bare
+
+uses t.pages
+consumes t.pay
+
+-- #2072: a caller that reaches no `Cents` at all. A generic record's fields
+-- take its type arguments (`items` is `List[Cents]`), and a shorthand field
+-- (`size`) is checked by its binding's type while the literal fields beside
+-- it are still admitted against `t.pay`'s `Cents`.
+service paged {
+	on call() -> Effect[Int] by c: Caller {
+		let size = 1
+		t.pay.paged(Page { items: [250, 3], size })
+	}
+}
+
+-- Without a shorthand field too.
+service listed {
+	on call() -> Effect[Int] by c: Caller { t.pay.paged(Page { items: [7], size: 0 }) }
+}

@@ -1,0 +1,2 @@
+bynk.test.service_bad_address `audit.event` is not a way to address a `from call` service in a test body
+# exact

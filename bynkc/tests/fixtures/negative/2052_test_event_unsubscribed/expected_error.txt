@@ -1,0 +1,2 @@
+bynk.test.event_not_subscribed `OnPlaced` subscribes to `Placed`, not `Cancelled`
+# exact
