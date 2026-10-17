@@ -3473,6 +3473,17 @@ fn resolve_actor_identity(name: &str, ctx: &Ctx) -> ActorIdentity {
     let tys = ctx.tys;
     use crate::actors::{Identity, prelude_actor};
     if let Some(decl) = ctx.test_actors.get(name) {
+        // #2019: a refinement (`actor Admin = User where …`) narrows its base by
+        // a claim and inherits the base's identity: the Worker's Bearer seam
+        // follows the refinement to its base and mints the base identity
+        // (`bearer_seam_for`). A refinement's base is never itself a refinement.
+        let decl = match &decl.refinement {
+            Some(r) => match ctx.test_actors.get(&r.base.name) {
+                Some(base) if base.refinement.is_none() => base,
+                _ => return ActorIdentity::Unit,
+            },
+            None => decl,
+        };
         return match &decl.identity {
             Some(t) => match resolve_type_ref(t, &ctx.input.types, tys) {
                 Some(ty) => ActorIdentity::Typed(ty),
@@ -3688,6 +3699,13 @@ pub(crate) fn check_effect_let_principal(
         return;
     }
 
+    // #2020: a sum (`by who: User | Visitor`) runs as whichever member
+    // resolves, so the case may act as any member, each with its own identity.
+    if let Some(by) = handler.by_clause.as_ref().filter(|by| by.is_sum()) {
+        check_sum_principal(by, principal, value.span, ctx);
+        return;
+    }
+
     let required = handler_actor_name(&handler, sig.protocol.as_deref())
         .map(|actor| resolve_actor_identity(&actor, ctx));
 
@@ -3792,6 +3810,85 @@ pub(crate) fn check_effect_let_principal(
         }
         (_, Some(p)) => report_principal_actor(p, ctx),
         (_, None) => {}
+    }
+}
+
+/// #2020: check a call-site principal against a handler whose `by` clause is
+/// an actor sum (`by who: User | Visitor`, or an `on call` sum such as
+/// `Caller | Legacy`). The handler reads the resolved member as `deps.who`, so
+/// the case must name a member, with exactly the identity that member
+/// carries: `by User("ada")` or `by Visitor`. A non-member, or no `by` at all,
+/// would leave `deps.who` unbuilt.
+fn check_sum_principal(
+    by: &bynk_syntax::ast::ByClause,
+    principal: Option<&bynk_syntax::ast::CallSiteActor>,
+    value_span: Span,
+    ctx: &mut Ctx,
+) {
+    let members = format!(
+        "`{}`",
+        by.actors
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+    let Some(p) = principal else {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.principal_required",
+                value_span,
+                format!(
+                    "this handler runs as one of the actors {members}; the case must act as one with `by <Actor>`"
+                ),
+            )
+            .with_note(format!(
+                "append a call-site actor naming a member, e.g. `... by {}`",
+                sum_member_example(&by.actors[0].name, ctx)
+            )),
+        );
+        return;
+    };
+    let name = &p.actor.name;
+    if !by.actors.iter().any(|a| &a.name == name) {
+        if matches!(resolve_actor_identity(name, ctx), ActorIdentity::Unknown) {
+            report_principal_actor(p, ctx);
+            return;
+        }
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.principal_identity_mismatch",
+                p.span,
+                format!(
+                    "this handler runs as one of the actors {members}, but `by {name}` names none of them"
+                ),
+            )
+            .with_note("act as a member of the handler's `by` sum"),
+        );
+        if let Some(idv) = &p.identity {
+            let _ = type_of(idv, None, ctx);
+        }
+        return;
+    }
+    match resolve_actor_identity(name, ctx) {
+        // The sum's `Caller` arm carries the calling context's name
+        // (`{ tag: "Caller", identity: string }`), so it must be named.
+        ActorIdentity::CallerString if p.identity.is_none() => ctx.errors.push(CompileError::new(
+            "bynk.test.actor_identity_required",
+            p.span,
+            format!(
+                "the `{name}` arm carries the calling context's name, so write `by {name}(\"...\")`"
+            ),
+        )),
+        _ => report_principal_actor(p, ctx),
+    }
+}
+
+/// An example call-site principal for a sum member, for a note.
+fn sum_member_example(name: &str, ctx: &Ctx) -> String {
+    match resolve_actor_identity(name, ctx) {
+        ActorIdentity::Typed(_) | ActorIdentity::CallerString => format!("{name}(...)"),
+        ActorIdentity::Unit | ActorIdentity::Unknown => name.to_string(),
     }
 }
 

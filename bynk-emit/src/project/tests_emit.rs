@@ -706,6 +706,7 @@ fn emit_integration_module(
             http_support.declared_routes.clone(),
             http_support.route_body.clone(),
             http_support.type_ns.clone(),
+            http_support.claims.clone(),
             input.source,
             &input.rel_path,
             &runtime_use,
@@ -872,6 +873,9 @@ struct SystemHttpSupport {
     /// The target's type namespace (`<target>.`), `route_body`'s types
     /// resolve `serialise_*` calls through.
     type_ns: String,
+    /// #2019: the refinement-guarded routes and each refinement actor's
+    /// witness claims, so a call acting as a refinement signs its claims.
+    claims: emitter::SystemHttpClaims,
 }
 
 fn emit_system_http_support(
@@ -890,6 +894,7 @@ fn emit_system_http_support(
             declared_routes: declared,
             route_body,
             type_ns: String::new(),
+            claims: emitter::SystemHttpClaims::default(),
         };
     };
     let ns = test_ns(target);
@@ -898,6 +903,21 @@ fn emit_system_http_support(
 
     let mut routes: Vec<TsStmt> = Vec::new();
     let mut secrets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // #2019: each refinement actor's witness claims, signed when a case acts
+    // as it on a refinement-guarded route.
+    let mut claims = emitter::SystemHttpClaims {
+        routes: std::collections::HashSet::new(),
+        actors: table
+            .actors
+            .iter()
+            .filter_map(|(name, decl)| {
+                let pred =
+                    bynk_check::actors::parse_claim_predicate(&decl.refinement.as_ref()?.predicate)
+                        .ok()?;
+                Some((name.clone(), bynk_check::actors::claim_witness_js(&pred)?))
+            })
+            .collect(),
+    };
 
     let mut svc_names: Vec<&String> = table.services.keys().collect();
     svc_names.sort();
@@ -961,12 +981,26 @@ fn emit_system_http_support(
                 s
             };
             // The signed Authorization header, if the handler's `by` is Bearer.
+            // #2019: a refinement-guarded route's signing drivers take the
+            // claims the acting actor presents, signed next to `sub`.
+            let mut signs_claims = false;
             let (auth_header, _secret_name) = match bynk_check::actors::bearer_seam_for(
                 h,
                 &table.actors,
             ) {
                 Some(seam) => {
                     secrets.insert(seam.secret.clone());
+                    signs_claims = seam.authorization.is_some();
+                    let claims_spread = if signs_claims {
+                        claims.routes.insert((
+                            sname.clone(),
+                            method.as_str().to_string(),
+                            path.clone(),
+                        ));
+                        "...__claims, "
+                    } else {
+                        ""
+                    };
                     // P7.2: `Record<string, string>`, not `emitter/workers.rs`'s own
                     // `Record<string, unknown>` marker — this expression feeds
                     // `__bynkSignHs256` directly with no `typeof` narrowing step in
@@ -979,7 +1013,7 @@ fn emit_system_http_support(
                     );
                     (
                         format!(
-                            "\"authorization\": `Bearer ${{await __bynkSignHs256({{ sub: __sub, exp: __bynkNow() + 3600 }}, {secret_read})}}`, "
+                            "\"authorization\": `Bearer ${{await __bynkSignHs256({{ {claims_spread}sub: __sub, exp: __bynkNow() + 3600 }}, {secret_read})}}`, "
                         ),
                         Some(seam.secret),
                     )
@@ -1082,6 +1116,7 @@ fn emit_system_http_support(
                 &binding,
                 "__responseToHttpResult",
                 &payload_deser,
+                signs_claims,
             ));
             // Slice C: the raw driver for a `Wire(…)`-carrying call. Every slot is
             // a raw `string` (the wire form the boundary receives *unvalidated*):
@@ -1112,6 +1147,7 @@ fn emit_system_http_support(
                     &binding,
                     "__responseToHttpOutcome",
                     &payload_deser,
+                    signs_claims,
                 ));
             }
             // #706: the no-auth driver for a `by Nobody` call — the same request
@@ -1137,6 +1173,7 @@ fn emit_system_http_support(
                     &binding,
                     "__responseToUnauthOutcome",
                     &payload_deser,
+                    false,
                 ));
             }
             // #821: the raw *and* no-auth driver combined, for a call mixing
@@ -1169,6 +1206,7 @@ fn emit_system_http_support(
                     &binding,
                     "__responseToUnauthOutcome",
                     &payload_deser,
+                    false,
                 ));
             }
         }
@@ -1274,6 +1312,7 @@ fn emit_system_http_support(
             declared_routes: declared,
             route_body,
             type_ns: String::new(),
+            claims: emitter::SystemHttpClaims::default(),
         };
     }
 
@@ -1343,6 +1382,7 @@ fn emit_system_http_support(
         declared_routes: declared,
         route_body,
         type_ns,
+        claims,
     }
 }
 
@@ -1809,23 +1849,36 @@ fn target_service_handler_kinds(
         .collect()
 }
 
-/// I3 (#1971): the target's services whose `on call` handler binds an actor
-/// sum (`by who: Caller | Legacy`), whose `deps.who` a call-site principal
-/// builds.
-fn target_call_sum_services(table: Option<&UnitTable>) -> HashSet<String> {
+/// I3 (#1971), #2020: the target's handlers that bind an actor sum, whose
+/// `deps.who` a call-site principal builds: an `on call` sum (`by who: Caller
+/// | Legacy`), keyed `(service, "call")`, and an http sum (`by who: User |
+/// Visitor`), keyed `(service, <emitted method name>)`. Mirrors the order
+/// `bynk_lower::lower_actor_seam_ir` resolves a handler's seam in.
+fn target_sum_handlers(table: Option<&UnitTable>) -> HashSet<(String, String)> {
     let Some(t) = table else {
         return HashSet::new();
     };
-    t.services
-        .iter()
-        .filter(|(_, decl)| {
-            decl.handlers.iter().any(|h| {
-                bynk_check::actors::call_admission_for(h, &t.actors)
-                    .is_some_and(|a| a.sum.is_some())
-            })
-        })
-        .map(|(name, _)| name.clone())
-        .collect()
+    let mut out = HashSet::new();
+    for (name, decl) in &t.services {
+        for h in &decl.handlers {
+            let key = match bynk_lower::lower_handler_kind_ir(&h.kind) {
+                bynk_ir::IrHandlerKind::Call
+                    if bynk_check::actors::call_admission_for(h, &t.actors)
+                        .is_some_and(|a| a.sum.is_some()) =>
+                {
+                    "call".to_string()
+                }
+                bynk_ir::IrHandlerKind::Http { method, path }
+                    if bynk_check::actors::sum_members_for(h, &t.actors).is_some() =>
+                {
+                    crate::emitter::http_handler_method_name_ir(method, &path)
+                }
+                _ => continue,
+            };
+            out.insert((name.clone(), key));
+        }
+    }
+    out
 }
 
 /// v0.119: `Some((run_var, agent_name))` when `prop` is a history property — its
@@ -4796,7 +4849,7 @@ fn emit_test_case_function(
         &cross,
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
-        target_call_sum_services(unit_tables.get(target_name)),
+        target_sum_handlers(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
         source,
@@ -6032,7 +6085,7 @@ fn emit_test_property_function(
         &cross,
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
-        target_call_sum_services(unit_tables.get(target_name)),
+        target_sum_handlers(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
         source,
@@ -6254,7 +6307,7 @@ fn emit_test_history_property_function(
         &cross,
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
-        target_call_sum_services(unit_tables.get(target_name)),
+        target_sum_handlers(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
         source,
@@ -6620,12 +6673,25 @@ fn sysdrive_driver(
     binding: &str,
     decode_fn: &str,
     payload: &str,
+    signs_claims: bool,
 ) -> TsStmt {
     params.push(TsParam {
         name: "__sub".to_string(),
         ty: Some(TsType::named("string")),
         optional: false,
     });
+    // #2019: a refinement-guarded route signs the claims the acting actor
+    // presents (`{}` for a non-refinement actor) next to `sub`.
+    if signs_claims {
+        params.push(TsParam {
+            name: "__claims".to_string(),
+            ty: Some(TsType::named_with_args(
+                "globalThis.Record",
+                vec![TsType::named("string"), TsType::named("unknown")],
+            )),
+            optional: false,
+        });
+    }
     let mut body = Vec::new();
     if let Some(stmt) = body_stmt {
         body.push(stmt);

@@ -697,3 +697,160 @@ pub fn claim_predicate_to_js(pred: &ClaimPredicate, claims_var: &str) -> String 
 fn js_str_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
+
+/// #2019: what a witness claim set requires of one claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClaimNeed {
+    /// Present and truthy (`hasClaim`).
+    Truthy,
+    /// Present and string-equal to the value (`claimEquals`).
+    Equals(String),
+    /// Absent (a negated `hasClaim`/`claimEquals`).
+    Absent,
+}
+
+type ClaimSet = std::collections::BTreeMap<String, ClaimNeed>;
+
+/// Merge two claim sets, or `None` when they contradict.
+fn merge_claims(a: &ClaimSet, b: &ClaimSet) -> Option<ClaimSet> {
+    let mut out = a.clone();
+    for (name, need) in b {
+        let merged = match (out.get(name), need) {
+            (None, n) => n.clone(),
+            (Some(x), y) if x == y => x.clone(),
+            (Some(ClaimNeed::Truthy), ClaimNeed::Equals(v))
+            | (Some(ClaimNeed::Equals(v)), ClaimNeed::Truthy)
+                if !v.is_empty() =>
+            {
+                ClaimNeed::Equals(v.clone())
+            }
+            _ => return None,
+        };
+        out.insert(name.clone(), merged);
+    }
+    Some(out)
+}
+
+/// Every claim set satisfying `pred` (when `want` is true) or falsifying it,
+/// one per way the `||`/`&&` alternatives can be met. The closed predicate
+/// vocabulary keeps this small.
+fn claim_witnesses(pred: &ClaimPredicate, want: bool) -> Vec<ClaimSet> {
+    let one = |name: &str, need: ClaimNeed| vec![ClaimSet::from([(name.to_string(), need)])];
+    let both = |l: Vec<ClaimSet>, r: Vec<ClaimSet>| {
+        l.iter()
+            .flat_map(|a| r.iter().filter_map(move |b| merge_claims(a, b)))
+            .collect()
+    };
+    let either = |mut l: Vec<ClaimSet>, r: Vec<ClaimSet>| {
+        l.extend(r);
+        l
+    };
+    match (pred, want) {
+        (ClaimPredicate::HasClaim(n), true) => one(n, ClaimNeed::Truthy),
+        (ClaimPredicate::ClaimEquals(n, v), true) => one(n, ClaimNeed::Equals(v.clone())),
+        (ClaimPredicate::HasClaim(n) | ClaimPredicate::ClaimEquals(n, _), false) => {
+            one(n, ClaimNeed::Absent)
+        }
+        (ClaimPredicate::And(l, r), true) | (ClaimPredicate::Or(l, r), false) => {
+            both(claim_witnesses(l, want), claim_witnesses(r, want))
+        }
+        (ClaimPredicate::Or(l, r), true) | (ClaimPredicate::And(l, r), false) => {
+            either(claim_witnesses(l, want), claim_witnesses(r, want))
+        }
+        (ClaimPredicate::Not(inner), _) => claim_witnesses(inner, !want),
+    }
+}
+
+/// #2019: a JavaScript object literal of JWT claims that satisfies a
+/// refinement actor's predicate, for the `system`-tier test driver to sign
+/// next to `sub` when a case acts as that refinement (`by Admin("root")`):
+/// `hasClaim("admin")` → `{ "admin": true }`, `claimEquals("role", "ops")` →
+/// `{ "role": "ops" }`. The Worker's seam then checks the predicate against
+/// the verified claims exactly as it would a real token's. `None` when no
+/// claim set satisfies the predicate (`hasClaim("a") && !hasClaim("a")`).
+pub fn claim_witness_js(pred: &ClaimPredicate) -> Option<String> {
+    let set = claim_witnesses(pred, true).into_iter().next()?;
+    let entries = set
+        .iter()
+        .filter_map(|(name, need)| {
+            let value = match need {
+                ClaimNeed::Truthy => "true".to_string(),
+                ClaimNeed::Equals(v) => format!("\"{}\"", js_str_escape(v)),
+                ClaimNeed::Absent => return None,
+            };
+            Some(format!("\"{}\": {value}", js_str_escape(name)))
+        })
+        .collect::<Vec<_>>();
+    Some(if entries.is_empty() {
+        "{}".to_string()
+    } else {
+        format!("{{ {} }}", entries.join(", "))
+    })
+}
+
+#[cfg(test)]
+mod claim_witness_tests {
+    use super::{ClaimPredicate as P, claim_witness_js};
+
+    fn has(n: &str) -> Box<P> {
+        Box::new(P::HasClaim(n.to_string()))
+    }
+    fn eq(n: &str, v: &str) -> Box<P> {
+        Box::new(P::ClaimEquals(n.to_string(), v.to_string()))
+    }
+
+    #[test]
+    fn a_single_claim_is_signed() {
+        assert_eq!(
+            claim_witness_js(&has("admin")).as_deref(),
+            Some("{ \"admin\": true }")
+        );
+        assert_eq!(
+            claim_witness_js(&eq("role", "ops")).as_deref(),
+            Some("{ \"role\": \"ops\" }")
+        );
+    }
+
+    #[test]
+    fn a_conjunction_signs_both_and_a_disjunction_its_first_arm() {
+        assert_eq!(
+            claim_witness_js(&P::And(has("a"), eq("role", "ops"))).as_deref(),
+            Some("{ \"a\": true, \"role\": \"ops\" }")
+        );
+        assert_eq!(
+            claim_witness_js(&P::Or(has("a"), has("b"))).as_deref(),
+            Some("{ \"a\": true }")
+        );
+    }
+
+    #[test]
+    fn a_negation_leaves_the_claim_out_and_steers_the_disjunction() {
+        assert_eq!(
+            claim_witness_js(&P::Not(has("banned"))).as_deref(),
+            Some("{}")
+        );
+        // `(a || b) && !a` is met only by `b`.
+        assert_eq!(
+            claim_witness_js(&P::And(
+                Box::new(P::Or(has("a"), has("b"))),
+                Box::new(P::Not(has("a")))
+            ))
+            .as_deref(),
+            Some("{ \"b\": true }")
+        );
+        // `!(a && b)` is met by leaving `a` out.
+        assert_eq!(
+            claim_witness_js(&P::Not(Box::new(P::And(has("a"), has("b"))))).as_deref(),
+            Some("{}")
+        );
+    }
+
+    #[test]
+    fn a_contradiction_has_no_witness() {
+        assert_eq!(
+            claim_witness_js(&P::And(has("a"), Box::new(P::Not(has("a"))))),
+            None
+        );
+        assert_eq!(claim_witness_js(&P::And(eq("r", "x"), eq("r", "y"))), None);
+    }
+}

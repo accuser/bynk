@@ -1,0 +1,19 @@
+suite r as system {
+	-- #2019: the system tier signs the claims the acting refinement's predicate
+	-- checks, so the Worker's seam admits it; its base actor carries none and is
+	-- refused with a `403`, as a real token lacking the claim would be.
+	case "an admin is answered by the Worker" {
+		let r <- api.GET("/admin") by Admin("root")
+		expect r == Ok("root")
+	}
+
+	case "an operator is answered by the Worker" {
+		let r <- api.GET("/ops") by Operator("ada")
+		expect r == Ok("ada")
+	}
+
+	case "a plain user is forbidden by the Worker" {
+		let r <- api.GET("/admin") by User("root")
+		expect r is Forbidden
+	}
+}

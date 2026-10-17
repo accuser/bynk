@@ -4114,9 +4114,11 @@ pub(crate) enum BodyMode {
         /// (P6.24a's own pure, unconditional mirror), not the raw AST
         /// `HandlerKind` this field used to store.
         test_service_handlers: HashMap<String, Vec<bynk_ir::IrHandlerKind>>,
-        /// I3 (#1971): the test services whose `on call` handler binds an
-        /// actor sum, whose `deps.who` a call-site principal builds.
-        call_sum_services: HashSet<String>,
+        /// I3 (#1971), #2020: the `(service, key)` handlers that bind an actor
+        /// sum, whose `deps.who` a call-site principal builds. `key` is
+        /// `"call"` for an `on call` handler and the emitted method name
+        /// (`http_handler_method_name_ir`) for an http route.
+        sum_handlers: HashSet<(String, String)>,
         /// #1994: the target has a handler that sends with `~>`, so `deps`
         /// carries the `__exec` double and each addressed service call is
         /// wrapped in `__bynkSettle(deps, …)`.
@@ -4153,7 +4155,26 @@ pub(crate) enum BodyMode {
         /// the raw driver. Mirrors the `type_ns` `emit_system_http_support`
         /// computes from the same suite target.
         system_http_type_ns: String,
+        /// #2019: the refinement-guarded routes and the claims each
+        /// refinement actor signs, for a call acting as a refinement.
+        system_http_claims: SystemHttpClaims,
     },
+}
+
+/// #2019: what a `system`-tier call needs to sign the claims a refinement
+/// actor's predicate checks (`actor Admin = User where hasClaim("admin")`).
+/// A route guarded by a refinement has drivers that take a trailing claims
+/// object, signed into the JWT next to `sub`; a call acting as a refinement
+/// actor passes that actor's witness claims, and any other call passes `{}`,
+/// so the Worker's seam answers `403` exactly as it would a real token
+/// lacking the claim.
+#[derive(Debug, Clone, Default)]
+pub struct SystemHttpClaims {
+    /// The `(service, method, path)` routes whose `by` actor is a refinement.
+    pub routes: HashSet<(String, String, String)>,
+    /// Each refinement actor's witness claims, as a JavaScript object literal
+    /// (`bynk_check::actors::claim_witness_js`).
+    pub actors: HashMap<String, String>,
 }
 
 /// Per-body lowering context: what module we are emitting into ([`ModuleCtx`]),
@@ -4648,13 +4669,14 @@ impl<'a> LowerCtx<'a> {
         }
     }
 
-    /// I3 (#1971): whether the test service `name`'s `on call` handler binds
-    /// an actor sum.
-    pub(crate) fn is_call_sum_service(&self, name: &str) -> bool {
+    /// I3 (#1971), #2020: whether the test service `service`'s handler at
+    /// `key` (`"call"`, or an http handler's emitted method name) binds an
+    /// actor sum, so a call-site principal builds its `deps.who`.
+    pub(crate) fn is_sum_handler(&self, service: &str, key: &str) -> bool {
         match &self.mode {
-            BodyMode::TestCase {
-                call_sum_services, ..
-            } => call_sum_services.contains(name),
+            BodyMode::TestCase { sum_handlers, .. } => {
+                sum_handlers.contains(&(service.to_string(), key.to_string()))
+            }
             _ => false,
         }
     }
@@ -4732,6 +4754,27 @@ impl<'a> LowerCtx<'a> {
                 ..
             } => system_http_type_ns.as_str(),
             _ => "",
+        }
+    }
+
+    /// #2019: the claims argument a `system`-tier call on `route` passes, if
+    /// the route is refinement-guarded: the acting refinement's witness
+    /// claims, or `{}` for any other actor.
+    pub(crate) fn system_http_claims_arg(
+        &self,
+        route: &(String, String, String),
+    ) -> Option<String> {
+        match &self.mode {
+            BodyMode::IntegrationCase {
+                system_http_claims, ..
+            } if system_http_claims.routes.contains(route) => Some(
+                self.call_site_actor
+                    .as_ref()
+                    .and_then(|a| system_http_claims.actors.get(a))
+                    .cloned()
+                    .unwrap_or_else(|| "{}".to_string()),
+            ),
+            _ => None,
         }
     }
 
