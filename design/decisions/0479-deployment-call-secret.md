@@ -14,7 +14,7 @@ every deployed context has a public address. Anyone could call any `on call`
 service from the internet, claim any context as the caller, and inject events
 into any subscriber. The contract hash is no credential: it is in
 `bynk-contracts.json`, and a 409 echoes it back. The interop track
-(`design/tracks/interop.md` §3.3, §11 Q1, §12) settled a fix outside the
+(`design/archive/retired-tracks.md`, interop track Q1) settled a fix outside the
 track: its D2 option (d), a shared per-deployment secret, until per-edge
 signatures (its slice I2) replace it.
 
@@ -25,7 +25,7 @@ own `env`. Each throws, naming the binding, rather than send without it. On
 the receiving side, the first statement of the `/_bynk/call/` and
 `/_bynk/event/` dispatches checks it. The check comes before the service
 lookup, the contract check and the body read. It runs for every handler,
-whether or not it binds `by c: Caller` (track §11 Q5). A failure answers `401`
+whether or not it binds `by c: Caller` (interop track Q5). A failure answers `401`
 with the body `Unauthorized`, so a sender without the secret cannot tell
 services apart (no 404 against 409), never sees a contract hash, and cannot
 write the skew log line. The comparison runs over SHA-256 digests of both

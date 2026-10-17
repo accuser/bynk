@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (v0.341)
 
-**Context.** The interop track's D2 (`design/tracks/interop.md` §8, §11 Q3,
+**Context.** The interop track's D2 (`design/archive/retired-tracks.md`, interop track Q3,
 Q4, Q5) settled how code that is not Bynk calls a context. ADR 0485
 (I2) proves every caller by a per-edge signature, so
 the mechanism exists. What a handler needs is to tell a foreign caller from a
@@ -63,7 +63,7 @@ Bynk context in the type of its `by` binder. `CallerId` must stay `String` and
     told apart by name.
   - `caller_binder_for` no longer resolves for a sum, whose binder is the
     resolved actor, not a `CallerId`.
-- **The secret's hand-off (§11 Q4).** The compiler lists each context's foreign
+- **The secret's hand-off (interop track Q4).** The compiler lists each context's foreign
   callers in `bynk-secrets.json` as `foreign` (`actor`, `secret`, `worker`).
   This is additive within manifest version 2: an absent list means none.
   - `bynk deploy` lists each secret as `managed` on that context.

@@ -5,9 +5,9 @@
 **Context.** A Bynk context could reach a Worker that is not part of its project only through
 `Fetch`, over the public internet: every generated `wrangler.toml` sets
 `global_fetch_strictly_public`, and `consumes` reaches only Bynk contexts. The interop track
-(`design/tracks/interop.md`, spine #1935) settled D4 (#1972) as option (a): a first-party platform
+(`design/archive/retired-tracks.md`, interop track spine #1973) settled D4 (#1972) as option (a): a first-party platform
 capability used through the standard-library track's derived capabilities (its D3, ADR 0469), and
-listed this as its front-loaded ADR 4, landing with slice I5. §11 Q8 settled the two platform
+listed this as its front-loaded ADR 4, landing with slice I5. Interop track Q8 settled the two platform
 behaviours: `bynk deploy` warns, never refuses, when the named Worker is missing, and `bynk dev`
 binds a per-instance test double by default and a locally running Worker where Miniflare supports
 it. Both were to be confirmed before shipping. I5 is platform work only (ADR 0023): no grammar
@@ -50,7 +50,7 @@ changes.
   order, the `--context` absent-dependency gate and the contract-skew gate, and under `--env` its
   target is copied as declared rather than environment-qualified: Bynk did not name it, so
   `legacy-billing-staging` would be a Worker nobody made.
-- **D7 — Deploy warns, never refuses (§11 Q8).** The plan shows each binding with no action
+- **D7 — Deploy warns, never refuses (interop track Q8).** The plan shows each binding with no action
   (`service SERVICE_BILLING legacy-billing (foreign Worker; not provisioned)`; in JSON,
   `foreign_services: [{binding, worker}]`). After authenticating and before confirming, deploy asks
   the account once per Worker with `wrangler deployments list --name <worker> --json`. Cloudflare's
@@ -58,7 +58,7 @@ changes.
   upload will be rejected. Any other failure produces a warning that the check could not be made.
   `--dry-run` stays offline and does not ask. The driver refuses nothing: a Worker created between
   the check and the push is fine.
-- **D8 — Dev stands in by default (§11 Q8).** For each context it serves, `bynk dev` writes one
+- **D8 — Dev stands in by default (interop track Q8).** For each context it serves, `bynk dev` writes one
   stand-in Worker per foreign Worker the context binds, under `.bynk/dev/stand-ins/`, and passes it
   to the context's own `wrangler dev` as an extra `-c` config. A stand-in answers every request with
   503 and a body naming the bindings and the way out.
@@ -131,7 +131,7 @@ changes.
 - `global_fetch_strictly_public` stays: `Fetch` remains public, and `Service` is the only private
   path.
 - Deferred:
-  - an RPC (`WorkerEntrypoint`) surface (track §11 Q9);
+  - an RPC (`WorkerEntrypoint`) surface (interop track Q9);
   - typed clients generated from a foreign Worker's types;
   - user-chosen stand-in responses under `bynk dev`;
   - per-environment Worker names for a foreign Worker.

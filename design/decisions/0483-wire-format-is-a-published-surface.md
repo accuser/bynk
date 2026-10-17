@@ -12,7 +12,7 @@ malformed body was a `500`, the method was never checked, an inline field
 refinement was neither hashed nor checked on decode, and a `Duration` field
 was not guarded. ADR 0310 publishes one small surface beside a codegen that
 stays free: the emit ABI, "exactly four items". The interop track
-(`design/tracks/interop.md` §8 D1, §11 Q2) settled the same treatment for the
+(`design/archive/retired-tracks.md`, interop track D1, Q2) settled the same treatment for the
 wire format, versioned on its own.
 
 **Decision.** The cross-context wire format is a second published surface

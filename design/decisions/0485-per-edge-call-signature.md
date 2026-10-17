@@ -8,7 +8,7 @@ one trust domain". ADR 0479 (#2004) showed `/_bynk/call/` and `/_bynk/event/`
 answer on every Worker's public address, and contained that with one shared
 `BYNK_CALL_SECRET`. A shared secret admits members of the deployment but cannot
 tell them apart: any holder can claim any caller, and the interop track
-(`design/tracks/interop.md` §8 D2) cannot let a non-Bynk caller in on those
+(`design/archive/retired-tracks.md`, interop track D2) cannot let a non-Bynk caller in on those
 terms. D2 settled option (c), a signed caller header under a per-edge secret,
 as the mechanism, with this slice (I2) replacing the shared secret for every
 Bynk edge.
@@ -63,7 +63,7 @@ Bynk edge.
   in-place change to version 1: from here on, the signature, its headers and
   the check order are frozen with the version like everything else.
 - **Every request, every handler.** A binder-less `on call` and every event
-  subscriber verify too (track §11 Q5). An undeclared caller has no key, so it
+  subscriber verify too (interop track Q5). An undeclared caller has no key, so it
   cannot reach any internal route.
 - **Provisioning.** `bynk deploy` derives the edges from the build's own
   `[[services]]` bindings between the project's Workers, lists each key as a

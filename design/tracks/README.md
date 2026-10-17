@@ -82,7 +82,6 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`interop.md`](interop.md) | [#1973](https://github.com/bynk-lang/bynk/issues/1973) | Settling | Interop with existing TypeScript Workers: the cross-context wire format as a published contract, a non-Bynk caller's identity, a generated TypeScript client, and calling a non-Bynk Worker over a Service Binding |
 | [`post-trajectory-crate-hygiene.md`](post-trajectory-crate-hygiene.md) | [#1533](https://github.com/accuser/bynk/issues/1533) | Settling | READMEs, crate-local unit tests, comment rewrite, and module decomposition left open after the compiler-trajectory's eight phases closed — internal-architecture theme, not language surface, continuing the posture `compiler-architecture.md`/`crate-decomposition.md`/`content-ownership.md` took |
 | [`standard-library.md`](standard-library.md) | [#1936](https://github.com/accuser/bynk/issues/1936) | Slicing (S0 shipped, #1940) | The standard library: its four layers (kernel, commons, the `bynk` surface, `bynk.cloudflare`), its placement in a `bynk-std` crate and its 1.0 promise, derived capabilities for context-owned platform resources (`capability Sessions = Kv`), and the order in which the Workers surface is admitted |
 
@@ -227,6 +226,13 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`interop.md`** — spine [#1973](https://github.com/bynk-lang/bynk/issues/1973): adopting Bynk
+  beside existing TypeScript Workers. A live forgery defect found while settling was fixed first
+  (per-deployment call secret, ADR 0479); then wire format version 1 was published (ADR 0483), every
+  internal request signed per edge (ADR 0485), foreign callers admitted with a `Foreign` actor scheme
+  (ADR 0486), a typed TypeScript client generated for them, and experimental `bynk.cloudflare`
+  `Service` added for calling a non-Bynk Worker (ADR 0480). Six slices shipped (v0.335.0–v0.343.0).
+  Retired 17 October 2026.
 - **Toolchain pins as gates** (no track doc) — spine
   [#1670](https://github.com/accuser/bynk/issues/1670), opened from the
   [2026-10-01 review](../reviews/2026-10-01-language-implementation-review.md): every external-tool
