@@ -201,6 +201,37 @@ pub(crate) fn conflicting_env_passthrough(wrangler_args: &[String]) -> Option<&s
         .map(String::as_str)
 }
 
+/// #2055: the refusal for a `--secrets-file` passed through after `--` when
+/// the run includes a first deploy. That deploy uploads the Worker's secrets
+/// with its own `wrangler deploy --secrets-file`, so the passthrough would be
+/// a second, contradictory one. Matched bare or `=`-joined, as
+/// [`conflicting_env_passthrough`] matches. `None` when there is no such
+/// argument or every Worker in `order` has been deployed in `environment`
+/// (a redeploy passes nothing of its own). Pure, so the wording is tested.
+pub(crate) fn secrets_file_passthrough_refusal(
+    wrangler_args: &[String],
+    order: &[String],
+    lock: &DeployLock,
+    environment: &str,
+) -> Option<String> {
+    let arg = wrangler_args
+        .iter()
+        .find(|arg| arg.as_str() == "--secrets-file" || arg.starts_with("--secrets-file="))?;
+    let first: Vec<String> = order
+        .iter()
+        .filter(|worker| !lock.is_deployed(environment, worker))
+        .map(|worker| format!("`{}`", deployed_worker_name(environment, worker)))
+        .collect();
+    if first.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "bynk: `{arg}` after `--` conflicts with the secrets file `bynk deploy` uploads with a new Worker's first version ({}).\n  \
+         Pass it to bynk instead, before `--`: `bynk deploy --secrets-file <file>`.\n",
+        first.join(", ")
+    ))
+}
+
 /// Run the slice-0 single-context deployment pipeline.
 pub fn run(
     tb: &dyn Toolbox,
@@ -310,8 +341,8 @@ pub fn run(
         // it still provide the contract this worker was compiled against?
         // Without this, the push succeeds and production discovers the skew by
         // 409ing. `--context` is precisely the flag that makes this reachable.
-        let expects = match read_contracts_manifest(&workers_dir.join(worker)) {
-            Ok(m) => m.expects,
+        let manifest = match read_contracts_manifest(&workers_dir.join(worker)) {
+            Ok(m) => m,
             Err(e) => {
                 eprintln!(
                     "bynk: could not read `{worker}`'s {}: {e}",
@@ -321,7 +352,7 @@ pub fn run(
             }
         };
         let skews = contract_skews(
-            &expects,
+            &manifest.expects,
             &lock,
             bynk_emit::project::worker_dir_name,
             &opts.environment,
@@ -332,6 +363,41 @@ pub fn run(
                 contract_skew_refusal(&opts.environment, worker, &skews)
             );
             return ExitCode::FAILURE;
+        }
+
+        // #2077: and the callee half. Does this build still provide what every
+        // *other* live Worker was compiled against? Without this, pushing a
+        // callee whose contract changed answers each live caller 409.
+        let callee_skews = callee_contract_skews(
+            worker,
+            &manifest.provides,
+            &lock,
+            bynk_emit::project::worker_dir_name,
+            &opts.environment,
+        );
+        if !callee_skews.is_empty() {
+            // A caller this build no longer has gets its own remedy: a
+            // whole-project deploy would not move it.
+            let (built, orphaned) = split_orphaned_callers(callee_skews, &graph);
+            if !built.is_empty() {
+                eprint!(
+                    "{}",
+                    callee_contract_skew_refusal(&opts.environment, worker, &built)
+                );
+            }
+            if !orphaned.is_empty() {
+                eprint!(
+                    "{}",
+                    orphaned_caller_skew_refusal(&opts.environment, worker, &orphaned)
+                );
+            }
+            return ExitCode::FAILURE;
+        }
+        for caller in unrecorded_callers(worker, &graph, &lock, &opts.environment) {
+            eprint!(
+                "{}",
+                unrecorded_caller_warning(&opts.environment, worker, &caller)
+            );
         }
     }
 
@@ -422,6 +488,16 @@ pub fn run(
     // rather than met as wrangler's own error partway through a deploy.
     if let Some(message) = kv_title_collision(&resources, &lock, &opts.environment) {
         eprintln!("bynk: {message}");
+        return ExitCode::FAILURE;
+    }
+    // #2055: a first deploy hands `wrangler deploy` Bynk's own
+    // `--secrets-file`, so a passthrough one would be a second, with
+    // wrangler deciding which wins. Refused before the plan, as `--env`'s
+    // clash is.
+    if let Some(refusal) =
+        secrets_file_passthrough_refusal(&opts.wrangler_args, &order, &lock, &opts.environment)
+    {
+        eprint!("{refusal}");
         return ExitCode::FAILURE;
     }
 
@@ -616,6 +692,14 @@ pub fn run(
     // Shared across the loop so two contexts wanting the same secret prompt
     // once. Dropped with the run — nothing here is ever written (ADR 0195 D1).
     let mut resolved_secrets = BTreeMap::new();
+    // #2055: a first deploy's secrets file that a SIGKILLed run left behind
+    // goes before this run might write one of its own.
+    let stale_removed = sweep_stale_upload_dirs(&std::env::temp_dir());
+    if stale_removed > 0 {
+        eprintln!(
+            "bynk: removed {stale_removed} secrets file(s) an interrupted deploy left in the temp directory"
+        );
+    }
     for (i, worker) in order.iter().enumerate() {
         if order.len() > 1 {
             eprint!(
@@ -641,6 +725,7 @@ pub fn run(
                 foreign_secrets: &foreign_secrets,
                 listed: &listed,
                 resolved: &mut resolved_secrets,
+                with_upload: secrets_file_supported(&probe),
             },
             &opts.wrangler_args,
             &opts.environment,
@@ -657,6 +742,12 @@ pub fn run(
                     .map(|m| Some(m.provides))
                     .unwrap_or(None);
                 lock.record_deployed(&opts.environment, worker, provided);
+                // #2077: and what it was compiled against, so a later
+                // `--context` push of one of its callees can be refused
+                // before it ships a callee this Worker would 409 against.
+                if let Ok(m) = read_contracts_manifest(&workers_dir.join(worker)) {
+                    lock.record_expects(&opts.environment, worker, m.expects);
+                }
                 // I4 (#1970): and what its declared foreign callers may call
                 // it at, so the ledger knows the consumers no manifest of
                 // their own records.
@@ -1003,6 +1094,105 @@ pub(crate) fn absent_dependencies_refusal(
             .collect::<Vec<_>>()
             .join(", "),
         if absent.len() == 1 { "has" } else { "have" },
+        deploy_command(environment)
+    )
+}
+
+/// #2077: the `--context` refusal for a callee whose new build no longer
+/// provides the contract its live callers were compiled against — the callee
+/// half of [`contract_skew_refusal`], under the same code. Each live caller and
+/// the callee by their [`deployed_worker_name`]; each finding names the
+/// contract (`<context>.<service>`) and both hashes; the remedy repeats the
+/// run's `--env` ([`deploy_command`]). Pure, so the wording is goldened.
+pub(crate) fn callee_contract_skew_refusal(
+    environment: &str,
+    worker: &str,
+    skews: &[CalleeSkew],
+) -> String {
+    let mut out = format!(
+        "bynk: `{}` no longer provides the contract its live callers were compiled against ({CONTRACT_SKEW}):\n",
+        deployed_worker_name(environment, worker)
+    );
+    for s in skews {
+        out.push_str(&format!(
+            "  `{}` calls {}.{} — compiled against {}, this build provides {}\n",
+            deployed_worker_name(environment, &s.caller),
+            s.dependency,
+            s.service,
+            s.expected,
+            s.provided
+        ));
+    }
+    out.push_str(
+        "  Deploying this would ship a callee that rejects its live callers (409 ContractMismatch) on every call.\n",
+    );
+    out.push_str(&format!(
+        "  Deploy the whole project (`{}`) so both sides move together.\n",
+        deploy_command(environment)
+    ));
+    out
+}
+
+/// #2077 review: the refusal for a callee whose new build breaks a live caller
+/// this project no longer builds — a Worker of a removed context, still
+/// recorded in the ledger (the plan's `orphan worker`). A whole-project deploy
+/// neither redeploys nor checks it, and `--prune` never deletes a Worker or its
+/// record, so the remedy is to retire it (delete the Worker, then drop its
+/// ledger entry, without which this gate keeps refusing) or to restore its
+/// context and deploy the whole project ([`deploy_command`]). Pure, so the
+/// wording is goldened.
+pub(crate) fn orphaned_caller_skew_refusal(
+    environment: &str,
+    worker: &str,
+    skews: &[CalleeSkew],
+) -> String {
+    let mut out = format!(
+        "bynk: `{}` no longer provides the contract a live Worker this project no longer builds was compiled against ({CONTRACT_SKEW}):\n",
+        deployed_worker_name(environment, worker)
+    );
+    for s in skews {
+        out.push_str(&format!(
+            "  `{}` (orphaned) calls {}.{} — compiled against {}, this build provides {}\n",
+            deployed_worker_name(environment, &s.caller),
+            s.dependency,
+            s.service,
+            s.expected,
+            s.provided
+        ));
+    }
+    out.push_str(
+        "  Deploying this would ship a callee that rejects it (409 ContractMismatch) on every call, and a whole-project deploy would not move it: that reports an orphaned Worker but never redeploys or deletes it, and `--prune` never deletes a Worker either.\n",
+    );
+    let mut callers: Vec<&str> = skews.iter().map(|s| s.caller.as_str()).collect();
+    callers.dedup();
+    out.push_str(&format!(
+        "  If it is unused, delete it ({}) and remove its entry ({}) from {LOCK_FILE}. If it is still needed, restore its context and deploy the whole project (`{}`).\n",
+        callers
+            .iter()
+            .map(|c| format!(
+                "`npx wrangler delete --name {}`",
+                deployed_worker_name(environment, c)
+            ))
+            .collect::<Vec<_>>()
+            .join(", "),
+        callers
+            .iter()
+            .map(|c| format!("`[environments.{environment}.workers.{c}]`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        deploy_command(environment)
+    ));
+    out
+}
+
+/// #2077: the warning for a live caller of the pushed `worker` whose ledger
+/// record predates recorded `expects`, so the callee gate cannot check it.
+/// Never a refusal: silence is not a match.
+pub(crate) fn unrecorded_caller_warning(environment: &str, worker: &str, caller: &str) -> String {
+    format!(
+        "bynk: warning: could not check that `{}` still provides what the live `{}` was compiled against — its deploy record predates recorded expectations ({CONTRACT_SKEW}). A whole-project deploy (`{}`) records them.\n",
+        deployed_worker_name(environment, worker),
+        deployed_worker_name(environment, caller),
         deploy_command(environment)
     )
 }
@@ -1682,6 +1872,53 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_passthrough_secrets_file_is_refused_only_when_the_run_has_a_first_deploy() {
+        // #2055: a first deploy passes its own `--secrets-file`.
+        let order = names(&["api", "web"]);
+        let mut lock = DeployLock::default();
+        lock.record_deployed("staging", "api", None);
+        let args = |a: &[&str]| names(a);
+        assert_eq!(
+            secrets_file_passthrough_refusal(
+                &args(&["--secrets-file", "s.env"]),
+                &order,
+                &lock,
+                "staging"
+            )
+            .as_deref(),
+            Some(
+                "bynk: `--secrets-file` after `--` conflicts with the secrets file `bynk deploy` uploads with a new Worker's first version (`web-staging`).\n  \
+                 Pass it to bynk instead, before `--`: `bynk deploy --secrets-file <file>`.\n"
+            )
+        );
+        assert!(
+            secrets_file_passthrough_refusal(
+                &args(&["--secrets-file=s.env"]),
+                &order,
+                &lock,
+                "staging"
+            )
+            .is_some_and(|r| r.contains("`--secrets-file=s.env`")),
+            "the `=`-joined spelling is the same flag"
+        );
+        lock.record_deployed("staging", "web", None);
+        assert_eq!(
+            secrets_file_passthrough_refusal(
+                &args(&["--secrets-file", "s.env"]),
+                &order,
+                &lock,
+                "staging"
+            ),
+            None,
+            "a redeploy passes no secrets file of its own"
+        );
+        assert_eq!(
+            secrets_file_passthrough_refusal(&args(&["--minify"]), &order, &lock, "default"),
+            None
+        );
+    }
+
+    #[test]
     fn a_wrangler_below_the_floor_refuses_only_a_push_that_declares_a_durable_object() {
         // #1796: `exports` is read from WRANGLER_MIN on, so below it a context
         // with an agent can't deploy; one without still can.
@@ -2299,6 +2536,221 @@ queue = "jobs"
             &DeployLock::default(),
             |c| c.replace('.', "-"),
             "default",
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    // ---- #2077: the callee half of the contract-skew gate ----
+
+    /// Chapter 14 of the shop, live: payment provides `authorise` at
+    /// `febd15c2757b72e1`, and orders was compiled against it.
+    fn live_shop(orders_expects: Option<&str>) -> DeployLock {
+        let mut lock = lock_with("shop-payment", &[("authorise", "febd15c2757b72e1")]);
+        lock.record_expects("default", "shop-payment", BTreeMap::new());
+        lock.record_deployed("default", "shop-orders", Some(BTreeMap::new()));
+        if let Some(hash) = orders_expects {
+            lock.record_expects(
+                "default",
+                "shop-orders",
+                expects("shop.payment", "authorise", hash),
+            );
+        }
+        lock
+    }
+
+    fn provides(svc: &str, hash: &str) -> BTreeMap<String, String> {
+        BTreeMap::from([(svc.to_string(), hash.to_string())])
+    }
+
+    fn worker_of(c: &str) -> String {
+        c.replace('.', "-")
+    }
+
+    #[test]
+    fn a_callee_whose_contract_changed_under_a_live_caller_is_refused() {
+        // The issue's reproduction: `authorise`'s parameter renamed, so the
+        // new build provides `da0d725f3a004040` while live orders stamps the
+        // old hash.
+        let lock = live_shop(Some("febd15c2757b72e1"));
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "default",
+        );
+        assert_eq!(
+            found,
+            [CalleeSkew {
+                caller: "shop-orders".into(),
+                dependency: "shop.payment".into(),
+                service: "authorise".into(),
+                expected: "febd15c2757b72e1".into(),
+                provided: "da0d725f3a004040".into(),
+            }]
+        );
+        let refusal = callee_contract_skew_refusal("default", "shop-payment", &found);
+        assert!(refusal.contains("`shop-orders` calls shop.payment.authorise"));
+        assert!(refusal.contains(CONTRACT_SKEW));
+    }
+
+    /// #2077 review: a caller this build still has is advised to deploy the
+    /// whole project, which moves it with the callee.
+    #[test]
+    fn a_built_caller_is_refused_with_the_whole_project_remedy() {
+        let lock = live_shop(Some("febd15c2757b72e1"));
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "default",
+        );
+        let bindings = graph(&[("shop-orders", &["shop-payment"]), ("shop-payment", &[])]);
+        let (built, orphaned) = split_orphaned_callers(found, &bindings);
+        assert_eq!(built.len(), 1);
+        assert!(orphaned.is_empty(), "{orphaned:?}");
+        let refusal = callee_contract_skew_refusal("default", "shop-payment", &built);
+        assert!(refusal.contains("Deploy the whole project (`bynk deploy`)"));
+    }
+
+    /// #2077 review: a caller of a context removed from the project is still
+    /// live in the ledger, and still refused — but a whole-project deploy
+    /// would neither move nor check it, so its refusal says to retire it (or
+    /// restore its context), never just to deploy the whole project.
+    #[test]
+    fn an_orphaned_caller_is_refused_with_the_orphan_remedy() {
+        let mut lock = live_shop(Some("febd15c2757b72e1"));
+        lock.record_deployed("staging", "shop-payment", Some(BTreeMap::new()));
+        lock.record_deployed("staging", "shop-legacy", Some(BTreeMap::new()));
+        lock.record_expects(
+            "staging",
+            "shop-legacy",
+            expects("shop.payment", "authorise", "febd15c2757b72e1"),
+        );
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "staging",
+        );
+        // This build has orders and payment; `shop-legacy` is gone.
+        let bindings = graph(&[("shop-orders", &["shop-payment"]), ("shop-payment", &[])]);
+        let (built, orphaned) = split_orphaned_callers(found, &bindings);
+        assert!(built.is_empty(), "{built:?}");
+        assert_eq!(orphaned.len(), 1);
+        assert_eq!(orphaned[0].caller, "shop-legacy");
+        let refusal = orphaned_caller_skew_refusal("staging", "shop-payment", &orphaned);
+        assert!(refusal.contains(CONTRACT_SKEW), "{refusal}");
+        assert!(
+            refusal.contains("`shop-legacy-staging` (orphaned) calls shop.payment.authorise"),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("`npx wrangler delete --name shop-legacy-staging`")
+                && refusal.contains("`[environments.staging.workers.shop-legacy]`")
+                && refusal.contains("`bynk deploy --env staging`"),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn a_callee_that_still_provides_the_live_hash_passes() {
+        let lock = live_shop(Some("febd15c2757b72e1"));
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "febd15c2757b72e1"),
+            &lock,
+            worker_of,
+            "default",
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_service_a_live_caller_still_calls_but_the_callee_removed_is_refused() {
+        let lock = live_shop(Some("febd15c2757b72e1"));
+        let found = callee_contract_skews(
+            "shop-payment",
+            &BTreeMap::new(),
+            &lock,
+            worker_of,
+            "default",
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].provided, "<absent>");
+    }
+
+    #[test]
+    fn a_pushed_worker_is_never_held_to_its_own_stale_record() {
+        // The gate is a `--context` gate, as D4 is: `run` reaches it only for
+        // a single selected context, so a whole-project run (which redeploys
+        // the callers beside the callee) is never refused by it — the
+        // binary-driven `deploy_env` test pins that. Here: a pushed caller's
+        // own recorded `expects` is being replaced, so it is no finding even
+        // when the pushed Worker's contract changed.
+        let mut lock = live_shop(Some("febd15c2757b72e1"));
+        lock.record_expects(
+            "default",
+            "shop-orders",
+            expects("shop.orders", "place", "0000000000000000"),
+        );
+        let found =
+            callee_contract_skews("shop-orders", &BTreeMap::new(), &lock, worker_of, "default");
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_caller_recorded_before_expects_is_not_refused_but_is_named_for_a_warning() {
+        // An old lock: orders is deployed, but the ledger never recorded what
+        // it expects. Silence is not a match, so no refusal; orders binds to
+        // payment in this build, so it is named for the warning.
+        let lock = live_shop(None);
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "default",
+        );
+        assert!(found.is_empty(), "{found:?}");
+        let bindings = graph(&[("shop-orders", &["shop-payment"]), ("shop-payment", &[])]);
+        assert_eq!(
+            unrecorded_callers("shop-payment", &bindings, &lock, "default"),
+            names(&["shop-orders"])
+        );
+        // A Worker that does not bind to payment is no caller of it.
+        let unrelated = graph(&[("shop-orders", &[]), ("shop-payment", &[])]);
+        assert!(unrecorded_callers("shop-payment", &unrelated, &lock, "default").is_empty());
+        // And once orders' expectations are recorded, there is nothing to warn of.
+        let recorded = live_shop(Some("febd15c2757b72e1"));
+        assert!(unrecorded_callers("shop-payment", &bindings, &recorded, "default").is_empty());
+    }
+
+    #[test]
+    fn a_caller_that_expects_nothing_of_the_callee_is_not_a_finding() {
+        let mut lock = live_shop(None);
+        lock.record_expects("default", "shop-orders", BTreeMap::new());
+        let found = callee_contract_skews(
+            "shop-payment",
+            &BTreeMap::new(),
+            &lock,
+            worker_of,
+            "default",
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_caller_live_in_another_environment_is_not_this_environments_caller() {
+        let lock = live_shop(Some("febd15c2757b72e1"));
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "staging",
         );
         assert!(found.is_empty(), "{found:?}");
     }

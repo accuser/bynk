@@ -176,6 +176,31 @@ fn set_fault_route(what: String) -> TsStmt {
     TsStmt::assign(ident("__route"), str_lit(what), None)
 }
 
+/// #2053: what a fault handler logs for a caught `e`, the expression
+/// `e instanceof globalThis.Error ? (e.stack || globalThis.String(e)) : e`.
+///
+/// Logging the error as a value reaches `wrangler tail` as its string,
+/// `Error: <message>`, with no frames, so an uploaded source map had nothing
+/// to map. A V8 stack's own first line is that same string, so nothing is
+/// lost; a thrown non-`Error` is logged as itself, as before. `||`, not `??`,
+/// so an empty `stack` (assignable on any `Error`) falls back to the string
+/// too, rather than logging nothing.
+pub(crate) fn fault_detail(e: &str) -> TsExpr {
+    cond_expr(
+        binary(
+            bynk_ts::TsBinaryOp::InstanceOf,
+            ident(e),
+            ident("globalThis.Error"),
+        ),
+        paren(binary(
+            bynk_ts::TsBinaryOp::Or,
+            member(ident(e), "stack"),
+            call(ident("globalThis.String"), vec![ident(e)]),
+        )),
+        ident(e),
+    )
+}
+
 fn try_catch_stmt(
     try_stmts: Vec<TsStmt>,
     catch_param: Option<&str>,
@@ -1423,7 +1448,11 @@ pub(crate) fn emit_worker_entry(
     // dispatch that faulted: the route *pattern* or `call <service>`, never
     // the request, so no key or value reaches the log. Caught, it is no
     // uncaught exception the platform would record, so without this a fault
-    // left no trace at all.
+    // left no trace at all. #2053: the log carries the error's stack
+    // (`fault_detail`), not its bare string, so an uploaded source map can
+    // lead a tail's frames back to `.bynk` lines. It does not rethrow: that
+    // would replace this 500 with the platform's own error page, and the
+    // queue handler's per-message `retry()` with a whole-batch retry.
     fetch_body.push(TsStmt::let_stmt(
         TsBindingName::Ident("__route".to_string()),
         Some(TsType::named("string")),
@@ -1442,7 +1471,7 @@ pub(crate) fn emit_worker_entry(
                         vec![format!("{context} "), " faulted".to_string()],
                         vec![ident("__route")],
                     ),
-                    ident("e"),
+                    fault_detail("e"),
                 ],
             )),
             return_(Some(text_response("Internal Server Error", 500))),
@@ -1718,7 +1747,10 @@ fn emit_queue_handler(
                     expr_stmt(method_call(
                         ident("globalThis.console"),
                         "error",
-                        vec![str_lit(format!("queue {} threw", route.name)), ident("e")],
+                        vec![
+                            str_lit(format!("queue {} threw", route.name)),
+                            fault_detail("e"),
+                        ],
                     )),
                     expr_stmt(method_call(ident("msg"), "retry", vec![])),
                 ],

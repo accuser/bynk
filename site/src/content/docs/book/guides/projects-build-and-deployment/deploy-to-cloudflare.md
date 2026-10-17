@@ -126,9 +126,31 @@ key-value storage API.
 
 ## Secrets
 
-`bynk deploy` sets your secrets before it pushes, and forgets them. Values move
-from wherever you keep them straight to `wrangler secret put` — they are never
-written to `bynk.deploy.lock`, to generated config, or to the plan.
+`bynk deploy` sets your secrets before your code can serve a request, and
+forgets them. A Worker that is already deployed gets them first, with
+`wrangler secret put`, and then the push. A new Worker gets them in the same
+upload as its code (`wrangler deploy --secrets-file`), so its first version
+already has them. Values go from wherever you keep them straight to wrangler —
+on stdin, or for a new Worker in a temporary file only you can read. That file
+is deleted as soon as the upload ends, even if you press Ctrl-C or CI sends
+`SIGTERM`: `bynk` waits for wrangler to stop before it exits. Only a `SIGKILL`
+can leave the file behind, and the next `bynk deploy` deletes it. Values are
+never written to `bynk.deploy.lock`, to generated config, or to the plan.
+
+Each secret set prints its name, never its value:
+
+```
+bynk: set secret `AUTH_JWT_SECRET` on `api`
+```
+
+On a new Worker the line ends `, with its first version`. If your wrangler is
+older than 4.74.0, which can't upload secrets with a new Worker, the deploy says
+so and sets them just after the first push. For that moment the new Worker
+answers `401` to any route that needs a secret.
+
+Give secrets to `bynk deploy --secrets-file`, not to wrangler after `--`. A run
+that includes a new Worker refuses `-- --secrets-file`, because that upload
+already passes its own file.
 
 Every line of the plan is marked with how Bynk came to know the name:
 
@@ -443,6 +465,14 @@ deployed — a Service Binding to a Worker that does not exist fails at upload.
 Bring a fresh topology up with a whole-project `bynk deploy` first; use
 `--context` for iteration after that.
 
+`--context` also refuses a push that would leave two live Workers disagreeing
+about a contract (`bynk.deploy.contract_skew`). It refuses a context compiled
+against a contract its live dependencies no longer provide. It also refuses a
+context whose new build no longer provides what a live caller was compiled
+against, naming each caller, the service and both hashes. Either way, deploy
+the whole project so both sides move together. See
+[Contract skew](/book/guides/projects-build-and-deployment/contract-skew/#better-deploy-refuses-first).
+
 ### When a deploy fails part-way
 
 A multi-context deploy is **resumable, not transactional**. If the third context
@@ -568,7 +598,9 @@ it trusts them to three different degrees:
   same namespaces. The bare `Kv`'s are kept by Worker, under `kv`; each derived
   instance's by Worker and binding, under `kv_instances`.
 - **Which contexts have been deployed** — how `--context` knows whether the
-  contexts you bind to are actually live.
+  contexts you bind to are actually live. With each, the contract hashes it
+  provides (`contracts`) and the ones it was compiled against (`expects`), so
+  `--context` can refuse a push that would break a live caller or callee.
 - **Which queues have been created** — a note to itself, so the plan can say
   `create` or `reuse` without calling Cloudflare. Nothing depends on it being
   right: a queue is found by its name either way.

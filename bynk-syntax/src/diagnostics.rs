@@ -637,7 +637,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.deploy.contract_skew",
-        "A worker was compiled against a contract its live dependencies no longer provide, so `bynk deploy` refuses to ship it.",
+        "A worker was compiled against a contract its live dependencies no longer provide, or no longer provides the contract its live callers were compiled against, so `bynk deploy --context` refuses to ship it.",
     ),
     d(
         "bynk.deploy.foreign_contract_skew",

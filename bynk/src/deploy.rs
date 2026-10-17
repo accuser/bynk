@@ -574,6 +574,87 @@ mod tests {
         bless_or_assert("deploy-context-refusal.txt", &out);
     }
 
+    /// #2077: `--context` refuses a callee whose new build no longer provides
+    /// what its live callers were compiled against, naming each caller, the
+    /// contract and both hashes; and warns of a caller it cannot check.
+    #[test]
+    fn golden_deploy_callee_contract_skew() {
+        fn skew(caller: &str, service: &str, expected: &str, provided: &str) -> CalleeSkew {
+            CalleeSkew {
+                caller: caller.into(),
+                dependency: "shop.payment".into(),
+                service: service.into(),
+                expected: expected.into(),
+                provided: provided.into(),
+            }
+        }
+        let one = [skew(
+            "shop-orders",
+            "authorise",
+            "febd15c2757b72e1",
+            "da0d725f3a004040",
+        )];
+        let several = [
+            skew(
+                "shop-orders",
+                "authorise",
+                "febd15c2757b72e1",
+                "da0d725f3a004040",
+            ),
+            skew("shop-refunds", "refund", "317bdd3de84d2176", "<absent>"),
+        ];
+        let mut out = String::new();
+        out.push_str("# one live caller on the old hash\n");
+        out.push_str(&callee_contract_skew_refusal(
+            "default",
+            "shop-payment",
+            &one,
+        ));
+        out.push_str("# two live callers, one service removed\n");
+        out.push_str(&callee_contract_skew_refusal(
+            "default",
+            "shop-payment",
+            &several,
+        ));
+        out.push_str("# --env staging: one live caller on the old hash\n");
+        out.push_str(&callee_contract_skew_refusal(
+            "staging",
+            "shop-payment",
+            &one,
+        ));
+        let orphaned = [skew(
+            "shop-legacy",
+            "authorise",
+            "febd15c2757b72e1",
+            "da0d725f3a004040",
+        )];
+        out.push_str("# a live caller of a context removed from the project\n");
+        out.push_str(&orphaned_caller_skew_refusal(
+            "default",
+            "shop-payment",
+            &orphaned,
+        ));
+        out.push_str("# --env staging: a live caller of a context removed from the project\n");
+        out.push_str(&orphaned_caller_skew_refusal(
+            "staging",
+            "shop-payment",
+            &orphaned,
+        ));
+        out.push_str("# a live caller recorded before expectations were\n");
+        out.push_str(&unrecorded_caller_warning(
+            "default",
+            "shop-payment",
+            "shop-orders",
+        ));
+        out.push_str("# --env staging: a live caller recorded before expectations were\n");
+        out.push_str(&unrecorded_caller_warning(
+            "staging",
+            "shop-payment",
+            "shop-orders",
+        ));
+        bless_or_assert("deploy-callee-contract-skew.txt", &out);
+    }
+
     /// #2047: every other deploy message that names a Worker or suggests a
     /// command, under the default environment and `--env staging`. A Worker
     /// is named by its deployed name, and a suggested `bynk deploy` repeats
