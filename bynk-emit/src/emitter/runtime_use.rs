@@ -121,6 +121,11 @@ pub(crate) struct RuntimeUse {
     /// time; the drain site converts once, immediately before the one consumer
     /// (`collect_codec_closure`) that is still genuinely `TypeRef`-driven.
     json_codec_roots: RefCell<Vec<TyId>>,
+    /// #2052: the target's `from Events(E)` services a test-scaffold module's
+    /// bodies deliver an event to (`svc.event(e)`). `emit_test_module` emits
+    /// one `__bynkEvent_<svc>` delivery helper for each, once every body has
+    /// lowered, so a module that delivers none is unchanged.
+    test_event_services: RefCell<std::collections::BTreeSet<String>>,
 }
 
 impl RuntimeUse {
@@ -188,6 +193,18 @@ impl RuntimeUse {
     /// helper its delegating call needs.
     pub fn note_json_codec_root(&self, t: TyId) {
         self.json_codec_roots.borrow_mut().push(t);
+    }
+
+    /// #2052: record that a test-scaffold body delivers an event to `service`.
+    pub fn note_test_event_service(&self, service: &str) {
+        self.test_event_services
+            .borrow_mut()
+            .insert(service.to_string());
+    }
+
+    /// #2052: the services a test-scaffold module delivers events to, sorted.
+    pub fn test_event_services(&self) -> Vec<String> {
+        self.test_event_services.borrow().iter().cloned().collect()
     }
 
     /// Drain the accumulated `Json` codec roots — called once, after every

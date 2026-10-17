@@ -28,6 +28,7 @@ the declared handler and checked for arity and argument types:
 | `from http` | `svc.GET("/path")`, `svc.POST("/path", body)` — the path is the route **pattern**, then the handler's params (path params, then body) |
 | `from cron` | `svc.schedule("<expr>")` — matched to the handler with that schedule |
 | `from queue` | `svc.message(msg)` |
+| `from Events(E)` | `svc.event(e)`, `svc.event(e, env)` — [one delivered event](#event-address) |
 
 A route/schedule the service does not declare is `bynk.test.service_unknown_route`;
 `svc.call(...)` on a service with no `on call` handler is
@@ -61,6 +62,49 @@ A call that reaches past the handler's types yields an
 [`HttpOutcome`](#httpoutcome) instead. Such calls drive a raw `Wire(…)`
 argument, drive `by Nobody`, or use a method the path declares no handler for.
 A [static asset](#assets) fetch yields an `HttpResult[()]`.
+
+### Delivering an event — `svc.event(e)` {#event-address}
+
+A case delivers one event to a `from Events(E)` service with `svc.event(e)`, or
+`svc.event(e, env)` to choose its [envelope](/book/guides/events/understand-events/#the-envelope-and-idempotent-handling).
+The event goes through the service's generated handler, the same path the
+fan-out uses, so the subscription's pattern filter and `via schema(N)` guard
+apply. An event they reject reaches no handler code.
+
+```bynk,fragment
+suite shop.ledger {
+  case "an event delivered twice is counted once" {
+    let e = OrderPlaced { id: "o1" }
+    let env = EventEnvelope { eventId: "evt-1", publisherId: "shop.orders", emittedAt: Instant.fromEpochMillis(0), schemaVersion: 1 }
+    let _ <- OnPlaced.event(e, env)
+    let _ <- OnPlaced.event(e, env)
+    let t <- Books("main").totals()
+    expect t.orders == 1
+  }
+}
+```
+
+With no envelope, the case supplies one as an emission would mint it:
+
+| field | default |
+|---|---|
+| `eventId` | fresh on every call (`"test-event-1"`, `"test-event-2"`, …), so two deliveries are two emissions |
+| `publisherId` | the context that publishes `E` to the target: the target itself, or the one context it consumes that declares `E` |
+| `emittedAt` | the test clock's reading, `Instant.fromEpochMillis(0)`; the clock is not called |
+| `schemaVersion` | the event's current version, the one an emission embeds |
+
+The payload must be the event the service subscribes to. Another event is
+`bynk.test.event_not_subscribed`, and any other wrong payload or envelope is
+`bynk.types.argument_mismatch`. `EventEnvelope` comes from `bynk`, so a suite can
+build one only when its target `consumes bynk`. `svc.event` on a service of
+another protocol is `bynk.test.service_bad_address`. When two consumed contexts
+both declare `E`, a default envelope has no single publisher, so the case must
+pass its own (`bynk.test.event_publisher_ambiguous`).
+
+The address works at `unit` and `integration`. A `system` case can't use it
+(`bynk.test.event_needs_in_process`). There, an event reaches a subscriber only
+through its publisher's fan-out, so a `system` case calls the handler that
+emits it.
 
 ### Fetching a static asset — `svc.GET(asset)` {#assets}
 
