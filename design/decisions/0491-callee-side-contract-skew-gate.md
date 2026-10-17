@@ -1,11 +1,6 @@
----
-level: patch
-changelog: `bynk deploy --context` now also refuses a callee whose new build no longer provides the contract a live caller was compiled against (`bynk.deploy.contract_skew`), naming each caller, the service and both hashes, before the plan and under `--dry-run`; `bynk.deploy.lock` records each Worker's `expects` beside what it provides, and a caller recorded before that is warned of, not refused (#2077).
----
+# 0491 — The deploy contract-skew gate checks the callee side too, under the same code
 
-## ADR: callee-side-contract-skew-gate
-title: The deploy contract-skew gate checks the callee side too, under the same code
-summary: `--context` holds the pushed Worker's new `provides` to every other live Worker's recorded `expects`; an unrecorded caller warns
+- **Status:** Accepted (v0.346.8)
 
 **Context.** ADR 0200 Decision H extended `deploy --context`'s D4 gate from
 "the dependency exists" to "the dependency matches": the pushed Worker's
