@@ -38,7 +38,8 @@ mod source_map;
 
 pub use lint::{Violation, verbatim_violations};
 pub use name_closure::{
-    ModuleExports, NamespaceMemberUse, module_exports, namespace_member_uses, unbound_names,
+    ModuleExports, NamespaceMemberUse, module_exports, namespace_member_uses, type_only_value_uses,
+    unbound_names, value_imports,
 };
 pub use printer::{
     Printed, print, print_class_method, print_class_method_and_merge, print_expr,

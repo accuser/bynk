@@ -4983,6 +4983,9 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
         && let TypeBody::Sum(s) = &decl.body
         && s.variants.iter().any(|v| v.name.name == id.name)
     {
+        if let Some(lit) = consumed_variant_literal(e, type_name, &id.name, &[], cx) {
+            return lit;
+        }
         return format!("{}.{}", type_name, id.name);
     }
     // v0.52: the multi-actor sum binder is not a runtime local — the resolved
@@ -4998,6 +5001,45 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // (now-shadowed) `ts_ident` name.
     cx.resolved_local_name(&id.name)
         .unwrap_or_else(|| ts_ident(&id.name))
+}
+
+/// #2045: on `workers`, a variant of a consumed context's sum built inline —
+/// `({ tag: "Held", reason: x } as Status)` — rather than through the callee's
+/// companion (`Status.Held(x)`), which would make the callee's module a value
+/// import of this Worker (#661). The companion's constructors are pure data,
+/// so the literal is the same value; the cast keeps the tag narrow, through
+/// the type-only import of `Status`. `None` for any other sum.
+fn consumed_variant_literal(
+    e: &Expr,
+    sum: &str,
+    tag: &str,
+    args: &[String],
+    cx: &LowerCtx,
+) -> Option<String> {
+    if !cx.is_consumed_context_type(sum) {
+        return None;
+    }
+    let decl = cx.commons().types.get(sum)?;
+    let TypeBody::Sum(s) = &decl.body else {
+        return None;
+    };
+    let variant = s.variants.iter().find(|v| v.name.name == tag)?;
+    if variant.payload.len() != args.len() {
+        return None;
+    }
+    let ty = cx.commons().expr_types.get(&e.id)?.ty;
+    let ts_ty = bynk_ts::print_type(&crate::emitter::ts_ty_to_ts_type(
+        ty,
+        &cx.commons().ty_intern,
+    ));
+    let mut fields = vec![format!("tag: \"{tag}\"")];
+    for (p, a) in variant.payload.iter().zip(args) {
+        fields.push(format!(
+            "{}: {a}",
+            crate::emitter::payload_prop(&p.name.name)
+        ));
+    }
+    Some(format!("({{ {} }} as {ts_ty})", fields.join(", ")))
 }
 
 fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lowered {
@@ -5062,6 +5104,9 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
     // type (the same re-derivation this whole `Callee` precedent, P6.0,
     // exists to close).
     if let Some(Callee::Ctor { sum, tag }) = cx.commons().callee(e.id) {
+        if let Some(lit) = consumed_variant_literal(e, &sum.name.name, tag, &args_lowered, cx) {
+            return pre.finish(lit);
+        }
         return pre.finish(format!(
             "{}.{}({})",
             sum.name.name,

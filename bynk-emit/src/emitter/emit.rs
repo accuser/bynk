@@ -2545,6 +2545,7 @@ pub(crate) fn emit_provider(
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
+        module.consumed_context_types = ctx.consumed_context_types();
         module.target = ctx.target;
         module.in_bynk_unit = ctx.commons_name == "bynk";
         let body_smb = RefCell::new(SourceMapBuilder::new());
@@ -2862,6 +2863,7 @@ pub(crate) fn emit_service(
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
+        module.consumed_context_types = ctx.consumed_context_types();
         module.target = ctx.target;
         let mut cx = LowerCtx::new(
             module,
@@ -5315,6 +5317,7 @@ pub(crate) fn emit_agent(
             module.agent_method_givens = ctx.agent_method_givens.clone();
             module.agent_called_contexts = ctx.agent_called_contexts.clone();
             module.event_schema_versions = ctx.event_schema_versions.clone();
+            module.consumed_context_types = ctx.consumed_context_types();
             let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
             icx.local_agents = ctx.local_agents.clone();
             let expr = pre.lower(init, &mut icx);
@@ -6178,6 +6181,7 @@ pub(crate) fn emit_agent(
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
+        module.consumed_context_types = ctx.consumed_context_types();
         let mut cx = LowerCtx::new(
             module,
             BodyMode::AgentHandler {
@@ -7195,6 +7199,7 @@ fn emit_ws_do_method(
     module.agent_method_givens = ctx.agent_method_givens.clone();
     module.agent_called_contexts = ctx.agent_called_contexts.clone();
     module.event_schema_versions = ctx.event_schema_versions.clone();
+    module.consumed_context_types = ctx.consumed_context_types();
     module.target = ctx.target;
     let mut cx = LowerCtx::new(
         module,

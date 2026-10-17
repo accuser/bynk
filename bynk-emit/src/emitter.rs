@@ -329,6 +329,7 @@ fn single_file_ctx() -> EmitProjectCtx {
         actors: HashMap::new(),
         event_schema_versions: HashMap::new(),
         consumed_adapters: HashSet::new(),
+        consumed_types_with_methods: HashSet::new(),
         history_target_agents: HashSet::new(),
         asset_served: Default::default(),
         imported_methods: HashMap::new(),
@@ -3338,6 +3339,17 @@ fn emit_project_imports(
             for n in &name_list {
                 let is_subscribed_event_type = ctx.target == BuildTarget::Workers
                     && subscribed_event_type_names.contains(n.as_str());
+                // #2045: under Workers, a consumed *context*'s type is named in
+                // type position only — its codecs are the caller's own
+                // (`emit_consumed_context_helpers`) — so it imports type-only and
+                // the callee's module never enters the caller's Worker bundle
+                // (#661). A consumed *adapter* is linked into each Worker, and
+                // its values (`Method.Get`) are real imports.
+                let is_consumed_context_type = ctx.target == BuildTarget::Workers
+                    && ctx.unit_kind == UnitKind::Context
+                    && !ctx.consumed_adapters.contains(unit_name.as_str())
+                    && ctx.imported_from_kind.get(n.as_str()) == Some(&UnitKind::Context)
+                    && !ctx.consumed_types_with_methods.contains(n.as_str());
                 // R4.10/R8.2: the same shared `is_uses_commons_type` predicate
                 // `emit_context_rebrands` below reads — this import-aliasing
                 // site is that function's own step 1 ("Done in imports", its
@@ -3359,7 +3371,7 @@ fn emit_project_imports(
                     )
                 {
                     parts.push(format!("{n} as __Commons{n}"));
-                } else if is_subscribed_event_type {
+                } else if is_subscribed_event_type || is_consumed_context_type {
                     // Events track, slice 0 (spine #936): under Workers, a
                     // context deploys as its own separate Worker script —
                     // there is no shared module graph to import a peer
@@ -4009,6 +4021,10 @@ pub(crate) struct ModuleCtx<'a> {
     in_bynk_unit: bool,
     /// #1961: [`crate::project::EmitProjectCtx::agent_called_contexts`].
     agent_called_contexts: Vec<String>,
+    /// #2045: [`crate::project::EmitProjectCtx::consumed_context_types`]. A
+    /// variant of one of these sums is built inline, not through the callee's
+    /// companion object, so the callee's module is never a value import.
+    consumed_context_types: HashSet<String>,
 }
 
 impl<'a> ModuleCtx<'a> {
@@ -4026,6 +4042,7 @@ impl<'a> ModuleCtx<'a> {
             event_schema_versions: HashMap::new(),
             in_bynk_unit: false,
             agent_called_contexts: Vec::new(),
+            consumed_context_types: HashSet::new(),
         }
     }
 }
@@ -4523,6 +4540,11 @@ impl<'a> LowerCtx<'a> {
     /// v0.8 build target.
     pub(crate) fn target(&self) -> BuildTarget {
         self.module.target
+    }
+
+    /// #2045: whether `name` is a consumed context's type on `workers`.
+    pub(crate) fn is_consumed_context_type(&self, name: &str) -> bool {
+        self.module.consumed_context_types.contains(name)
     }
 
     /// #934: true when the unit being emitted is the first-party `bynk` adapter.
