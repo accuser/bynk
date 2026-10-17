@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Under `bynk deploy --env <name>`, the bare `Kv` namespace is created as `<worker>-<name>` (`kv create shop-cart-staging`), where it reused the default environment's title `shop-cart`, which Cloudflare refuses as a duplicate on the same account. The default environment's titles are unchanged, and a namespace whose id `bynk.deploy.lock` already records for the environment is reused, not recreated (#2037).
----
+# 0488 — The bare KV namespace's title is environment-qualified
 
-## ADR: bare-kv-title-env-qualified
-title: The bare KV namespace's title is environment-qualified
-summary: Cloudflare refuses a duplicate KV title on one account, so the bare `Kv` namespace takes `-<env>` outside the default environment
+- **Status:** Accepted (v0.344.1)
 
 **Context.** ADR 0254 D3 said KV needs no environment qualification, having "no account-wide name
 to collide on". ADR 0471 D2 kept the bare `Kv` namespace titled with the Worker's name and

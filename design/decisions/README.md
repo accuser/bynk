@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0488](0488-bare-kv-title-env-qualified.md) | **The bare KV namespace's title is environment-qualified** (v0.344.1) — Cloudflare refuses a duplicate KV title on one account, so the bare `Kv` namespace takes `-<env>` outside the default environment | Accepted (v0.344.1) |
 | [0487](0487-no-send-in-agent-handler.md) | **An agent handler cannot `~>` send; a store operation is refused with its own code** (v0.342) — `~>` needs an execution context to keep the effect alive, and an agent handler has none, so the checker refuses it there (`bynk.send.in_agent_handler`), and refuses a sent store operation as `bynk.send.store_op` | Accepted (v0.342) |
 | [0486](0486-foreign-caller-actors.md) | **Foreign callers are declared actors with their own `call` scheme** (v0.341) — A non-Bynk caller is a `Foreign` actor the callee declares; it signs as the actor under a deploy-minted secret, resolves to that actor and never to `Caller`, and `bynk deploy` prints the hand-off | Accepted (v0.341) |
 | [0485](0485-per-edge-call-signature.md) | **Caller identity is proved by a per-edge signature, amending ADR 0092 and superseding ADR 0479** (v0.340) — Every internal request is HMAC-signed under a key one sender shares with one receiver; the callee picks the key by the claimed caller and refuses what does not verify | Accepted (v0.340) |
