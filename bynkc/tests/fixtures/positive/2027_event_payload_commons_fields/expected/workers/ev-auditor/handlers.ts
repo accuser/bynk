@@ -11,6 +11,8 @@ import { __serialise_Line, __deserialise_Line, __serialise_Qty, __deserialise_Qt
 
 export type Line = __CommonsLine & { readonly __ctxBrand?: "ev.auditor" };
 
+export { type Pinged };
+
 export const OnPing = {
   async event(e: Pinged, deps: {}): globalThis.Promise<void> {
     return undefined;
