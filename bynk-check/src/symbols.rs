@@ -1162,9 +1162,14 @@ pub fn build_cross_context_info(
     // already resolves ownership this same way for wiring.
     let mut consumed_event_names: HashMap<String, std::collections::HashSet<String>> =
         HashMap::new();
+    let mut consumed_type_owners: HashMap<String, HashMap<String, String>> = HashMap::new();
     for t in &consumed_contexts {
-        let other_types_combined = combined_types_for(t, unit_tables, unit_uses);
-        consumed_types.insert(t.clone(), other_types_combined.clone());
+        let (other_types_combined, owners) =
+            contract_types_for(t, unit_tables, unit_uses, unit_consumes);
+        consumed_types.insert(t.clone(), other_types_combined);
+        if !owners.is_empty() {
+            consumed_type_owners.insert(t.clone(), owners);
+        }
         let Some(other_table) = unit_tables.get(t) else {
             continue;
         };
@@ -1240,6 +1245,7 @@ pub fn build_cross_context_info(
             .map(|t| t.flattened_caps.clone())
             .unwrap_or_default(),
         consumed_event_names,
+        consumed_type_owners,
     }
 }
 
@@ -1483,6 +1489,42 @@ pub fn resolve_given_cap_ref(
 /// canonicalise the callee's contract from the *same* table or their hashes
 /// diverge and every call 409s. Routing both through one function makes that
 /// agreement structural rather than a thing to keep in step by hand.
+/// #2073: the type table a context's service signatures resolve in, as a
+/// caller and the context itself both see it: [`combined_types_for`] (its own
+/// types and its `uses` commons'), plus the types of the contexts it consumes,
+/// which a signature may name (`on call(o: Order)` in `shop.ledger`, `Order`
+/// from `shop.order`). Its own types win a name clash. The second map names
+/// the declaring context of each type that came from a consumed context.
+///
+/// Both sides of a cross-context call build the contract hash from this one
+/// table, so they agree by construction.
+pub fn contract_types_for(
+    unit: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+) -> (HashMap<String, Arc<TypeDecl>>, HashMap<String, String>) {
+    let mut out = combined_types_for(unit, unit_tables, unit_uses);
+    let mut owners: HashMap<String, String> = HashMap::new();
+    let mut consumed: Vec<&String> = unit_consumes.get(unit).into_iter().flatten().collect();
+    consumed.sort();
+    for u in consumed {
+        let Some(used) = unit_tables.get(u) else {
+            continue;
+        };
+        if used.kind != Some(UnitKind::Context) {
+            continue;
+        }
+        for (n, d) in &used.types {
+            if !out.contains_key(n) {
+                out.insert(n.clone(), d.clone());
+                owners.insert(n.clone(), u.clone());
+            }
+        }
+    }
+    (out, owners)
+}
+
 pub fn combined_types_for(
     unit: &str,
     unit_tables: &HashMap<String, UnitTable>,

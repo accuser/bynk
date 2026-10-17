@@ -1,0 +1,6 @@
+[project]
+name = "signature-type-unconsumed"
+version = "0.1.0"
+
+[paths]
+include = ["src", "tests"]

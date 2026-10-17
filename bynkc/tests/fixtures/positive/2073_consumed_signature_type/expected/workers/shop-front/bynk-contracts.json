@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "check": "dc4eb4be1fc391ff"
+  },
+  "expects": {
+    "shop.ledger": {
+      "isDomestic": "18d7709789670052"
+    }
+  }
+}

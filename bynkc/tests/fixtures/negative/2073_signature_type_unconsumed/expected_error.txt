@@ -1,0 +1,2 @@
+bynk.consumes.signature_type_unconsumed `shop.ledger.domestic` takes or returns `Order`, which `shop.ledger` consumes from `shop.order`, but this context does not consume `shop.order`
+# exact

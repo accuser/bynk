@@ -1,0 +1,12 @@
+-- #2073: `shop.ledger.domestic` returns `shop.order`'s `Order`, which this
+-- context does not consume, so it cannot name the value's type.
+context shop.front
+
+consumes shop.ledger
+
+service check {
+  on call(id: String) -> Effect[String] {
+    let o <- shop.ledger.domestic(id)
+    o.id
+  }
+}

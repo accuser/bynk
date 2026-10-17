@@ -2726,8 +2726,13 @@ fn build_output(
                 // contracts, hashed from *its own* namespace — the same table
                 // (`combined_types_for`) a caller reaches through
                 // `consumed_types[ctx_name]`, so the two sides cannot disagree.
-                let own_types =
-                    bynk_check::symbols::combined_types_for(ctx_name, &unit_tables, &unit_uses);
+                let own_types = bynk_check::symbols::contract_types_for(
+                    ctx_name,
+                    &unit_tables,
+                    &unit_uses,
+                    &unit_consumes,
+                )
+                .0;
                 let own_contracts = bynk_check::contract::own_contract_hashes(table, &own_types);
                 let binding_modules: HashMap<String, String> = adapter_bindings
                     .iter()
@@ -2945,8 +2950,13 @@ fn build_output(
                     let Some(dep_table) = unit_tables.get(dep) else {
                         continue;
                     };
-                    let dep_types =
-                        bynk_check::symbols::combined_types_for(dep, &unit_tables, &unit_uses);
+                    let dep_types = bynk_check::symbols::contract_types_for(
+                        dep,
+                        &unit_tables,
+                        &unit_uses,
+                        &unit_consumes,
+                    )
+                    .0;
                     let all = bynk_check::contract::own_contract_hashes(dep_table, &dep_types);
                     let hashes: std::collections::BTreeMap<String, String> = all
                         .into_iter()

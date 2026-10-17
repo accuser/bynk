@@ -286,6 +286,10 @@
       "summary": "A consumed service was called with the wrong number of arguments."
     },
     {
+      "code": "bynk.consumes.signature_type_unconsumed",
+      "summary": "A cross-context call reaches a service whose signature names a type the consumed context itself consumes from a third context, which the caller does not consume."
+    },
+    {
       "code": "bynk.consumes.target_is_commons",
       "summary": "`consumes` targets a `commons` instead of a context."
     },

@@ -1,0 +1,18 @@
+-- #2073: a `system` case passes and receives a consumed context's types
+-- across the target's own boundary.
+suite shop.ledger as system {
+  case "a consumed record parameter crosses the wire" {
+    let d <- shop.ledger.isDomestic(Order { id: "o3", region: Region.Domestic })
+    expect d
+  }
+
+  case "a consumed enum parameter crosses the wire" {
+    let h <- shop.ledger.isHome(Region.International)
+    expect h == false
+  }
+
+  case "a consumed record result crosses the wire" {
+    let o <- shop.ledger.domestic("o4")
+    expect o.region == Region.Domestic
+  }
+}

@@ -1,0 +1,13 @@
+context shop.order
+
+exports transparent { Order, Region }
+
+type Region = enum { Domestic, International }
+
+type Order = { id: String, region: Region }
+
+service place {
+  on call(id: String) -> Effect[Order] {
+    Order { id: id, region: Region.Domestic }
+  }
+}

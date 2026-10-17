@@ -678,6 +678,26 @@ fn emit_integration_module(
                 2,
             );
         }
+        // #2073: a participant's type the case names (`Region.Domestic`, a
+        // consumed context's enum the view brings in), from the namespace of
+        // the participant declaring it. Reserved here, before the lowering, so
+        // a `let` of the same name is renamed; destructured below only when
+        // the lowered body names it, so a case that names none is unchanged.
+        let mut participant_types: Vec<(String, Vec<String>)> = Vec::new();
+        for p in participants {
+            let Some(t) = unit_tables.get(p) else {
+                continue;
+            };
+            let mut names: Vec<String> = t
+                .types
+                .keys()
+                .filter(|n| view.types.contains_key(*n) && !harness_bound.contains(*n))
+                .cloned()
+                .collect();
+            names.sort();
+            harness_bound.extend(names.iter().cloned());
+            participant_types.push((p.clone(), names));
+        }
         // #1855: the lowering reads the case's checked types (a literal at a
         // refined record field is branded only when its type says so), so
         // type the body here as the check pass did, into throwaway sinks.
@@ -718,6 +738,25 @@ fn emit_integration_module(
             &input.rel_path,
             &runtime_use,
         );
+        for (p, names) in &participant_types {
+            let named: Vec<String> = names
+                .iter()
+                .filter(|n| names_ident(&body_src, n))
+                .cloned()
+                .collect();
+            if named.is_empty() {
+                continue;
+            }
+            let Some(t) = unit_tables.get(p) else {
+                continue;
+            };
+            let type_names = aliased_types(t, |n| named.contains(n));
+            crate::emitter::extend_printed_at(
+                &mut case_out,
+                emit_ns_destructure(&test_ns(p), &named, &type_names),
+                2,
+            );
+        }
         let src_id = map.add_source(input.map_source.clone(), input.source.to_string());
         let body_base = case_out.len();
         for line in body_src.lines() {
@@ -806,6 +845,17 @@ fn emit_integration_module(
             cases: discovered,
         },
     ))
+}
+
+/// #2073: whether the lowered TypeScript `src` names the identifier `name`,
+/// as a whole word outside a member access (`x.Region` names a property).
+fn names_ident(src: &str, name: &str) -> bool {
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    src.match_indices(name).any(|(i, _)| {
+        let before = src[..i].chars().next_back();
+        let after = src[i + name.len()..].chars().next();
+        !before.is_some_and(|c| is_ident(c) || c == '.') && !after.is_some_and(is_ident)
+    })
 }
 
 /// #1486: `emitter/workers.rs`'s own `append_missing_bindings`'s sibling

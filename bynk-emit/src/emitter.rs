@@ -1511,6 +1511,47 @@ fn emit_boundary_helpers(
                     &mut emitted_insts,
                 );
             stmts.extend(consumed_stmts);
+            // #2073: a type this context consumes from another *context* that
+            // crosses its own boundary (`on call(o: Order)`, `Order` from
+            // `shop.order`) and that no call of its own already reached. Its
+            // Worker entry and compose root name the type and its codecs
+            // through `handlers`, as a local type's, but the owner emits codecs
+            // only for its own boundary. They are generated here, the type
+            // named through the owner's namespace as a consumed call's codecs
+            // name it, and the type re-exported.
+            let mut unserved: Vec<String> = boundary_types_all
+                .iter()
+                .filter(|n| {
+                    !emitted_names.contains(*n)
+                        && matches!(ctx.imported_from_kind.get(*n), Some(UnitKind::Context))
+                        && codec_owner(ctx, n).is_none()
+                })
+                .cloned()
+                .collect();
+            unserved.sort();
+            if !unserved.is_empty() {
+                let qual: HashMap<String, String> = unserved
+                    .iter()
+                    .filter_map(|n| {
+                        let owner = ctx.imported_from.get(n)?;
+                        Some((n.clone(), format!("{}.", qualified_to_ns(owner))))
+                    })
+                    .collect();
+                stmts.push(bynk_ts::TsStmt::raw(
+                    format!("export type {{ {} }};\n", unserved.join(", ")),
+                    None,
+                ));
+                stmts.extend(serialisation::decls_as_stmts_block(
+                    serialisation::emit_helpers_for_owner_qualified(
+                        &unserved,
+                        &commons.types,
+                        ctx.commons_name.as_str(),
+                        &qual,
+                        &ctx.runtime_use,
+                    ),
+                ));
+                emitted_names.extend(unserved.iter().cloned());
+            }
             // #1823: codecs of commons types a call to another context needs,
             // beyond those this context's own boundary already imports.
             let (imports, imported) =
@@ -1911,8 +1952,18 @@ fn emit_consumed_context_helpers(
             }
         }
         // #1846: the whole TS name, `t_vault.Code` (see `serialisation::qual_type`).
+        // #2073: a type `c` consumes from another context is that context's,
+        // so its TS name goes through the declaring context (`shop_order.Order`),
+        // which the caller consumes too (the checker refuses the call
+        // otherwise). Its codecs keep `c`'s renamed names, which the call sites
+        // share.
+        let owners = info.consumed_type_owners.get(c);
         for (renamed, original) in &hidden {
-            qual.insert(renamed.clone(), format!("{ns}{original}"));
+            let owner_ns = owners
+                .and_then(|o| o.get(original))
+                .map(|owner| format!("{}.", qualified_to_ns(owner)))
+                .unwrap_or_else(|| ns.clone());
+            qual.insert(renamed.clone(), format!("{owner_ns}{original}"));
         }
         // #1736: a generic type the callee owns reaches the closure only as the
         // base of an instantiation (`Envelope[Int]`), never as a plain name, so

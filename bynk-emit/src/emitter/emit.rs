@@ -4218,10 +4218,19 @@ pub(crate) fn param_cast(
         return arg;
     };
     if let Some(name) = type_ref_named_root(ptype_ref) {
+        // #2073: a type the consumed context itself consumes is named through
+        // its declaring context, which the caller consumes too (the checker
+        // refuses the call otherwise).
+        let owner = info
+            .consumed_type_owners
+            .get(consumed)
+            .and_then(|o| o.get(name))
+            .map(String::as_str)
+            .unwrap_or(consumed);
         let ns = if in_test_scaffold {
-            test_scaffold_ns(consumed)
+            test_scaffold_ns(owner)
         } else {
-            qualified_to_ns(consumed)
+            qualified_to_ns(owner)
         };
         // v0.9.1: when both contexts brand the same commons type (e.g., both
         // see `Money` with their own `__ctxBrand`), a direct

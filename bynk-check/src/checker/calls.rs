@@ -4410,6 +4410,61 @@ fn type_cross_context_arg(
     (type_of(arg, Some(param_ty), ctx), false)
 }
 
+/// #2073: a consumed context's service whose signature reaches a type that
+/// context consumes from a third (`shop.ledger.isDomestic(o: Order)`, `Order`
+/// from `shop.order`) crosses the boundary as that third context's type. The
+/// caller names it, and builds its codecs, through the declaring context, so
+/// it must consume that context too; otherwise `bynk.consumes.signature_type_unconsumed`.
+fn check_signature_owners_consumed(
+    consumed: &str,
+    service: &crate::resolver::CrossContextService,
+    method: &Ident,
+    ctx: &mut Ctx,
+) {
+    let info = &ctx.input.cross_context;
+    let Some(owners) = info.consumed_type_owners.get(consumed) else {
+        return;
+    };
+    let types = info.consumed_types.get(consumed);
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut stack: Vec<String> = Vec::new();
+    let vars = HashSet::new();
+    for (_, t) in &service.params {
+        crate::project_model::type_ref_names(t, &vars, &mut stack);
+    }
+    crate::project_model::type_ref_names(&service.return_type, &vars, &mut stack);
+    let mut missing: std::collections::BTreeMap<String, String> = Default::default();
+    while let Some(n) = stack.pop() {
+        if !seen.insert(n.clone()) {
+            continue;
+        }
+        if let Some(owner) = owners.get(&n)
+            && info.self_context.as_deref() != Some(owner.as_str())
+            && !info.consumed_contexts.contains(owner)
+        {
+            missing.entry(owner.clone()).or_insert(n.clone());
+        }
+        if let Some(d) = types.and_then(|t| t.get(&n)) {
+            stack.extend(crate::project_model::type_decl_ref_names(d));
+        }
+    }
+    for (owner, ty) in missing {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.consumes.signature_type_unconsumed",
+                method.span,
+                format!(
+                    "`{consumed}.{}` takes or returns `{ty}`, which `{consumed}` consumes from `{owner}`, but this context does not consume `{owner}`",
+                    method.name
+                ),
+            )
+            .with_note(format!(
+                "add `consumes {owner}`: a value of `{ty}` crosses this call as `{owner}`'s type"
+            )),
+        );
+    }
+}
+
 fn check_cross_context_call(
     receiver: &Expr,
     consumed: &str,
@@ -4481,6 +4536,7 @@ fn check_cross_context_call(
     };
     ctx.refs
         .record_in_unit(method.span, SymbolKind::Service, &method.name, consumed);
+    check_signature_owners_consumed(consumed, &service, method, ctx);
 
     if service.params.len() != args.len() {
         ctx.errors.push(
