@@ -315,6 +315,10 @@ fn agent_calls_use_the_boundary_codec_on_workerd() {
 const BYTES_OPS_SOURCE: &str = r#"context smoke
 
 service api from http {
+  on GET("/") () -> Effect[HttpResult[String]] by v: Visitor {
+    Ok("up")
+  }
+
   on GET("/bytes") () -> Effect[HttpResult[String]] by v: Visitor {
     let b = Bytes.fromUtf8("v1:").concat(Bytes.fromUtf8("hi"))
     let hex = b.slice(-2, 99).toHex()
