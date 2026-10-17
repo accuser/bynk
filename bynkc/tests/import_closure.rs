@@ -12,6 +12,12 @@
 //! ([`bynk_ts::module_exports`], following `export *`), and a missing one is
 //! reported as `<specifier>::<member>`.
 //!
+//! **Worker isolation** (#2045). A Worker's module never imports another
+//! Worker's module as a value, so that module stays out of its bundle (#661):
+//! a named import from another `workers/<dir>/` is reported unless every
+//! entry is `type X`. A type-only name used as a value (`TS1361`) is reported
+//! too, the regression a type-only import would otherwise hide without `tsc`.
+//!
 //! **Both targets.** A project fixture is compiled for bundle *and* Workers,
 //! whatever its `target.txt` says. A fixture built only for bundle never had
 //! its Workers output type-checked, and that is where #1845 and #1846 were
@@ -79,6 +85,12 @@ fn record(
             modules += 1;
             let mut unbound = bynk_ts::unbound_names(program);
             unbound.extend(missing_members(path, program, &out.artefacts.docs));
+            unbound.extend(
+                bynk_ts::type_only_value_uses(program)
+                    .into_iter()
+                    .map(|n| format!("{n} (type-only, TS1361)")),
+            );
+            unbound.extend(cross_worker_value_imports(path, program));
             if !unbound.is_empty() {
                 reports.insert(
                     (source.to_string(), target_name(target), module_key(path)),
@@ -110,6 +122,41 @@ fn missing_members(
         .map(|u| format!("{}::{}", u.from, u.member))
         .collect()
 }
+
+/// #2045: each name a Worker's module imports *as a value* from another
+/// Worker's directory (`workers/a/…` importing `{ Batch }` from
+/// `workers/b/handlers.js`), reported as `value import <specifier>::<name>`.
+/// Another context's module must not enter this Worker's bundle (#661), so
+/// its types import type-only and its sum variants are built inline. Two
+/// value imports are by design and so not reported: a consumed type with
+/// attached methods (`CONSUMED_METHOD_TYPES`), whose methods run from the
+/// callee's companion, and the `import * as handlers_<ns>` of a
+/// cross-context capability provider, which the caller instantiates (a
+/// namespace import, which this check does not inspect).
+fn cross_worker_value_imports(path: &Path, program: &bynk_ts::TsProgram) -> Vec<String> {
+    let worker_of = |p: &Path| -> Option<String> {
+        let mut comps = p.components().map(|c| c.as_os_str().to_string_lossy());
+        (comps.next()? == "workers").then(|| comps.next().map(|c| c.to_string()))?
+    };
+    let Some(own) = worker_of(path) else {
+        return Vec::new();
+    };
+    bynk_ts::value_imports(program)
+        .into_iter()
+        .filter(|(from, name)| {
+            resolve(path, from)
+                .as_deref()
+                .and_then(worker_of)
+                .is_some_and(|other| other != own)
+                && !CONSUMED_METHOD_TYPES.contains(&name.as_str())
+        })
+        .map(|(from, name)| format!("value import {from}::{name}"))
+        .collect()
+}
+
+/// #2045: consumed types the corpus calls an attached method on, imported as
+/// values by design (see [`cross_worker_value_imports`]).
+const CONSUMED_METHOD_TYPES: &[&str] = &[];
 
 /// The emitted module a relative specifier names from `from_module`
 /// (`./handlers.js` from `workers/x/compose.ts` is `workers/x/handlers.ts`).

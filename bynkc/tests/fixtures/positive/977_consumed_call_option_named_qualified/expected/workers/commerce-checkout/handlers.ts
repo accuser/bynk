@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
-import { Receipt } from "../commerce-payment/handlers.js";
+import { type Receipt } from "../commerce-payment/handlers.js";
 
 import type * as commerce_payment from "../commerce-payment/handlers.js";
 
