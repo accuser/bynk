@@ -4726,6 +4726,16 @@ fn structural_compare_named(
     let Some(param_decl) = param_types.get(param_name) else {
         return false;
     };
+    // #2087: one declaration on both sides (its applied arguments already
+    // compared) is the same type, field for field. Its fields' types need not
+    // resolve in the caller's table: a borrowed type's field may name a type
+    // the caller cannot bind unambiguously (#1941), which the callee's table
+    // holds under a qualified key (`shop_order__Code`).
+    if arg_name == param_name
+        && (Arc::ptr_eq(arg_decl, param_decl) || arg_decl.span == param_decl.span)
+    {
+        return true;
+    }
     // #1736: a generic declaration's fields name its type parameters
     // (`item: T`), which resolve against neither side's type table, so every
     // generic record or sum used to compare as incompatible, even against

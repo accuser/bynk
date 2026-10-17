@@ -1917,23 +1917,22 @@ fn emit_consumed_context_helpers(
         // which the caller consumes too (the checker refuses the call
         // otherwise). Its codecs keep `c`'s renamed names, which the call sites
         // share.
-        // A key `contract_types_for` qualified (`shop_order__Region`) is named in
-        // TS by its declaration's own name (`shop_order.Region`). The declaring
-        // context's namespace is reached when this module consumes it
-        // (imported by `emit_cross_context_namespace_imports`); otherwise
+        // A key `contract_types_for` qualified by its declaring context
+        // (`shop_order__Region`, the declaration's name too, #2087) is named in
+        // TS by the name that context gives it (`shop_order.Region`). The
+        // declaring context's namespace is reached when this module consumes
+        // it (imported by `emit_cross_context_namespace_imports`); otherwise
         // through `c`'s, whose `handlers.ts` re-exports each consumed type it
         // imports (#2044).
         let owners = info.consumed_type_owners.get(c);
-        let declared = info.consumed_types.get(c);
         for (renamed, original) in &hidden {
-            let owner_ns = owners
-                .and_then(|o| o.get(original))
+            let owner = owners.and_then(|o| o.get(original));
+            let owner_ns = owner
                 .filter(|owner| info.consumed_contexts.contains(*owner))
                 .map(|owner| format!("{}.", qualified_to_ns(owner)))
                 .unwrap_or_else(|| ns.clone());
-            let ts_name = declared
-                .and_then(|t| t.get(original))
-                .map(|d| d.name.name.as_str())
+            let ts_name = owner
+                .and_then(|owner| original.strip_prefix(&format!("{}__", qualified_to_ns(owner))))
                 .unwrap_or(original.as_str());
             qual.insert(renamed.clone(), format!("{owner_ns}{ts_name}"));
         }

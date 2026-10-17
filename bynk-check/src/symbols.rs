@@ -1639,7 +1639,13 @@ fn contract_types_inner(
                         d.as_deref().unwrap_or(owner.as_str()).replace('.', "_")
                     );
                     if !out.contains_key(&qualified) {
-                        out.insert(qualified.clone(), target.clone());
+                        // #2087: the declaration takes its key as its name, so a
+                        // type resolved through the key (`Ty::Named`'s name is
+                        // the declaration's) looks up this declaration, not the
+                        // unit's same-named one.
+                        let mut renamed = (**target).clone();
+                        renamed.name.name = qualified.clone();
+                        out.insert(qualified.clone(), Arc::new(renamed));
                         if let Some(d) = d {
                             owners.insert(qualified.clone(), d);
                         }
