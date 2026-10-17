@@ -10,6 +10,10 @@ pub(crate) struct DeployLock {
     pub(crate) environments: BTreeMap<String, Environment>,
 }
 
+/// #2077: what a Worker was compiled against — dependency (qualified context
+/// name) → service → contract hash ([`WorkerRecord::expects`]).
+pub(crate) type Expects = BTreeMap<String, BTreeMap<String, String>>;
+
 fn lock_version() -> u32 {
     1
 }
@@ -209,7 +213,7 @@ impl DeployLock {
     pub(crate) fn live_expects(
         &self,
         environment: &str,
-    ) -> impl Iterator<Item = (&str, Option<&BTreeMap<String, BTreeMap<String, String>>>)> {
+    ) -> impl Iterator<Item = (&str, Option<&Expects>)> {
         self.environments
             .get(environment)
             .into_iter()
