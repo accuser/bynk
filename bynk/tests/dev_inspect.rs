@@ -34,6 +34,73 @@ fn tmp() -> PathBuf {
     ))
 }
 
+/// Two distinct localhost TCP ports that are free when asked. Both are bound to
+/// `:0` at once, so the OS can't hand out the same port twice, then read back
+/// and released.
+fn free_ports() -> (u16, u16) {
+    let bind = || std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+    let (a, b) = (bind(), bind());
+    let port = |l: &std::net::TcpListener| l.local_addr().expect("local addr").port();
+    (port(&a), port(&b))
+}
+
+/// #2069: stops `wrangler` and everything it started, and nothing else.
+///
+/// On Unix the child leads its own process group (`process_group(0)` at
+/// spawn), and workerd, a grandchild, inherits it. Signalling the group
+/// (`kill(-pgid)`) reaches exactly that tree: `SIGTERM` first so wrangler can
+/// shut workerd down, then `SIGKILL` for anything still there. This replaces a
+/// `pkill -f workerd`, which also killed every other test's workerd and any
+/// `bynk dev` on the machine. Elsewhere it kills the direct child only.
+fn stop_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let Ok(pid) = libc::pid_t::try_from(child.id()) else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return;
+        };
+        // SAFETY: `kill` takes plain integers and has no memory effects; a
+        // negative pid names the process group this test created for `child`.
+        unsafe { libc::kill(-pid, libc::SIGTERM) };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut gone = false;
+        while Instant::now() < deadline {
+            // Reap wrangler if it has exited, so its zombie doesn't keep the
+            // group alive; `kill(-pgid, 0)` fails once no member is left.
+            let _ = child.try_wait();
+            // SAFETY: as above; signal 0 only checks for existence.
+            if unsafe { libc::kill(-pid, 0) } != 0 {
+                gone = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if !gone {
+            // SAFETY: as above.
+            unsafe { libc::kill(-pid, libc::SIGKILL) };
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// #2069 review: owns the spawned `wrangler` and stops its whole process group
+/// on drop, so a panic between `spawn()` and the end of the test (an `expect`
+/// in `drive`, say) can't leak the tree. That leak is the one #2069 fixes.
+///
+/// One case it does not cover: because wrangler leads its own process group,
+/// a Ctrl-C at the terminal no longer reaches it, and an interrupted
+/// `cargo test` dies without unwinding, so no `Drop` runs. Stopping the group
+/// then would need a `SIGINT`/`SIGTERM` handler in the test.
+struct Group(std::process::Child);
+
+impl Drop for Group {
+    fn drop(&mut self) {
+        stop_tree(&mut self.0);
+    }
+}
+
 #[test]
 fn workerd_breakpoint_in_bynk_handler_binds_and_pauses() {
     if !have("wrangler") || !have("node") {
@@ -66,12 +133,22 @@ fn workerd_breakpoint_in_bynk_handler_binds_and_pauses() {
         "worker output must carry handlers.ts.map"
     );
 
-    // Unique ports per run (pid-derived) to avoid collisions with a parallel test.
-    let base = 9000 + (std::process::id() % 500) as u16 * 2;
-    let (inspector_port, app_port) = (base + 1, base);
+    // #2069: ports the OS reports free right now, not pid-derived ones. A
+    // derived port could already be held by another process, such as a workerd
+    // a past run leaked. Then wrangler exits at once, and the inspector probe
+    // reaches *that* process's inspector instead.
+    let (inspector_port, app_port) = free_ports();
 
-    let mut wrangler = Command::new("wrangler")
-        .args([
+    let mut cmd = Command::new("wrangler");
+    // #2069: its own process group, so cleanup can stop wrangler *and* the
+    // workerd it spawns (a grandchild of this test) without touching any other
+    // workerd on the machine.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    // Held in a `Group`, so a panic anywhere below (`drive`'s `.expect`s among
+    // them) still stops the tree as the stack unwinds.
+    let wrangler = Group(
+        cmd.args([
             "dev",
             "--inspector-port",
             &inspector_port.to_string(),
@@ -82,14 +159,12 @@ fn workerd_breakpoint_in_bynk_handler_binds_and_pauses() {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .expect("spawn wrangler dev");
+        .expect("spawn wrangler dev"),
+    );
 
     let result = drive(&worker_dir, inspector_port, app_port, bynk_line);
 
-    let _ = wrangler.kill();
-    let _ = wrangler.wait();
-    // workerd is a grandchild of wrangler — reap it too (best-effort, unix).
-    let _ = Command::new("pkill").arg("-f").arg("workerd").output();
+    drop(wrangler);
     let _ = std::fs::remove_dir_all(&dir);
 
     let (status, stdout, stderr) = result;

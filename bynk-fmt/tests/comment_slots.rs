@@ -33,10 +33,18 @@
 //! **Refusals are counted, not listed.** Trivia attach at declaration and
 //! statement granularity (#523), so a comment inside an expression (a match
 //! arm, a call's arguments, a message entry) is refused by design: about a
-//! quarter of all placements. [`REFUSED`] pins that count per insertion kind,
-//! strictly. More refusals than pinned is a regression; fewer means the
-//! formatter learned a placement, and the pin must come down so the gain cannot
-//! quietly reverse. Adding a fixture moves the pin too; the failure says how.
+//! quarter of all placements. The count is pinned per fixture and per insertion
+//! kind, strictly, in one file per fixture under [`PIN_DIR`]
+//! (`<fixture>.refused`: trailing, own line, split, own line with a blank after).
+//! A fixture with no refusals has no file. More refusals than pinned is a
+//! regression; fewer means the formatter learned a placement, and the pin must
+//! come down so the gain cannot quietly reverse.
+//!
+//! The pins are per fixture so that adding a fixture adds its own pin file
+//! instead of editing a count every other open change also edits.
+//! `BYNK_BLESS=1 cargo test -p bynk-fmt --test comment_slots` rewrites the pin
+//! files from the current run: after adding a fixture, or after a formatter
+//! change, with the moved counts reviewed in the diff.
 //!
 //! **Sampling.** Checking every candidate takes well over half a minute in a
 //! debug build, so by default
@@ -59,7 +67,64 @@ use bynk_syntax::parser::parse_units;
 
 /// Refusals in the default sample, per insertion kind: `(trailing, own line,
 /// split, own line with a blank after)`.
-const REFUSED: (usize, usize, usize, usize) = (991, 616, 567, 0);
+type Refused = (usize, usize, usize, usize);
+
+/// Where the per-fixture refusal pins live, relative to this crate.
+const PIN_DIR: &str = "tests/comment_slots";
+
+/// The fixture a corpus file belongs to: its first path component (a positive
+/// fixture's directory), or a repro's own name.
+fn fixture_of(file: &str) -> &str {
+    file.split('/').next().unwrap_or(file)
+}
+
+fn pin_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(PIN_DIR)
+}
+
+fn read_pins() -> BTreeMap<String, Refused> {
+    let mut pins = BTreeMap::new();
+    let Ok(entries) = fs::read_dir(pin_dir()) else {
+        return pins;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let Some(name) = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_suffix(".refused"))
+        else {
+            continue;
+        };
+        let text = fs::read_to_string(&p).expect("read pin file");
+        let n: Vec<usize> = text
+            .split_whitespace()
+            .map(|t| t.parse().expect("pin file holds four counts"))
+            .collect();
+        assert_eq!(n.len(), 4, "{} must hold four counts", p.display());
+        pins.insert(name.to_string(), (n[0], n[1], n[2], n[3]));
+    }
+    pins
+}
+
+/// Rewrites the pin directory to exactly `actual`: one file per fixture with
+/// any refusal, and no file for the rest.
+fn bless_pins(actual: &BTreeMap<String, Refused>) {
+    let dir = pin_dir();
+    fs::create_dir_all(&dir).expect("create pin dir");
+    for name in read_pins().keys() {
+        if !actual.contains_key(name) {
+            fs::remove_file(dir.join(format!("{name}.refused"))).expect("remove stale pin");
+        }
+    }
+    for (name, (t, o, s, b)) in actual {
+        fs::write(
+            dir.join(format!("{name}.refused")),
+            format!("{t} {o} {s} {b}\n"),
+        )
+        .expect("write pin");
+    }
+}
 
 /// Where a comment was inserted: the line it went on or before, the line
 /// above that, and the construct a closing line ends (the nearest line above
@@ -268,6 +333,7 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
     let exhaustive = std::env::var_os("BYNK_FMT_EXHAUSTIVE").is_some();
     let opts = FormatOptions::default();
     let mut counts: BTreeMap<(Outcome, Kind), usize> = BTreeMap::new();
+    let mut refused_by_fixture: BTreeMap<String, Refused> = BTreeMap::new();
     let mut matched = vec![0usize; KNOWN.len()];
     let mut failures: Vec<String> = Vec::new();
 
@@ -376,6 +442,17 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
                 }
                 let outcome = classify(&mutated, &tag, kind, &base, &opts);
                 *counts.entry((outcome, kind)).or_default() += 1;
+                if outcome == Outcome::Refused {
+                    let r = refused_by_fixture
+                        .entry(fixture_of(&file).to_string())
+                        .or_default();
+                    match kind {
+                        Kind::Trailing => r.0 += 1,
+                        Kind::OwnLine => r.1 += 1,
+                        Kind::Split(_) => r.2 += 1,
+                        Kind::OwnLineBlank => r.3 += 1,
+                    }
+                }
                 if matches!(outcome, Outcome::Kept | Outcome::Refused) {
                     continue;
                 }
@@ -397,19 +474,6 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
         .filter(|(_, n)| **n == 0)
         .map(|((issue, outcome, kind, _), _)| format!("  #{issue}: {outcome:?} [{kind:?}]"))
         .collect();
-    let refused_where = |pick: fn(Kind) -> bool| -> usize {
-        counts
-            .iter()
-            .filter(|((o, k), _)| *o == Outcome::Refused && pick(*k))
-            .map(|(_, n)| n)
-            .sum()
-    };
-    let refused = (
-        refused_where(|k| k == Kind::Trailing),
-        refused_where(|k| k == Kind::OwnLine),
-        refused_where(|k| matches!(k, Kind::Split(_))),
-        refused_where(|k| k == Kind::OwnLineBlank),
-    );
     let summary = format!("{counts:?}");
     assert!(
         failures.is_empty() && fixed.is_empty(),
@@ -423,11 +487,32 @@ fn a_comment_at_every_slot_is_kept_or_refused() {
         eprintln!("exhaustive run: {summary}");
         return;
     }
-    assert_eq!(
-        refused, REFUSED,
-        "refusals (trailing, own line, split, own line with a blank after) moved from the `REFUSED` pin.\n\
-         More: the formatter now refuses a comment somewhere it kept one, which is a regression.\n\
-         Fewer: it learned a placement; lower the pin so the gain cannot quietly reverse.\n\
-         Adding or editing a fixture moves this too: set `REFUSED` to the new counts.\n{summary}"
+    if std::env::var_os("BYNK_BLESS").is_some() {
+        bless_pins(&refused_by_fixture);
+        eprintln!("blessed {} comment-slot pins", refused_by_fixture.len());
+        return;
+    }
+    let pins = read_pins();
+    let names: std::collections::BTreeSet<&String> =
+        pins.keys().chain(refused_by_fixture.keys()).collect();
+    let moved: Vec<String> = names
+        .into_iter()
+        .filter_map(|name| {
+            let pinned = pins.get(name).copied().unwrap_or_default();
+            let now = refused_by_fixture.get(name).copied().unwrap_or_default();
+            (pinned != now).then(|| format!("  {name}: pinned {pinned:?}, now {now:?}"))
+        })
+        .collect();
+    assert!(
+        moved.is_empty(),
+        "comment-slot refusals (trailing, own line, split, own line with a blank after) moved \
+         from their per-fixture pins in `bynk-fmt/{PIN_DIR}`:\n{}\n\
+         A count above its pin: the formatter now refuses a comment somewhere it kept one, which \
+         is a regression.\n\
+         A count below its pin: it learned a placement; lower the pin so the gain cannot quietly \
+         reverse.\n\
+         A new or edited fixture moves its own pin: rewrite the pins with \
+         `BYNK_BLESS=1 cargo test -p bynk-fmt --test comment_slots` and review the diff.\n{summary}",
+        moved.join("\n"),
     );
 }
