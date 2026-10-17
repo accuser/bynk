@@ -1,0 +1,4 @@
+# #1660: run by bynkc/tests/behaviour_fixtures.rs; see that file for the format.
+# #2072: a refined literal in a generic record's field, beside a shorthand field
+# or not, crosses as the callee's type.
+passed=4 failed=0
