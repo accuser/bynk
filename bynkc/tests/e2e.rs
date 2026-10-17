@@ -514,6 +514,57 @@ fn no_unknown_placeholder_in_emitted_output() {
     );
 }
 
+/// #2053: every fault handler in an emitted Worker entry logs the error's
+/// stack, not the error as a value, so `wrangler tail` shows frames that an
+/// uploaded source map can lead back to `.bynk` lines. Checked over every
+/// blessed `workers/<unit>/index.ts`: each `catch (e)` (the `fetch` wrapper
+/// that covers routes, `/_bynk/call/` and `/_bynk/event/`, and the queue
+/// consumer's per-message catch) must log the stack expression on its first
+/// line. A new catch site that logs `e` bare fails here.
+#[test]
+fn every_worker_entry_fault_handler_logs_the_stack() {
+    const STACK: &str = "e instanceof globalThis.Error ? (e.stack ?? globalThis.String(e)) : e";
+    let mut sites = 0usize;
+    let mut offenders = Vec::new();
+    for dir in fixture_dirs("positive") {
+        let expected = dir.join("expected");
+        if !expected.is_dir() {
+            continue;
+        }
+        for path in collect_expected_ts(&expected) {
+            let is_entry = path.file_name().is_some_and(|n| n == "index.ts")
+                && path
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::file_name)
+                    .is_some_and(|n| n == "workers");
+            if !is_entry {
+                continue;
+            }
+            let text = read(&path);
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                if !line.contains("catch (e) {") {
+                    continue;
+                }
+                sites += 1;
+                // The log sits on the catch's own line (the queue consumer's
+                // compact form) or on the line after it (`fetch`).
+                let body = format!("{line}\n{}", lines.get(i + 1).unwrap_or(&""));
+                if !(body.contains("globalThis.console.error(") && body.contains(STACK)) {
+                    offenders.push(format!("{}:{}", path.display(), i + 1));
+                }
+            }
+        }
+    }
+    assert!(sites > 0, "no Worker entry fault handler found to check");
+    assert!(
+        offenders.is_empty(),
+        "a Worker entry fault handler does not log the error's stack ({STACK}):\n{}",
+        offenders.join("\n"),
+    );
+}
+
 /// #58 (adjacent to #696): checks a project fixture's `expected_diagnostics.txt`
 /// — optional, `category<TAB>path:line:col` lines, plus an optional `# exact`
 /// line (#1663) — against the *attributed*

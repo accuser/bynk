@@ -50,7 +50,7 @@ export default {
       }
       return new globalThis.Response("Not Found", { status: 404 });
     } catch (e) {
-      globalThis.console.error(`api ${__route} faulted`, e);
+      globalThis.console.error(`api ${__route} faulted`, e instanceof globalThis.Error ? (e.stack ?? globalThis.String(e)) : e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },
@@ -66,7 +66,7 @@ export default {
             if (result.tag === "Ack") msg.ack();
             else { globalThis.console.error("queue cents-credited retry", result.reason); msg.retry(); }
           } catch (e) {
-            globalThis.console.error("queue cents-credited threw", e); msg.retry();
+            globalThis.console.error("queue cents-credited threw", e instanceof globalThis.Error ? (e.stack ?? globalThis.String(e)) : e); msg.retry();
           }
         }
         return;
