@@ -32,7 +32,11 @@ fn analyse_roots_expecting(
     roots: &bynk_ide::AnalysisRoots,
     expected: &[&str],
 ) -> (ProjectIndex, HashMap<String, String>) {
-    let result = bynk_ide::diagnose_project_with(roots, &bynk_testkit::read_project_sources(roots));
+    let result = bynk_ide::diagnose_project_with(
+        roots,
+        &bynk_testkit::read_project_sources(roots),
+        &bynk_ide::SchemaLock::Off,
+    );
     let reported: Vec<&str> = result
         .files
         .iter()

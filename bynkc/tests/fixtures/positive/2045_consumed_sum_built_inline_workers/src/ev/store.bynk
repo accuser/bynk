@@ -1,0 +1,18 @@
+-- #2045: `ev.store` exports a sum and a record carrying it. `ev.relay`
+-- builds both without calling `ev.store`.
+context ev.store
+
+exports transparent { Batch, Status, Code }
+
+type Code = Int where NonNegative
+
+type Status = | Active
+| Held(reason: String)
+
+type Batch = { id: String, size: Int, status: Status, code: Code }
+
+service latest {
+  on call() -> Effect[Batch] {
+    Effect.pure(Batch { id: "b1", size: 3, status: Active, code: 1 })
+  }
+}

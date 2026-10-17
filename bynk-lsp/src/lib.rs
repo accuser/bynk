@@ -43,6 +43,7 @@ mod locals_nav;
 pub mod position;
 mod project;
 mod publish;
+mod schema_lock;
 pub mod sequence_request;
 mod signature_help;
 mod structure;
@@ -187,6 +188,11 @@ struct ProjectState {
     /// rounds can't take it.
     #[cfg(test)]
     panic_next_round: bool,
+    /// #2081: this project's `bynk.schema.lock`, read-only and cached by its
+    /// `(mtime, len)` stamp, handed to every diagnostics round so the editor
+    /// reports a non-additive event change as `bynk check` does. Cleared by
+    /// the `**/bynk.schema.lock` watcher.
+    schema_lock: schema_lock::SchemaLockCache,
 }
 
 /// #733: the client's `workspace/*/refresh` support, per pull-based decoration,
@@ -640,6 +646,26 @@ impl Backend {
         }
     }
 
+    /// #2081: `root`'s `bynk.schema.lock`, through its project's cache. The
+    /// cache is copied out, refreshed with no `state` lock held (a `stat`,
+    /// and a read only when the file changed), then stored back. A root with
+    /// no project entry gets a one-off read. Never writes the lock.
+    async fn schema_lock_for(&self, root: &std::path::Path) -> bynk_ide::SchemaLock {
+        let mut cache = self
+            .state
+            .read()
+            .await
+            .projects
+            .get(root)
+            .map(|ps| ps.schema_lock.clone())
+            .unwrap_or_default();
+        let lock = cache.current(root);
+        if let Some(ps) = self.state.write().await.projects.get_mut(root) {
+            ps.schema_lock = cache;
+        }
+        lock
+    }
+
     /// v0.24 (ADR 0052): one project-wide diagnostics round — overlay the
     /// open buffers over disk, analyse off the async runtime, convert spans
     /// against the **analysed snapshots**, and publish via the pure
@@ -702,13 +728,16 @@ impl Backend {
             .projects
             .get_mut(&root)
             .is_some_and(|ps| std::mem::take(&mut ps.panic_next_round));
+        // #2081: the committed schema lock, so a non-additive event change is
+        // diagnosed here as `bynk check` diagnoses it.
+        let schema_lock = self.schema_lock_for(&root).await;
         let joined = tokio::task::spawn_blocking(move || {
             #[cfg(test)]
             if inject_panic {
                 panic!("injected analysis panic");
             }
             let content = crate::content::sweep_project_content(&roots, &overlay);
-            bynk_ide::diagnose_project_with(&roots, &content)
+            bynk_ide::diagnose_project_with(&roots, &content, &schema_lock)
         })
         .await;
         let result = match joined {
@@ -1264,9 +1293,11 @@ impl Backend {
         // Content-ownership track (#1086) slice 5: same complete-content
         // requirement as `run_project_diagnostics` — `overlay` here is only
         // the open buffers, and `discovery.rs`'s disk fallback is gone.
+        // #2081: `Off` — this re-analysis only reads expression types, which
+        // the schema lock cannot change, so it skips the event sweep.
         let result = tokio::task::spawn_blocking(move || {
             let content = crate::content::sweep_project_content(&roots, &overlay);
-            bynk_ide::diagnose_project_with(&roots, &content)
+            bynk_ide::diagnose_project_with(&roots, &content, &bynk_ide::SchemaLock::Off)
         })
         .await
         .map_err(|e| tracing::error!("receiver-typing analysis {}", describe_join_error(e)))
@@ -1430,14 +1461,15 @@ impl Backend {
 
     /// Slice E: register the `workspace/didChangeWatchedFiles` capability with
     /// the client — once, with folder-independent globs (`**/*.bynk`,
-    /// `**/bynk.toml`), per Q4 (ADR 0204 §D). So a client that supports dynamic
+    /// `**/bynk.toml`, and since #2081 `**/bynk.schema.lock`), per Q4 (ADR
+    /// 0204 §D). So a client that supports dynamic
     /// registration is notified of source and manifest changes without watching
     /// files itself. Best-effort: a registration failure is logged, not fatal.
     async fn register_file_watchers(&self) {
         use tower_lsp::lsp_types::{
             DidChangeWatchedFilesRegistrationOptions, FileSystemWatcher, GlobPattern, Registration,
         };
-        let watchers = ["**/*.bynk", "**/bynk.toml"]
+        let watchers = ["**/*.bynk", "**/bynk.toml", "**/bynk.schema.lock"]
             .into_iter()
             .map(|g| FileSystemWatcher {
                 glob_pattern: GlobPattern::String(g.to_string()),
@@ -3354,9 +3386,16 @@ impl LanguageServer for Backend {
             overlay.insert(abs, edited);
         }
         let roots = bynk_ide::AnalysisRoots::Project(analysis.project_root.clone());
-        let Ok(post) =
-            tokio::task::spawn_blocking(move || bynk_ide::diagnose_project_with(&roots, &overlay))
-                .await
+        // #2081: `Off`. Schema-lock diagnostics are project-level: they land
+        // in `unattributed`, which neither validator compares (both read
+        // `post.files`), so reading the lock here would cost a `stat` and an
+        // event sweep for nothing. A rename that changes an event
+        // non-additively is not refused; the next diagnostics round reports
+        // it on `bynk.toml`.
+        let Ok(post) = tokio::task::spawn_blocking(move || {
+            bynk_ide::diagnose_project_with(&roots, &overlay, &bynk_ide::SchemaLock::Off)
+        })
+        .await
         else {
             return Err(refused("rename validation failed to run".into()));
         };
@@ -3595,6 +3634,19 @@ impl LanguageServer for Backend {
                 {
                     let root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
                     config_changed_roots.insert(root.clone());
+                    roots_to_reanalyse.insert(root);
+                }
+            } else if schema_lock::is_schema_lock(&ev.uri) {
+                // #2081: the lock's own directory is the project root. Drop
+                // its cached content and re-analyse, so the editor shows the
+                // new lock's verdict without waiting for an edit.
+                if let Ok(p) = ev.uri.to_file_path()
+                    && let Some(dir) = p.parent()
+                {
+                    let root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+                    if let Some(ps) = self.state.write().await.projects.get_mut(&root) {
+                        ps.schema_lock.invalidate();
+                    }
                     roots_to_reanalyse.insert(root);
                 }
             } else if open_docs.contains(&ev.uri) {
@@ -4867,6 +4919,140 @@ mod tests {
         assert_eq!(
             related[0].location.range,
             Range::new(Position::new(2, 8), Position::new(2, 11)),
+        );
+    }
+
+    /// #2081: a round reconciles events against the committed
+    /// `bynk.schema.lock`, read-only, so a non-additive change reaches the
+    /// editor as `bynk.event.non_additive_schema_change`, as it reaches
+    /// `bynk check`. The lock is never written, and a changed lock is re-read
+    /// on the next round (its stamp moved), clearing the diagnostic.
+    #[tokio::test]
+    async fn a_round_reports_a_non_additive_event_change_against_the_lock() {
+        use futures::StreamExt;
+        use tower::{Service, ServiceExt};
+
+        const CODE: &str = "bynk.event.non_additive_schema_change";
+        const LOCK_V1: &str = "version = 1\n\n\
+            [events.\"commerce.order.PaymentConfirmed\"]\nschema = 1\n\n\
+            [[events.\"commerce.order.PaymentConfirmed\".fields]]\n\
+            name = \"orderId\"\ntype = \"String\"\ndefault = false\n";
+        // The same event recorded with the source's current shape.
+        const LOCK_V2: &str = "version = 1\n\n\
+            [events.\"commerce.order.PaymentConfirmed\"]\nschema = 1\n\n\
+            [[events.\"commerce.order.PaymentConfirmed\".fields]]\n\
+            name = \"orderId\"\ntype = \"String\"\ndefault = false\n\n\
+            [[events.\"commerce.order.PaymentConfirmed\".fields]]\n\
+            name = \"region\"\ntype = \"String\"\ndefault = false\n";
+        // `region` added with no default: not additive against `LOCK_V1`.
+        const SOURCE: &str = "context commerce.order\n\n\
+            consumes bynk { Events }\n\n\
+            event PaymentConfirmed = {\n  orderId: String,\n  region: String,\n}\n\n\
+            service markPaid {\n  on call(orderId: String) -> Effect[()] given Events {\n    \
+            Events.emit[PaymentConfirmed](PaymentConfirmed { orderId: orderId, region: \"US\" })\n  \
+            }\n}\n";
+
+        let s = scratch_project(
+            "schema_lock",
+            &[
+                ("bynk.toml", "[project]\nname = \"shop\"\n"),
+                ("src/commerce/order.bynk", SOURCE),
+                ("bynk.schema.lock", LOCK_V1),
+            ],
+        );
+        let (mut service, socket) = tower_lsp::LspService::new(Backend::new);
+        for request in [
+            tower_lsp::jsonrpc::Request::build("initialize")
+                .params(serde_json::json!({ "capabilities": {} }))
+                .id(1)
+                .finish(),
+            tower_lsp::jsonrpc::Request::build("initialized")
+                .params(serde_json::json!({}))
+                .finish(),
+        ] {
+            service.ready().await.unwrap().call(request).await.unwrap();
+        }
+        let published = Arc::new(std::sync::Mutex::new(Vec::<PublishDiagnosticsParams>::new()));
+        let drain = {
+            let published = Arc::clone(&published);
+            tokio::spawn(socket.for_each(move |message| {
+                if message.method() == "textDocument/publishDiagnostics"
+                    && let Some(params) = message.params()
+                {
+                    published
+                        .lock()
+                        .unwrap()
+                        .push(serde_json::from_value(params.clone()).unwrap());
+                }
+                async {}
+            }))
+        };
+        let backend = service.inner().clone();
+        let canonical = s.0.canonicalize().unwrap();
+        backend
+            .state
+            .write()
+            .await
+            .projects
+            .insert(canonical.clone(), ProjectState::default());
+        // The project-level diagnostic anchors on `bynk.toml`.
+        let manifest = Url::from_file_path(canonical.join("bynk.toml")).unwrap();
+        let reported = |published: &[PublishDiagnosticsParams]| {
+            published
+                .iter()
+                .rfind(|p| p.uri == manifest)
+                .is_some_and(|p| {
+                    p.diagnostics
+                        .iter()
+                        .any(|d| d.code == Some(NumberOrString::String(CODE.into())))
+                })
+        };
+
+        backend.run_project_diagnostics(canonical.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(
+            reported(&published.lock().unwrap()),
+            "the round must report {CODE} against the committed lock: {:?}",
+            published.lock().unwrap()
+        );
+        assert_eq!(
+            std::fs::read_to_string(canonical.join("bynk.schema.lock")).unwrap(),
+            LOCK_V1,
+            "the editor must never write the lock"
+        );
+
+        // Record the new shape, as `bynkc compile` would after a fix: the next
+        // round re-reads the lock and the diagnostic clears.
+        std::fs::write(canonical.join("bynk.schema.lock"), LOCK_V2).unwrap();
+        backend.run_project_diagnostics(canonical.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(
+            !reported(&published.lock().unwrap()),
+            "a lock matching the source must clear {CODE}: {:?}",
+            published.lock().unwrap()
+        );
+
+        // Restore the stale lock: it is read again and the diagnostic returns.
+        std::fs::write(canonical.join("bynk.schema.lock"), LOCK_V1).unwrap();
+        backend.run_project_diagnostics(canonical.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(
+            reported(&published.lock().unwrap()),
+            "the old lock is read again"
+        );
+        // No lock at all: a fresh project, nothing to report.
+        std::fs::remove_file(canonical.join("bynk.schema.lock")).unwrap();
+        backend.run_project_diagnostics(canonical.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        drain.abort();
+        assert!(
+            !reported(&published.lock().unwrap()),
+            "with no lock there is nothing to report: {:?}",
+            published.lock().unwrap()
+        );
+        assert!(
+            !canonical.join("bynk.schema.lock").exists(),
+            "the editor must not create a lock"
         );
     }
 
@@ -6595,6 +6781,59 @@ mod tests {
             backend.state.read().await.projects.len(),
             1,
             "a created bynk.toml warms its project via the watcher event",
+        );
+    }
+
+    /// #2081: a `bynk.schema.lock` watcher event clears that project's cached
+    /// lock, so a rewrite the stamp cannot see (same length, same mtime: an
+    /// edit within one mtime tick) is still read on the next round.
+    #[tokio::test]
+    async fn a_schema_lock_watcher_event_invalidates_the_cached_lock() {
+        const OLD: &str = "version = 1\n# aaaa\n";
+        const NEW: &str = "version = 1\n# bbbb\n";
+        let s = scratch_project(
+            "lock_watch",
+            &[
+                ("bynk.toml", "[project]\nname = \"p\"\n"),
+                ("bynk.schema.lock", OLD),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let root = backend.test_root().await;
+        let lock = root.join("bynk.schema.lock");
+        let on = |text: &str| bynk_ide::SchemaLock::On {
+            existing: Some(text.to_string()),
+        };
+        assert_eq!(backend.schema_lock_for(&root).await, on(OLD));
+
+        // Rewrite with the same length, then put the old mtime back: the
+        // stamp is unchanged, so only the watcher can tell the cache.
+        let mtime = std::fs::metadata(&lock).unwrap().modified().unwrap();
+        std::fs::write(&lock, NEW).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&lock)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+        assert_eq!(
+            backend.schema_lock_for(&root).await,
+            on(OLD),
+            "an unchanged stamp serves the cache"
+        );
+
+        backend
+            .did_change_watched_files(DidChangeWatchedFilesParams {
+                changes: vec![FileEvent {
+                    uri: Url::from_file_path(&lock).unwrap(),
+                    typ: FileChangeType::CHANGED,
+                }],
+            })
+            .await;
+        assert_eq!(
+            backend.schema_lock_for(&root).await,
+            on(NEW),
+            "the watcher event must clear the cached lock"
         );
     }
 

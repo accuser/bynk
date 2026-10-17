@@ -1,0 +1,13 @@
+-- #2045: the one consumed type this Worker imports as a value. `b.big()`
+-- runs `ev.store`'s own `Batch.big` from its companion object, so
+-- `handlers.ts` keeps `import { Batch }`; every other consumed type is
+-- imported type-only (`2045_consumed_sum_built_inline_workers`).
+context ev.relay
+
+consumes ev.store
+
+service big {
+  on call(b: Batch) -> Effect[Bool] {
+    Effect.pure(b.big())
+  }
+}

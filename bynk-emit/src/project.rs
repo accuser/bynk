@@ -1414,6 +1414,19 @@ fn emit_unit(
             .filter(|t| unit_info.get(*t).map(|i| i.kind) == Some(UnitKind::Adapter))
             .cloned()
             .collect(),
+        consumed_types_with_methods: info
+            .consumes
+            .iter()
+            .filter_map(|t| unit_info.get(t))
+            .filter(|i| i.kind == UnitKind::Context)
+            .flat_map(|i| {
+                i.table
+                    .methods
+                    .iter()
+                    .filter(|(_, m)| !m.instance.is_empty() || !m.statics.is_empty())
+                    .map(|(n, _)| n.clone())
+            })
+            .collect(),
         import_ext,
         contracts,
         history_target_agents: history_target_agents.clone(),
@@ -4290,6 +4303,11 @@ pub(crate) struct EmitProjectCtx {
     /// so in workers mode its capability types are imported from its root module
     /// (`<adapter>.ts`), not from a per-Worker `handlers.ts`.
     pub consumed_adapters: HashSet<String>,
+    /// #2045: the types of consumed *contexts* (adapters aside) that carry
+    /// attached methods. A call to one (`b.big()` lowers to `Batch.big(b)`) runs
+    /// the callee's own code from its companion object, so that name is a real
+    /// value import; every other consumed context type imports type-only.
+    pub consumed_types_with_methods: HashSet<String>,
     /// Slice 2: the extension emitted import specifiers use (`.js` default; `.ts`
     /// for the `bynkc test --inspect` debug build). Consulted by `runtime_import_for`
     /// and the sibling/cross-commons specifier helpers.
@@ -4333,6 +4351,23 @@ pub(crate) struct EmitProjectCtx {
 }
 
 impl EmitProjectCtx {
+    /// #2045: on `workers`, the types this unit imports from a consumed
+    /// *context* (not an adapter): each is another Worker's, so this module
+    /// names it in type position only and builds its sum variants inline.
+    pub(crate) fn consumed_context_types(&self) -> HashSet<String> {
+        if self.target != BuildTarget::Workers || self.unit_kind != UnitKind::Context {
+            return HashSet::new();
+        }
+        self.imported_from
+            .iter()
+            .filter(|(n, owner)| {
+                self.imported_from_kind.get(n.as_str()) == Some(&UnitKind::Context)
+                    && !self.consumed_adapters.contains(owner.as_str())
+            })
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
+
     pub fn commons_path(name: &str) -> PathBuf {
         commons_dir_for(name)
     }

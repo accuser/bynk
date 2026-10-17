@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
-import { Batch } from "../ev-store/handlers.js";
+import { type Batch } from "../ev-store/handlers.js";
 import { Line as __CommonsLine, Page as __CommonsPage, Qty as __CommonsQty, Tag as __CommonsTag, someTag } from "../../ev/values.js";
 
 import type * as ev_store from "../ev-store/handlers.js";

@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
-import { Envelope } from "../demo-vault/handlers.js";
+import { type Envelope } from "../demo-vault/handlers.js";
 
 import type * as demo_vault from "../demo-vault/handlers.js";
 
