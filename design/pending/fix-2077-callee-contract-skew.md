@@ -37,8 +37,12 @@ whole-project deploy records it.
 
 **Consequences.** A whole-project deploy is unaffected: the gate is a
 `--context` gate, as D4 is, and a whole-project run moves the callers with the
-callee. A Worker of a removed context that is still live in the ledger is not
-checked on a whole-project run; it is not redeployed, and pruning it is the
-orphan flow's job. Foreign callers keep their own pin check, which already runs
+callee. A live caller this build no longer has, a Worker of a removed context
+still recorded in the ledger, is refused under `--context` too, but with a
+different remedy. A whole-project deploy reports it as `orphan worker` without
+redeploying or checking it, and `--prune` never deletes a Worker or its record.
+So the refusal says to delete the Worker and remove its ledger entry, or to
+restore its context and deploy the whole project. A whole-project run itself
+still doesn't check such a Worker. Foreign callers keep their own pin check, which already runs
 on the callee's build. The runtime 409 remains the backstop for a push behind
 the driver's back or a drifted ledger.

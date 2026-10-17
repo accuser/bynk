@@ -622,6 +622,24 @@ mod tests {
             "shop-payment",
             &one,
         ));
+        let orphaned = [skew(
+            "shop-legacy",
+            "authorise",
+            "febd15c2757b72e1",
+            "da0d725f3a004040",
+        )];
+        out.push_str("# a live caller of a context removed from the project\n");
+        out.push_str(&orphaned_caller_skew_refusal(
+            "default",
+            "shop-payment",
+            &orphaned,
+        ));
+        out.push_str("# --env staging: a live caller of a context removed from the project\n");
+        out.push_str(&orphaned_caller_skew_refusal(
+            "staging",
+            "shop-payment",
+            &orphaned,
+        ));
         out.push_str("# a live caller recorded before expectations were\n");
         out.push_str(&unrecorded_caller_warning(
             "default",

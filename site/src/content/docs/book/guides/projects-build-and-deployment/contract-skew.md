@@ -122,6 +122,14 @@ Under `--env staging`, the Workers are named `-staging` and the advice says
 `bynk deploy --env staging`. A whole-project `bynk deploy` is never refused this
 way, because it moves the callers with the callee.
 
+A live caller can also be a Worker of a context you've since removed from the
+project, still recorded in `bynk.deploy.lock` (the plan's `orphan worker`). It's
+refused too, but deploying the whole project wouldn't help, because a deploy
+never redeploys or deletes an orphaned Worker, and `--prune` doesn't either.
+The refusal says so: if the Worker is unused, delete it with `wrangler delete`
+and remove its entry from the lock file. If it's still needed, restore its
+context and deploy the whole project.
+
 A caller deployed by a driver older than this check has no record of what it
 expects, so it can't be checked. `deploy` warns that it couldn't check that
 caller, and the next whole-project deploy records it.

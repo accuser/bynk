@@ -102,7 +102,7 @@ struct WorkerRecord {
     /// call no `on call` service at all. Additive and `default`ed, so an older
     /// ledger still reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    expects: Option<BTreeMap<String, BTreeMap<String, String>>>,
+    expects: Option<Expects>,
     /// #1883, slice 1b: the static files this Worker serves, as of the push
     /// that recorded it — each one's served path (`/_assets/board.<hash>.css`).
     /// The content hash is in the path, so a changed, added or removed file
@@ -192,12 +192,7 @@ impl DeployLock {
     /// push ([`WorkerRecord::expects`]). Called right after
     /// [`DeployLock::record_deployed`]; a Worker not yet recorded is ignored.
     /// `Some` even when empty: this build *knows* what the Worker calls.
-    pub(crate) fn record_expects(
-        &mut self,
-        environment: &str,
-        worker: &str,
-        expects: BTreeMap<String, BTreeMap<String, String>>,
-    ) {
+    pub(crate) fn record_expects(&mut self, environment: &str, worker: &str, expects: Expects) {
         if let Some(record) = self
             .environments
             .get_mut(environment)

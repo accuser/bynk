@@ -345,10 +345,21 @@ pub fn run(
             &opts.environment,
         );
         if !callee_skews.is_empty() {
-            eprint!(
-                "{}",
-                callee_contract_skew_refusal(&opts.environment, worker, &callee_skews)
-            );
+            // A caller this build no longer has gets its own remedy: a
+            // whole-project deploy would not move it.
+            let (built, orphaned) = split_orphaned_callers(callee_skews, &graph);
+            if !built.is_empty() {
+                eprint!(
+                    "{}",
+                    callee_contract_skew_refusal(&opts.environment, worker, &built)
+                );
+            }
+            if !orphaned.is_empty() {
+                eprint!(
+                    "{}",
+                    orphaned_caller_skew_refusal(&opts.environment, worker, &orphaned)
+                );
+            }
             return ExitCode::FAILURE;
         }
         for caller in unrecorded_callers(worker, &graph, &lock, &opts.environment) {
@@ -1067,6 +1078,58 @@ pub(crate) fn callee_contract_skew_refusal(
     );
     out.push_str(&format!(
         "  Deploy the whole project (`{}`) so both sides move together.\n",
+        deploy_command(environment)
+    ));
+    out
+}
+
+/// #2077 review: the refusal for a callee whose new build breaks a live caller
+/// this project no longer builds — a Worker of a removed context, still
+/// recorded in the ledger (the plan's `orphan worker`). A whole-project deploy
+/// neither redeploys nor checks it, and `--prune` never deletes a Worker or its
+/// record, so the remedy is to retire it (delete the Worker, then drop its
+/// ledger entry, without which this gate keeps refusing) or to restore its
+/// context and deploy the whole project ([`deploy_command`]). Pure, so the
+/// wording is goldened.
+pub(crate) fn orphaned_caller_skew_refusal(
+    environment: &str,
+    worker: &str,
+    skews: &[CalleeSkew],
+) -> String {
+    let mut out = format!(
+        "bynk: `{}` no longer provides the contract a live Worker this project no longer builds was compiled against ({CONTRACT_SKEW}):\n",
+        deployed_worker_name(environment, worker)
+    );
+    for s in skews {
+        out.push_str(&format!(
+            "  `{}` (orphaned) calls {}.{} — compiled against {}, this build provides {}\n",
+            deployed_worker_name(environment, &s.caller),
+            s.dependency,
+            s.service,
+            s.expected,
+            s.provided
+        ));
+    }
+    out.push_str(
+        "  Deploying this would ship a callee that rejects it (409 ContractMismatch) on every call, and a whole-project deploy would not move it: that reports an orphaned Worker but never redeploys or deletes it, and `--prune` never deletes a Worker either.\n",
+    );
+    let mut callers: Vec<&str> = skews.iter().map(|s| s.caller.as_str()).collect();
+    callers.dedup();
+    out.push_str(&format!(
+        "  If it is unused, delete it ({}) and remove its entry ({}) from {LOCK_FILE}. If it is still needed, restore its context and deploy the whole project (`{}`).\n",
+        callers
+            .iter()
+            .map(|c| format!(
+                "`npx wrangler delete --name {}`",
+                deployed_worker_name(environment, c)
+            ))
+            .collect::<Vec<_>>()
+            .join(", "),
+        callers
+            .iter()
+            .map(|c| format!("`[environments.{environment}.workers.{c}]`"))
+            .collect::<Vec<_>>()
+            .join(", "),
         deploy_command(environment)
     ));
     out
@@ -2432,6 +2495,67 @@ queue = "jobs"
         let refusal = callee_contract_skew_refusal("default", "shop-payment", &found);
         assert!(refusal.contains("`shop-orders` calls shop.payment.authorise"));
         assert!(refusal.contains(CONTRACT_SKEW));
+    }
+
+    /// #2077 review: a caller this build still has is advised to deploy the
+    /// whole project, which moves it with the callee.
+    #[test]
+    fn a_built_caller_is_refused_with_the_whole_project_remedy() {
+        let lock = live_shop(Some("febd15c2757b72e1"));
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "default",
+        );
+        let bindings = graph(&[("shop-orders", &["shop-payment"]), ("shop-payment", &[])]);
+        let (built, orphaned) = split_orphaned_callers(found, &bindings);
+        assert_eq!(built.len(), 1);
+        assert!(orphaned.is_empty(), "{orphaned:?}");
+        let refusal = callee_contract_skew_refusal("default", "shop-payment", &built);
+        assert!(refusal.contains("Deploy the whole project (`bynk deploy`)"));
+    }
+
+    /// #2077 review: a caller of a context removed from the project is still
+    /// live in the ledger, and still refused — but a whole-project deploy
+    /// would neither move nor check it, so its refusal says to retire it (or
+    /// restore its context), never just to deploy the whole project.
+    #[test]
+    fn an_orphaned_caller_is_refused_with_the_orphan_remedy() {
+        let mut lock = live_shop(Some("febd15c2757b72e1"));
+        lock.record_deployed("staging", "shop-payment", Some(BTreeMap::new()));
+        lock.record_deployed("staging", "shop-legacy", Some(BTreeMap::new()));
+        lock.record_expects(
+            "staging",
+            "shop-legacy",
+            expects("shop.payment", "authorise", "febd15c2757b72e1"),
+        );
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "staging",
+        );
+        // This build has orders and payment; `shop-legacy` is gone.
+        let bindings = graph(&[("shop-orders", &["shop-payment"]), ("shop-payment", &[])]);
+        let (built, orphaned) = split_orphaned_callers(found, &bindings);
+        assert!(built.is_empty(), "{built:?}");
+        assert_eq!(orphaned.len(), 1);
+        assert_eq!(orphaned[0].caller, "shop-legacy");
+        let refusal = orphaned_caller_skew_refusal("staging", "shop-payment", &orphaned);
+        assert!(refusal.contains(CONTRACT_SKEW), "{refusal}");
+        assert!(
+            refusal.contains("`shop-legacy-staging` (orphaned) calls shop.payment.authorise"),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("`npx wrangler delete --name shop-legacy-staging`")
+                && refusal.contains("`[environments.staging.workers.shop-legacy]`")
+                && refusal.contains("`bynk deploy --env staging`"),
+            "{refusal}"
+        );
     }
 
     #[test]

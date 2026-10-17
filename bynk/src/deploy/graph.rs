@@ -267,6 +267,22 @@ pub(crate) fn callee_contract_skews(
     out
 }
 
+/// #2077 review: split callee skews into those whose caller this build still
+/// has (`graph` keys every project Worker) and those whose caller is an
+/// orphan — a Worker of a context since removed from the project, still live
+/// in the ledger. The remedies differ: a whole-project deploy moves a built
+/// caller with its callee, but neither redeploys nor checks an orphan (nor
+/// does `--prune`, which never deletes a Worker), so advising it for an
+/// orphan would ship the very 409 the gate refused.
+pub(crate) fn split_orphaned_callers(
+    skews: Vec<CalleeSkew>,
+    graph: &BTreeMap<String, Vec<String>>,
+) -> (Vec<CalleeSkew>, Vec<CalleeSkew>) {
+    skews
+        .into_iter()
+        .partition(|s| graph.contains_key(&s.caller))
+}
+
 /// #2077: the live Workers that bind to `worker` in this build's `graph` but
 /// whose ledger record predates `expects`, so [`callee_contract_skews`] cannot
 /// check them. A warning, never a refusal: the gate reports only what it
