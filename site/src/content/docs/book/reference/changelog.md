@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.346.7** | A Worker's fault handlers (`fetch`, which covers `/_bynk/call/` and `/_bynk/event/`, and the queue consumer) log the error's stack, `e instanceof Error ? (e.stack || String(e)) : e`, instead of the error as a value, so `wrangler tail` shows frames an uploaded source map can map back to `.bynk` lines; the Workers guide says so (#2053). |
 | **v0.346.6** | The `dev_inspect` workerd test and the VS Code extension's two workerd debug tests stop only the `wrangler dev` process group they started, instead of running `pkill -f workerd`. That command killed every workerd on the machine, while the `wrangler` it had started (and the workerd that one respawned) leaked. `dev_inspect` also asks the OS for free ports instead of deriving them from its pid (#2069). |
 | **v0.346.5** | A unit or integration test case whose agent or service handler emits now runs, and `expect Events.emit called once` observes the release (the test deps carry `__eventsDispatch`) |
 | **v0.346.4** | A test now pins that every internal path a Worker answers (`/_bynk/call/`, `/_bynk/event/`) checks the caller's signature before anything else that can answer, so an unauthenticated request gets a bare `401` and never the `409` `ContractMismatch` body that names the expected hash; that body is unchanged (#2054). |
