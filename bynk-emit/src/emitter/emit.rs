@@ -4234,6 +4234,82 @@ pub(crate) fn param_cast(
     arg
 }
 
+/// #2042: the bundle path's cast for an argument crossing a context boundary.
+/// A named parameter type takes [`param_cast`]. So does a generic one that
+/// names a user type anywhere (`List[Line]`, `Option[Line]`,
+/// `Map[String, Line]`, `Page[Line]`): the caller's `readonly Line[]` carries
+/// the caller's brand and the callee's parameter the callee's, so it is cast
+/// through `unknown` to the parameter type with every named type qualified by
+/// the callee's namespace (`readonly cs_store.Line[]`). A parameter that names
+/// no user type (`List[Int]`) needs no cast.
+///
+/// The workers path keeps [`param_cast`] alone: a generic argument there goes
+/// to the caller's own instantiation codec, whose commons types are unbranded
+/// (#2027), so it already accepts the caller's value.
+pub(crate) fn bundle_param_cast(
+    consumed: &str,
+    info: &bynk_check::resolver::CrossContextInfo,
+    method: &Ident,
+    idx: usize,
+    arg: String,
+    in_test_scaffold: bool,
+) -> String {
+    let ptype_ref = info
+        .consumed_services
+        .get(consumed)
+        .and_then(|svcs| svcs.get(&method.name))
+        .and_then(|service| service.params.get(idx))
+        .map(|(_, t)| t);
+    let Some(ptype_ref) =
+        ptype_ref.filter(|t| type_ref_named_root(t).is_none() && type_ref_names_a_user_type(t))
+    else {
+        return param_cast(consumed, info, method, idx, arg, in_test_scaffold);
+    };
+    let ns = if in_test_scaffold {
+        test_scaffold_ns(consumed)
+    } else {
+        qualified_to_ns(consumed)
+    };
+    let ty = bynk_ts::print_type(&ts_type_ref_to_ts_type(
+        ptype_ref,
+        Some(&|_| Some(ns.clone())),
+    ));
+    // One opaque leaf for the same reason as [`param_cast`]'s.
+    bynk_ts::print_expr(&bynk_ts::TsExpr::Paren(Box::new(
+        bynk_ts::TsExpr::VerbatimExpr(
+            format!("{arg} as unknown as {ty}"),
+            bynk_ts::VerbatimOrigin::Emit,
+        ),
+    )))
+}
+
+/// Whether `t` names a user type (a `Named` or a generic `App`) anywhere.
+fn type_ref_names_a_user_type(t: &TypeRef) -> bool {
+    match t {
+        TypeRef::Named(_) | TypeRef::App { .. } => true,
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            type_ref_names_a_user_type(a) || type_ref_names_a_user_type(b)
+        }
+        TypeRef::Option(a, _)
+        | TypeRef::Effect(a, _)
+        | TypeRef::Query(a, _)
+        | TypeRef::Stream(a, _)
+        | TypeRef::History(a, _)
+        | TypeRef::HttpResult(a, _)
+        | TypeRef::Connection(a, _)
+        | TypeRef::List(a, _) => type_ref_names_a_user_type(a),
+        TypeRef::Fn(params, ret, _) => {
+            params.iter().any(type_ref_names_a_user_type) || type_ref_names_a_user_type(ret)
+        }
+        TypeRef::Base(..)
+        | TypeRef::JsonError(_)
+        | TypeRef::QueueResult(_)
+        | TypeRef::Asset(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::Unit(_) => false,
+    }
+}
+
 /// If the type-ref names a single user type at its root, return that name.
 /// (For generics like `Result[T, E]`, we don't emit a cast at the outer
 /// layer — TypeScript handles the variance through the intersection.)

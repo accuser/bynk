@@ -3022,7 +3022,7 @@ fn lower_cross_context_service_call(
                         .enumerate()
                         .map(|(i, a)| {
                             let lowered = pre.lower(a, cx);
-                            param_cast(
+                            bundle_param_cast(
                                 &consumed,
                                 cx.cross_context(),
                                 method,
