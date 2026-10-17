@@ -7,6 +7,8 @@ import { Order, Region } from "../shop-order/handlers.js";
 
 import type * as shop_order from "../shop-order/handlers.js";
 
+export { type Order, type Region };
+
 export const domestic = {
   async call(id: string, deps: {}): globalThis.Promise<Order> {
     return { id: id, region: Region.Domestic };
@@ -24,8 +26,6 @@ export const isHome = {
     return __bynkEq(r, Region.Domestic);
   },
 };
-
-export type { Order, Region };
 
 export function __serialise_Order(value: shop_order.Order): __JsonValue {
   return {

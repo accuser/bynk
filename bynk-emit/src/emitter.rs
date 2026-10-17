@@ -1511,47 +1511,6 @@ fn emit_boundary_helpers(
                     &mut emitted_insts,
                 );
             stmts.extend(consumed_stmts);
-            // #2073: a type this context consumes from another *context* that
-            // crosses its own boundary (`on call(o: Order)`, `Order` from
-            // `shop.order`) and that no call of its own already reached. Its
-            // Worker entry and compose root name the type and its codecs
-            // through `handlers`, as a local type's, but the owner emits codecs
-            // only for its own boundary. They are generated here, the type
-            // named through the owner's namespace as a consumed call's codecs
-            // name it, and the type re-exported.
-            let mut unserved: Vec<String> = boundary_types_all
-                .iter()
-                .filter(|n| {
-                    !emitted_names.contains(*n)
-                        && matches!(ctx.imported_from_kind.get(*n), Some(UnitKind::Context))
-                        && codec_owner(ctx, n).is_none()
-                })
-                .cloned()
-                .collect();
-            unserved.sort();
-            if !unserved.is_empty() {
-                let qual: HashMap<String, String> = unserved
-                    .iter()
-                    .filter_map(|n| {
-                        let owner = ctx.imported_from.get(n)?;
-                        Some((n.clone(), format!("{}.", qualified_to_ns(owner))))
-                    })
-                    .collect();
-                stmts.push(bynk_ts::TsStmt::raw(
-                    format!("export type {{ {} }};\n", unserved.join(", ")),
-                    None,
-                ));
-                stmts.extend(serialisation::decls_as_stmts_block(
-                    serialisation::emit_helpers_for_owner_qualified(
-                        &unserved,
-                        &commons.types,
-                        ctx.commons_name.as_str(),
-                        &qual,
-                        &ctx.runtime_use,
-                    ),
-                ));
-                emitted_names.extend(unserved.iter().cloned());
-            }
             // #1823: codecs of commons types a call to another context needs,
             // beyond those this context's own boundary already imports.
             let (imports, imported) =
