@@ -1116,11 +1116,30 @@ mod tests {
     // and answers `kv namespace create` with an id. Nothing reaches
     // Cloudflare.
 
+    /// Write an executable stand-in `wrangler` at `path`.
+    ///
+    /// By a child `sh`, not by this process: a test thread that forks while
+    /// this process holds the script open for writing carries that descriptor
+    /// into its child until exec, and running the script in that window fails
+    /// with ETXTBSY ("Text file busy"). Seen once the #2055 tests ran beside
+    /// these in parallel.
+    #[cfg(unix)]
+    fn write_stand_in(path: &Path, script: &str) {
+        let wrote = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"")
+            .arg("sh")
+            .arg(script)
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(wrote.success(), "the stand-in wrangler is written");
+    }
+
     /// What `deploy_one` ran, one line per `wrangler` invocation, and the
     /// ledger it left, for one Worker `api` that binds only the bare `KV`.
     #[cfg(unix)]
     fn provision_bare_kv(environment: &str, lock: DeployLock) -> (Vec<String>, DeployLock) {
-        use std::os::unix::fs::PermissionsExt;
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1138,15 +1157,13 @@ mod tests {
         .unwrap();
         let log = root.join("calls.log");
         let fake = root.join("wrangler");
-        std::fs::write(
+        write_stand_in(
             &fake,
-            format!(
+            &format!(
                 "#!/bin/sh\necho \"$*\" >> '{}'\nif [ \"$1\" = kv ]; then echo '{{\"id\":\"minted-id\",\"title\":\"t\"}}'; fi\nexit 0\n",
                 log.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
 
         let mut lock = lock;
         let source = SecretSource::default();
@@ -1263,7 +1280,6 @@ mod tests {
         with_upload: bool,
         deploy_exit: i32,
     ) -> SecretRun {
-        use std::os::unix::fs::PermissionsExt;
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1284,10 +1300,8 @@ mod tests {
         let fake = root.join("wrangler");
         // A `--secrets-file` is checked while the upload runs: it must exist
         // then, and hold the name. Its value is never echoed.
-        std::fs::write(
-            &fake,
-            format!(
-                "#!/bin/sh\n\
+        let script = format!(
+            "#!/bin/sh\n\
                  echo \"$*\" >> '{log}'\n\
                  if [ \"$1\" = secret ] && [ \"$2\" = put ]; then cat > /dev/null; fi\n\
                  if [ \"$1\" = deploy ]; then\n\
@@ -1301,12 +1315,10 @@ mod tests {
                  exit {deploy_exit}\n\
                  fi\n\
                  exit 0\n",
-                log = log.display(),
-                seen = seen.display(),
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+            log = log.display(),
+            seen = seen.display(),
+        );
+        write_stand_in(&fake, &script);
 
         let mut lock = DeployLock::default();
         if already_deployed {
