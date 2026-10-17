@@ -627,15 +627,19 @@ pub(crate) fn apply_secrets(
     prepared: &[(String, String)],
     environment: &str,
 ) -> Result<(), DeployFailure> {
-    for (name, value) in prepared {
-        set_secret(provenance, worker_dir, name, value, environment).map_err(|e| {
+    for (binding_name, value) in prepared {
+        set_secret(provenance, worker_dir, binding_name, value, environment).map_err(|e| {
             DeployFailure::driver(format!(
-                "could not set the secret `{name}` on `{worker}`: {e}"
+                "could not set the secret `{binding_name}` on `{worker}`: {e}"
             ))
         })?;
         eprintln!(
             "{}",
-            secret_set_line(name, &deployed_worker_name(environment, worker), false)
+            binding_set_line(
+                binding_name,
+                &deployed_worker_name(environment, worker),
+                false
+            )
         );
     }
     Ok(())
@@ -648,11 +652,15 @@ pub(crate) fn apply_secrets(
 /// `--env staging`, since that is the Worker the secret went to.
 /// `with_first_version` is a new Worker's case: the secret went up with its
 /// first version rather than as a version of its own.
-pub(crate) fn secret_set_line(name: &str, deployed: &str, with_first_version: bool) -> String {
+pub(crate) fn binding_set_line(
+    binding_name: &str,
+    deployed: &str,
+    with_first_version: bool,
+) -> String {
     if with_first_version {
-        format!("bynk: set secret `{name}` on `{deployed}`, with its first version")
+        format!("bynk: set secret `{binding_name}` on `{deployed}`, with its first version")
     } else {
-        format!("bynk: set secret `{name}` on `{deployed}`")
+        format!("bynk: set secret `{binding_name}` on `{deployed}`")
     }
 }
 

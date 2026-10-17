@@ -146,6 +146,10 @@ older than 4.74.0, which can't upload secrets with a new Worker, the deploy says
 so and sets them just after the first push. For that moment the new Worker
 answers `401` to any route that needs a secret.
 
+Give secrets to `bynk deploy --secrets-file`, not to wrangler after `--`. A run
+that includes a new Worker refuses `-- --secrets-file`, because that upload
+already passes its own file.
+
 Every line of the plan is marked with how Bynk came to know the name:
 
 ```

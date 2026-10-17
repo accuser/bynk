@@ -285,8 +285,8 @@ pub(crate) fn deploy_one(
     drop(file);
     let pushed = pushed?;
     if pushed == Pushed::Ok {
-        for (name, _) in &prepared {
-            eprintln!("{}", secret_set_line(name, &deployed, true));
+        for (binding_name, _) in &prepared {
+            eprintln!("{}", binding_set_line(binding_name, &deployed, true));
         }
     }
     Ok(pushed)
@@ -1257,13 +1257,13 @@ mod tests {
     // drains a `secret put`'s stdin, and notes whether a `--secrets-file` it
     // is handed exists and names the secret. Nothing reaches Cloudflare.
 
-    const SECRET: &str = "LEDGER_CALL_KEY";
-    const VALUE: &str = "s3cret-value-2055";
+    const BINDING: &str = "LEDGER_CALL";
+    const PLANTED: &str = "planted-2055";
 
     /// What one `deploy_one` of a Worker `api` with one secret to set left
     /// behind.
     #[cfg(unix)]
-    struct SecretRun {
+    struct BindingRun {
         /// One line per `wrangler` invocation.
         calls: Vec<String>,
         /// What the stand-in saw of the `--secrets-file`, one line per upload.
@@ -1274,12 +1274,12 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn deploy_with_secret(
+    fn deploy_with_binding(
         environment: &str,
         already_deployed: bool,
         with_upload: bool,
         deploy_exit: i32,
-    ) -> SecretRun {
+    ) -> BindingRun {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1308,7 +1308,7 @@ mod tests {
                  prev=\n\
                  for a in \"$@\"; do\n\
                  if [ \"$prev\" = --secrets-file ]; then\n\
-                 if [ -f \"$a\" ] && grep -q '\"{SECRET}\":\"{VALUE}\"' \"$a\"; then echo present >> '{seen}'; else echo missing >> '{seen}'; fi\n\
+                 if [ -f \"$a\" ] && grep -q '\"{BINDING}\":\"{PLANTED}\"' \"$a\"; then echo present >> '{seen}'; else echo missing >> '{seen}'; fi\n\
                  fi\n\
                  prev=$a\n\
                  done\n\
@@ -1327,13 +1327,13 @@ mod tests {
         let source = SecretSource::default();
         let edge_keys = BTreeMap::new();
         let foreign_keys = BTreeMap::from([(
-            ("api".to_string(), SECRET.to_string()),
+            ("api".to_string(), BINDING.to_string()),
             ForeignKey::Set {
-                value: VALUE.to_string(),
+                value: PLANTED.to_string(),
                 minted: false,
             },
         )]);
-        let foreign_secrets = BTreeSet::from([SECRET.to_string()]);
+        let foreign_secrets = BTreeSet::from([BINDING.to_string()]);
         let listed = BTreeMap::from([("api".to_string(), Some(BTreeSet::new()))]);
         let mut resolved = BTreeMap::new();
         let pushed = deploy_one(
@@ -1371,10 +1371,10 @@ mod tests {
             .any(|p| p.to_string_lossy().contains("bynk-secrets"));
         let lock_text = std::fs::read_to_string(root.join(LOCK_FILE)).unwrap_or_default();
         assert!(
-            !lock_text.contains(VALUE),
+            !lock_text.contains(PLANTED),
             "the ledger never carries a secret"
         );
-        let run = SecretRun {
+        let run = BindingRun {
             calls: read(&log),
             seen: read(&seen),
             pushed,
@@ -1397,20 +1397,28 @@ mod tests {
         out
     }
 
-    /// The `--secrets-file` path in a logged `deploy` line, checked to be the
-    /// only thing besides `rest` and to sit under the system temp dir.
+    /// The `--secrets-file` path in the run's only call, checked to be a
+    /// `deploy` with nothing else but `rest`, and to sit under the system temp
+    /// dir. The asserts here and below compare without formatting what wrangler
+    /// was handed into a failure message: a test of secret handling logs none
+    /// of it, even its own planted values.
     #[cfg(unix)]
-    fn secrets_file_of(call: &str, rest: &[&str]) -> std::path::PathBuf {
+    fn secrets_file_of(calls: &[String], rest: &[&str]) -> std::path::PathBuf {
+        assert!(calls.len() == 1, "a first deploy is one wrangler call");
+        let call = &calls[0];
         let tokens: Vec<&str> = call.split(' ').collect();
-        assert_eq!(&tokens[..2], ["deploy", "--secrets-file"], "{call}");
-        assert_eq!(&tokens[3..], rest, "{call}");
+        assert!(
+            tokens.len() == 3 + rest.len() && tokens[..2] == ["deploy", "--secrets-file"],
+            "the call is `deploy --secrets-file <path>`, then `rest`"
+        );
+        assert!(tokens[3..] == *rest, "and then exactly `rest`");
         let path = std::path::PathBuf::from(tokens[2]);
         assert!(
             path.starts_with(std::env::temp_dir()),
-            "the secrets file is written under the temp dir, not the project: {call}"
+            "the secrets file is written under the temp dir, not the project"
         );
         assert!(
-            !call.contains(VALUE),
+            !call.contains(PLANTED),
             "only the path reaches argv, never a value"
         );
         path
@@ -1419,12 +1427,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_first_deploy_uploads_its_secrets_with_the_worker() {
-        let run = deploy_with_secret("default", false, true, 0);
-        assert_eq!(run.pushed, Ok(Pushed::Ok));
+        let run = deploy_with_binding("default", false, true, 0);
+        assert!(run.pushed == Ok(Pushed::Ok), "the push succeeds");
         // One call, and no `secret put` after it: the first version has them.
-        assert_eq!(run.calls.len(), 1, "{:?}", run.calls);
-        let file = secrets_file_of(&run.calls[0], &[]);
-        assert_eq!(run.seen, ["present"], "the file existed during the upload");
+        let file = secrets_file_of(&run.calls, &[]);
+        assert!(
+            run.seen == ["present"],
+            "the file existed during the upload"
+        );
         assert!(!file.exists(), "and is removed once it succeeded");
         assert!(!file.parent().unwrap().exists(), "with its directory");
         assert!(!run.left_in_project);
@@ -1433,11 +1443,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_failed_first_upload_still_removes_the_secrets_file() {
-        let run = deploy_with_secret("default", false, true, 1);
+        let run = deploy_with_binding("default", false, true, 1);
         assert!(run.pushed.is_err(), "wrangler's failure is the deploy's");
-        assert_eq!(run.calls.len(), 1, "{:?}", run.calls);
-        let file = secrets_file_of(&run.calls[0], &[]);
-        assert_eq!(run.seen, ["present"]);
+        let file = secrets_file_of(&run.calls, &[]);
+        assert!(
+            run.seen == ["present"],
+            "the file existed during the upload"
+        );
         assert!(!file.exists(), "removed although the upload failed");
         assert!(!file.parent().unwrap().exists());
     }
@@ -1447,11 +1459,13 @@ mod tests {
     fn a_first_deploy_under_an_environment_uploads_to_the_suffixed_worker() {
         // `--env staging` is what makes wrangler upload `api-staging`, the
         // secrets with it.
-        let run = deploy_with_secret("staging", false, true, 0);
-        assert_eq!(run.pushed, Ok(Pushed::Ok));
-        assert_eq!(run.calls.len(), 1, "{:?}", run.calls);
-        let file = secrets_file_of(&run.calls[0], &["--env", "staging"]);
-        assert_eq!(run.seen, ["present"]);
+        let run = deploy_with_binding("staging", false, true, 0);
+        assert!(run.pushed == Ok(Pushed::Ok), "the push succeeds");
+        let file = secrets_file_of(&run.calls, &["--env", "staging"]);
+        assert!(
+            run.seen == ["present"],
+            "the file existed during the upload"
+        );
         assert!(!file.exists());
     }
 
@@ -1460,33 +1474,37 @@ mod tests {
     fn a_redeploy_sets_its_secrets_before_the_push_on_stdin() {
         // The Worker exists, so its secrets go first, as their own version,
         // and never through a file.
-        let run = deploy_with_secret("default", true, true, 0);
-        assert_eq!(run.pushed, Ok(Pushed::Ok));
-        assert_eq!(run.calls, [format!("secret put {SECRET}"), "deploy".into()]);
-        assert!(run.seen.is_empty());
-        let run = deploy_with_secret("staging", true, true, 0);
-        assert_eq!(
-            run.calls,
-            [
-                format!("secret put {SECRET} --env staging"),
-                "deploy --env staging".into()
-            ]
+        let run = deploy_with_binding("default", true, true, 0);
+        assert!(run.pushed == Ok(Pushed::Ok), "the push succeeds");
+        assert!(
+            run.calls == [format!("secret put {BINDING}"), "deploy".into()],
+            "`secret put`, then `deploy`"
+        );
+        assert!(run.seen.is_empty(), "no secrets file");
+        let run = deploy_with_binding("staging", true, true, 0);
+        assert!(
+            run.calls
+                == [
+                    format!("secret put {BINDING} --env staging"),
+                    "deploy --env staging".into()
+                ],
+            "both under `--env staging`"
         );
     }
 
     #[cfg(unix)]
     #[test]
     fn a_wrangler_without_the_secrets_file_falls_back_to_setting_after_the_push() {
-        let run = deploy_with_secret("default", false, false, 0);
-        assert_eq!(run.pushed, Ok(Pushed::Ok));
-        assert_eq!(
-            run.calls,
-            ["deploy".to_string(), format!("secret put {SECRET}")]
+        let run = deploy_with_binding("default", false, false, 0);
+        assert!(run.pushed == Ok(Pushed::Ok), "the push succeeds");
+        assert!(
+            run.calls == ["deploy".to_string(), format!("secret put {BINDING}")],
+            "`deploy`, then `secret put`"
         );
         // And a failed push sets nothing on a Worker that may not exist.
-        let run = deploy_with_secret("default", false, false, 1);
-        assert!(run.pushed.is_err());
-        assert_eq!(run.calls, ["deploy"]);
+        let run = deploy_with_binding("default", false, false, 1);
+        assert!(run.pushed.is_err(), "the push fails");
+        assert!(run.calls == ["deploy"], "and nothing is set after it");
     }
 
     #[cfg(unix)]
@@ -1509,22 +1527,25 @@ mod tests {
         assert_eq!(mode(&dir), 0o700);
         let parsed: BTreeMap<String, String> =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(parsed, prepared.into_iter().collect());
+        assert!(
+            parsed == prepared.into_iter().collect::<BTreeMap<_, _>>(),
+            "the file holds exactly the prepared pairs"
+        );
         drop(file);
         assert!(!dir.exists(), "dropping it removes the directory");
     }
 
     #[test]
     fn the_set_line_names_the_secret_and_the_deployed_worker_never_the_value() {
-        let line = secret_set_line(SECRET, &deployed_worker_name("staging", "api"), true);
+        let line = binding_set_line(BINDING, &deployed_worker_name("staging", "api"), true);
         assert_eq!(
             line,
-            "bynk: set secret `LEDGER_CALL_KEY` on `api-staging`, with its first version"
+            "bynk: set secret `LEDGER_CALL` on `api-staging`, with its first version"
         );
-        assert!(!line.contains(VALUE));
+        assert!(!line.contains(PLANTED));
         assert_eq!(
-            secret_set_line(SECRET, "api", false),
-            "bynk: set secret `LEDGER_CALL_KEY` on `api`"
+            binding_set_line(BINDING, "api", false),
+            "bynk: set secret `LEDGER_CALL` on `api`"
         );
     }
 
