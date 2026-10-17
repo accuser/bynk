@@ -364,10 +364,10 @@ kv create shop-cart-sessions (KV_SESSIONS)
 deploy shop-cart
 ```
 
-The first line is the bare `Kv`'s namespace, titled with the Worker's name as it
-always has been. It appears only if the context uses the bare `Kv`. An
-instance's namespace is titled `<worker>-<capability>`, and gets an
-environment suffix under `--env` (`shop-cart-sessions-staging`). Each id is
+The first line is the bare `Kv`'s namespace, titled with the Worker's name. It
+appears only if the context uses the bare `Kv`. An instance's namespace is
+titled `<worker>-<capability>`. Both get an environment suffix under `--env`
+(`shop-cart-staging`, `shop-cart-sessions-staging`). Each id is
 recorded in `bynk.deploy.lock` under its Worker and its binding, and only ever
 written into the generated `wrangler.toml` immediately before the push.
 
@@ -495,13 +495,25 @@ order commerce-payment-staging → commerce-orders-staging
 The plan and the deploy take these names from the same place: the
 environment's section of the generated config states the Worker's `name`
 (`commerce-orders-staging`) rather than leaving it to Wrangler's default, which
-is the same name.
+is the same name. The `--context` refusal for a binding target that has never
+been deployed, and the list of contexts a failed run did not reach, name
+Workers the same way.
+
+In `--format json`, `orphans.workers` and `orphans.queues` hold these
+account names too (`gone-staging`, `old-jobs-staging`). `orphans.kv` does not:
+each entry's `worker` is the Worker's ledger key, its bare name, alongside the
+`binding` (absent for the bare `Kv`), because that pair is what the ledger
+records the namespace under.
 
 KV's identity is the namespace id Cloudflare hands back, already kept apart per
-environment in `bynk.deploy.lock`. The bare `Kv`'s namespace keeps its plain
-title, so no live namespace is ever renamed. A derived instance's title does
-take the suffix (`shop-cart-sessions-staging`), so the environments' namespaces
-are told apart in the dashboard too.
+environment in `bynk.deploy.lock`. A namespace's title takes the suffix too,
+because Cloudflare refuses a second namespace with a title the account already
+holds. So the bare `Kv`'s namespace is `shop-cart-staging` and a derived
+instance's is `shop-cart-sessions-staging`. The default environment's titles
+are unchanged (`shop-cart`, `shop-cart-sessions`). The title only matters when
+the namespace is created: one whose id the lock file already records for the
+environment is reused, whatever it was titled when it was made, and the plan
+shows the title Bynk would give it.
 
 `--env` is the driver's own flag; putting `--env` or `--environment` after
 `--` as well is rejected rather than silently resolved one way or the other:

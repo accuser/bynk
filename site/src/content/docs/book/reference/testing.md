@@ -109,6 +109,19 @@ case "each owner's list is private" {
 - `by Visitor` — a unit-identity actor takes **no** argument
   (`bynk.test.actor_no_identity` if one is given; `bynk.test.actor_identity_required`
   if an identity-carrying actor is written bare).
+- `by Admin("root")` — a [refinement actor](/book/guides/actors/authorisation/)
+  carries its base actor's identity, so it takes the base's identity value (a
+  bare `by Admin` is `bynk.test.actor_identity_required`). At the `unit` and
+  `integration` tiers its claim is given, not checked. At the `system` tier the
+  signed token carries claims that satisfy the refinement's predicate, so the
+  Worker admits it, and a case acting as the base (`by User("root")`) gets the
+  `403` a real token lacking the claim would.
+- `by Visitor` or `by User("ada")` on a handler guarded by an
+  [actor sum](/book/guides/actors/multiple-callers/) (`by who: User | Visitor`)
+  — the case names any member, with the identity that member carries, and the
+  handler runs with its binder bound to that member's arm. A non-member is
+  `bynk.test.principal_identity_mismatch`; a case with no `by` is
+  `bynk.test.principal_required`.
 - `by Caller("orders")` — an `on call` handler that binds its caller
   (`by c: Caller`) reads the calling context's name, and a case has no calling
   context, so it must name one; without it the call is
@@ -412,6 +425,9 @@ production `provides`).
   operation the capability does not declare is `bynk.stub.unknown_op`; a
   `returns` value whose type disagrees with the operation's result type is
   `bynk.stub.rhs_type`.
+- **`stub` is in-process only.** A `stub` overrides a seam at `unit` and
+  `integration`. At `system` each context runs as the Worker it deploys as and
+  builds its own providers, so a `stub` there is `bynk.stub.at_system`.
 - **Precedence:** case `stub` > suite `stub` > the tier default, **per
   operation**. A case-scoped clause applies to its own case only. An operation
   no clause covers (for this case) reaches the tier default, so stubbing
@@ -807,8 +823,10 @@ suite checkout as system {
 - The inferred set must span **at least two contexts** (the target and a consumed
   one); otherwise `bynk.tier.system_needs_wire`. The closure under `consumes` is
   derived automatically, so a consumed context can never be left unwired.
-- A `stub` clause is legal at every tier, `system` included (it overrides one
-  seam); what a tier controls is the *default* provision.
+- A `stub` is not legal at `system`, suite- or case-scoped
+  (`bynk.stub.at_system`). Each participant runs as the Worker it deploys as, and
+  that Worker builds its own capability providers, so there is no seam to put a
+  double in. A case that needs a stubbed seam stays at `unit` or `integration`.
 
 Cross-context capabilities (`given B.Cap`) are wired as in production: the
 provider is instantiated locally in the consumer Worker (v0.15 model A1).

@@ -1,0 +1,17 @@
+context r
+
+consumes bynk { Secrets }
+
+service mode {
+	on call() -> Effect[String] by c: Caller given Secrets {
+		let m <- Secrets.get("MODE")
+		match m {
+			Some(v) => v,
+			None => "unset",
+		}
+	}
+}
+
+service api from http {
+	on GET("/") () -> Effect[HttpResult[String]] by Visitor { Ok("ok") }
+}

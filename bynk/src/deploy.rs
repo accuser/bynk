@@ -409,8 +409,9 @@ mod tests {
 
         // A renamed capability (`Carts` → `PriceCache`) is a new binding: a
         // create beside the reuse, and the old instance an orphan, never
-        // pruned without `--prune`'s confirmation. Under `--env staging` the
-        // instances' titles are qualified; the bare one's is not.
+        // pruned without `--prune`'s confirmation. Under `--env staging` every
+        // title is qualified, the bare one's too (#2037); the recorded ids are
+        // reused, whatever their namespaces were titled when made.
         out.push_str("\n# S4b: an instance renamed, under --env staging\n");
         let mut staged = DeployLock::default();
         staged.record_deployed("staging", "shop-cart", Some(Default::default()));
@@ -433,8 +434,8 @@ mod tests {
         out.push_str(&plan_report(&renamed, DeployFormat::Json));
 
         // #2028: under `--env staging` every Worker, binding target and queue
-        // is named as the push creates it, `-staging`; the bare `KV`'s
-        // namespace title is not.
+        // is named as the push creates it, `-staging`, and so is the bare
+        // `KV`'s namespace title (#2037).
         out.push_str("\n# --env staging: several contexts and a queue, first deploy\n");
         let staging_resources = project(vec![
             (
@@ -456,6 +457,28 @@ mod tests {
         out.push_str(&plan_report(&staging, DeployFormat::Short));
         out.push_str("\n# --format json, the same plan under --env staging\n");
         out.push_str(&plan_report(&staging, DeployFormat::Json));
+
+        // #2037: the bare `KV`'s title, first deploy, default and staging. An
+        // account holds one namespace per title, so staging's is qualified
+        // and the default's is the title it has always had.
+        let bare = project(vec![("api", Resources::default().needs_kv())]);
+        let bare_order = names(&["api"]);
+        for environment in ["default", "staging"] {
+            out.push_str(&format!(
+                "\n# #2037: the bare namespace, first deploy, --env {environment}\n"
+            ));
+            out.push_str(&plan_report(
+                &derive_plan(
+                    &bare_order,
+                    &bare,
+                    &DeployLock::default(),
+                    &SecretSource::default(),
+                    false,
+                    environment,
+                ),
+                DeployFormat::Short,
+            ));
+        }
 
         out.push_str("\n# S4b: a removed context's bare namespace and instance, both orphans\n");
         out.push_str(&plan_report(
@@ -499,15 +522,56 @@ mod tests {
     fn golden_deploy_stopped() {
         let mut out = String::new();
         out.push_str("# the last context failed: nothing was left to withhold\n");
-        out.push_str(&stopped_report(&[]));
+        out.push_str(&stopped_report("default", &[]));
         out.push_str("# one context was left\n");
-        out.push_str(&stopped_report(&names(&["commerce-orders"])));
+        out.push_str(&stopped_report("default", &names(&["commerce-orders"])));
         out.push_str("# several were left\n");
-        out.push_str(&stopped_report(&names(&[
-            "commerce-orders",
-            "commerce-shipping",
-        ])));
+        out.push_str(&stopped_report(
+            "default",
+            &names(&["commerce-orders", "commerce-shipping"]),
+        ));
+        // #2038: under `--env staging` each context is named as the plan's
+        // `order` line names it, `-staging`.
+        out.push_str("# --env staging: one context was left\n");
+        out.push_str(&stopped_report("staging", &names(&["commerce-orders"])));
+        out.push_str("# --env staging: several were left\n");
+        out.push_str(&stopped_report(
+            "staging",
+            &names(&["commerce-orders", "commerce-shipping"]),
+        ));
         bless_or_assert("deploy-stopped.txt", &out);
+    }
+
+    /// D4 / #2038: `--context` refuses a Worker whose binding target has never
+    /// been deployed, naming both by their deployed name in the environment.
+    #[test]
+    fn golden_deploy_context_refusal() {
+        let mut out = String::new();
+        out.push_str("# one target never deployed\n");
+        out.push_str(&absent_dependencies_refusal(
+            "default",
+            "commerce-orders",
+            &names(&["commerce-payment"]),
+        ));
+        out.push_str("# two targets never deployed\n");
+        out.push_str(&absent_dependencies_refusal(
+            "default",
+            "commerce-orders",
+            &names(&["commerce-payment", "commerce-shipping"]),
+        ));
+        out.push_str("# --env staging: one target never deployed\n");
+        out.push_str(&absent_dependencies_refusal(
+            "staging",
+            "commerce-orders",
+            &names(&["commerce-payment"]),
+        ));
+        out.push_str("# --env staging: two targets never deployed\n");
+        out.push_str(&absent_dependencies_refusal(
+            "staging",
+            "commerce-orders",
+            &names(&["commerce-payment", "commerce-shipping"]),
+        ));
+        bless_or_assert("deploy-context-refusal.txt", &out);
     }
 
     #[test]
@@ -515,14 +579,19 @@ mod tests {
         // The regression: the slice reported `order[i..]`, which included the
         // context that had just failed — so a 3-context run failing at the 2nd
         // said "1 more context was not deployed: b, c", naming two.
-        assert_eq!(
-            stopped_report(&[]),
-            "",
-            "the failure itself is already reported"
-        );
-        for n in 1..5usize {
+        for environment in ["default", "staging"] {
+            assert_eq!(
+                stopped_report(environment, &[]),
+                "",
+                "the failure itself is already reported"
+            );
+        }
+        for (environment, n) in ["default", "staging"]
+            .into_iter()
+            .flat_map(|environment| (1..5usize).map(move |n| (environment, n)))
+        {
             let rest = names(&["c0", "c1", "c2", "c3"][..n]);
-            let report = stopped_report(&rest);
+            let report = stopped_report(environment, &rest);
             let listed = report
                 .split(" not deployed: ")
                 .nth(1)
