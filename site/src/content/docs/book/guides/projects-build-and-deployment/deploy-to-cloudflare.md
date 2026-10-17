@@ -519,6 +519,14 @@ the namespace is created: one whose id the lock file already records for the
 environment is reused, whatever it was titled when it was made, and the plan
 shows the title Bynk would give it.
 
+Suffixes can still make two titles coincide: Worker `shop`'s bare namespace
+under `--env staging` and its `capability Staging` in the default environment
+are both `shop-staging`. `bynk deploy` refuses that before the plan,
+`--dry-run` included, naming both namespaces and both environments. It
+compares the namespaces this deploy would create against every environment
+`bynk.deploy.lock` knows, both the namespaces recorded there and the ones that
+environment's next deploy would create.
+
 `--env` is the driver's own flag; putting `--env` or `--environment` after
 `--` as well is rejected rather than silently resolved one way or the other:
 
