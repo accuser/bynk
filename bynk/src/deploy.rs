@@ -699,21 +699,10 @@ mod tests {
                 "commerce-orders",
             ));
             out.push('\n');
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::ExitStatusExt;
-                section(&mut out, "wrangler deploy failed");
-                let Err(failure) = wrangler_outcome(
-                    environment,
-                    "commerce-orders",
-                    &std::process::ExitStatus::from_raw(2 << 8),
-                ) else {
-                    panic!("a non-zero exit is a failure");
-                };
-                out.push_str(&failure.message);
-                out.push('\n');
-            }
         }
+        // Platform-independent by construction: the failed-push message needs
+        // a Unix `ExitStatus`, so it is pinned by
+        // `a_failed_push_names_the_deployed_worker` in provisioning.rs instead.
         bless_or_assert("deploy-env-messages.txt", &out);
     }
 

@@ -773,6 +773,29 @@ mod tests {
         );
     }
 
+    /// #2047: a failed push names the Worker it was creating, `-staging`
+    /// under `--env staging`.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_push_names_the_deployed_worker() {
+        for (environment, expected) in [
+            (
+                "default",
+                "wrangler deploy failed for `commerce-orders` (exit 2)",
+            ),
+            (
+                "staging",
+                "wrangler deploy failed for `commerce-orders-staging` (exit 2)",
+            ),
+        ] {
+            let Err(failure) = wrangler_outcome(environment, "commerce-orders", &status(2 << 8))
+            else {
+                panic!("a non-zero wrangler exit is a failure");
+            };
+            assert_eq!(failure.message, expected);
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_shared_ctrl_c_is_a_clean_stop_not_a_failure() {

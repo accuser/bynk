@@ -38,8 +38,6 @@ bynk: could not ask Cloudflare which secrets `commerce-orders` has, and no value
 could not set the secret `API_KEY` on `commerce-orders`: exit 1
 # declared secret missing, environment default
 `commerce-orders` declares the secret `AUTH_SECRET` (an actor's `auth` secret) but no value was supplied — pass it in --secrets-file, or set AUTH_SECRET in the environment. Deploying without it would answer every request with 401.
-# wrangler deploy failed, environment default
-wrangler deploy failed for `commerce-orders` (exit 2)
 # contract skew refusal, environment staging
 bynk: `commerce-orders-staging` was compiled against a contract its live dependencies no longer provide (bynk.deploy.contract_skew):
   commerce.payment.authorise — compiled against aaaa, live is bbbb
@@ -80,5 +78,3 @@ bynk: could not ask Cloudflare which secrets `commerce-orders-staging` has, and 
 could not set the secret `API_KEY` on `commerce-orders-staging`: exit 1
 # declared secret missing, environment staging
 `commerce-orders-staging` declares the secret `AUTH_SECRET` (an actor's `auth` secret) but no value was supplied — pass it in --secrets-file, or set AUTH_SECRET in the environment. Deploying without it would answer every request with 401.
-# wrangler deploy failed, environment staging
-wrangler deploy failed for `commerce-orders-staging` (exit 2)
