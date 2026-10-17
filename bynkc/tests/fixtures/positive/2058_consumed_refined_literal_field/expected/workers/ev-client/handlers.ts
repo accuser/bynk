@@ -3,8 +3,8 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
-import { Tag } from "../ev-kinds/handlers.js";
-import { Item } from "../ev-store/handlers.js";
+import { type Tag } from "../ev-kinds/handlers.js";
+import { type Item } from "../ev-store/handlers.js";
 
 import type * as ev_kinds from "../ev-kinds/handlers.js";
 import type * as ev_store from "../ev-store/handlers.js";
