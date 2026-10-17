@@ -299,16 +299,10 @@ pub fn run(
     {
         let absent = absent_dependencies(worker, &graph, &lock, &opts.environment);
         if !absent.is_empty() {
-            eprintln!(
-                "bynk: `{worker}` binds to {}, which {} never been deployed — a Service Binding to a Worker that does not exist fails at upload.",
-                absent
-                    .iter()
-                    .map(|a| format!("`{a}`"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                if absent.len() == 1 { "has" } else { "have" }
+            eprint!(
+                "{}",
+                absent_dependencies_refusal(&opts.environment, worker, &absent)
             );
-            eprintln!("  Deploy the whole project once (`bynk deploy`) to bring the topology up.");
             return ExitCode::FAILURE;
         }
 
@@ -715,7 +709,7 @@ pub fn run(
                 // is excluded — the line above already named it as the failure,
                 // and listing it here again as "not deployed" would double-count
                 // it against the number.
-                eprint!("{}", stopped_report(&order[i + 1..]));
+                eprint!("{}", stopped_report(&opts.environment, &order[i + 1..]));
                 // #2004 review: a run that re-keyed an edge and stopped between
                 // its two ends leaves them refusing each other. The next plain
                 // run sees a key on each end and keeps both, so say how to
@@ -875,13 +869,39 @@ pub fn preflight_failure_message(report: &Report) -> String {
     )
 }
 
+/// The D4 refusal: `--context` selected `worker`, which binds to `absent`
+/// Workers the ledger has never recorded as deployed in `environment`.
+///
+/// Every Worker is named by its [`deployed_worker_name`], as the plan names it
+/// (#2038): under `--env staging` the missing target is `payment-staging`, not
+/// the logical `payment`. Pure, so the wording is goldened rather than
+/// described.
+pub(crate) fn absent_dependencies_refusal(
+    environment: &str,
+    worker: &str,
+    absent: &[String],
+) -> String {
+    format!(
+        "bynk: `{}` binds to {}, which {} never been deployed — a Service Binding to a Worker that does not exist fails at upload.\n  Deploy the whole project once (`bynk deploy`) to bring the topology up.\n",
+        deployed_worker_name(environment, worker),
+        absent
+            .iter()
+            .map(|a| format!("`{}`", deployed_worker_name(environment, a)))
+            .collect::<Vec<_>>()
+            .join(", "),
+        if absent.len() == 1 { "has" } else { "have" }
+    )
+}
+
 /// What the run did **not** get to, once a context failed. `rest` is the order
 /// *beyond* the failure, so the last context failing reports nothing — there was
 /// nothing left to withhold, and the failure itself has already been named.
+/// Each context is named by its [`deployed_worker_name`] in `environment`, as
+/// the plan's `order` line names it (#2038).
 ///
 /// Pure, so the wording — and the count's agreement with the list — is goldened
 /// rather than described.
-pub(crate) fn stopped_report(rest: &[String]) -> String {
+pub(crate) fn stopped_report(environment: &str, rest: &[String]) -> String {
     if rest.is_empty() {
         return String::new();
     }
@@ -892,7 +912,10 @@ pub(crate) fn stopped_report(rest: &[String]) -> String {
         } else {
             format!("{} further contexts were", rest.len())
         },
-        rest.join(", ")
+        rest.iter()
+            .map(|worker| deployed_worker_name(environment, worker))
+            .collect::<Vec<_>>()
+            .join(", ")
     )
 }
 

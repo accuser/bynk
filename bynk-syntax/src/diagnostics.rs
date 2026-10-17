@@ -1984,7 +1984,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.test.principal_identity_mismatch",
-        "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor.",
+        "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor, or names no member of the handler's actor sum.",
         &["case"],
     ),
     dg(
@@ -1999,7 +1999,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.test.principal_required",
-        "A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`.",
+        "A test drives an identity-carrying handler, or one guarded by an actor sum, with no call-site `by <Actor>`.",
         &["case"],
     ),
     dg(

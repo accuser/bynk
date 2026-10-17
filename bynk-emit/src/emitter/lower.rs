@@ -73,7 +73,7 @@ pub fn lower_test_case_body(
     cross_context: &bynk_check::resolver::CrossContextInfo,
     test_services: HashSet<String>,
     test_service_handlers: HashMap<String, Vec<bynk_ir::IrHandlerKind>>,
-    call_sum_services: HashSet<String>,
+    sum_handlers: HashSet<(String, String)>,
     test_agents: HashSet<String>,
     settle_sends: bool,
     // #2024: the names the runner scaffold binds in the body's scope.
@@ -100,7 +100,7 @@ pub fn lower_test_case_body(
                 observation_trace: Some("__obs".to_string()),
                 test_services,
                 test_service_handlers,
-                call_sum_services,
+                sum_handlers,
                 settle_sends,
             },
         )
@@ -140,6 +140,7 @@ pub fn lower_integration_case_body(
     system_http_routes: std::collections::HashSet<(String, String, String)>,
     system_http_route_body: HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>,
     system_http_type_ns: String,
+    system_http_claims: crate::emitter::SystemHttpClaims,
     // #2024: the names the case scaffold binds in the body's scope.
     harness_bound: HashSet<String>,
     source: &str,
@@ -165,6 +166,7 @@ pub fn lower_integration_case_body(
                 system_http_routes,
                 system_http_route_body,
                 system_http_type_ns,
+                system_http_claims,
             },
         )
         .with_source_map(Some(&smb));
@@ -2506,6 +2508,17 @@ fn lower_method_call(
             .collect();
         let mut all = rest;
         all.push(sub);
+        // #2019: a refinement-guarded route's signing drivers take the claims
+        // the acting actor presents; the no-auth drivers sign nothing.
+        if !cx.call_site_no_credential
+            && let Some(claims) = cx.system_http_claims_arg(&(
+                id.name.clone(),
+                verb.as_str().to_string(),
+                path.clone(),
+            ))
+        {
+            all.push(claims);
+        }
         return pre.finish(format!(
             "{}_{}_{}({})",
             driver,
@@ -2536,10 +2549,23 @@ fn lower_method_call(
         // `bynk-check`'s actor declarations, not plumbed here today (unlike the
         // `ty: &TypeRef` available a few lines up for the sibling brand cast). A
         // guessed type risks a `tsc --strict` mismatch; left as `any`, named here.
-        // I3 (#1971): a `call` sum reads the principal as the resolved actor,
-        // `deps.who`: `by Caller("shop.front")` or `by Legacy`.
+        // I3 (#1971), #2020: a sum handler (`on call` or http) reads the
+        // principal as the resolved actor, `deps.who` (the emitted handler's
+        // deps key for every sum, whatever its binder is named):
+        // `by Caller("shop.front")`, `by User("ada")` or `by Visitor`.
+        let sum_key = match (IrHttpMethod::from_ident(&method.name), args.first()) {
+            (Some(verb), Some(first)) => match &first.kind {
+                ExprKind::StrLit(path) => {
+                    Some(crate::emitter::http_handler_method_name_ir(verb, path))
+                }
+                _ => None,
+            },
+            _ if method.name == "call" => Some("call".to_string()),
+            _ => None,
+        };
+        let is_sum = sum_key.is_some_and(|k| cx.is_sum_handler(&id.name, &k));
         let deps_expr = match (cx.call_site_actor.clone(), cx.call_site_identity.clone()) {
-            (Some(actor), identity) if cx.is_call_sum_service(&id.name) => match identity {
+            (Some(actor), identity) if is_sum => match identity {
                 Some(identity) => {
                     format!("{{ ...deps, who: {{ tag: {actor:?}, identity: {identity} }} }}")
                 }

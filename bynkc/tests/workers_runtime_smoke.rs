@@ -321,6 +321,7 @@ service api from http {
 
   on GET("/bytes") () -> Effect[HttpResult[String]] by v: Visitor {
     let b = Bytes.fromUtf8("v1:").concat(Bytes.fromUtf8("hi"))
+    -- A negative start clamps to 0 and an end past the length to the length.
     let hex = b.slice(-2, 99).toHex()
     let url = Bytes.fromUtf8("fo").toBase64Url()
     let back = match Bytes.fromBase64Url(url) {
@@ -343,7 +344,7 @@ fn bytes_operations_run_on_workerd() {
     };
     let body = fetch(&served.url, "/bytes").expect("GET /bytes runs the Bytes operations");
     assert!(
-        body.contains("hex=6869 url=Zm8 back=true order=1"),
+        body.contains("hex=76313a6869 url=Zm8 back=true order=1"),
         "each operation gives the same answer on workerd as under Node: {body}"
     );
 }

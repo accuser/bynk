@@ -1,0 +1,6 @@
+[project]
+name = "test-actor-sum-principal"
+version = "0.1.0"
+
+[paths]
+include = ["src", "tests"]

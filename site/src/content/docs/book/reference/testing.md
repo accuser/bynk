@@ -109,6 +109,19 @@ case "each owner's list is private" {
 - `by Visitor` — a unit-identity actor takes **no** argument
   (`bynk.test.actor_no_identity` if one is given; `bynk.test.actor_identity_required`
   if an identity-carrying actor is written bare).
+- `by Admin("root")` — a [refinement actor](/book/guides/actors/authorisation/)
+  carries its base actor's identity, so it takes the base's identity value (a
+  bare `by Admin` is `bynk.test.actor_identity_required`). At the `unit` and
+  `integration` tiers its claim is given, not checked. At the `system` tier the
+  signed token carries claims that satisfy the refinement's predicate, so the
+  Worker admits it, and a case acting as the base (`by User("root")`) gets the
+  `403` a real token lacking the claim would.
+- `by Visitor` or `by User("ada")` on a handler guarded by an
+  [actor sum](/book/guides/actors/multiple-callers/) (`by who: User | Visitor`)
+  — the case names any member, with the identity that member carries, and the
+  handler runs with its binder bound to that member's arm. A non-member is
+  `bynk.test.principal_identity_mismatch`; a case with no `by` is
+  `bynk.test.principal_required`.
 - `by Caller("orders")` — an `on call` handler that binds its caller
   (`by c: Caller`) reads the calling context's name, and a case has no calling
   context, so it must name one; without it the call is
