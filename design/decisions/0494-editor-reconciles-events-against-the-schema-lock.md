@@ -1,11 +1,6 @@
----
-level: patch
-changelog: The editor now reports a non-additive event change against the committed `bynk.schema.lock` as `bynk.event.non_additive_schema_change`, as `bynk check` does: the language server reads the lock read-only, caches it by its modification stamp, re-reads it when it changes (a new `**/bynk.schema.lock` file watcher), and passes it to `bynk_ide::diagnose_project_with`, whose new `schema_lock` argument `bynk_check::analysis::analyse_project` now also takes (#2081).
----
+# 0494 — The language server reads `bynk.schema.lock` and hands it to the analysis, read-only
 
-## ADR: editor-reconciles-events-against-the-schema-lock
-title: The language server reads `bynk.schema.lock` and hands it to the analysis, read-only
-summary: The lock travels as a `SchemaLock` argument through `diagnose_project_with` and `analyse_project`; bynk-lsp owns the read and the cache
+- **Status:** Accepted (v0.346.12)
 
 **Context.** After #2078, `bynkc check`, `bynk check` and `bynkc test` reconcile events against the committed `bynk.schema.lock`, read-only. The editor did not. It analyses through `bynk_ide::diagnose_project_with` and `bynk_check::analysis::analyse_project`, and that path always reconciled against an empty registry. An empty registry can report nothing, so a breaking event change showed no diagnostic until the user ran check or test (#2081). The review note on #1133 had also flagged that empty sweep as a cost paid on every analysis for a diagnostic that could never fire.
 
