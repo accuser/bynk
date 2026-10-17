@@ -633,7 +633,7 @@ pub(crate) fn emit_project(
     }
     references.settle_implied(&body);
     let mut project_imports = emit_project_imports(commons, ctx, &references);
-    let mut cross_context_imports = emit_cross_context_namespace_imports(commons, ctx);
+    let mut cross_context_imports = emit_cross_context_namespace_imports(commons, ctx, &body);
     // #1486: the boundary between `emit_project_imports`'s own last
     // statement and `emit_cross_context_namespace_imports`'s own first
     // (when non-empty) must reproduce the pre-#1486 code's own unconditional
@@ -3143,6 +3143,7 @@ fn record_name_ref(
 fn emit_cross_context_namespace_imports(
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
+    body: &[bynk_ts::TsStmt],
 ) -> Vec<bynk_ts::TsStmt> {
     let info = &ctx.cross_context;
     // Consumed contexts that expose services (v0.6) plus, v0.15, those whose
@@ -3183,6 +3184,36 @@ fn emit_cross_context_namespace_imports(
                 .iter()
                 .filter(|(_, names)| names.iter().any(|n| subscribed.contains(n)))
                 .map(|(c, _)| c.clone()),
+        );
+    }
+    // #2058: a consumed context the body names a type of through its alias
+    // (`(1 as ev_store.Code)`, a literal admitted to its refined type), even
+    // one with no service this context calls.
+    // Only a refined type an expression here is checked as can be cast to,
+    // and only one the body then spells through the alias is imported.
+    let type_ns = crate::emitter::emit::consumed_type_ns(ctx);
+    let named: HashSet<String> = commons
+        .expr_types
+        .values()
+        .filter_map(|te| match &*commons.tys().get(te.ty) {
+            Ty::Named {
+                name,
+                kind: NamedKind::Refined(_),
+                ..
+            } => type_ns.get(name).cloned(),
+            _ => None,
+        })
+        .collect();
+    if !named.is_empty() {
+        let spelled = body_words(body);
+        needed.extend(
+            info.consumed_contexts
+                .iter()
+                .filter(|c| {
+                    let ns = qualified_to_ns(c);
+                    named.contains(&ns) && spelled.contains(&ns)
+                })
+                .cloned(),
         );
     }
     if needed.is_empty() {
@@ -4028,6 +4059,10 @@ pub(crate) struct ModuleCtx<'a> {
     /// 1`, exactly every event's behaviour before this map existed, not a
     /// hard failure the way a missing `runtime_use` would be.
     event_schema_versions: HashMap<String, i64>,
+    /// #2058: the namespace each consumed context's type is named under in
+    /// this module (mirrors [`crate::emitter::emit::consumed_type_ns`]).
+    /// Default-empty: a miss names the type bare, as before.
+    consumed_type_ns: HashMap<String, String>,
     /// #934: true when the unit being emitted is the reserved first-party
     /// `bynk` adapter itself. `bynk` is a reserved namespace, so a capability
     /// literally named `Idempotency` declared *in this unit* is unambiguously
@@ -4057,6 +4092,7 @@ impl<'a> ModuleCtx<'a> {
             target: BuildTarget::Bundle,
             agent_method_givens: HashMap::new(),
             event_schema_versions: HashMap::new(),
+            consumed_type_ns: HashMap::new(),
             in_bynk_unit: false,
             agent_called_contexts: Vec::new(),
             consumed_context_types: HashSet::new(),
@@ -4989,6 +5025,15 @@ impl<'a> LowerCtx<'a> {
                 .get("Events")
                 .map(String::as_str)
                 == Some("bynk")
+    }
+
+    /// #2058: `name` as this module spells it in a type position: qualified
+    /// under its context's namespace when a consumed context declares it.
+    pub(crate) fn consumed_type_name(&self, name: &str) -> String {
+        match self.module.consumed_type_ns.get(name) {
+            Some(ns) => [ns.as_str(), ".", name].concat(),
+            None => name.to_string(),
+        }
     }
 
     /// Events slice 3b (#978): the declared `@schema(N)` version of the

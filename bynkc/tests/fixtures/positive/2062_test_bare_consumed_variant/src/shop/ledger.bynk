@@ -1,0 +1,16 @@
+-- #2062: the target names `shop.order`'s variants bare in its handlers.
+context shop.ledger
+
+consumes shop.order
+
+service domestic {
+  on call(id: String) -> Effect[Order] {
+    Order { id: id, region: Domestic }
+  }
+}
+
+service isDomestic {
+  on call(o: Order) -> Effect[Bool] {
+    o.region == Domestic
+  }
+}

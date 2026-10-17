@@ -1,0 +1,4 @@
+-- #2052 review: an event `Note` in a context `shop.ledger` does not consume.
+context shop.archive
+
+event Note = { text: String }

@@ -3402,16 +3402,42 @@ fn check_test_service_address(
         return handler_outcome(handler, ctx);
     }
 
+    // #2052: `svc.event(payload)` / `svc.event(payload, envelope)` — one
+    // delivery to a `from Events(E)` service's `on event` handler.
+    if method.name == "event"
+        && let Some(handler) = sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Event))
+    {
+        ctx.callees.insert(
+            expr_id,
+            Callee::TestService {
+                service: id.name.clone(),
+                address: "event".to_string(),
+            },
+        );
+        let handler = handler.clone();
+        check_event_address(sig, id, &handler, args, method.span, ctx);
+        return handler_outcome(&handler, ctx);
+    }
+
     // Not a recognised address form for this service.
     let proto = sig.protocol.as_deref().unwrap_or("call");
-    ctx.errors.push(CompileError::new(
+    let mut err = CompileError::new(
         "bynk.test.service_bad_address",
         method.span,
         format!(
             "`{}.{}` is not a way to address a `from {proto}` service in a test body",
             id.name, method.name
         ),
-    ));
+    );
+    if method.name == "event" {
+        err = err.with_note(
+            "only a `from Events(E)` service is addressed with `svc.event(e)`; it delivers one event to the service's `on event` handler",
+        );
+    }
+    ctx.errors.push(err);
     for a in args {
         let _ = type_of(a, None, ctx);
     }
@@ -3567,6 +3593,13 @@ fn resolve_test_address<'a>(
             .handlers
             .iter()
             .find(|h| matches!(&h.kind, HandlerKind::Message));
+    }
+    // #2052: the `on event` handler of a `from Events(E)` service.
+    if method == "event" {
+        return sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Event));
     }
     None
 }
@@ -4048,6 +4081,137 @@ fn check_address_args(
                 ),
             ));
         }
+    }
+}
+
+/// #2052: arity and argument types of `svc.event(payload)` /
+/// `svc.event(payload, envelope)`. The payload is typed against the handler's
+/// first parameter, which `bynk.event.handler_param_type_mismatch` holds to the
+/// header's event type `E`; the envelope against `EventEnvelope`, whether or
+/// not the handler declares one (a `via schema(N)` guard reads it either way).
+fn check_event_address(
+    sig: &TestServiceSig,
+    id: &Ident,
+    handler: &TestHandler,
+    args: &[Expr],
+    err_span: Span,
+    ctx: &mut Ctx,
+) {
+    let tys = ctx.tys;
+    let svc = &id.name;
+    if args.is_empty() || args.len() > 2 {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.service_call_arity",
+                err_span,
+                format!(
+                    "`{svc}.event` takes the event and, optionally, an `EventEnvelope`, but {} argument(s) were given",
+                    args.len()
+                ),
+            )
+            .with_note("deliver an event with `svc.event(e)`, or `svc.event(e, env)` to choose its envelope"),
+        );
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return;
+    }
+    // #2052 review: a default envelope names the event's publisher, which must
+    // resolve to one context, as the service's header resolves `E`.
+    if args.len() == 1
+        && let Some(Err(candidates)) = &sig.event_publisher
+    {
+        let found = if candidates.is_empty() {
+            "no context the target declares or consumes declares it".to_string()
+        } else {
+            format!(
+                "it is declared by {}",
+                candidates
+                    .iter()
+                    .map(|c| format!("`{c}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.event_publisher_ambiguous",
+                err_span,
+                format!("`{svc}.event(e)` has no single publisher to name in its default envelope: {found}"),
+            )
+            .with_note("pass the envelope yourself: `svc.event(e, env)`"),
+        );
+    }
+    let payload = &args[0];
+    let expected = handler
+        .params
+        .first()
+        .and_then(|p| resolve_type_ref(&p.type_ref, &ctx.input.types, tys));
+    let arg_ty = type_of(payload, expected, ctx);
+    if let (Some(a), Some(p)) = (arg_ty, expected)
+        && !compatible(a, p, tys)
+    {
+        let other_event = match &*tys.get(a) {
+            Ty::Named { name, .. } if sig.known_events.contains(name) => Some(name.clone()),
+            _ => None,
+        };
+        let err = match other_event {
+            Some(other) => CompileError::new(
+                "bynk.test.event_not_subscribed",
+                payload.span,
+                format!(
+                    "`{svc}` subscribes to `{}`, not `{other}`",
+                    p.display(tys)
+                ),
+            )
+            .with_note(
+                "an event address delivers only the event the service's `from Events(E)` header names",
+            ),
+            None => CompileError::new(
+                "bynk.types.argument_mismatch",
+                payload.span,
+                format!(
+                    "argument 1 has type `{}`, but `{svc}.event` expects the event it subscribes to, `{}`",
+                    a.display(tys),
+                    p.display(tys)
+                ),
+            ),
+        };
+        ctx.errors.push(err);
+    }
+    let Some(envelope) = args.get(1) else {
+        return;
+    };
+    let envelope_ref = TypeRef::Named(Ident {
+        name: "EventEnvelope".to_string(),
+        span: envelope.span,
+    });
+    let expected = resolve_type_ref(&envelope_ref, &ctx.input.types, tys);
+    let env_ty = type_of(envelope, expected, ctx);
+    let Some(a) = env_ty else {
+        return;
+    };
+    // `EventEnvelope` is `bynk`'s; a suite names it only when its target
+    // consumes `bynk`, and no other value is one.
+    let mismatch = match expected {
+        Some(p) => !compatible(a, p, tys),
+        None => true,
+    };
+    if mismatch {
+        let mut err = CompileError::new(
+            "bynk.types.argument_mismatch",
+            envelope.span,
+            format!(
+                "argument 2 has type `{}`, but `{svc}.event` expects an `EventEnvelope`",
+                a.display(tys)
+            ),
+        );
+        if expected.is_none() {
+            err = err.with_note(
+                "`EventEnvelope` comes from `bynk`; the suite's target must `consumes bynk` to build one",
+            );
+        }
+        ctx.errors.push(err);
     }
 }
 

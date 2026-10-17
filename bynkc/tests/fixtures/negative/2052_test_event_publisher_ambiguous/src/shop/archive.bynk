@@ -1,0 +1,5 @@
+context shop.archive
+
+exports transparent { Placed }
+
+event Placed = { id: String }

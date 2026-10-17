@@ -1978,6 +1978,21 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["case"],
     ),
     dg(
+        "bynk.test.event_needs_in_process",
+        "A `system`-tier case delivers an event with `svc.event(e)`; at `system` an event reaches a subscriber only through its publisher's fan-out, so the case drives the emitting handler instead, or delivers the event at `unit` or `integration`.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.event_not_subscribed",
+        "A test body's `svc.event(e)` delivers an event the `from Events(E)` service does not subscribe to.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.event_publisher_ambiguous",
+        "A test body's `svc.event(e)` omits the envelope, but the event's publisher, which the default envelope names, is not one context the target declares or consumes.",
+        &["case"],
+    ),
+    dg(
         "bynk.test.faults_needs_in_process",
         "A `system`-tier case claims a fault with `expect <call> faults`, or a fault claim at any tier is driven `by Nobody`; at `system` a fault reaches the case as an error response from the deployed Worker, never a throw, so the claim belongs at `unit` or `integration`.",
         &["case"],

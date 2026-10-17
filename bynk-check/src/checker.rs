@@ -2138,6 +2138,15 @@ pub struct TestServiceSig {
     /// Every handler the service declares, so the branch can resolve any address
     /// form. Slice 0 only reads the `on call` entry.
     pub handlers: Vec<TestHandler>,
+    /// #2052: for a `from Events(E)` service, every event the project
+    /// declares, so `svc.event(f)` with some other event `f` is reported as an
+    /// event the service does not subscribe to. Empty for any other protocol.
+    pub known_events: std::collections::BTreeSet<String>,
+    /// #2052 review: for a `from Events(E)` service, the context that
+    /// publishes `E` to it ([`crate::test_suites::event_publisher`]), which a
+    /// default envelope names; `Err` lists the candidates when there is no
+    /// unique one. `None` for any other protocol.
+    pub event_publisher: Option<Result<String, Vec<String>>>,
 }
 
 /// One service handler, as a test body sees it (v0.178 / v0.182).

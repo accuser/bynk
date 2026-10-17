@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **521** codes in total.
+There are **523** codes in total.
 
 ## Agents
 
@@ -55,7 +55,6 @@ There are **521** codes in total.
 | `bynk.consumes.name_conflict` | A `consumes` name collides with another name in scope. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
 | `bynk.consumes.self_reference` | A context `consumes` itself. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
 | `bynk.consumes.service_arity` | A consumed service was called with the wrong number of arguments. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
-| `bynk.consumes.signature_type_unconsumed` | A cross-context call reaches a service whose signature names a type the consumed context itself consumes from a third context, which the caller does not consume. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
 | `bynk.consumes.target_is_commons` | `consumes` targets a `commons` instead of a context. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
 | `bynk.consumes.unknown_context` | `consumes` names a context that does not exist. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
 | `bynk.consumes.unknown_service` | Called a service the consumed context does not declare. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) | — |
@@ -343,6 +342,9 @@ There are **521** codes in total.
 | `bynk.test.actor_no_identity` | A call-site `by <Actor>(x)` supplies an identity to an actor that takes none — a unit-identity actor (e.g. `Visitor`) or `Nobody`. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.asset_address_method` | A suite fetches an asset with a method other than `GET`; the platform serves assets to `GET` and answers other methods with 405. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.credential_needs_system` | A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it. | [`case`](/book/reference/grammar/#rule-case) | — |
+| `bynk.test.event_needs_in_process` | A `system`-tier case delivers an event with `svc.event(e)`; at `system` an event reaches a subscriber only through its publisher's fan-out, so the case drives the emitting handler instead, or delivers the event at `unit` or `integration`. | [`case`](/book/reference/grammar/#rule-case) | — |
+| `bynk.test.event_not_subscribed` | A test body's `svc.event(e)` delivers an event the `from Events(E)` service does not subscribe to. | [`case`](/book/reference/grammar/#rule-case) | — |
+| `bynk.test.event_publisher_ambiguous` | A test body's `svc.event(e)` omits the envelope, but the event's publisher, which the default envelope names, is not one context the target declares or consumes. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.faults_needs_in_process` | A `system`-tier case claims a fault with `expect <call> faults`, or a fault claim at any tier is driven `by Nobody`; at `system` a fault reaches the case as an error response from the deployed Worker, never a throw, so the claim belongs at `unit` or `integration`. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.nobody_needs_secured_route` | A case drives `by Nobody` at a route that is not Bearer-secured (e.g. a public `Visitor` route) — there is no auth seam to reject the missing credential. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.principal_identity_mismatch` | A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor, or names no member of the handler's actor sum. | [`case`](/book/reference/grammar/#rule-case) | — |

@@ -1,0 +1,4 @@
+bynk.types.argument_mismatch argument 1 has type `String`, but `OnPlaced.event` expects the event it subscribes to, `Placed`
+bynk.types.argument_mismatch argument 2 has type `String`, but `OnPlaced.event` expects an `EventEnvelope`
+bynk.test.service_call_arity `OnPlaced.event` takes the event and, optionally, an `EventEnvelope`, but 0 argument(s) were given
+# exact
