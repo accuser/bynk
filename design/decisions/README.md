@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0494](0494-editor-reconciles-events-against-the-schema-lock.md) | **The language server reads `bynk.schema.lock` and hands it to the analysis, read-only** (v0.346.12) — The lock travels as a `SchemaLock` argument through `diagnose_project_with` and `analyse_project`; bynk-lsp owns the read and the cache | Accepted (v0.346.12) |
 | [0493](0493-check-and-test-reconcile-the-schema-lock-read-only.md) | **`check` and `test` reconcile events against `bynk.schema.lock`, read-only** (v0.346.10) — The schema registry is consulted by every CLI command that judges a project, and written only by a build | Accepted (v0.346.10) |
 | [0492](0492-secrets-with-first-upload.md) | **A new Worker's secrets are uploaded with its first version** (v0.346.9) — Supersedes ADR 0195 (F) for a first deploy: `wrangler deploy --secrets-file`, not a post-push `secret put` | Accepted (v0.346.9) |
 | [0491](0491-callee-side-contract-skew-gate.md) | **The deploy contract-skew gate checks the callee side too, under the same code** (v0.346.8) — `--context` holds the pushed Worker's new `provides` to every other live Worker's recorded `expects`; an unrecorded caller warns | Accepted (v0.346.8) |

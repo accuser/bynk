@@ -16,10 +16,11 @@
 //! P5.3 (`design/tracks/semantics-in-the-checker.md` §6): [`reconcile`] and
 //! its helpers moved here from that same `bynk-emit` module — category 1 of
 //! `bynk-check/src/analysis.rs`'s own seven-category residual-gap accounting
-//! ("gap in name only": `reconcile` only ever ran under `SchemaLock::On`, and
-//! the analyse path always passed `SchemaLock::Off`, so relocating it changes
-//! nothing observable — see that module's doc for why R3.5 still requires the
-//! move). `bynk-emit`'s `run_checks` is now this function's caller, not its
+//! ("gap in name only" at the time: `reconcile` only ever ran under
+//! `SchemaLock::On`, and the analyse path always passed `SchemaLock::Off`, so
+//! relocating it changed nothing observable — see that module's doc for why
+//! R3.5 still required the move; #2081 later gave the analyse path the
+//! caller's lock). `bynk-emit`'s `run_checks` is now this function's caller, not its
 //! owner, the same way P4.0/P4.1 turned `project.rs` into a caller of
 //! `bynk-project`/`bynk-check` throughout.
 //!

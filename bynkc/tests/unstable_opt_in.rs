@@ -73,6 +73,7 @@ fn the_build_and_the_editor_report_the_same_unstable_diagnostics() {
             paths,
         },
         &overlay,
+        &bynkc::SchemaLock::Off,
     );
     let editor = unstable(
         analysis

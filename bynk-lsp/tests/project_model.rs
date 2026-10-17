@@ -31,7 +31,7 @@ fn rel_files(root: &Path) -> Vec<String> {
     // sources map instead of relying on bynk-emit's disk fallback.
     let roots = bynk_ide::AnalysisRoots::Project(root.to_path_buf());
     let sources = bynk_testkit::read_project_sources(&roots);
-    let r = bynk_ide::diagnose_project_with(&roots, &sources);
+    let r = bynk_ide::diagnose_project_with(&roots, &sources, &bynk_ide::SchemaLock::Off);
     let mut v: Vec<String> = r
         .files
         .iter()
@@ -190,8 +190,11 @@ fn an_unsaved_bynk_toml_edit_changes_the_resolved_roots() {
     );
     overlay.insert(s.0.join("src/a.bynk"), "context a\n".to_string());
     overlay.insert(s.0.join("alt/b.bynk"), "context b\n".to_string());
-    let r =
-        bynk_ide::diagnose_project_with(&bynk_ide::AnalysisRoots::Project(s.0.clone()), &overlay);
+    let r = bynk_ide::diagnose_project_with(
+        &bynk_ide::AnalysisRoots::Project(s.0.clone()),
+        &overlay,
+        &bynk_ide::SchemaLock::Off,
+    );
     let mut files: Vec<String> = r
         .files
         .iter()
@@ -310,7 +313,7 @@ fn every_path_a_round_produces_is_a_file_the_round_analysed() {
     // sources map instead of relying on bynk-emit's disk fallback.
     let roots = bynk_ide::AnalysisRoots::Project(root.clone());
     let sources = bynk_testkit::read_project_sources(&roots);
-    let r = bynk_ide::diagnose_project_with(&roots, &sources);
+    let r = bynk_ide::diagnose_project_with(&roots, &sources, &bynk_ide::SchemaLock::Off);
 
     let known: std::collections::BTreeSet<PathBuf> =
         r.files.iter().map(|f| f.source_path.clone()).collect();
@@ -396,7 +399,11 @@ fn single_tree_and_project_analysis_disagree_when_exclude_is_in_play() {
     // sources map instead of relying on bynk-emit's disk fallback.
     let project_roots = bynk_ide::AnalysisRoots::Project(s.0.clone());
     let project_sources = bynk_testkit::read_project_sources(&project_roots);
-    let project = bynk_ide::diagnose_project_with(&project_roots, &project_sources);
+    let project = bynk_ide::diagnose_project_with(
+        &project_roots,
+        &project_sources,
+        &bynk_ide::SchemaLock::Off,
+    );
     let project_files: std::collections::BTreeSet<String> = project
         .files
         .iter()

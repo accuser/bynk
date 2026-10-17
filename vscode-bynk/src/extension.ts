@@ -174,12 +174,13 @@ async function startServer(
     documentSelector: [{ scheme: "file", language: "bynk" }],
     synchronize: {
       // No client-side `fileEvents` here: since v0.183 (LSP foundations slice
-      // E) the server registers the `**/*.bynk` and `**/bynk.toml` watchers
-      // itself via `workspace/didChangeWatchedFiles` dynamic registration, so
-      // it is notified of source and manifest edits for *any* client. Keeping a
-      // client-side watcher too would double-notify the server. The separate
-      // `tomlWatcher` above is unrelated — it only drives the `bynk.hasProject`
-      // context key and never reaches the server.
+      // E) the server registers the `**/*.bynk`, `**/bynk.toml` and (#2081)
+      // `**/bynk.schema.lock` watchers itself via
+      // `workspace/didChangeWatchedFiles` dynamic registration, so it is
+      // notified of source, manifest and schema-lock edits for *any* client.
+      // Keeping a client-side watcher too would double-notify the server. The
+      // separate `tomlWatcher` above is unrelated — it only drives the
+      // `bynk.hasProject` context key and never reaches the server.
       configurationSection: "bynk",
     },
     outputChannel: output,

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "provides": {
+    "many": "c785c4ac35bc6a9d",
+    "maybe": "160020c3334955d4",
+    "place": "b3f990d552f03b49",
+    "refund": "e12d6bac496ce10c",
+    "settle": "548ff3eb8deb0e3f",
+    "shift": "7f37b80c889cbe3f",
+    "total": "d52d2030f5c25d29"
+  },
+  "expects": {}
+}

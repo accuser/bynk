@@ -1,0 +1,29 @@
+-- #2045: `ev.store`'s types are another Worker's, so `handlers.ts` imports
+-- them type-only (`import { type Batch, type Status }`) and builds `Status`'s
+-- variants inline (`({ tag: "Held", reason: "x" } as Status)`), not through
+-- `ev.store`'s companion object, which would put `ev.store`'s module in this
+-- Worker's bundle. A payload variant, a nullary one, and a match on both.
+context ev.relay
+
+consumes ev.store
+
+service hold {
+  on call(id: String, b: Batch) -> Effect[Option[Batch]] {
+    Effect.pure(Some(Batch { id: id, size: b.size, status: Held("checked"), code: b.code }))
+  }
+}
+
+service active {
+  on call() -> Effect[Status] {
+    Effect.pure(Active)
+  }
+}
+
+service held {
+  on call(b: Batch) -> Effect[Bool] {
+    Effect.pure(match b.status {
+      Active => false
+      Held(_) => true
+    })
+  }
+}
