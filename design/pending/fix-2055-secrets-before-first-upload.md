@@ -2,3 +2,13 @@
 level: patch
 changelog: A new Worker's first `bynk deploy` now uploads its secrets with its code (`wrangler deploy --secrets-file`, from a 0600 temporary file deleted when the upload ends), so the Worker is never live without them; it used to set them about four seconds after the upload. A redeploy still sets them first with `wrangler secret put`. Each secret set now prints a `bynk: set secret` line naming it and the Worker (`api-staging` under `--env staging`), never its value, beside the "already set, skipping" line, and a wrangler older than 4.74.0 falls back to the old order and says so (#2055).
 ---
+
+## ADR: secrets-with-first-upload
+title: A new Worker's secrets are uploaded with its first version
+summary: Supersedes ADR 0195 (F) for a first deploy: `wrangler deploy --secrets-file`, not a post-push `secret put`
+
+**Context.** ADR 0195 (F) has a first deploy push first and run `wrangler secret put` after. The reason is that `secret put` against a Worker that doesn't exist yet makes a stub draft Worker. The cost (F) accepted was a brief fail-closed window, and a live deploy measured it at about four seconds (#2055). During that window the new Worker answers 401 on every route that needs a secret, while the deploy guide said secrets were set before the push. Wrangler 4.74.0 (cloudflare/workers-sdk#10896) added `wrangler deploy --secrets-file`, which puts the secrets in the uploaded version. Every wrangler at or above `WRANGLER_MIN` (4.107.0) has it.
+
+**Decision.** A first deploy writes its prepared secrets as a JSON object to a new temp directory (mode 0700) outside the project, in a file created new with mode 0600. It passes that file to `wrangler deploy --secrets-file` and removes the directory when the upload ends, whether the upload succeeds or fails. The Worker's first version carries its secrets, so there is no window. A redeploy keeps (F)'s order, `secret put` on stdin and then the push: the Worker already exists, so a file would buy nothing, and a value on stdin never touches disk. An installed wrangler known to be older than 4.74.0 falls back to (F)'s first-deploy order and says so. An unknown version (npx) counts as supported, the same rule `wrangler_floor_refusal` uses. Each secret set prints its name, never its value.
+
+**Consequences.** (F)'s first-deploy consequence (live but unrecorded when the post-push step fails) no longer arises, because the secrets either go up with the version or the push fails. Deciding and resolving still happen before anything is uploaded. A secret value now briefly exists on disk on a first deploy, limited to the owner, outside the project and never logged. The guide's promise holds again.
