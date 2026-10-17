@@ -3,6 +3,8 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __DurableObjectState, type __DurableObjectNamespace, __StateRegistry, __makeAgent, __rehydrationViolation, HttpResult, type __JsonValue, type __BoundaryError } from "../runtime.js";
 
+import * as r_other from "./other.js";
+
 /**
  * #2024: a test case's `let` may take the name of a service, an agent or an
  * asset of the unit under test, which the generated runner already binds.
@@ -59,8 +61,36 @@ export function __makeCounter(key: string, env?: { COUNTER?: __DurableObjectName
   return __makeAgent(__CounterRegistry, env?.COUNTER, key, (state) => new Counter(state));
 }
 
+export async function __bynkDriveHistory_Counter(seq: globalThis.Array<{ h: number, args: unknown[] }>, deps: any): globalThis.Promise<globalThis.Array<{ call: any, accepted: boolean, old: CounterState, new: CounterState }>> {
+  __CounterRegistry.reset();
+  const __inst = __makeCounter("") as any;
+  const __load = async (): globalThis.Promise<CounterState> => { const __s = await __inst.state.storage.get("state"); if (__s === undefined) return __zeroOfCounterState(); const __m = { ...__zeroOfCounterState(), ...__s }; __rehydrateCounterState(__m, __s); return __m; };
+  const __rej = (e: unknown) => !!e && (e as { invariantViolation?: unknown }).invariantViolation !== undefined;
+  const __steps: globalThis.Array<{ call: any, accepted: boolean, old: CounterState, new: CounterState }> = [];
+  const __ce = globalThis.console.error;
+  globalThis.console.error = (...__a: unknown[]) => { if (typeof __a[0] === "string" && __a[0].startsWith("InvariantViolation")) return; __ce(...__a); };
+  try {
+  for (const __st of seq) {
+    const __old = await __load();
+    let __accepted = true;
+    try {
+      switch (__st.h) {
+        case 0: await __inst.bump(deps); break;
+      }
+    } catch (__e) { if (__rej(__e)) { __accepted = false; } else { throw __e; } }
+    const __new = __accepted ? await __load() : __old;
+    let __call: any;
+    switch (__st.h) {
+      case 0: __call = { tag: "Bump" }; break;
+    }
+    __steps.push({ call: __call, accepted: __accepted, old: __old, new: __new });
+  }
+  return __steps;
+  } finally { globalThis.console.error = __ce; }
+}
+
 export const level = {
-  async call(id: string, deps: {}): globalThis.Promise<number> {
+  async call(id: string, deps: { surface: { other: globalThis.ReturnType<typeof r_other.__makeSurface> } }): globalThis.Promise<number> {
     return __makeCounter(id).bump(deps);
   },
 };
@@ -76,6 +106,7 @@ export function __resetAgents(): void {
 }
 
 export interface __RCounterDeps {
+  readonly surface: { other: globalThis.ReturnType<typeof r_other.__makeSurface> };
 }
 
 export function __makeSurface(deps: __RCounterDeps) {

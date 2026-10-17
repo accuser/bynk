@@ -3,6 +3,7 @@
 
 import { Ok, Err, Some, None, __makeTestState, type Result, type Option, type ValidationError, HttpResult } from "../runtime.js";
 import * as __ns_r_counter from "./../r/counter.js";
+import * as __ns_r_other from "./../r/other.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -27,6 +28,7 @@ function __bynkShow(v: unknown): string {
 
 
 const __bynkAssetFiles: Record<string, { readonly body: string; readonly contentType: string }> = {
+  "/_assets/badge.675c6e4be5c05a62.svg": { body: "PHN2Zy8+", contentType: "image/svg+xml" },
   "/_assets/board.94fe1aa214bf93ad.css": { body: "Ym9keXt9Cg==", contentType: "text/css; charset=utf-8" },
 };
 function __bynkAssetGet(url: string): HttpResult<never> {
@@ -163,8 +165,95 @@ async function __bynkRunProperty(spec: { seed: number, cases: number, gens: any[
   return { pass: true };
 }
 
+type __BynkHistoryHandler = { tag: string, gens: Array<{ boundaries: any[], gen: (rng: any) => any, shrink: (v: any) => any[], show: (v: any) => string }> };
+type __BynkHistorySpec = { seed: number, cases: number, maxLen: number, handlers: __BynkHistoryHandler[], drive: (seq: any[]) => Promise<any[]>, body: (run: any[]) => Promise<void>, name: string, location: string, file: string };
+function __bynkGenHistory(rng: any, spec: __BynkHistorySpec): Array<{ h: number, args: any[] }> {
+  const len = Math.floor(rng.next() * (spec.maxLen + 1));
+  const seq: Array<{ h: number, args: any[] }> = [];
+  for (let i = 0; i < len; i++) {
+    const h = spec.handlers.length > 0 ? Math.floor(rng.next() * spec.handlers.length) : 0;
+    const args = spec.handlers[h] ? spec.handlers[h].gens.map((g) => g.gen(rng)) : [];
+    seq.push({ h, args });
+  }
+  return seq;
+}
+async function __bynkHistoryStillFails(spec: __BynkHistorySpec, seq: Array<{ h: number, args: any[] }>): Promise<boolean> {
+  let run: any[];
+  try { run = await spec.drive(seq); } catch { return false; }
+  try { await spec.body(run); return false; } catch (e) { return __bynkIsFailure(e); }
+}
+async function __bynkShrinkHistory(spec: __BynkHistorySpec, seq: Array<{ h: number, args: any[] }>): Promise<Array<{ h: number, args: any[] }>> {
+  let cur = seq.slice();
+  let budget = 300;
+  // Delta-debug the sequence: drop a step, re-drive, keep the reduction only if it
+  // still reproduces the failure (so the printed counterexample stays reachable).
+  let improved = true;
+  while (improved && budget > 0) {
+    improved = false;
+    for (let i = 0; i < cur.length && budget > 0; i++) {
+      budget--;
+      const trial = cur.slice(0, i).concat(cur.slice(i + 1));
+      if (await __bynkHistoryStillFails(spec, trial)) { cur = trial; improved = true; break; }
+    }
+  }
+  // Then shrink each surviving step's arguments with the value shrinker.
+  improved = true;
+  while (improved && budget > 0) {
+    improved = false;
+    for (let i = 0; i < cur.length; i++) {
+      const step = cur[i];
+      const gens = spec.handlers[step.h] ? spec.handlers[step.h].gens : [];
+      for (let j = 0; j < gens.length; j++) {
+        const cands = gens[j].shrink(step.args[j]);
+        for (const c of cands) {
+          if (--budget <= 0) break;
+          const nargs = step.args.slice(); nargs[j] = c;
+          const trial = cur.slice(); trial[i] = { h: step.h, args: nargs };
+          if (await __bynkHistoryStillFails(spec, trial)) { cur = trial; improved = true; break; }
+        }
+        if (budget <= 0) break;
+      }
+    }
+  }
+  return cur;
+}
+function __bynkShowHistory(spec: __BynkHistorySpec, seq: Array<{ h: number, args: any[] }>): string {
+  return "[" + seq.map((st) => {
+    const h = spec.handlers[st.h];
+    if (!h) return "?";
+    const args = st.args.map((a: any, j: number) => h.gens[j] ? h.gens[j].show(a) : __bynkShow(a)).join(", ");
+    return h.tag + "(" + args + ")";
+  }).join(", ") + "]";
+}
+async function __bynkRunHistory(spec: __BynkHistorySpec): Promise<{ pass: boolean, error?: { message: string, location: string } }> {
+  const rng = __bynkRng(spec.seed);
+  for (let c = 0; c < spec.cases; c++) {
+    const seq = __bynkGenHistory(rng, spec);
+    let run: any[];
+    try { run = await spec.drive(seq); } catch (e) {
+      return { pass: false, error: { message: String(e), location: spec.location } };
+    }
+    try {
+      await spec.body(run);
+    } catch (e) {
+      if (!__bynkIsFailure(e)) {
+        return { pass: false, error: { message: String(e), location: spec.location } };
+      }
+      const shrunk = await __bynkShrinkHistory(spec, seq);
+      const seedHex = "0x" + (__bynkSeed >>> 0).toString(16);
+      const shown = __bynkShowHistory(spec, shrunk);
+      let detail = (e as any).message;
+      try { const __r2 = await spec.drive(shrunk); await spec.body(__r2); } catch (e2) { if (__bynkIsFailure(e2)) detail = (e2 as any).message; }
+      const firstLine = String(detail).split("\n")[0];
+      const message = `history property failed after ${c + 1} runs (seed ${seedHex})\n  shrunk sequence:  ${shown}\n  ${firstLine}\n  reproduce: bynkc test ${spec.file} --seed ${seedHex}`;
+      return { pass: false, error: { message, location: spec.location } };
+    }
+  }
+  return { pass: true };
+}
+
 function __makeTestDeps() {
-  return {  };
+  return { surface: { other: undefined as unknown as globalThis.ReturnType<typeof __ns_r_other.__makeSurface> } };
 }
 
 // case tier: unit
@@ -173,6 +262,8 @@ async function test_a_local_named_like_a_service() {
     __ns_r_counter.__resetAgents();
     const deps = __makeTestDeps();
     const { Counter, __makeCounter, api, level, style } = __ns_r_counter;
+    const { badge } = __ns_r_other;
+    const other = (deps as any).surface?.other;
     const __r0 = await __makeCounter("a").bump(deps);
     if (!(__r0 === 1)) { throw __bynkExpectFailure("tests/r/counter.bynk:9:10", 260, 270, "expect level == 1\n  expected: level == 1\n  actual:   " + __bynkShow((__r0)) + " == " + __bynkShow((1))); }
     return { pass: true };
@@ -190,6 +281,8 @@ async function test_a_local_that_reads_the_service_it_shadows() {
     __ns_r_counter.__resetAgents();
     const deps = __makeTestDeps();
     const { Counter, __makeCounter, api, level, style } = __ns_r_counter;
+    const { badge } = __ns_r_other;
+    const other = (deps as any).surface?.other;
     const __r0 = await level.call("b", deps);
     const __r1 = __r0 + 10;
     if (!(__r1 === 11)) { throw __bynkExpectFailure("tests/r/counter.bynk:15:10", 390, 401, "expect level == 11\n  expected: level == 11\n  actual:   " + __bynkShow((__r1)) + " == " + __bynkShow((11))); }
@@ -208,6 +301,8 @@ async function test_the_service_before_the_shadow() {
     __ns_r_counter.__resetAgents();
     const deps = __makeTestDeps();
     const { Counter, __makeCounter, api, level, style } = __ns_r_counter;
+    const { badge } = __ns_r_other;
+    const other = (deps as any).surface?.other;
     const first = await level.call("c", deps);
     const __r0 = first * 2;
     if (!(__r0 === 2)) { throw __bynkExpectFailure("tests/r/counter.bynk:21:10", 508, 518, "expect level == 2\n  expected: level == 2\n  actual:   " + __bynkShow((__r0)) + " == " + __bynkShow((2))); }
@@ -226,6 +321,8 @@ async function test_a_local_named_like_an_agent() {
     __ns_r_counter.__resetAgents();
     const deps = __makeTestDeps();
     const { Counter, __makeCounter, api, level, style } = __ns_r_counter;
+    const { badge } = __ns_r_other;
+    const other = (deps as any).surface?.other;
     const __r0 = 5;
     if (!(__r0 === 5)) { throw __bynkExpectFailure("tests/r/counter.bynk:26:10", 586, 598, "expect Counter == 5\n  expected: Counter == 5\n  actual:   " + __bynkShow((__r0)) + " == " + __bynkShow((5))); }
     return { pass: true };
@@ -243,6 +340,8 @@ async function test_a_local_named_like_an_asset() {
     __ns_r_counter.__resetAgents();
     const deps = __makeTestDeps();
     const { Counter, __makeCounter, api, level, style } = __ns_r_counter;
+    const { badge } = __ns_r_other;
+    const other = (deps as any).surface?.other;
     const r = await __bynkAssetGet((style).url);
     const __r0 = "shadowed";
     if (!(__r0 === "shadowed")) { throw __bynkExpectFailure("tests/r/counter.bynk:32:10", 699, 718, "expect style == \"shadowed\"\n  expected: style == \"shadowed\"\n  actual:   " + __bynkShow((__r0)) + " == " + __bynkShow(("shadowed"))); }
@@ -262,6 +361,8 @@ async function test_a_local_named_like_the_deps_record() {
     __ns_r_counter.__resetAgents();
     const deps = __makeTestDeps();
     const { Counter, __makeCounter, api, level, style } = __ns_r_counter;
+    const { badge } = __ns_r_other;
+    const other = (deps as any).surface?.other;
     const __id_deps = 3;
     if (!(__id_deps === 3)) { throw __bynkExpectFailure("tests/r/counter.bynk:38:10", 814, 823, "expect deps == 3\n  expected: deps == 3\n  actual:   " + __bynkShow((__id_deps)) + " == " + __bynkShow((3))); }
     return { pass: true };
@@ -273,10 +374,52 @@ async function test_a_local_named_like_the_deps_record() {
   }
 }
 
+// case tier: unit
+async function test_locals_named_like_a_consumed_context_and_its_asset() {
+  try {
+    __ns_r_counter.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Counter, __makeCounter, api, level, style } = __ns_r_counter;
+    const { badge } = __ns_r_other;
+    const other = (deps as any).surface?.other;
+    const __r0 = 2;
+    const __r1 = 3;
+    if (!(__r0 + __r1 === 5)) { throw __bynkExpectFailure("tests/r/counter.bynk:44:10", 928, 946, "expect other + badge == 5\n  expected: other + badge == 5\n  actual:   " + __bynkShow((__r0 + __r1)) + " == " + __bynkShow((5))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+async function __prop_test_a_let_shadowing_the_history_run_binder() {
+    __ns_r_counter.__resetAgents();
+    const deps = __makeTestDeps();
+    const { Counter, __makeCounter, api, level, style } = __ns_r_counter;
+    const { badge } = __ns_r_other;
+    const other = (deps as any).surface?.other;
+    type __History_Counter_Step = any; type __History_Counter_Call = any; type __History_Counter_State = any;
+    const __handlers = [
+      { tag: "Bump", gens: [] },
+    ];
+    const __body = async (__run: globalThis.Array<{ h: number, args: unknown[] }>) => {
+      const run = __run;
+      const steps = (run).length;
+      const __r0 = steps;
+      if (!(__r0 === steps)) { throw __bynkExpectFailure("tests/r/counter.bynk:51:12", 1096, 1108, "expect run == steps\n  expected: run == steps\n  actual:   " + __bynkShow((__r0)) + " == " + __bynkShow((steps))); }
+    };
+    const __drive = (seq: globalThis.Array<{ h: number, args: unknown[] }>) => (__ns_r_counter as any).__bynkDriveHistory_Counter(seq, deps);
+    return await __bynkRunHistory({ seed: __bynkMix(__bynkSeed, 0), cases: 60, maxLen: 16, handlers: __handlers, drive: __drive, body: __body, name: "a let shadowing the history run binder", location: "tests/r/counter.bynk", file: "tests/r/counter.bynk" });
+}
+
 async function __prop_test_a_let_rebinding_a_for_all_binder() {
     __ns_r_counter.__resetAgents();
     const deps = __makeTestDeps();
     const { Counter, __makeCounter, api, level, style } = __ns_r_counter;
+    const { badge } = __ns_r_other;
+    const other = (deps as any).surface?.other;
     const __gens = [
       { name: "n", boundaries: [0n, 1000n, -1000n], gen: (rng: any) => rng.int(-1000n, 1000n), shrink: (v: any) => __bynkShrinkInt(v, 0n), show: (v: any) => __bynkShow(v) },
     ];
@@ -286,9 +429,9 @@ async function __prop_test_a_let_rebinding_a_for_all_binder() {
       const m = n;
       const __r0 = n + 1;
       const __r1 = __r0;
-      if (!(__r1 === m + 1)) { throw __bynkExpectFailure("tests/r/counter.bynk:46:12", 953, 967, "expect level == m + 1\n  expected: level == m + 1\n  actual:   " + __bynkShow((__r1)) + " == " + __bynkShow((m + 1))); }
+      if (!(__r1 === m + 1)) { throw __bynkExpectFailure("tests/r/counter.bynk:60:12", 1242, 1256, "expect level == m + 1\n  expected: level == m + 1\n  actual:   " + __bynkShow((__r1)) + " == " + __bynkShow((m + 1))); }
     };
-    return await __bynkRunProperty({ seed: __bynkMix(__bynkSeed, 0), cases: 100, gens: __gens, where: __where, body: __body, name: "a let rebinding a for-all binder", location: "tests/r/counter.bynk", file: "tests/r/counter.bynk" });
+    return await __bynkRunProperty({ seed: __bynkMix(__bynkSeed, 1), cases: 100, gens: __gens, where: __where, body: __body, name: "a let rebinding a for-all binder", location: "tests/r/counter.bynk", file: "tests/r/counter.bynk" });
 }
 
 export async function run(only?: string) {
@@ -300,6 +443,8 @@ export async function run(only?: string) {
   if (want("a local named like an agent")) results.push({ name: "a local named like an agent", ...(await test_a_local_named_like_an_agent()) });
   if (want("a local named like an asset")) results.push({ name: "a local named like an asset", ...(await test_a_local_named_like_an_asset()) });
   if (want("a local named like the deps record")) results.push({ name: "a local named like the deps record", ...(await test_a_local_named_like_the_deps_record()) });
+  if (want("locals named like a consumed context and its asset")) results.push({ name: "locals named like a consumed context and its asset", ...(await test_locals_named_like_a_consumed_context_and_its_asset()) });
+  if (want("a let shadowing the history run binder")) results.push({ name: "a let shadowing the history run binder", ...(await __prop_test_a_let_shadowing_the_history_run_binder()) });
   if (want("a let rebinding a for-all binder")) results.push({ name: "a let rebinding a for-all binder", ...(await __prop_test_a_let_rebinding_a_for_all_binder()) });
   return results;
 }

@@ -4,6 +4,8 @@ asset of the unit under test, which the generated runner already binds.
 ---
 context r.counter
 
+consumes r.other
+
 asset style = "assets/board.css"
 
 agent Counter {
