@@ -4010,24 +4010,50 @@ pub(crate) fn lower_workers_cross_context_call(
     };
     let mut args_serialised: Vec<bynk_ts::TsExpr> = Vec::new();
     for (i, a) in args.iter().enumerate() {
-        // #2035: a value the caller builds for a named parameter type carries
-        // the caller's brand on its commons parts (`Map.empty()` lowers to
-        // `new globalThis.Map<string, Line>()` with this context's `Line`),
-        // while the codec takes the callee's type (`cs_store.Batch`, holding
-        // the callee's `Line`), so tsc rejected it (TS2345). Cast through
-        // `unknown` to the callee's type, as the bundle path does
-        // ([`param_cast`]); the checker has already matched the shapes.
-        let lowered = param_cast(
-            consumed,
-            info,
-            method,
-            i,
-            pre.lower(a, cx),
-            cx.in_test_scaffold(),
-        );
+        let mut lowered = pre.lower(a, cx);
         let (_, param_ty) = &svc.params[i];
+        let wire_ty = renamed(param_ty);
+        // #2025: a literal passed straight to a refined parameter is admitted
+        // to the callee's type, but lowers with the brand of the caller's
+        // name for it. Where the caller doesn't name the callee's type (it
+        // was renamed above), cast it to what the codec takes.
+        let param_renamed = matches!(
+            param_ty,
+            TypeRef::Named(id) if renames.is_some_and(|r| r.contains_key(&id.name))
+        );
+        let admitted_literal = param_renamed
+            && matches!(
+                a.kind,
+                ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } | ExprKind::StrLit(_)
+            );
+        if admitted_literal {
+            let codec = bynk_ts::print_expr(&crate::emitter::serialisation::serialise_ref_via(
+                &wire_ty,
+                &ns,
+                cx.runtime_use(),
+            ));
+            let codec_param = ["globalThis.Parameters<typeof ", codec.as_str(), ">[0]"].concat();
+            lowered = bynk_ts::print_expr(&bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::As {
+                expr: Box::new(bynk_ts::TsExpr::As {
+                    expr: Box::new(bynk_ts::TsExpr::Ident(lowered)),
+                    ty: bynk_ts::TsType::named("unknown"),
+                }),
+                ty: bynk_ts::TsType::named(codec_param),
+            })));
+        } else {
+            // #2035: a value the caller builds for a named parameter type
+            // carries the caller's brand on its commons parts (`Map.empty()`
+            // lowers to `new globalThis.Map<string, Line>()` with this
+            // context's `Line`), while the codec takes the callee's type
+            // (`cs_store.Batch`, holding the callee's `Line`), so tsc rejected
+            // it (TS2345). Cast through `unknown` to the callee's type, as the
+            // bundle path does ([`param_cast`]); the checker has already
+            // matched the shapes. An admitted literal (above) already has its
+            // one cast, to what the codec takes, so it gets no second.
+            lowered = param_cast(consumed, info, method, i, lowered, cx.in_test_scaffold());
+        }
         args_serialised.push(serialise_expr_via(
-            &renamed(param_ty),
+            &wire_ty,
             &lowered,
             &ns,
             cx.runtime_use(),
