@@ -1,12 +1,6 @@
----
-level: minor
-probes: ts_writes
-changelog: `Bytes` gains `concat`, `slice` (clamped like `String.slice`), `compare` (unsigned lexicographic, `-1`/`0`/`1`), `toHex` and `toBase64Url`, plus the partial statics `Bytes.fromHex` and `Bytes.fromBase64Url`. `Bytes` stays unorderable
----
+# 0497 — The `Bytes` kernel gains concatenation, slicing, a compare method, hex and base64url
 
-## ADR: bytes-operations
-title: The `Bytes` kernel gains concatenation, slicing, a compare method, hex and base64url
-summary: `concat`, `slice`, `compare`, `toHex`/`fromHex` and `toBase64Url`/`fromBase64Url` are L0 kernel members, pure and synchronous over typed arrays; `compare` is a method and `Bytes` stays out of the orderable set; none is constant-time
+- **Status:** Accepted (v0.351)
 
 **Context.** ADR 0142 shipped `Bytes` as a length plus a UTF-8/base64 bridge. Its D4 named
 `concat`, `slice`, `fromHex`/`toHex` and lexicographic ordering as follow-ons. Without them a
