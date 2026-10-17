@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0492](0492-secrets-with-first-upload.md) | **A new Worker's secrets are uploaded with its first version** (v0.346.9) — Supersedes ADR 0195 (F) for a first deploy: `wrangler deploy --secrets-file`, not a post-push `secret put` | Accepted (v0.346.9) |
 | [0491](0491-callee-side-contract-skew-gate.md) | **The deploy contract-skew gate checks the callee side too, under the same code** (v0.346.8) — `--context` holds the pushed Worker's new `provides` to every other live Worker's recorded `expects`; an unrecorded caller warns | Accepted (v0.346.8) |
 | [0490](0490-contract-mismatch-body-keeps-expected.md) | **The 409 ContractMismatch body keeps `expected`, because only an authenticated caller can reach it** (v0.346.4) — The signature check precedes the contract check on every internal path; the published 409 body is unchanged | Accepted (v0.346.4) |
 | [0489](0489-test-principal-refinement-and-sum.md) | **A test acts as a refinement actor with its base identity, and as any member of an actor sum** (v0.345) — Refinements resolve through their base's identity and sign a witness of their predicate at `system`; a sum `by` takes any member and builds `deps.who` | Accepted (v0.345) |

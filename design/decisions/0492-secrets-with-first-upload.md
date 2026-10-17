@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A new Worker's first `bynk deploy` now uploads its secrets with its code (`wrangler deploy --secrets-file`, from a 0600 temporary file deleted when the upload ends, even if `bynk` gets Ctrl-C or SIGTERM, with a SIGKILLed run's file removed by the next deploy), so the Worker is never live without them; it used to set them about four seconds after the upload. A redeploy still sets them first with `wrangler secret put`. Each secret set now prints a `bynk: set secret` line naming it and the Worker (`api-staging` under `--env staging`), never its value, beside the "already set, skipping" line, and a wrangler older than 4.74.0 falls back to the old order and says so. A run that includes a new Worker refuses a `-- --secrets-file` passthrough (#2055). Test stand-in binaries are now written by a child process, which fixes intermittent `Text file busy` failures (#2064).
----
+# 0492 — A new Worker's secrets are uploaded with its first version
 
-## ADR: secrets-with-first-upload
-title: A new Worker's secrets are uploaded with its first version
-summary: Supersedes ADR 0195 (F) for a first deploy: `wrangler deploy --secrets-file`, not a post-push `secret put`
+- **Status:** Accepted (v0.346.9)
 
 **Context.** ADR 0195 (F) has a first deploy push first and run `wrangler secret put` after. The reason is that `secret put` against a Worker that doesn't exist yet makes a stub draft Worker. The cost (F) accepted was a brief fail-closed window, and a live deploy measured it at about four seconds (#2055). During that window the new Worker answers 401 on every route that needs a secret, while the deploy guide said secrets were set before the push. Wrangler 4.74.0 (cloudflare/workers-sdk#10896) added `wrangler deploy --secrets-file`, which puts the secrets in the uploaded version. Every wrangler at or above `WRANGLER_MIN` (4.107.0) has it.
 
