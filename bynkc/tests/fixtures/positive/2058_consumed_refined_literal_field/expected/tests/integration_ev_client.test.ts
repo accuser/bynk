@@ -6,6 +6,8 @@ import * as __ns_ev_client from "../workers/ev-client/handlers.js";
 import worker___ns_ev_client from "../workers/ev-client/index.js";
 import * as __ns_ev_store from "../workers/ev-store/handlers.js";
 import worker___ns_ev_store from "../workers/ev-store/index.js";
+import * as __ns_ev_kinds from "../workers/ev-kinds/handlers.js";
+import worker___ns_ev_kinds from "../workers/ev-kinds/index.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -31,16 +33,20 @@ function __bynkShow(v: unknown): string {
 function __makeHarness() {
   const env___ns_ev_client: any = {};
   const env___ns_ev_store: any = {};
+  const env___ns_ev_kinds: any = {};
   env___ns_ev_client.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
   env___ns_ev_client.BYNK_CALL_TO_EV__STORE = "bynk-local-call-key";
   env___ns_ev_client.EV_STORE = { fetch: (req: globalThis.Request) => worker___ns_ev_store.fetch(req, env___ns_ev_store) } as __ServiceBinding;
   env___ns_ev_store.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
   env___ns_ev_store.BYNK_CALL_FROM_EV__CLIENT = "bynk-local-call-key";
+  env___ns_ev_kinds.BYNK_CALL_FROM_INTEGRATION = "bynk-local-call-key";
   const rootEnv: any = {};
   rootEnv.BYNK_CALL_TO_EV__CLIENT = "bynk-local-call-key";
   rootEnv.BYNK_CALL_TO_EV__STORE = "bynk-local-call-key";
+  rootEnv.BYNK_CALL_TO_EV__KINDS = "bynk-local-call-key";
   rootEnv.EV_CLIENT = { fetch: (req: globalThis.Request) => worker___ns_ev_client.fetch(req, env___ns_ev_client) } as __ServiceBinding;
   rootEnv.EV_STORE = { fetch: (req: globalThis.Request) => worker___ns_ev_store.fetch(req, env___ns_ev_store) } as __ServiceBinding;
+  rootEnv.EV_KINDS = { fetch: (req: globalThis.Request) => worker___ns_ev_kinds.fetch(req, env___ns_ev_kinds) } as __ServiceBinding;
   return { env: rootEnv };
 }
 
@@ -58,11 +64,25 @@ async function test_a_record_bound_before_the_call() {
   }
 }
 
+async function test_a_record_of_a_consumed_context_with_no_service() {
+  try {
+    const deps = __makeHarness();
+    const r = await __callService(deps.env.EV_CLIENT, "tagged", {  }, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "1c72e694be51e388", deps.env, "ev.client");
+    if (!(r === 3)) { throw __bynkExpectFailure("tests/client.bynk:10:12", 254, 260, "expect r == 3\n  expected: r == 3\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((3))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 async function test_a_record_built_in_the_call() {
   try {
     const deps = __makeHarness();
     const r = await __callService(deps.env.EV_CLIENT, "direct", {  }, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "76f6dbd04a55794f", deps.env, "ev.client");
-    if (!(r === 2)) { throw __bynkExpectFailure("tests/client.bynk:10:12", 234, 240, "expect r == 2\n  expected: r == 2\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((2))); }
+    if (!(r === 2)) { throw __bynkExpectFailure("tests/client.bynk:15:12", 347, 353, "expect r == 2\n  expected: r == 2\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((2))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -76,6 +96,7 @@ export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
   if (want("a record bound before the call")) results.push({ name: "a record bound before the call", ...(await test_a_record_bound_before_the_call()) });
+  if (want("a record of a consumed context with no service")) results.push({ name: "a record of a consumed context with no service", ...(await test_a_record_of_a_consumed_context_with_no_service()) });
   if (want("a record built in the call")) results.push({ name: "a record built in the call", ...(await test_a_record_built_in_the_call()) });
   return results;
 }

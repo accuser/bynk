@@ -3,16 +3,25 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
+import { Tag } from "../ev-kinds/handlers.js";
 import { Item } from "../ev-store/handlers.js";
 
+import type * as ev_kinds from "../ev-kinds/handlers.js";
 import type * as ev_store from "../ev-store/handlers.js";
 
-export { type Item };
+export { type Item, type Tag };
 
 export const bound = {
   async call(deps: { env: { EV_STORE: __ServiceBinding } }): globalThis.Promise<number> {
     const i = { code: (1 as ev_store.Code), name: "a" };
     return __callService(deps.env.EV_STORE, "put", __serialise_Item(i), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "ev.client", "8e24320cd24578cb", deps.env, "ev.store");
+  },
+};
+
+export const tagged = {
+  async call(deps: {}): globalThis.Promise<number> {
+    const t = { kind: (3 as ev_kinds.Kind), label: "x" };
+    return t.kind;
   },
 };
 

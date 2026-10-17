@@ -17,5 +17,8 @@ export function compose(env: Env) {
     async direct() {
       return handlers.direct.call(deps);
     },
+    async tagged() {
+      return handlers.tagged.call(deps);
+    },
   };
 }

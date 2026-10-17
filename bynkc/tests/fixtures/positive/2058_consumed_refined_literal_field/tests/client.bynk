@@ -5,6 +5,11 @@ suite ev.client as system {
     expect r == 1
   }
 
+  case "a record of a consumed context with no service" {
+    let r <- ev.client.tagged()
+    expect r == 3
+  }
+
   case "a record built in the call" {
     let r <- ev.client.direct()
     expect r == 2

@@ -2,7 +2,8 @@
   "version": 1,
   "provides": {
     "bound": "ca650fc30d20ca42",
-    "direct": "76f6dbd04a55794f"
+    "direct": "76f6dbd04a55794f",
+    "tagged": "1c72e694be51e388"
   },
   "expects": {
     "ev.store": {
