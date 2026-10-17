@@ -92,10 +92,27 @@ async function test_a_pinned_refined_argument_over_the_wire() {
   }
 }
 
+async function test_a_hinted_None_over_the_wire() {
+  try {
+    const deps = __makeHarness();
+    const { Cents } = __ns_t_values;
+    type Cents = __ns_t_values.Cents;
+    const r = await __callService(deps.env.T_PAY, "maybe", __ns_t_pay.__serialise_Option_Cents(None), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "160020c3334955d4", deps.env, "t.pay");
+    if (!(r === 0)) { throw __bynkExpectFailure("tests/pay.bynk:18:10", 513, 519, "expect r == 0\n  expected: r == 0\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((0))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
   if (want("a refined argument over the wire")) results.push({ name: "a refined argument over the wire", ...(await test_a_refined_argument_over_the_wire()) });
   if (want("a pinned refined argument over the wire")) results.push({ name: "a pinned refined argument over the wire", ...(await test_a_pinned_refined_argument_over_the_wire()) });
+  if (want("a hinted None over the wire")) results.push({ name: "a hinted None over the wire", ...(await test_a_hinted_None_over_the_wire()) });
   return results;
 }

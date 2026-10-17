@@ -17,6 +17,21 @@ export const charge = {
   },
 };
 
+export const maybe = {
+  async call(cents: Option<Cents>, deps: { identity: string }): globalThis.Promise<number> {
+    switch (cents.tag) {
+      case "Some": {
+        const c = cents.value;
+        return c;
+      }
+      case "None": {
+        return 0;
+      }
+    }
+    throw new globalThis.Error("non-exhaustive match");
+  },
+};
+
 export const api = {
   async http_GET(deps: {}): globalThis.Promise<HttpResult<string>> {
     return HttpResult.Ok("ok");
@@ -24,3 +39,43 @@ export const api = {
 };
 
 export { __serialise_Cents, __deserialise_Cents };
+
+export function __serialise_Option_Cents(value: Option<Cents>): __JsonValue {
+  if (value.tag === "Some") return { kind: "Some", value: __serialise_Cents(value.value) };
+  return { kind: "None" };
+}
+
+function __option_value_Cents(raw: __JsonValue, at: string): Result<unknown, __BoundaryError> {
+  const __r_v = __deserialise_Cents(raw, at);
+  if (__r_v.tag === "Err") return __r_v;
+  const __v = __r_v.value;
+  return Ok(__v);
+}
+
+export function __deserialise_Option_Cents(json: __JsonValue, path: string = "$"): Result<Option<Cents>, __BoundaryError> {
+  if (json === undefined || json === null) {
+    return Ok(None as Option<Cents>);
+  }
+  if (typeof json === "object" && !globalThis.Array.isArray(json)) {
+    const obj = json as { [k: string]: __JsonValue };
+    const __keys = globalThis.Object.keys(obj);
+    if (obj["kind"] === "None" && __keys.length === 1) {
+      return Ok(None as Option<Cents>);
+    }
+    if (obj["kind"] === "Some" && __keys.length === 2 && "value" in obj) {
+      const __t = __option_value_Cents(obj["value"], `${path}.value`);
+      if (__t.tag === "Err") {
+        return __t;
+      }
+      return Ok(Some(__t.value as Cents) as Option<Cents>);
+    }
+  }
+  const __b = __option_value_Cents(json, path);
+  if (__b.tag === "Ok") {
+    return Ok(Some(__b.value as Cents) as Option<Cents>);
+  }
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
+    return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
+  }
+  return __b;
+}

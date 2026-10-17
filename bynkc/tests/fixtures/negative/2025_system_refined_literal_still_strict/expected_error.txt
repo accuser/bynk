@@ -1,4 +1,5 @@
 bynk.refine.literal_violates literal 5000 does not satisfy `InRange` required by type `Cents`
+bynk.refine.literal_violates literal 5000 does not satisfy `InRange` required by type `Cents`
 bynk.boundary.structural_mismatch cross-context argument 1 to `t.pay.charge` has type `Int` in `t.pay`, but parameter `cents` expects `Cents` in `t.pay`
 bynk.boundary.structural_mismatch cross-context argument 1 to `t.pay.charge` has type `Cents` in `t.other`, but parameter `cents` expects `Cents` in `t.pay`
 # exact

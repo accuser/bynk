@@ -3,12 +3,16 @@
 
 declare const process: { exit(code: number): never; env: { [k: string]: string | undefined } };
 
-import * as test_0 from "./integration_t_pay.test.js";
+import * as test_0 from "./integration_t_bare.test.js";
+import * as test_1 from "./integration_t_pay.test.js";
+import * as test_2 from "./integration_t_shadow.test.js";
 
 async function main() {
   const only = process.env.BYNK_TEST_CASE;
   const modules = [
-    { name: "integration · t.pay", run: test_0.run },
+    { name: "integration · t.bare", run: test_0.run },
+    { name: "integration · t.pay", run: test_1.run },
+    { name: "integration · t.shadow", run: test_2.run },
   ];
   let passed = 0;
   let failed = 0;

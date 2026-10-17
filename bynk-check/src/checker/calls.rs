@@ -4174,13 +4174,16 @@ fn check_cross_context_capability_call(
         let param_ty = resolve_type_ref_in(ptype_ref, &consumed_types, &vars, tys)
             .unwrap_or(tys.intern(Ty::Unit));
         let param_ty = substitute(param_ty, &subst, tys);
-        // #2025: the parameter's type is the hint, so a literal is admitted
-        // to a refined parameter as at a local call; the structural check
-        // below still decides whether the argument crosses.
-        let Some(arg_ty) = type_of(arg, Some(param_ty), ctx) else {
+        // #2025: against the parameter's type; see `type_cross_context_arg`.
+        let (arg_ty, admitted) =
+            type_cross_context_arg(arg, param_ty, &consumed_types, consumed, ctx);
+        let Some(arg_ty) = arg_ty else {
             all_ok = false;
             continue;
         };
+        if admitted {
+            continue;
+        }
         if !structurally_compatible(arg_ty, param_ty, &caller_types, &consumed_types, tys) {
             let mut err = CompileError::new(
                 "bynk.boundary.structural_mismatch",
@@ -4253,6 +4256,50 @@ fn rebranded_return_mismatch(
         "a returned value takes the receiving context's type of the same name, so the two \
          must be structurally compatible; rename one of them",
     )
+}
+
+/// #2025: type one cross-context argument against its parameter's type,
+/// returning the type and whether the argument was a literal admitted
+/// straight to that type.
+///
+/// A literal passed directly to a refined parameter is admitted against the
+/// parameter type's own declaration, from the consumed context's table: it
+/// is checked against the callee's predicate, whether or not the caller
+/// `uses` the declaring commons and whatever the caller binds under that
+/// name. Such an argument is the callee's type by construction, so the
+/// caller skips the structural check for it.
+///
+/// Any other argument is typed with the parameter's type as its hint (so
+/// `None` takes `Option[Cents]`), in the caller's own scope, and the
+/// structural check decides whether it crosses. A literal nested inside it
+/// (`Some(250)`) is admitted against the caller's declaration, as at a local
+/// call.
+fn type_cross_context_arg(
+    arg: &Expr,
+    param_ty: TyId,
+    consumed_types: &HashMap<String, Arc<TypeDecl>>,
+    consumed: &str,
+    ctx: &mut Ctx,
+) -> (Option<TyId>, bool) {
+    if matches!(
+        arg.kind,
+        ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } | ExprKind::StrLit(_)
+    ) {
+        let before = ctx.errors.len();
+        if let Some(ty) = admit_refined_literal_in(arg, Some(param_ty), consumed_types, ctx) {
+            let tys = ctx.tys;
+            for err in &mut ctx.errors[before..] {
+                err.notes.push(format!(
+                    "`{}` is the parameter's type, as `{consumed}` declares it",
+                    ty.display(tys)
+                ));
+            }
+            ctx.expr_types
+                .insert(arg.id, TypedExpr { span: arg.span, ty });
+            return (Some(ty), true);
+        }
+    }
+    (type_of(arg, Some(param_ty), ctx), false)
 }
 
 fn check_cross_context_call(
@@ -4369,16 +4416,17 @@ fn check_cross_context_call(
         record_param_hint(ctx.hints, pname, arg);
         let param_ty =
             resolve_type_ref(ptype_ref, &consumed_types, tys).unwrap_or(tys.intern(Ty::Unit));
-        // Type-check the argument in the caller's context. #2025: against
-        // the parameter's type, so a literal is admitted to a refined
-        // parameter (`t.pay.charge(250)` for `cents: Cents`) as it is at a
-        // local call; the structural check below still decides whether the
-        // argument crosses.
-        let arg_ty = type_of(arg, Some(param_ty), ctx);
+        // Type-check the argument in the caller's context (#2025: against
+        // the parameter's type; see `type_cross_context_arg`).
+        let (arg_ty, admitted) =
+            type_cross_context_arg(arg, param_ty, &consumed_types, consumed, ctx);
         let Some(arg_ty) = arg_ty else {
             all_ok = false;
             continue;
         };
+        if admitted {
+            continue;
+        }
         if !structurally_compatible(arg_ty, param_ty, &caller_types, &consumed_types, tys) {
             let mut err = CompileError::new(
                     "bynk.boundary.structural_mismatch",

@@ -12,4 +12,9 @@ suite t.pay as system {
 		let r <- t.pay.charge(Val[Cents](7)) by Caller("t.other")
 		expect r == 7
 	}
+
+	case "a hinted None over the wire" {
+		let r <- t.pay.maybe(None) by Caller("t.other")
+		expect r == 0
+	}
 }

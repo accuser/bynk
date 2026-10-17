@@ -43,6 +43,27 @@ export default {
             const body = ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(result);
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
+          case "maybe": {
+            __route = "call maybe";
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "160020c3334955d4") {
+              globalThis.console.error("ContractMismatch t.pay call maybe", { service: "maybe", expected: "160020c3334955d4", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "maybe", expected: "160020c3334955d4", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
+            let args: __JsonValue;
+            try {
+              args = globalThis.JSON.parse(__body) as __JsonValue;
+            } catch {
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            }
+            const __caller = request.headers.get("X-Bynk-Caller") as string;
+            const __r_cents = handlers.__deserialise_Option_Cents(args, "$");
+            if (__r_cents.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_cents.error), { status: 400, headers: { "content-type": "application/json" } });
+            const cents = __r_cents.value;
+            const result = await surface.maybe(__caller, cents);
+            const body = ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(result);
+            return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+          }
           default:
             return new globalThis.Response("Not found", { status: 404 });
         }
