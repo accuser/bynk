@@ -960,4 +960,123 @@ mod tests {
             "the second changes nothing, so the ledger must not be rewritten"
         );
     }
+
+    // ---- #2037: the bare namespace's title on the provisioning command ----
+    //
+    // `deploy_one` against a stand-in `wrangler` that records its arguments
+    // and answers `kv namespace create` with an id. Nothing reaches
+    // Cloudflare.
+
+    /// What `deploy_one` ran, one line per `wrangler` invocation, and the
+    /// ledger it left, for one Worker `api` that binds only the bare `KV`.
+    #[cfg(unix)]
+    fn provision_bare_kv(environment: &str, lock: DeployLock) -> (Vec<String>, DeployLock) {
+        use std::os::unix::fs::PermissionsExt;
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "bynk-kv-title-{environment}-{}-{unique}",
+            std::process::id()
+        ));
+        let workers_dir = root.join("workers");
+        std::fs::create_dir_all(workers_dir.join("api")).unwrap();
+        std::fs::write(
+            workers_dir.join("api/wrangler.toml"),
+            "name = \"api\"\nmain = \"index.ts\"\n\n[[kv_namespaces]]\nbinding = \"KV\"\nid = \"<KV_NAMESPACE_ID>\" # set at deploy time\n",
+        )
+        .unwrap();
+        let log = root.join("calls.log");
+        let fake = root.join("wrangler");
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\necho \"$*\" >> '{}'\nif [ \"$1\" = kv ]; then echo '{{\"id\":\"minted-id\",\"title\":\"t\"}}'; fi\nexit 0\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut lock = lock;
+        let source = SecretSource::default();
+        let edge_keys = BTreeMap::new();
+        let listed = BTreeMap::from([("api".to_string(), Some(BTreeSet::new()))]);
+        let mut resolved = BTreeMap::new();
+        let pushed = deploy_one(
+            &Provenance::Path(fake),
+            &root,
+            &workers_dir,
+            "api",
+            &Resources::default().needs_kv(),
+            &mut lock,
+            &root.join(LOCK_FILE),
+            &mut BTreeSet::new(),
+            &mut Secrets {
+                source: &source,
+                force: false,
+                edge_keys: &edge_keys,
+                listed: &listed,
+                resolved: &mut resolved,
+            },
+            &[],
+            environment,
+            None,
+        );
+        assert_eq!(pushed, Ok(Pushed::Ok));
+        let calls = std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        let _ = std::fs::remove_dir_all(root);
+        (calls, lock)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_default_environment_creates_the_bare_namespace_under_the_workers_name() {
+        let (calls, lock) = provision_bare_kv("default", DeployLock::default());
+        assert_eq!(calls, ["kv namespace create api --json", "deploy"]);
+        assert_eq!(
+            recorded_kv_binding(&lock, "api", "KV", "default"),
+            Some("minted-id")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_named_environment_creates_the_bare_namespace_under_a_qualified_title() {
+        // An account holds one namespace per title, so `api` would collide
+        // with the default environment's.
+        let (calls, lock) = provision_bare_kv("staging", DeployLock::default());
+        assert_eq!(
+            calls,
+            [
+                "kv namespace create api-staging --json",
+                "deploy --env staging"
+            ]
+        );
+        assert_eq!(
+            recorded_kv_binding(&lock, "api", "KV", "staging"),
+            Some("minted-id")
+        );
+        assert_eq!(recorded_kv_binding(&lock, "api", "KV", "default"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_recorded_staging_namespace_is_reused_not_recreated() {
+        // Whatever it was titled when made, a namespace the ledger records for
+        // the environment is the one the deploy binds.
+        let mut lock = DeployLock::default();
+        lock.record_kv("staging", "api", "KV", "staging-id");
+        let (calls, lock) = provision_bare_kv("staging", lock);
+        assert_eq!(calls, ["deploy --env staging"]);
+        assert_eq!(
+            recorded_kv_binding(&lock, "api", "KV", "staging"),
+            Some("staging-id")
+        );
+    }
 }

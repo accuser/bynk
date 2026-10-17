@@ -238,7 +238,7 @@ deploy shop-cart
 
 # S4b: an instance renamed, under --env staging
 orphan kv shop-cart KV_CARTS
-kv reuse shop-cart
+kv reuse shop-cart-staging
 kv create shop-cart-price-cache-staging (KV_PRICE_CACHE)
 kv reuse shop-cart-sessions-staging (KV_SESSIONS)
 redeploy shop-cart
@@ -266,7 +266,7 @@ redeploy shop-cart
         {
           "binding": "KV",
           "action": "reuse",
-          "namespace": "shop-cart"
+          "namespace": "shop-cart-staging"
         },
         {
           "binding": "KV_PRICE_CACHE",
@@ -289,6 +289,14 @@ redeploy shop-cart
     }
   ]
 }
+
+# #2037: the bare namespace, first deploy, --env default
+kv create api
+deploy api
+
+# #2037: the bare namespace, first deploy, --env staging
+kv create api-staging
+deploy api
 
 # S4b: a removed context's bare namespace and instance, both orphans
 orphan kv gone

@@ -437,10 +437,14 @@ deploy commerce-orders-staging
 ```
 
 KV's identity is the namespace id Cloudflare hands back, already kept apart per
-environment in `bynk.deploy.lock`. The bare `Kv`'s namespace keeps its plain
-title, so no live namespace is ever renamed. A derived instance's title does
-take the suffix (`shop-cart-sessions-staging`), so the environments' namespaces
-are told apart in the dashboard too.
+environment in `bynk.deploy.lock`. A namespace's title takes the suffix too,
+because Cloudflare refuses a second namespace with a title the account already
+holds. So the bare `Kv`'s namespace is `shop-cart-staging` and a derived
+instance's is `shop-cart-sessions-staging`. The default environment's titles
+are unchanged (`shop-cart`, `shop-cart-sessions`). The title only matters when
+the namespace is created: one whose id the lock file already records for the
+environment is reused, whatever it was titled when it was made, and the plan
+shows the title Bynk would give it.
 
 `--env` is the driver's own flag; putting `--env` or `--environment` after
 `--` as well is rejected rather than silently resolved one way or the other:
