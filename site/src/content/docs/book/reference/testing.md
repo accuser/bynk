@@ -412,6 +412,9 @@ production `provides`).
   operation the capability does not declare is `bynk.stub.unknown_op`; a
   `returns` value whose type disagrees with the operation's result type is
   `bynk.stub.rhs_type`.
+- **`stub` is in-process only.** A `stub` overrides a seam at `unit` and
+  `integration`. At `system` each context runs as the Worker it deploys as and
+  builds its own providers, so a `stub` there is `bynk.stub.at_system`.
 - **Precedence:** case `stub` > suite `stub` > the tier default, **per
   operation**. A case-scoped clause applies to its own case only. An operation
   no clause covers (for this case) reaches the tier default, so stubbing
@@ -807,8 +810,10 @@ suite checkout as system {
 - The inferred set must span **at least two contexts** (the target and a consumed
   one); otherwise `bynk.tier.system_needs_wire`. The closure under `consumes` is
   derived automatically, so a consumed context can never be left unwired.
-- A `stub` clause is legal at every tier, `system` included (it overrides one
-  seam); what a tier controls is the *default* provision.
+- A `stub` is not legal at `system`, suite- or case-scoped
+  (`bynk.stub.at_system`). Each participant runs as the Worker it deploys as, and
+  that Worker builds its own capability providers, so there is no seam to put a
+  double in. A case that needs a stubbed seam stays at `unit` or `integration`.
 
 Cross-context capabilities (`given B.Cap`) are wired as in production: the
 provider is instantiated locally in the consumer Worker (v0.15 model A1).

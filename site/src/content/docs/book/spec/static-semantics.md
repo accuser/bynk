@@ -1462,6 +1462,10 @@ consumed seam of the unit under test (`consumes` declares, `given` requires,
 - **Scope and precedence.** A `stub` MAY appear at suite scope (applies to every
   case) and at case scope (overrides for one case); precedence is case `stub` >
   suite `stub` > the tier default.
+- **Tier (#2026).** A `stub` MUST NOT appear in a `system`-tier case, nor at the
+  scope of a `suite … as system` (`bynk.stub.at_system`): each participant runs as
+  the Worker it deploys as, whose composition builds its own capability providers,
+  so no seam is open to a double.
 - **Argument patterns (DECISION D3).** Each parameter takes a pattern from the one
   predicate surface — `_` (any) or a literal / pure value the recorded argument must
   equal, plus `is` narrowing. Multiple clauses for one method form an ordered match

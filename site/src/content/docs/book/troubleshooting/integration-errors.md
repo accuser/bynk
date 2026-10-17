@@ -97,6 +97,21 @@ agent's realness is the tier's job, not a provider's.
 an agent or a whole context, promote the tier (`as integration` / `as system`)
 instead.
 
+## `bynk.stub.at_system`
+
+```text
+[bynk.stub.at_system] `stub Secrets.get` is in a `system`-tier case, where a `stub` has no effect
+```
+
+**Cause:** a `stub` clause sits in a `system`-tier case, or at the scope of a
+`suite … as system`. A `system` case runs each context as the Worker it deploys
+as, and that Worker builds its own capability providers, so the stub has no seam
+to override.
+
+**Fix:** move the case into a suite below `system` (`unit`, or `as
+integration`), where a `stub` overrides the seam. Keep the `system` case for what
+only the wire shows: the serialised request and response.
+
 ## `bynk.stub.unknown_op`
 
 ```text

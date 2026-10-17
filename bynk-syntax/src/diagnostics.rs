@@ -1903,6 +1903,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.store.unknown_op",
         "A storage-`Map`/`Set` operation is not a recognised entry/membership method.",
     ),
+    dg(
+        "bynk.stub.at_system",
+        "A test `stub` is in a `system`-tier case; each context runs as the Worker it deploys as, which builds its own capability providers, so there is no seam to override.",
+        &["stub_clause"],
+    ),
     d(
         "bynk.stub.bad_sequence",
         "A `stub … returns each […]` sequence is malformed (e.g. empty).",

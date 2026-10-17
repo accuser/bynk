@@ -657,6 +657,47 @@ pub fn phase_integration_bodies(
             }
         }
 
+        // -- #2026: a `stub` has nothing to override at `system`. --
+        // Each participant runs as the Worker it deploys as, and its
+        // composition root builds every capability provider from its own
+        // `env`, so the harness has no seam to put a double in. Refused
+        // rather than accepted and dropped. Reported without marking the
+        // suite `bad`, like #1738 above.
+        for &i in indices {
+            let Some(d) = parsed[i].integration() else {
+                continue;
+            };
+            let system = bynk_syntax::ast::TestTier::System;
+            let suite_stubs = d
+                .stubs
+                .iter()
+                .filter(|_| d.tier == Some(system))
+                .map(|s| (s, "suite"));
+            let case_stubs = d
+                .cases
+                .iter()
+                .filter(|c| case_effective_tier(c, d) == system)
+                .flat_map(|c| c.stubs.iter().map(|s| (s, "case")));
+            for (stub, scope) in suite_stubs.chain(case_stubs) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.stub.at_system",
+                        stub.span,
+                        format!(
+                            "`stub {}.{}` is in a `system`-tier {scope}, where a `stub` has no effect",
+                            stub.capability.name, stub.method.name
+                        ),
+                    )
+                    .with_note(
+                        "a `system` case runs each context as the Worker it deploys as, which builds its own capability providers; no seam can be overridden there",
+                    )
+                    .with_note(format!(
+                        "move the case into a `suite {suite_target}` below `system` (`unit`, or `as integration`), where a `stub` overrides the seam"
+                    )),
+                );
+            }
+        }
+
         if bad {
             continue;
         }
