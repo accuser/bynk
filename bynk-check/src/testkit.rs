@@ -69,8 +69,13 @@ pub(crate) fn analyse_with(
     }
     let roots = Roots::Single(root.clone());
     let analysis = match policy {
-        Some(policy) => crate::analysis::analyse_project_with_policy(&roots, &overlay, policy),
-        None => analyse_project(&roots, &overlay),
+        Some(policy) => crate::analysis::analyse_project_with_policy(
+            &roots,
+            &overlay,
+            policy,
+            &bynk_project::SchemaLock::Off,
+        ),
+        None => analyse_project(&roots, &overlay, &bynk_project::SchemaLock::Off),
     };
     Analysed {
         root,

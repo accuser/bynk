@@ -1286,6 +1286,7 @@ pub fn check_handler_body(
         callees,
         scopes: vec![param_scope],
         is_binding_cache: HashMap::new(),
+        admitted_literals: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
         return_ty_span,
@@ -1436,6 +1437,7 @@ pub fn check_body(
         callees,
         scopes: vec![scope],
         is_binding_cache: HashMap::new(),
+        admitted_literals: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
         return_ty_span,
@@ -1585,6 +1587,7 @@ pub fn check_invariants(
             callees,
             scopes: vec![field_scope.clone()],
             is_binding_cache: HashMap::new(),
+            admitted_literals: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
             return_ty_span: inv.predicate.span,
@@ -1730,6 +1733,7 @@ pub fn check_contracts(
             callees,
             scopes: vec![scope],
             is_binding_cache: HashMap::new(),
+            admitted_literals: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
             return_ty_span: c.predicate.span,
@@ -1954,6 +1958,7 @@ pub fn check_transitions(
             callees,
             scopes: vec![scope.clone()],
             is_binding_cache: HashMap::new(),
+            admitted_literals: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: bool_ty,
             return_ty_span: tr.predicate.span,
@@ -2220,6 +2225,11 @@ pub(crate) struct Ctx<'a> {
     /// spans are unique per body, caching each node's result collapses the walk
     /// to a single pass.
     pub is_binding_cache: HashMap<(ExprId, bool), Vec<(String, TyId)>>,
+    /// #2039: literals inside a cross-context argument already admitted to
+    /// the refined type at their position in the callee's parameter type,
+    /// against the callee's declaration. `type_of` takes a literal's type
+    /// from here before trying admission in the caller's own scope.
+    pub admitted_literals: HashMap<ExprId, TyId>,
     /// T3.4: a pattern-bound name's resolved type, keyed by the binding
     /// `Ident`'s own span. Deliberately **not** `ExprId`-keyed and not
     /// folded into `expr_types` — a `Pattern::Binding` is not an `Expr` and
@@ -3630,7 +3640,11 @@ fn interpolable(ty: TyId, tys: &Types) -> bool {
 
 pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Option<TyId> {
     let tys = ctx.tys;
+    let admitted = ctx.admitted_literals.get(&expr.id).copied();
     let ty = match &expr.kind {
+        // #2039: a literal a cross-context argument already admitted to the
+        // callee's refined type at its position.
+        _ if admitted.is_some() => admitted,
         // v0.9.4: a literal in a refined-expected position takes the refined
         // type (validated now); otherwise it keeps its base type.
         // v0.20a: a lambda. With an expected function type, params type

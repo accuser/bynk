@@ -1,0 +1,56 @@
+context t.pay
+
+uses t.values
+uses t.orders
+
+service maybe {
+	on call(cents: Option[Cents]) -> Effect[Int] by c: Caller {
+		match cents {
+			Some(v) => v,
+			None => 0,
+		}
+	}
+}
+
+service total {
+	on call(all: List[Cents]) -> Effect[Int] by c: Caller {
+		all.fold(0, (acc, v) => acc + v)
+	}
+}
+
+service settle {
+	on call(r: Result[Cents, String]) -> Effect[Int] by c: Caller {
+		match r {
+			Ok(v) => v,
+			Err(_) => -1,
+		}
+	}
+}
+
+service many {
+	on call(all: List[Cents], one: Option[Cents], by_name: Map[String, Cents]) -> Effect[Int] by c: Caller {
+		all.length() + by_name.length()
+	}
+}
+
+service shift {
+	on call(d: Option[Delta]) -> Effect[Int] by c: Caller {
+		match d {
+			Some(v) => v,
+			None => 0,
+		}
+	}
+}
+
+service refund {
+	on call(r: Result[Int, Cents]) -> Effect[Int] by c: Caller {
+		match r {
+			Ok(v) => v,
+			Err(e) => e,
+		}
+	}
+}
+
+service place {
+	on call(order: Order) -> Effect[Int] by c: Caller { order.cents }
+}

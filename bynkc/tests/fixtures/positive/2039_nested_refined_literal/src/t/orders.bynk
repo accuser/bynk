@@ -1,0 +1,5 @@
+commons t.orders
+
+uses t.values
+
+type Order = { cents: Cents, note: String }

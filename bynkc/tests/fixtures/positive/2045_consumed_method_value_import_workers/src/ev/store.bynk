@@ -1,0 +1,16 @@
+-- #2045: `Batch` carries an attached method, which `ev.relay` calls.
+context ev.store
+
+exports transparent { Batch }
+
+type Batch = { id: String, size: Int }
+
+fn Batch.big(self) -> Bool {
+  self.size > 10
+}
+
+service latest {
+  on call() -> Effect[Batch] {
+    Effect.pure(Batch { id: "b1", size: 3 })
+  }
+}

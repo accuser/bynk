@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.346**.
+written against **v0.348**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,11 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.348.0** | A refined literal in a field of a generic record passed to a cross-context call (`Page { items: [250] }` for a `Page[Cents]` parameter), or in a record literal that also has a shorthand field, is admitted against the callee's own declaration, as other nested literals are, so it crosses from a caller with its own type of that name; a shorthand field is checked by its binding's type |
+| **v0.347.1** | On `workers`, a context imports a consumed context's types type-only (`import { type Receipt }`) and builds that context's sum variants inline (`({ tag: "Held", reason } as Status)`), so the callee's module stays out of the caller's Worker bundle; a consumed type with attached methods still imports as a value |
+| **v0.347.0** | A refined literal nested in a cross-context argument, in an `Option`/`Result` payload, a list element or a record field (`t.pay.maybe(Some(250))`), is admitted against the callee's own declaration, as a direct literal is, so it crosses from a caller with no `uses` of the declaring commons or with its own type of that name; an empty `[]`, `None`, `List.empty()` or `Map.empty()` passed positionally takes its parameter's type and crosses from such a caller too |
+| **v0.346.12** | The editor now reports a non-additive event change against the committed `bynk.schema.lock` as `bynk.event.non_additive_schema_change`, as `bynk check` does: the language server reads the lock read-only, caches it by its modification stamp, re-reads it when it changes (a new `**/bynk.schema.lock` file watcher), and passes it to `bynk_ide::diagnose_project_with`, whose new `schema_lock` argument `bynk_check::analysis::analyse_project` now also takes (#2081). |
+| **v0.346.11** | The formatter's comment-slot test pins its refusal counts per fixture, in `bynk-fmt/tests/comment_slots/`, so adding a fixture adds its own pin file instead of editing one shared count |
 | **v0.346.10** | A non-additive event change now fails `bynkc check` and `bynkc test` (and `bynk check`/`bynk test`) with `bynk.event.non_additive_schema_change`, as it already failed `bynkc compile`, `bynk dev` and `bynk deploy`: both reconcile events against the committed `bynk.schema.lock` read-only and never write it, so an additive change passes and the next build records it (#2078). |
 | **v0.346.9** | A new Worker's first `bynk deploy` now uploads its secrets with its code (`wrangler deploy --secrets-file`, from a 0600 temporary file deleted when the upload ends, even if `bynk` gets Ctrl-C or SIGTERM, with a SIGKILLed run's file removed by the next deploy), so the Worker is never live without them; it used to set them about four seconds after the upload. A redeploy still sets them first with `wrangler secret put`. Each secret set now prints a `bynk: set secret` line naming it and the Worker (`api-staging` under `--env staging`), never its value, beside the "already set, skipping" line, and a wrangler older than 4.74.0 falls back to the old order and says so. A run that includes a new Worker refuses a `-- --secrets-file` passthrough (#2055). Test stand-in binaries are now written by a child process, which fixes intermittent `Text file busy` failures (#2064). |
 | **v0.346.8** | `bynk deploy --context` now also refuses a callee whose new build no longer provides the contract a live caller was compiled against (`bynk.deploy.contract_skew`), naming each caller, the service and both hashes, before the plan and under `--dry-run`; `bynk.deploy.lock` records each Worker's `expects` beside what it provides, and a caller recorded before that is warned of, not refused (#2077). |

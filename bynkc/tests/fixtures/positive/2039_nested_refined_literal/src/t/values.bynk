@@ -1,0 +1,5 @@
+commons t.values
+
+type Cents = Int where InRange(1, 1000)
+
+type Delta = Int where InRange(-10, 10)
