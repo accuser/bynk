@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "provides": {
+    "go": "5e7a0d0ca04f13c2",
+    "take": "18cccadf9534cc6d"
+  },
+  "expects": {
+    "ev.store": {
+      "batch": "dfe34381a63b312b"
+    }
+  }
+}
