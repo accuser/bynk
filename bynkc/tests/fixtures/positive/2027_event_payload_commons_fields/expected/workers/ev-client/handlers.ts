@@ -30,7 +30,7 @@ export const take = {
 export const go = {
   async call(deps: { env: { EV_STORE: __ServiceBinding } }): globalThis.Promise<number> {
     const line = { qty: (2 as Qty), tag: someTag() };
-    const b = await __callService(deps.env.EV_STORE, "batch", __serialise_Batch({ lines: [line], first: Some(line), qtys: [], page: { items: [line] } }), __deserialise_Batch, "ev.client", "dfe34381a63b312b", deps.env, "ev.store");
+    const b = await __callService(deps.env.EV_STORE, "batch", __serialise_Batch(({ lines: [line], first: Some(line), qtys: [], page: { items: [line] } } as unknown as ev_store.Batch)), __deserialise_Batch, "ev.client", "dfe34381a63b312b", deps.env, "ev.store");
     return (b.lines).length;
   },
 };

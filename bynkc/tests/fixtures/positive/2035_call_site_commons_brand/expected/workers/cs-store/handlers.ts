@@ -104,26 +104,26 @@ export function __deserialise_Holder(json: __JsonValue, path: string = "$"): Res
 
 export { __serialise_Line, __deserialise_Line, __serialise_Pair, __deserialise_Pair, __serialise_Qty, __deserialise_Qty };
 
-export function __serialise_List_Line(value: readonly Line[]): __JsonValue {
+export function __serialise_List_Line(value: readonly __CommonsLine[]): __JsonValue {
   return value.map((v) => __serialise_Line(v));
 }
 
-export function __deserialise_List_Line(json: __JsonValue, path: string = "$"): Result<readonly Line[], __BoundaryError> {
+export function __deserialise_List_Line(json: __JsonValue, path: string = "$"): Result<readonly __CommonsLine[], __BoundaryError> {
   if (!globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "array", actual: typeof json });
   }
-  const out: Line[] = [];
+  const out: __CommonsLine[] = [];
   for (let i = 0; i < json.length; i++) {
   const item = json[i];
   const __r_el = __deserialise_Line(item, `${path}[${i}]`);
   if (__r_el.tag === "Err") return __r_el;
   const __el = __r_el.value;
-  out.push(__el as Line);
+  out.push(__el as __CommonsLine);
   }
   return Ok(out);
 }
 
-export function __serialise_Option_Line(value: Option<Line>): __JsonValue {
+export function __serialise_Option_Line(value: Option<__CommonsLine>): __JsonValue {
   if (value.tag === "Some") return { kind: "Some", value: __serialise_Line(value.value) };
   return { kind: "None" };
 }
@@ -135,27 +135,27 @@ function __option_value_Line(raw: __JsonValue, at: string): Result<unknown, __Bo
   return Ok(__v);
 }
 
-export function __deserialise_Option_Line(json: __JsonValue, path: string = "$"): Result<Option<Line>, __BoundaryError> {
+export function __deserialise_Option_Line(json: __JsonValue, path: string = "$"): Result<Option<__CommonsLine>, __BoundaryError> {
   if (json === undefined || json === null) {
-    return Ok(None as Option<Line>);
+    return Ok(None as Option<__CommonsLine>);
   }
   if (typeof json === "object" && !globalThis.Array.isArray(json)) {
     const obj = json as { [k: string]: __JsonValue };
     const __keys = globalThis.Object.keys(obj);
     if (obj["kind"] === "None" && __keys.length === 1) {
-      return Ok(None as Option<Line>);
+      return Ok(None as Option<__CommonsLine>);
     }
     if (obj["kind"] === "Some" && __keys.length === 2 && "value" in obj) {
       const __t = __option_value_Line(obj["value"], `${path}.value`);
       if (__t.tag === "Err") {
         return __t;
       }
-      return Ok(Some(__t.value as Line) as Option<Line>);
+      return Ok(Some(__t.value as __CommonsLine) as Option<__CommonsLine>);
     }
   }
   const __b = __option_value_Line(json, path);
   if (__b.tag === "Ok") {
-    return Ok(Some(__b.value as Line) as Option<Line>);
+    return Ok(Some(__b.value as __CommonsLine) as Option<__CommonsLine>);
   }
   if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
     return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
@@ -163,7 +163,7 @@ export function __deserialise_Option_Line(json: __JsonValue, path: string = "$")
   return __b;
 }
 
-export function __serialise_Map_String_Line(value: ReadonlyMap<string, Line>): __JsonValue {
+export function __serialise_Map_String_Line(value: ReadonlyMap<string, __CommonsLine>): __JsonValue {
   const entries: __JsonValue[] = [];
   for (const [k, v] of value) {
     entries.push([k as __JsonValue, __serialise_Line(v)]);
@@ -171,11 +171,11 @@ export function __serialise_Map_String_Line(value: ReadonlyMap<string, Line>): _
   return entries;
 }
 
-export function __deserialise_Map_String_Line(json: __JsonValue, path: string = "$"): Result<ReadonlyMap<string, Line>, __BoundaryError> {
+export function __deserialise_Map_String_Line(json: __JsonValue, path: string = "$"): Result<ReadonlyMap<string, __CommonsLine>, __BoundaryError> {
   if (!globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "array", actual: typeof json });
   }
-  const out = new globalThis.Map<string, Line>();
+  const out = new globalThis.Map<string, __CommonsLine>();
   for (let i = 0; i < json.length; i++) {
   const entry = json[i];
   if (!globalThis.Array.isArray(entry) || entry.length !== 2) {
@@ -190,18 +190,18 @@ export function __deserialise_Map_String_Line(json: __JsonValue, path: string = 
   const __r_v = __deserialise_Line(entryV, `${path}[${i}][1]`);
   if (__r_v.tag === "Err") return __r_v;
   const __v = __r_v.value;
-  out.set(__k as string, __v as Line);
+  out.set(__k as string, __v as __CommonsLine);
   }
   return Ok(out);
 }
 
-export function __serialise_Page_Line(value: Page<Line>): __JsonValue {
+export function __serialise_Page_Line(value: __CommonsPage<__CommonsLine>): __JsonValue {
   return {
     items: __serialise_List_Line(value.items),
   };
 }
 
-export function __deserialise_Page_Line(json: __JsonValue, path: string = "$"): Result<Page<Line>, __BoundaryError> {
+export function __deserialise_Page_Line(json: __JsonValue, path: string = "$"): Result<__CommonsPage<__CommonsLine>, __BoundaryError> {
   if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
   }
@@ -209,5 +209,5 @@ export function __deserialise_Page_Line(json: __JsonValue, path: string = "$"): 
   const __r_items = __deserialise_List_Line(obj["items"], `${path}.items`);
   if (__r_items.tag === "Err") return __r_items;
   const __items = __r_items.value;
-  return Ok({ items: __items } as Page<Line>);
+  return Ok({ items: __items } as __CommonsPage<__CommonsLine>);
 }
