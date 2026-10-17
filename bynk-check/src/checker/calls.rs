@@ -4759,10 +4759,10 @@ fn check_signature_owners_consumed(
     service: &crate::resolver::CrossContextService,
     method: &Ident,
     ctx: &mut Ctx,
-) {
+) -> bool {
     let info = &ctx.input.cross_context;
     let Some(owners) = info.consumed_type_owners.get(consumed) else {
-        return;
+        return false;
     };
     let types = info.consumed_types.get(consumed);
     let mut seen: HashSet<String> = HashSet::new();
@@ -4781,12 +4781,19 @@ fn check_signature_owners_consumed(
             && info.self_context.as_deref() != Some(owner.as_str())
             && !info.consumed_contexts.contains(owner)
         {
-            missing.entry(owner.clone()).or_insert(n.clone());
+            // The declaration's own name, not the key `contract_types_for`
+            // may have qualified it under (`shop_base__Region`).
+            let declared = n
+                .strip_prefix(&format!("{}__", owner.replace('.', "_")))
+                .unwrap_or(&n)
+                .to_string();
+            missing.entry(owner.clone()).or_insert(declared);
         }
         if let Some(d) = types.and_then(|t| t.get(&n)) {
             stack.extend(crate::project_model::type_decl_ref_names(d));
         }
     }
+    let refused = !missing.is_empty();
     for (owner, ty) in missing {
         ctx.errors.push(
             CompileError::new(
@@ -4802,6 +4809,7 @@ fn check_signature_owners_consumed(
             )),
         );
     }
+    refused
 }
 
 fn check_cross_context_call(
@@ -4875,7 +4883,8 @@ fn check_cross_context_call(
     };
     ctx.refs
         .record_in_unit(method.span, SymbolKind::Service, &method.name, consumed);
-    check_signature_owners_consumed(consumed, &service, method, ctx);
+    // A refused signature's arguments would only repeat it as a mismatch.
+    let unconsumed = check_signature_owners_consumed(consumed, &service, method, ctx);
 
     if service.params.len() != args.len() {
         ctx.errors.push(
@@ -4927,7 +4936,7 @@ fn check_cross_context_call(
             all_ok = false;
             continue;
         };
-        if !crosses {
+        if !crosses && !unconsumed {
             let mut err = CompileError::new(
                     "bynk.boundary.structural_mismatch",
                     arg.span,

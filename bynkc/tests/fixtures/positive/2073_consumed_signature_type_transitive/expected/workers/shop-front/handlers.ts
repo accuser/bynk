@@ -15,13 +15,13 @@ export { type Base, type Order };
 export const check = {
   async call(id: string, deps: { env: { SHOP_LEDGER: __ServiceBinding; SHOP_ORDER: __ServiceBinding } }): globalThis.Promise<number> {
     const o = await __callService(deps.env.SHOP_ORDER, "place", id as __JsonValue, __deserialise_Order, "shop.front", "8168b2b203446bfe", deps.env, "shop.order");
-    return __callService(deps.env.SHOP_LEDGER, "take", __serialise_shop_ledger__Order(o), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "shop.front", "0cb3df41e793ac30", deps.env, "shop.ledger");
+    return __callService(deps.env.SHOP_LEDGER, "take", __serialise_shop_ledger__Order((o as unknown as shop_order.Order)), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "shop.front", "0cb3df41e793ac30", deps.env, "shop.ledger");
   },
 };
 
 export const direct = {
   async call(id: string, deps: { env: { SHOP_LEDGER: __ServiceBinding } }): globalThis.Promise<number> {
-    return __callService(deps.env.SHOP_LEDGER, "take", __serialise_shop_ledger__Order({ id: id, b: { n: 3 } }), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "shop.front", "0cb3df41e793ac30", deps.env, "shop.ledger");
+    return __callService(deps.env.SHOP_LEDGER, "take", __serialise_shop_ledger__Order(({ id: id, b: { n: 3 } } as unknown as shop_order.Order)), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "shop.front", "0cb3df41e793ac30", deps.env, "shop.ledger");
   },
 };
 

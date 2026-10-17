@@ -1,0 +1,10 @@
+-- #2073 review: `Region` is unexported here, and `shop.ledger` declares a
+-- `Region` of its own, so `shop.ledger`'s contract table files this one under
+-- a qualified key.
+context shop.base
+
+exports transparent { Base }
+
+type Region = enum { North, South }
+
+type Base = { n: Int, r: Region }

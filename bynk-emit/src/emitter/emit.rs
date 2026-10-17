@@ -4322,8 +4322,10 @@ pub(crate) fn param_cast(
     };
     if let Some(name) = type_ref_named_root(ptype_ref) {
         // #2073: a type the consumed context itself consumes is named through
-        // its declaring context, which the caller consumes too (the checker
-        // refuses the call otherwise).
+        // its declaring context's namespace. This relies on the checker
+        // refusing a caller that does not consume that context
+        // (`bynk.consumes.signature_type_unconsumed`), so the namespace is
+        // always imported here.
         let owner = info
             .consumed_type_owners
             .get(consumed)

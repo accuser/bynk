@@ -48,7 +48,7 @@ async function test_a_borrowed_record_with_a_commons_field_crosses_the_wire() {
     const { Region } = __ns_geo;
     type Region = __ns_geo.Region;
     const o = await __callService(deps.env.SHOP_ORDER, "place", "o1" as __JsonValue, __ns_shop_order.__deserialise_Order, "integration", "d884dccfbbb38122", deps.env, "shop.order");
-    const id = await __callService(deps.env.SHOP_LEDGER, "orderId", __ns_shop_ledger.__serialise_Order(o), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "integration", "663f30fee451cde6", deps.env, "shop.ledger");
+    const id = await __callService(deps.env.SHOP_LEDGER, "orderId", __ns_shop_ledger.__serialise_Order((o as unknown as __ns_shop_order.Order)), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "integration", "663f30fee451cde6", deps.env, "shop.ledger");
     if (!(id === "o1")) { throw __bynkExpectFailure("tests/system.bynk:7:12", 303, 313, "expect id == \"o1\"\n  expected: id == \"o1\"\n  actual:   " + __bynkShow((id)) + " == " + __bynkShow(("o1"))); }
     return { pass: true };
   } catch (e) {
@@ -65,7 +65,7 @@ async function test_a_borrowed_record_with_a_commons_field_crosses_back() {
     const { Region } = __ns_geo;
     type Region = __ns_geo.Region;
     const o = await __callService(deps.env.SHOP_ORDER, "place", "o2" as __JsonValue, __ns_shop_order.__deserialise_Order, "integration", "d884dccfbbb38122", deps.env, "shop.order");
-    const back = await __callService(deps.env.SHOP_LEDGER, "echo", __ns_shop_ledger.__serialise_Order(o), __ns_shop_ledger.__deserialise_Order, "integration", "4ed9e6c524c58307", deps.env, "shop.ledger");
+    const back = await __callService(deps.env.SHOP_LEDGER, "echo", __ns_shop_ledger.__serialise_Order((o as unknown as __ns_shop_order.Order)), __ns_shop_ledger.__deserialise_Order, "integration", "4ed9e6c524c58307", deps.env, "shop.ledger");
     if (!(back.id === "o2")) { throw __bynkExpectFailure("tests/system.bynk:13:12", 465, 480, "expect back.id == \"o2\"\n  expected: back.id == \"o2\"\n  actual:   " + __bynkShow((back.id)) + " == " + __bynkShow(("o2"))); }
     return { pass: true };
   } catch (e) {

@@ -51,10 +51,10 @@ async function test_a_borrowed_record_keeps_its_own_context_s_field_types() {
   try {
     const deps = __makeHarness();
     const o = await __callService(deps.env.SHOP_ORDER, "place", "o1" as __JsonValue, __ns_shop_order.__deserialise_Order, "integration", "d884dccfbbb38122", deps.env, "shop.order");
-    const id = await __callService(deps.env.SHOP_LEDGER, "orderId", __ns_shop_ledger.__serialise_Order(o), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "integration", "63ccab8c0151718d", deps.env, "shop.ledger");
+    const id = await __callService(deps.env.SHOP_LEDGER, "orderId", __ns_shop_ledger.__serialise_Order((o as unknown as __ns_shop_order.Order)), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "integration", "63ccab8c0151718d", deps.env, "shop.ledger");
     if (!(id === "o1")) { throw __bynkExpectFailure("tests/system.bynk:8:12", 362, 372, "expect id == \"o1\"\n  expected: id == \"o1\"\n  actual:   " + __bynkShow((id)) + " == " + __bynkShow(("o1"))); }
     const p = await __callService(deps.env.SHOP_POST, "send", "p1" as __JsonValue, __ns_shop_post.__deserialise_Parcel, "integration", "856befaf27902680", deps.env, "shop.post");
-    const r = await __callService(deps.env.SHOP_LEDGER, "parcelRef", __ns_shop_ledger.__serialise_Parcel(p), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "integration", "5cf635bacfa951d6", deps.env, "shop.ledger");
+    const r = await __callService(deps.env.SHOP_LEDGER, "parcelRef", __ns_shop_ledger.__serialise_Parcel((p as unknown as __ns_shop_post.Parcel)), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "integration", "5cf635bacfa951d6", deps.env, "shop.ledger");
     if (!(r === "p1")) { throw __bynkExpectFailure("tests/system.bynk:11:12", 456, 465, "expect r == \"p1\"\n  expected: r == \"p1\"\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow(("p1"))); }
     return { pass: true };
   } catch (e) {

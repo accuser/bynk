@@ -46,7 +46,7 @@ async function test_a_consumed_record_parameter_crosses_the_wire() {
     const deps = __makeHarness();
     const { Region } = __ns_shop_order;
     type Region = __ns_shop_order.Region;
-    const d = await __callService(deps.env.SHOP_LEDGER, "isDomestic", __ns_shop_ledger.__serialise_Order({ id: "o3", region: Region.Domestic }), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "18d7709789670052", deps.env, "shop.ledger");
+    const d = await __callService(deps.env.SHOP_LEDGER, "isDomestic", __ns_shop_ledger.__serialise_Order(({ id: "o3", region: Region.Domestic } as unknown as __ns_shop_order.Order)), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "18d7709789670052", deps.env, "shop.ledger");
     if (!(d)) { throw __bynkExpectFailure("tests/system.bynk:6:12", 288, 289, "expect d"); }
     return { pass: true };
   } catch (e) {
@@ -62,7 +62,7 @@ async function test_a_consumed_enum_parameter_crosses_the_wire() {
     const deps = __makeHarness();
     const { Region } = __ns_shop_order;
     type Region = __ns_shop_order.Region;
-    const h = await __callService(deps.env.SHOP_LEDGER, "isHome", __ns_shop_ledger.__serialise_Region(Region.International), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "d12ea5dbd46c7174", deps.env, "shop.ledger");
+    const h = await __callService(deps.env.SHOP_LEDGER, "isHome", __ns_shop_ledger.__serialise_Region((Region.International as unknown as __ns_shop_order.Region)), (__j: __JsonValue) => ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "boolean", actual: typeof __v } as __BoundaryError))(__j), "integration", "d12ea5dbd46c7174", deps.env, "shop.ledger");
     if (!(h === false)) { throw __bynkExpectFailure("tests/system.bynk:11:12", 414, 424, "expect h == false\n  expected: h == false\n  actual:   " + __bynkShow((h)) + " == " + __bynkShow((false))); }
     return { pass: true };
   } catch (e) {

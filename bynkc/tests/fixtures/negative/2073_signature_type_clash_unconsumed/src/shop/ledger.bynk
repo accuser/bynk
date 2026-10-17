@@ -1,0 +1,11 @@
+context shop.ledger
+
+consumes shop.order
+
+type Region = enum { Here, There }
+
+service take {
+  on call(o: Order) -> Effect[String] {
+    o.id
+  }
+}

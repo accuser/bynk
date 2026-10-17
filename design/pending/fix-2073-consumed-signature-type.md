@@ -1,7 +1,7 @@
 ---
 level: minor
 probes: diagnostic_coverage, emit_diagnostics, ts_writes
-changelog: A call to a consumed context's service whose signature names a type that context consumes (`isDomestic(o: Order)`, `Order` from a third context) now checks and runs for every caller, `system` suites included; a caller must consume the type's declaring context (`bynk.consumes.signature_type_unconsumed`). The `X-Bynk-Contract` hash of every service whose signature names a consumed context's type now describes that type's shape, so it moves for services that already worked; redeploy both Workers of such a pair together, or the call answers `ContractMismatch`
+changelog: A call to a consumed context's service whose signature names a type that context consumes (`isDomestic(o: Order)`, `Order` from a third context) now checks and runs for every caller, `system` suites included. A caller must consume every context that a called service's signature types reach (`bynk.consumes.signature_type_unconsumed`); this also refuses a call such as `shop.order.place`, returning `shop.order`'s own `Order` with a `shop.base` field, from a caller that does not consume `shop.base`. That call compiled on `bundle` but failed `tsc` on `workers`. The `X-Bynk-Contract` hash of every service whose signature names a consumed context's type now describes that type's shape, so it moves for services that already worked; redeploy both Workers of such a pair together, or the call answers `ContractMismatch`
 ---
 
 ## ADR: consumed-signature-types
@@ -41,10 +41,17 @@ same table on both sides, so it hashed such a type as unresolved.
   type. It can never land under a qualified key, because a consuming context
   that binds `Region` to something else is already
   `bynk.uses.name_conflict` (#1814).
-- **The caller must consume the declaring context.** A value of the type
-  crosses the call as the declaring context's type, so the caller names it,
-  and builds its codecs, through that context. A caller that does not consume
-  it is refused with `bynk.consumes.signature_type_unconsumed`.
+- **The caller must consume every context the signature's types reach.** A
+  value of such a type crosses the call as its declaring context's type, so
+  the caller names it, and builds its codecs, through that context. A caller
+  that does not consume it is refused with
+  `bynk.consumes.signature_type_unconsumed`, which names the declaration
+  (`Base`) and its context. The rule covers every type the signature reaches,
+  not only a borrowed one. `shop.order.place`, returning `shop.order`'s own
+  `Order { b: Base }`, is refused for a caller that does not consume
+  `shop.base`. That program passed the checker before, compiled on `bundle`,
+  and failed `tsc` on `workers` (the caller had no codec for `Base`). It is
+  now refused on both.
 - **The contract hash moves.** A service whose signature names a consumed
   context's type now hashes that type's shape. Before, it hashed the type as
   unresolved. Services that already worked, such as one returning a consumed

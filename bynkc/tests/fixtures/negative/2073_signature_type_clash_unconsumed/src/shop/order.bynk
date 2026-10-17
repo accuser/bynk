@@ -1,0 +1,7 @@
+context shop.order
+
+consumes shop.base
+
+exports transparent { Order }
+
+type Order = { id: String, b: Base }

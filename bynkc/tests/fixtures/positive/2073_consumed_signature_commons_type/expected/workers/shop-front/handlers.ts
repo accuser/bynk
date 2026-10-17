@@ -10,8 +10,8 @@ import { __serialise_Region, __deserialise_Region } from "../../geo/geo.js";
 export const check = {
   async call(id: string, deps: { env: { SHOP_LEDGER: __ServiceBinding; SHOP_ORDER: __ServiceBinding } }): globalThis.Promise<string> {
     const o = await __callService(deps.env.SHOP_ORDER, "place", id as __JsonValue, __deserialise_Order, "shop.front", "d884dccfbbb38122", deps.env, "shop.order");
-    const back = await __callService(deps.env.SHOP_LEDGER, "echo", __serialise_shop_ledger__Order(o), __deserialise_shop_ledger__Order, "shop.front", "4ed9e6c524c58307", deps.env, "shop.ledger");
-    return __callService(deps.env.SHOP_LEDGER, "orderId", __serialise_shop_ledger__Order(back), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "shop.front", "663f30fee451cde6", deps.env, "shop.ledger");
+    const back = await __callService(deps.env.SHOP_LEDGER, "echo", __serialise_shop_ledger__Order((o as unknown as shop_order.Order)), __deserialise_shop_ledger__Order, "shop.front", "4ed9e6c524c58307", deps.env, "shop.ledger");
+    return __callService(deps.env.SHOP_LEDGER, "orderId", __serialise_shop_ledger__Order((back as unknown as shop_order.Order)), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "shop.front", "663f30fee451cde6", deps.env, "shop.ledger");
   },
 };
 

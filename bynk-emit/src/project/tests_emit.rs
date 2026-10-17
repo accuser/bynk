@@ -871,8 +871,9 @@ fn emit_integration_module(
 
 /// #2073: whether the lowered TypeScript `src` names the identifier `name`,
 /// as a whole word outside a member access (`x.Region` names a property) and
-/// outside a string literal (an `expect`'s failure message quotes the source).
-/// A template literal's text is skipped too, but its `${…}` holes are code.
+/// outside a string literal (an `expect`'s failure message quotes the source)
+/// or a `//` or `/* */` comment. A template literal's text is skipped too, but
+/// its `${…}` holes are code.
 fn names_ident(src: &str, name: &str) -> bool {
     let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
     // `code` is `src` with every literal character blanked, so offsets and
@@ -909,6 +910,30 @@ fn names_ident(src: &str, name: &str) -> bool {
                 '"' | '\'' | '`' => {
                     quote = Some(c);
                     code.push(' ');
+                }
+                '/' if chars.peek() == Some(&'/') => {
+                    // A line comment runs to the end of the line.
+                    code.push(' ');
+                    for d in chars.by_ref() {
+                        if d == '\n' {
+                            code.push('\n');
+                            break;
+                        }
+                        code.push(' ');
+                    }
+                }
+                '/' if chars.peek() == Some(&'*') => {
+                    // A block comment runs to the next `*/`.
+                    chars.next();
+                    code.push_str("  ");
+                    let mut star = false;
+                    for d in chars.by_ref() {
+                        code.push(' ');
+                        if star && d == '/' {
+                            break;
+                        }
+                        star = d == '*';
+                    }
                 }
                 '{' if !stack.is_empty() => {
                     *stack.last_mut().expect("non-empty") += 1;
@@ -7956,6 +7981,10 @@ mod tests {
         ));
         assert!(!names_ident("fail(`a ${ { k: 1 }.k } Region`)", "Region"));
         assert!(!names_ident("fail(\"a \\\" Region\")", "Region"));
+        assert!(!names_ident("x(); // Region\n", "Region"));
+        assert!(names_ident("x(); // c\nRegion.Here", "Region"));
+        assert!(!names_ident("/* Region */ x()", "Region"));
+        assert!(names_ident("/* a */ Region.Here", "Region"));
     }
 
     #[test]
