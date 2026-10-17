@@ -1,0 +1,33 @@
+-- #2050: an agent handler that emits (release-at-commit) under `bynkc test`.
+-- The harness's deps carry the `__eventsDispatch` the flush calls, handing
+-- each released event to the `Events` double, so `expect Events.emit` sees it.
+context app
+
+consumes bynk { Events }
+exports transparent { Bumped }
+
+event Bumped = { n: Int }
+
+agent Counter {
+  key id: String
+
+  store n: Cell[Int] = 0
+  invariant small: n <= 1
+
+  on call bump() -> Effect[()] given Events {
+    let _ <- n.update((v) => v + 1)
+    Events.emit[Bumped](Bumped { n: 1 })
+  }
+}
+
+service api from http {
+  on POST("/bump") () -> Effect[HttpResult[()]] by Visitor {
+    let _ <- Counter("c").bump()
+    Ok(())
+  }
+
+  on POST("/note") () -> Effect[HttpResult[()]] by Visitor given Events {
+    let _ <- Events.emit[Bumped](Bumped { n: 0 })
+    Ok(())
+  }
+}

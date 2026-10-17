@@ -514,6 +514,155 @@ fn no_unknown_placeholder_in_emitted_output() {
     );
 }
 
+/// #2054: on every internal path a Worker entry answers, the signature check
+/// (`__verifyCall`, I2 #1971) runs before anything else that can answer, so an
+/// unauthenticated request gets a bare `401` and never a `404` that names a
+/// service, a `409` that echoes the contract hash, or a `400` from the body.
+///
+/// Checked over every blessed `workers/<unit>/index.ts`: each
+/// `path.startsWith("/_bynk/…")` block must open with `__verifyCall` (the
+/// `/_bynk/call/` block may put only its `405` method gate first, which reads
+/// nothing but the method), immediately followed by the gate that returns its
+/// refusal. Every `"/_bynk/…"` literal in the entry must be one of those
+/// blocks' opening test or their `servicePath` slice, for `/_bynk/call/` or
+/// `/_bynk/event/`, so an internal path in any other form (another prefix,
+/// `path === "/_bynk/…"`, a `__matchPath` pattern) fails here until it is
+/// gated and added. `/_bynk/agent/` and `/_bynk/fanout` are Durable Object
+/// paths, reached only through a stub, and never appear in a Worker entry.
+#[test]
+fn every_internal_path_verifies_the_caller_before_any_other_answer() {
+    const PREFIXES: &[&str] = &["/_bynk/call/", "/_bynk/event/"];
+    let mut blocks = [0usize; 2];
+    let mut offenders = Vec::new();
+    for dir in fixture_dirs("positive") {
+        let expected = dir.join("expected");
+        if !expected.is_dir() {
+            continue;
+        }
+        for path in collect_expected_ts(&expected) {
+            let is_entry = path.file_name().is_some_and(|n| n == "index.ts")
+                && path
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::file_name)
+                    .is_some_and(|n| n == "workers");
+            if !is_entry {
+                continue;
+            }
+            let text = read(&path);
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                if !line.contains("\"/_bynk/") {
+                    continue;
+                }
+                let trimmed = line.trim();
+                // Any `"/_bynk/…"` literal, in any form (`===`, `__matchPath`, a
+                // new prefix), must be one of the known shapes: a gated block's
+                // opening test, or the `servicePath` slice inside one.
+                if PREFIXES
+                    .iter()
+                    .any(|p| trimmed == format!("const servicePath = path.slice(\"{p}\".length);"))
+                {
+                    continue;
+                }
+                let Some(k) = PREFIXES
+                    .iter()
+                    .position(|p| trimmed == format!("if (path.startsWith(\"{p}\")) {{"))
+                else {
+                    offenders.push(format!(
+                        "{}:{}: an internal path this guard does not know: {trimmed}",
+                        path.display(),
+                        i + 1
+                    ));
+                    continue;
+                };
+                let prefix = PREFIXES[k];
+                blocks[k] += 1;
+                let mut body = lines[i + 1..].iter().map(|l| l.trim());
+                let mut first = body.next().unwrap_or("");
+                if k == 0 && first.starts_with("if (method !== \"POST\") return ") {
+                    first = body.next().unwrap_or("");
+                }
+                let gate = body.next().unwrap_or("");
+                if !first.starts_with("const __body = await __verifyCall(") {
+                    offenders.push(format!(
+                        "{}:{}: `{prefix}` answers before `__verifyCall`: {first}",
+                        path.display(),
+                        i + 1
+                    ));
+                } else if gate != "if (typeof __body !== \"string\") return __body;" {
+                    // A dropped or inverted gate would run on unverified.
+                    offenders.push(format!(
+                        "{}:{}: `{prefix}` does not return `__verifyCall`'s refusal: {gate}",
+                        path.display(),
+                        i + 1
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        blocks.iter().all(|&n| n > 0),
+        "expected `/_bynk/call/` and `/_bynk/event/` blocks to check, found {blocks:?}"
+    );
+    assert!(
+        offenders.is_empty(),
+        "an internal path does not verify the caller first:\n{}",
+        offenders.join("\n"),
+    );
+}
+
+/// #2053: every fault handler in an emitted Worker entry logs the error's
+/// stack, not the error as a value, so `wrangler tail` shows frames that an
+/// uploaded source map can lead back to `.bynk` lines. Checked over every
+/// blessed `workers/<unit>/index.ts`: each `catch (e)` (the `fetch` wrapper
+/// that covers routes, `/_bynk/call/` and `/_bynk/event/`, and the queue
+/// consumer's per-message catch) must log the stack expression on its first
+/// line. A new catch site that logs `e` bare fails here.
+#[test]
+fn every_worker_entry_fault_handler_logs_the_stack() {
+    const STACK: &str = "e instanceof globalThis.Error ? (e.stack || globalThis.String(e)) : e";
+    let mut sites = 0usize;
+    let mut offenders = Vec::new();
+    for dir in fixture_dirs("positive") {
+        let expected = dir.join("expected");
+        if !expected.is_dir() {
+            continue;
+        }
+        for path in collect_expected_ts(&expected) {
+            let is_entry = path.file_name().is_some_and(|n| n == "index.ts")
+                && path
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::file_name)
+                    .is_some_and(|n| n == "workers");
+            if !is_entry {
+                continue;
+            }
+            let text = read(&path);
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                if !line.contains("catch (e) {") {
+                    continue;
+                }
+                sites += 1;
+                // The log sits on the catch's own line (the queue consumer's
+                // compact form) or on the line after it (`fetch`).
+                let body = format!("{line}\n{}", lines.get(i + 1).unwrap_or(&""));
+                if !(body.contains("globalThis.console.error(") && body.contains(STACK)) {
+                    offenders.push(format!("{}:{}", path.display(), i + 1));
+                }
+            }
+        }
+    }
+    assert!(sites > 0, "no Worker entry fault handler found to check");
+    assert!(
+        offenders.is_empty(),
+        "a Worker entry fault handler does not log the error's stack ({STACK}):\n{}",
+        offenders.join("\n"),
+    );
+}
+
 /// #58 (adjacent to #696): checks a project fixture's `expected_diagnostics.txt`
 /// — optional, `category<TAB>path:line:col` lines, plus an optional `# exact`
 /// line (#1663) — against the *attributed*

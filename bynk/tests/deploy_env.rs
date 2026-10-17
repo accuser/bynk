@@ -156,6 +156,11 @@ fn a_context_refusal_names_the_deployed_workers() {
         ),
         "{err}"
     );
+    // #2047: the remedy deploys the environment that needs it.
+    assert!(
+        err.contains("Deploy the whole project once (`bynk deploy --env staging`)"),
+        "{err}"
+    );
 
     let (ok, text, err) = dry_run(&dir, &["--context", "shop.orders"]);
     assert!(!ok, "a never-deployed target refuses:\n{text}{err}");
@@ -163,4 +168,99 @@ fn a_context_refusal_names_the_deployed_workers() {
         err.contains("bynk: `shop-orders` binds to `shop-payment`, which has never been deployed"),
         "{err}"
     );
+}
+
+/// The ledger of a project whose payment is live providing `authorise` at
+/// `live`, and whose orders is live — compiled against `orders_expects` when
+/// given, or recorded before expectations were (`None`), as an older lock is.
+fn write_live_lock(dir: &Path, live: &str, orders_expects: Option<&str>) {
+    let mut lock = format!(
+        "version = 1\n\
+         [environments.default.workers.shop-payment]\n\
+         deployed = true\n\
+         [environments.default.workers.shop-payment.contracts]\n\
+         authorise = \"{live}\"\n\
+         [environments.default.workers.shop-orders]\n\
+         deployed = true\n\
+         [environments.default.workers.shop-orders.contracts]\n\
+         place = \"0000000000000000\"\n"
+    );
+    if let Some(hash) = orders_expects {
+        lock.push_str(&format!(
+            "[environments.default.workers.shop-orders.expects.\"shop.payment\"]\n\
+             authorise = \"{hash}\"\n"
+        ));
+    }
+    std::fs::write(dir.join("bynk.deploy.lock"), lock).unwrap();
+}
+
+/// #2077: `--context` refuses a callee whose new build no longer provides
+/// the contract a live caller was compiled against, before the plan and so
+/// under `--dry-run`, naming the caller, the contract and both hashes. A
+/// whole-project run, which redeploys the caller too, is not refused; and a
+/// caller recorded before expectations were is warned of, not refused.
+#[test]
+fn a_callee_push_that_breaks_a_live_caller_is_refused() {
+    if !on_path("wrangler") && !on_path("npx") {
+        eprintln!("\n!!! DEPLOY ENV SKIPPED !!!\nneither `wrangler` nor `npx` is on PATH\n");
+        return;
+    }
+    let dir = scratch("deploy-env-callee-skew");
+    let stale = "ffffffffffffffff";
+
+    // Live orders stamps a hash this build of payment no longer provides.
+    write_live_lock(&dir, stale, Some(stale));
+    let (ok, text, err) = dry_run(&dir, &["--context", "shop.payment"]);
+    assert!(!ok, "a callee skew refuses:\n{text}{err}");
+    assert!(
+        err.contains(
+            "bynk: `shop-payment` no longer provides the contract its live callers were compiled against (bynk.deploy.contract_skew):"
+        ),
+        "{err}"
+    );
+    assert!(
+        err.contains(&format!(
+            "`shop-orders` calls shop.payment.authorise — compiled against {stale}, this build provides "
+        )),
+        "{err}"
+    );
+    assert!(text.is_empty(), "refused before the plan:\n{text}");
+
+    // The hash this build provides, from its manifest.
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join(".bynk/deploy/workers/shop-payment/bynk-contracts.json"))
+            .expect("payment provides a contract"),
+    )
+    .unwrap();
+    let provided = manifest["provides"]["authorise"]
+        .as_str()
+        .expect("payment provides `authorise`")
+        .to_string();
+    assert!(
+        err.contains(&format!("this build provides {provided}\n")),
+        "{err}"
+    );
+
+    // The whole project moves orders with payment: not refused.
+    let (ok, text, err) = dry_run(&dir, &[]);
+    assert!(ok, "a whole-project run is not refused:\n{text}{err}");
+    assert!(text.contains("redeploy shop-payment\n"), "{text}");
+
+    // A caller still on the hash this build provides passes.
+    write_live_lock(&dir, &provided, Some(&provided));
+    let (ok, text, err) = dry_run(&dir, &["--context", "shop.payment"]);
+    assert!(ok, "an unchanged contract passes:\n{text}{err}");
+    assert!(!err.contains("warning"), "{err}");
+
+    // An older lock, with no `expects`: loads, warns, still plans.
+    write_live_lock(&dir, stale, None);
+    let (ok, text, err) = dry_run(&dir, &["--context", "shop.payment"]);
+    assert!(ok, "an unrecorded caller is not refused:\n{text}{err}");
+    assert!(
+        err.contains(
+            "bynk: warning: could not check that `shop-payment` still provides what the live `shop-orders` was compiled against"
+        ),
+        "{err}"
+    );
+    assert!(text.contains("redeploy shop-payment\n"), "{text}");
 }
