@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.346**.
+written against **v0.347**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,8 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.347.1** | On `workers`, a context imports a consumed context's types type-only (`import { type Receipt }`) and builds that context's sum variants inline (`({ tag: "Held", reason } as Status)`), so the callee's module stays out of the caller's Worker bundle; a consumed type with attached methods still imports as a value |
+| **v0.347.0** | A refined literal nested in a cross-context argument, in an `Option`/`Result` payload, a list element or a record field (`t.pay.maybe(Some(250))`), is admitted against the callee's own declaration, as a direct literal is, so it crosses from a caller with no `uses` of the declaring commons or with its own type of that name; an empty `[]`, `None`, `List.empty()` or `Map.empty()` passed positionally takes its parameter's type and crosses from such a caller too |
 | **v0.346.12** | The editor now reports a non-additive event change against the committed `bynk.schema.lock` as `bynk.event.non_additive_schema_change`, as `bynk check` does: the language server reads the lock read-only, caches it by its modification stamp, re-reads it when it changes (a new `**/bynk.schema.lock` file watcher), and passes it to `bynk_ide::diagnose_project_with`, whose new `schema_lock` argument `bynk_check::analysis::analyse_project` now also takes (#2081). |
 | **v0.346.11** | The formatter's comment-slot test pins its refusal counts per fixture, in `bynk-fmt/tests/comment_slots/`, so adding a fixture adds its own pin file instead of editing one shared count |
 | **v0.346.10** | A non-additive event change now fails `bynkc check` and `bynkc test` (and `bynk check`/`bynk test`) with `bynk.event.non_additive_schema_change`, as it already failed `bynkc compile`, `bynk dev` and `bynk deploy`: both reconcile events against the committed `bynk.schema.lock` read-only and never write it, so an additive change passes and the next build records it (#2078). |

@@ -192,6 +192,46 @@ pub fn unbound_names(program: &TsProgram) -> Vec<String> {
     all.into_iter().collect()
 }
 
+/// #2045: each `(specifier, name)` a structured named import brings in as a
+/// value: every entry of an `import { … }` but its `type X` ones, none of an
+/// `import type { … }`. Namespace and opaque-text imports are not reported.
+pub fn value_imports(program: &TsProgram) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for stmt in &program.stmts {
+        if let TsStmtKind::Decl(TsDecl::Import {
+            type_only: false,
+            names,
+            from,
+        }) = &stmt.kind
+        {
+            out.extend(
+                names
+                    .iter()
+                    .map(|n| n.trim())
+                    .filter(|n| !n.starts_with("type "))
+                    .map(|n| (from.clone(), n.to_string())),
+            );
+        }
+    }
+    out
+}
+
+/// #2045: every name `program` uses as a value that only a type-only import
+/// binds (`import { type Status }` then `Status.Active`): a `TS1361` (`cannot
+/// be used as a value because it was imported using 'import type'`). Opaque
+/// text is not searched for uses, as in [`unbound_names`].
+pub fn type_only_value_uses(program: &TsProgram) -> Vec<String> {
+    let mut w = Walk::default();
+    for s in &program.stmts {
+        w.stmt(s);
+    }
+    w.used_values
+        .iter()
+        .filter(|n| w.type_only.contains(*n) && !w.value_bound.contains(*n))
+        .cloned()
+        .collect()
+}
+
 /// #2036: a member a module names through one of its namespace imports:
 /// `handlers.Batch` in type position, `handlers.__deserialise_Batch(…)` in
 /// value position.
@@ -316,6 +356,11 @@ struct Walk {
     namespaces: BTreeMap<String, String>,
     /// #2036: every `head.member` named in type or value position.
     qualified: BTreeSet<(String, String)>,
+    /// #2045: names bound only by a type-only import (`import { type X }`,
+    /// `import type { X }`, `import type * as ns`), and the names bound any
+    /// other way. A value use of the first and not the second is `TS1361`.
+    type_only: BTreeSet<String>,
+    value_bound: BTreeSet<String>,
 }
 
 /// The identifier a piece of text starts with: `value` of `value.name`,
@@ -344,10 +389,20 @@ impl Walk {
             for word in name.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$')) {
                 if let Some(ident) = leading_ident(word) {
                     self.bound.insert(ident.to_string());
+                    self.value_bound.insert(ident.to_string());
                 }
             }
         } else if let Some(ident) = leading_ident(name) {
             self.bound.insert(ident.to_string());
+            self.value_bound.insert(ident.to_string());
+        }
+    }
+
+    /// #2045: bind a name a type-only import brings in.
+    fn bind_type_only(&mut self, name: &str) {
+        if let Some(ident) = leading_ident(name) {
+            self.bound.insert(ident.to_string());
+            self.type_only.insert(ident.to_string());
         }
     }
 
@@ -381,11 +436,19 @@ impl Walk {
 
     /// An import specifier: `X`, `type X`, `X as Y` or `type X as Y` binds
     /// the local name.
-    fn bind_specifier(&mut self, spec: &str) {
+    fn bind_specifier(&mut self, spec: &str, decl_type_only: bool) {
         let spec = spec.trim();
-        let spec = spec.strip_prefix("type ").unwrap_or(spec).trim();
+        let (spec, type_only) = match spec.strip_prefix("type ") {
+            Some(rest) => (rest.trim(), true),
+            None => (spec, decl_type_only),
+        };
         let local = spec.rsplit(" as ").next().unwrap_or(spec).trim();
-        if !local.is_empty() {
+        if local.is_empty() {
+            return;
+        }
+        if type_only {
+            self.bind_type_only(local);
+        } else {
             self.bind(local);
         }
     }
@@ -408,7 +471,7 @@ impl Walk {
                     .and_then(|open| head[open..].find('}').map(|close| (open, open + close)));
                 if let Some((open, close)) = braces {
                     for spec in head[open + 1..close].split(',') {
-                        self.bind_specifier(spec);
+                        self.bind_specifier(spec, false);
                     }
                 } else if let Some(alias) = head.trim().strip_prefix("* as ") {
                     self.bind(alias.trim());
@@ -681,14 +744,24 @@ impl Walk {
 
     fn decl(&mut self, decl: &TsDecl) {
         match decl {
-            TsDecl::Import { names, .. } => {
+            TsDecl::Import {
+                names, type_only, ..
+            } => {
                 for n in names {
-                    self.bind_specifier(n);
+                    self.bind_specifier(n, *type_only);
                 }
             }
-            TsDecl::ImportNamespace { alias, from, .. } => {
+            TsDecl::ImportNamespace {
+                alias,
+                from,
+                type_only,
+            } => {
                 self.namespaces.insert(alias.clone(), from.clone());
-                self.bind(alias)
+                if *type_only {
+                    self.bind_type_only(alias)
+                } else {
+                    self.bind(alias)
+                }
             }
             TsDecl::ImportDefault { alias, .. } => self.bind(alias),
             TsDecl::ReExport { .. } | TsDecl::ReExportAll { .. } => {}
@@ -698,7 +771,14 @@ impl Walk {
             TsDecl::ExportNames { names } => {
                 for n in names {
                     let n = n.trim();
-                    self.use_value(n.strip_prefix("type ").unwrap_or(n));
+                    match n.strip_prefix("type ") {
+                        Some(t) => {
+                            if let Some(ident) = leading_ident(t) {
+                                self.used_types.insert(ident.to_string());
+                            }
+                        }
+                        None => self.use_value(n),
+                    }
                 }
             }
             TsDecl::Export(inner) => self.decl(inner),
@@ -1218,5 +1298,51 @@ mod tests {
             ]
         );
         assert_eq!(exports.star_from, ["./handlers/a.js"]);
+    }
+
+    #[test]
+    fn a_type_only_import_used_as_a_value_is_reported() {
+        // #2045: `import { type Status }` then `Status.Active` is TS1361; a
+        // type position, or a name also bound as a value, is not.
+        let member = |object: &str| TsExpr::Member {
+            object: Box::new(TsExpr::Ident(object.to_string())),
+            property: "Active".to_string(),
+        };
+        let p = program(vec![
+            import(&["type Status", "type Batch", "Kept"]),
+            TsStmt::let_stmt(
+                TsBindingName::Ident("a".to_string()),
+                Some(TsType::named("Batch")),
+                Some(member("Status")),
+                None,
+            ),
+            TsStmt::let_stmt(
+                TsBindingName::Ident("b".to_string()),
+                None,
+                Some(member("Kept")),
+                None,
+            ),
+        ]);
+        assert_eq!(type_only_value_uses(&p), ["Status"]);
+        assert!(unbound_names(&p).is_empty());
+    }
+
+    #[test]
+    fn value_imports_skip_type_only_entries_and_declarations() {
+        let p = program(vec![
+            import(&["type Status", "Batch"]),
+            TsStmt::decl(
+                TsDecl::Import {
+                    type_only: true,
+                    names: vec!["Receipt".to_string()],
+                    from: "./r.js".to_string(),
+                },
+                None,
+            ),
+        ]);
+        assert_eq!(
+            value_imports(&p),
+            [("./m.js".to_string(), "Batch".to_string())]
+        );
     }
 }
