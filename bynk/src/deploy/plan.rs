@@ -52,25 +52,34 @@ pub struct DeployOptions {
 #[derive(Debug, Serialize)]
 pub(crate) struct Plan<'a> {
     environment: &'a str,
-    /// Slice 5: every ledger entry this environment no longer declares —
-    /// printed before the per-context breakdown, so an orphan is seen before
-    /// what's actually being pushed.
+    /// Slice 5: every ledger entry this environment no longer declares, by
+    /// its ledger key, which is what `--prune` deletes by. Not serialised:
+    /// the plan shows [`Plan::shown_orphans`].
+    #[serde(skip)]
     orphans: Orphans,
+    /// The same orphans as the account names them (#2028): a queue or Worker
+    /// under its [`env_qualify`]d name. Printed before the per-context
+    /// breakdown, so an orphan is seen before what's actually being pushed.
+    #[serde(rename = "orphans")]
+    shown_orphans: Orphans,
     /// The resolved upload order — the plan's headline, since Cloudflare
-    /// rejects a Worker uploaded before its binding target.
-    order: Vec<&'a str>,
+    /// rejects a Worker uploaded before its binding target. Each Worker by
+    /// its [`deployed_worker_name`] (#2028).
+    order: Vec<String>,
     contexts: Vec<ContextPlan<'a>>,
 }
 
 #[derive(Debug, Serialize)]
 struct ContextPlan<'a> {
-    worker: &'a str,
+    /// The Worker this context deploys as: its [`deployed_worker_name`] in
+    /// this environment, the name the push hands Wrangler (#2028).
+    worker: String,
     /// One line per KV namespace the Worker binds: the bare `KV` first, then
     /// each derived instance in binding order (S4b, #1967). Empty for a
     /// context with no KV.
     kv: Vec<PlanKv<'a>>,
     /// One line per queue this context consumes, in name order.
-    queues: Vec<PlanQueue<'a>>,
+    queues: Vec<PlanQueue>,
     /// #1796: one line per Durable Object class the push declares in
     /// `exports`, in class-name order. Empty for a context with no agent and
     /// no events fan-out.
@@ -89,8 +98,9 @@ struct ContextPlan<'a> {
     /// `deploy` first time, `redeploy` when the ledger has pushed it before —
     /// the honest word, since a re-run re-pushes rather than skipping.
     action: &'static str,
-    /// The workers this one binds to, in the emitted config.
-    binds_to: Vec<&'a str>,
+    /// The workers this one binds to, in the emitted config, each by its
+    /// [`deployed_worker_name`] — the target the push's Service Binding names.
+    binds_to: Vec<String>,
     /// Interop I5 (#1972): its Service Bindings to Workers outside the
     /// project, in binding order. Bound, never provisioned.
     foreign_services: Vec<PlanForeignService<'a>>,
@@ -116,13 +126,15 @@ struct PlanKv<'a> {
 }
 
 #[derive(Debug, Serialize)]
-struct PlanQueue<'a> {
+struct PlanQueue {
     /// `create` when this project has never made the queue, `reuse` when the
     /// ledger has it. Either way the provision step attempts the create and
     /// treats an existing queue as success, so `reuse` is a forecast — "expect
     /// nothing new" — not a promise to stay silent (ADR 0194 D2).
     action: &'static str,
-    queue: &'a str,
+    /// The queue's account name, [`env_qualify`]d as the provision step
+    /// creates it (#2028).
+    queue: String,
 }
 
 /// One secret the run intends to set on one context.
@@ -895,7 +907,7 @@ pub(crate) fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
             // fact about the account regardless of what this run is about to
             // do, and a reader should see it before the noise of what's being
             // pushed (slice 5).
-            for kv in &plan.orphans.kv {
+            for kv in &plan.shown_orphans.kv {
                 match &kv.binding {
                     None => out.push_str(&format!("orphan kv {}\n", kv.worker)),
                     Some(binding) => {
@@ -903,10 +915,10 @@ pub(crate) fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
                     }
                 }
             }
-            for worker in &plan.orphans.workers {
+            for worker in &plan.shown_orphans.workers {
                 out.push_str(&format!("orphan worker {worker}\n"));
             }
-            for queue in &plan.orphans.queues {
+            for queue in &plan.shown_orphans.queues {
                 out.push_str(&format!("orphan queue {queue}\n"));
             }
             for context in &plan.contexts {
@@ -1009,16 +1021,21 @@ pub(crate) fn derive_plan<'a>(
         .values()
         .flat_map(|r| r.foreign_callers.iter().map(|f| f.binding.clone()))
         .collect();
+    let orphans = find_orphans(lock, environment, resources);
     Plan {
         environment,
-        orphans: find_orphans(lock, environment, resources),
-        order: order.iter().map(String::as_str).collect(),
+        shown_orphans: orphans.as_named_in(environment),
+        orphans,
+        order: order
+            .iter()
+            .map(|worker| deployed_worker_name(environment, worker))
+            .collect(),
         contexts: order
             .iter()
             .map(|worker| {
                 let declared = &resources[worker];
                 ContextPlan {
-                    worker,
+                    worker: deployed_worker_name(environment, worker),
                     kv: kv_bindings(declared)
                         .map(|binding| PlanKv {
                             binding,
@@ -1041,7 +1058,7 @@ pub(crate) fn derive_plan<'a>(
                             } else {
                                 "create"
                             },
-                            queue,
+                            queue: env_qualify(environment, queue),
                         })
                         .collect(),
                     durable_objects: declared
@@ -1091,7 +1108,11 @@ pub(crate) fn derive_plan<'a>(
                     } else {
                         "deploy"
                     },
-                    binds_to: declared.binds_to.iter().map(String::as_str).collect(),
+                    binds_to: declared
+                        .binds_to
+                        .iter()
+                        .map(|target| deployed_worker_name(environment, target))
+                        .collect(),
                     foreign_services: declared
                         .foreign_services
                         .iter()
@@ -1552,6 +1573,143 @@ pub(crate) mod tests {
         assert_eq!(plan.contexts[1].worker, "orders");
         assert_eq!(plan.contexts[1].binds_to, vec!["payment"]);
         assert!(plan.contexts[0].binds_to.is_empty());
+    }
+
+    /// #2028: under `--env staging` the plan names what the push creates —
+    /// each Worker, binding target and queue `-staging` — while the ledger,
+    /// keyed by logical name within the environment, still decides each
+    /// action.
+    #[test]
+    fn under_a_named_environment_the_plan_names_what_the_push_creates() {
+        let order = names(&["payment", "orders"]);
+        let declared = project(vec![
+            (
+                "orders",
+                Resources::default().binds(&["payment"]).consumes(&["jobs"]),
+            ),
+            ("payment", Resources::default()),
+        ]);
+        let mut lock = DeployLock::default();
+        lock.record_deployed("staging", "payment", Some(Default::default()));
+        lock.record_deployed("staging", "gone", Some(Default::default()));
+        lock.record_queue("staging", "jobs");
+        lock.record_queue("staging", "old-jobs");
+        let plan = derive_plan(
+            &order,
+            &declared,
+            &lock,
+            &SecretSource::default(),
+            false,
+            "staging",
+        );
+        assert_eq!(plan.order, vec!["payment-staging", "orders-staging"]);
+        assert_eq!(plan.contexts[0].worker, "payment-staging");
+        assert_eq!(plan.contexts[0].action, "redeploy", "found by logical name");
+        assert_eq!(plan.contexts[1].worker, "orders-staging");
+        assert_eq!(plan.contexts[1].action, "deploy");
+        assert_eq!(plan.contexts[1].binds_to, vec!["payment-staging"]);
+        assert_eq!(plan.contexts[1].queues[0].queue, "jobs-staging");
+        assert_eq!(plan.contexts[1].queues[0].action, "reuse");
+        // Shown as the account names them; pruned by ledger key.
+        assert_eq!(plan.shown_orphans.workers, vec!["gone-staging"]);
+        assert_eq!(plan.shown_orphans.queues, vec!["old-jobs-staging"]);
+        assert_eq!(plan.orphans.workers, vec!["gone"]);
+        assert_eq!(plan.orphans.queues, vec!["old-jobs"]);
+
+        let text = plan_report(&plan, DeployFormat::Short);
+        assert!(text.contains("orphan worker gone-staging\n"), "{text}");
+        assert!(text.contains("orphan queue old-jobs-staging\n"), "{text}");
+        assert!(text.contains("queue reuse jobs-staging\n"), "{text}");
+        assert!(text.contains("redeploy payment-staging\n"), "{text}");
+        assert!(text.contains("deploy orders-staging\n"), "{text}");
+        assert!(
+            text.contains("order payment-staging → orders-staging\n"),
+            "{text}"
+        );
+
+        let json: serde_json::Value =
+            serde_json::from_str(&plan_report(&plan, DeployFormat::Json)).unwrap();
+        assert_eq!(
+            json["order"],
+            serde_json::json!(["payment-staging", "orders-staging"])
+        );
+        assert_eq!(json["contexts"][1]["worker"], "orders-staging");
+        assert_eq!(
+            json["contexts"][1]["binds_to"],
+            serde_json::json!(["payment-staging"])
+        );
+        assert_eq!(json["contexts"][1]["queues"][0]["queue"], "jobs-staging");
+        assert_eq!(
+            json["orphans"]["workers"],
+            serde_json::json!(["gone-staging"])
+        );
+        assert_eq!(
+            json["orphans"]["queues"],
+            serde_json::json!(["old-jobs-staging"])
+        );
+    }
+
+    /// #2028: the plan and the push get every name from the same functions.
+    /// The `[env.staging]` block the push hands Wrangler is synthesised from a
+    /// generated config, and its `name`, Service Binding targets and queue
+    /// names are exactly the plan's `worker`, `binds_to` and `queues`.
+    #[test]
+    fn the_plan_and_the_push_share_one_name_function() {
+        const ORDERS: &str = r#"name = "shop-orders"
+main = "index.ts"
+
+[[services]]
+binding = "PAYMENT"
+service = "shop-payment"
+
+[[queues.consumers]]
+queue = "jobs"
+"#;
+        let order = names(&["shop-payment", "shop-orders"]);
+        let declared = project(vec![
+            (
+                "shop-orders",
+                Resources::default()
+                    .binds(&["shop-payment"])
+                    .consumes(&["jobs"]),
+            ),
+            ("shop-payment", Resources::default()),
+        ]);
+        for environment in ["staging", "production", "default"] {
+            let plan = derive_plan(
+                &order,
+                &declared,
+                &DeployLock::default(),
+                &SecretSource::default(),
+                false,
+                environment,
+            );
+            let orders = &plan.contexts[1];
+            let pushed: toml::Table = synthesise_environment_block(
+                ORDERS,
+                environment,
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+            )
+            .unwrap()
+            .parse()
+            .unwrap();
+            let block = &pushed["env"][environment];
+            assert_eq!(block["name"].as_str(), Some(orders.worker.as_str()));
+            assert_eq!(
+                block["services"][0]["service"].as_str(),
+                Some(orders.binds_to[0].as_str())
+            );
+            assert_eq!(
+                block["queues"]["consumers"][0]["queue"].as_str(),
+                Some(orders.queues[0].queue.as_str())
+            );
+            assert_eq!(plan.order[1], orders.worker);
+            assert_eq!(
+                orders.worker,
+                deployed_worker_name(environment, "shop-orders")
+            );
+        }
     }
 
     #[test]
