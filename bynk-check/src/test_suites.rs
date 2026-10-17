@@ -944,8 +944,9 @@ pub fn typecheck_integration_case_body(
         // and names a principal (`by User(...)`), so the checker needs the
         // target's services and actors — the same resolution the unit tier does.
         target_test_services(
-            participants.first().and_then(|t| unit_tables.get(t)),
+            participants.first().map(String::as_str),
             unit_tables,
+            &cross_context.consumed_contexts,
         ),
         target_test_actors(participants.first().and_then(|t| unit_tables.get(t))),
         None,
@@ -1840,18 +1841,56 @@ fn target_test_actors(table: Option<&UnitTable>) -> HashMap<String, bynk_syntax:
     table.map(|t| t.actors.clone()).unwrap_or_default()
 }
 
-fn target_test_services(
-    table: Option<&UnitTable>,
+/// #2052 review: the context that publishes `event` to `target`'s
+/// subscribers, resolved as the target's `from Events(E)` header resolves
+/// `E`: the target's own declaration, else the one context among those it
+/// consumes (`consumed`) that declares it. `Err` lists the candidates when
+/// there is no unique one (none, or several). A same-named event in a context
+/// the target does not consume is never a candidate.
+pub fn event_publisher(
+    target: &str,
+    event: &str,
     unit_tables: &HashMap<String, UnitTable>,
+    consumed: &[String],
+) -> Result<String, Vec<String>> {
+    if unit_tables
+        .get(target)
+        .is_some_and(|t| t.events.contains_key(event))
+    {
+        return Ok(target.to_string());
+    }
+    let mut owners: Vec<String> = consumed
+        .iter()
+        .filter(|c| c.as_str() != target)
+        .filter(|c| {
+            unit_tables
+                .get(*c)
+                .is_some_and(|t| t.events.contains_key(event))
+        })
+        .cloned()
+        .collect();
+    owners.sort();
+    owners.dedup();
+    match owners.as_slice() {
+        [one] => Ok(one.clone()),
+        _ => Err(owners),
+    }
+}
+
+fn target_test_services(
+    target: Option<&str>,
+    unit_tables: &HashMap<String, UnitTable>,
+    consumed: &[String],
 ) -> HashMap<String, checker::TestServiceSig> {
     use bynk_syntax::ast::ServiceProtocol;
-    let Some(t) = table else {
+    let Some((target, t)) = target.and_then(|n| unit_tables.get(n).map(|t| (n, t))) else {
         return HashMap::new();
     };
-    // #2052: every event the project declares, for an events service's
-    // `bynk.test.event_not_subscribed`.
-    let all_events: std::collections::BTreeSet<String> = unit_tables
-        .values()
+    // #2052: the events in the target's scope, its own and its consumed
+    // contexts', for an events service's `bynk.test.event_not_subscribed`.
+    let scope_events: std::collections::BTreeSet<String> = std::iter::once(target)
+        .chain(consumed.iter().map(String::as_str))
+        .filter_map(|u| unit_tables.get(u))
         .flat_map(|u| u.events.keys().cloned())
         .collect();
     t.services
@@ -1876,10 +1915,15 @@ fn target_test_services(
                     span: h.span,
                 })
                 .collect();
-            let known_events = if matches!(decl.protocol, ServiceProtocol::Events { .. }) {
-                all_events.clone()
-            } else {
-                Default::default()
+            let (known_events, event_publisher) = match &decl.protocol {
+                ServiceProtocol::Events {
+                    event_type: TypeRef::Named(e),
+                    ..
+                } => (
+                    scope_events.clone(),
+                    Some(event_publisher(target, &e.name, unit_tables, consumed)),
+                ),
+                _ => (Default::default(), None),
             };
             (
                 name.clone(),
@@ -1887,6 +1931,7 @@ fn target_test_services(
                     protocol,
                     handlers,
                     known_events,
+                    event_publisher,
                 },
             )
         })
@@ -2038,7 +2083,11 @@ pub fn typecheck_case_body(
             given_entries: Vec::new(),
             given_anchor: None,
         },
-        target_test_services(unit_tables.get(target_name), unit_tables),
+        target_test_services(
+            Some(target_name),
+            unit_tables,
+            &resolved.cross_context.consumed_contexts,
+        ),
         target_test_actors(unit_tables.get(target_name)),
         None,
         checker::CheckSinks {
@@ -3052,7 +3101,11 @@ fn check_property_body(
             given_entries: Vec::new(),
             given_anchor: None,
         },
-        target_test_services(unit_tables.get(target_name), unit_tables),
+        target_test_services(
+            Some(target_name),
+            unit_tables,
+            &resolved.cross_context.consumed_contexts,
+        ),
         target_test_actors(unit_tables.get(target_name)),
         prop.forall.where_pred.as_ref(),
         checker::CheckSinks {
@@ -3902,5 +3955,115 @@ mod history_pattern_tests {
             &payload_variant("Some"),
             &variant(None, "Some")
         ));
+    }
+}
+
+/// #2052: the `svc.event(e)` address's checks that the fixtures don't pin
+/// (a note's text) or that need a project shape of their own.
+#[cfg(test)]
+mod event_address_tests {
+    use crate::testkit::analyse;
+
+    const ORDER: &str =
+        "context shop.order\n\nexports transparent { Placed }\n\nevent Placed = { id: String }\n";
+
+    fn ledger(consumes: &str, extra: &str) -> String {
+        format!(
+            "context shop.ledger\n\n{consumes}\n{extra}\nservice OnPlaced from Events(Placed) {{\n  on event(e: Placed) -> Effect[()] {{\n    ()\n  }}\n}}\n"
+        )
+    }
+
+    fn suite(body: &str) -> String {
+        format!("suite shop.ledger {{\n  case \"c\" {{\n{body}\n  }}\n}}\n")
+    }
+
+    #[test]
+    fn an_envelope_the_suite_cannot_name_notes_consumes_bynk() {
+        let a = analyse(&[
+            ("shop/order.bynk", ORDER),
+            ("shop/ledger.bynk", &ledger("consumes shop.order", "")),
+            (
+                "shop/tests/ledger.test.bynk",
+                &suite("    let _ <- OnPlaced.event(Placed { id: \"o1\" }, \"evt-1\")"),
+            ),
+        ]);
+        let e = a
+            .analysis
+            .errors
+            .iter()
+            .find(|e| e.error.category == "bynk.types.argument_mismatch")
+            .expect("an argument mismatch on the envelope");
+        assert!(
+            e.error
+                .notes
+                .iter()
+                .any(|n| n.contains("must `consumes bynk`")),
+            "expected the `consumes bynk` note, got {:?}",
+            e.error.notes
+        );
+    }
+
+    #[test]
+    fn a_same_named_event_outside_the_targets_scope_is_a_plain_mismatch() {
+        // `shop.archive` declares an event `Note`, but the target doesn't
+        // consume it; the target's own `Note` is a record, not an event.
+        let a = analyse(&[
+            ("shop/order.bynk", ORDER),
+            (
+                "shop/archive.bynk",
+                "context shop.archive\n\nevent Note = { text: String }\n",
+            ),
+            (
+                "shop/ledger.bynk",
+                &ledger("consumes shop.order", "\ntype Note = { text: String }\n"),
+            ),
+            (
+                "shop/tests/ledger.test.bynk",
+                &suite("    let _ <- OnPlaced.event(Note { text: \"n\" })"),
+            ),
+        ]);
+        a.assert_reports("bynk.types.argument_mismatch");
+        assert!(
+            !a.categories().contains(&"bynk.test.event_not_subscribed"),
+            "a record named like an unconsumed context's event is not an event: {:?}",
+            a.categories()
+        );
+    }
+
+    #[test]
+    fn a_same_named_event_in_an_unconsumed_context_leaves_the_publisher_unique() {
+        let a = analyse(&[
+            ("shop/order.bynk", ORDER),
+            (
+                "shop/archive.bynk",
+                "context shop.archive\n\nexports transparent { Placed }\n\nevent Placed = { id: String }\n",
+            ),
+            ("shop/ledger.bynk", &ledger("consumes shop.order", "")),
+            (
+                "shop/tests/ledger.test.bynk",
+                &suite("    let _ <- OnPlaced.event(Placed { id: \"o1\" })"),
+            ),
+        ]);
+        a.assert_clean();
+    }
+
+    #[test]
+    fn two_consumed_publishers_refuse_a_default_envelope() {
+        let a = analyse(&[
+            ("shop/order.bynk", ORDER),
+            (
+                "shop/archive.bynk",
+                "context shop.archive\n\nexports transparent { Placed }\n\nevent Placed = { id: String }\n",
+            ),
+            (
+                "shop/ledger.bynk",
+                &ledger("consumes shop.order\nconsumes shop.archive", ""),
+            ),
+            (
+                "shop/tests/ledger.test.bynk",
+                &suite("    let _ <- OnPlaced.event(Placed { id: \"o1\" })"),
+            ),
+        ]);
+        a.assert_reports("bynk.test.event_publisher_ambiguous");
     }
 }

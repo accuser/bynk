@@ -4114,6 +4114,32 @@ fn check_event_address(
         }
         return;
     }
+    // #2052 review: a default envelope names the event's publisher, which must
+    // resolve to one context, as the service's header resolves `E`.
+    if args.len() == 1
+        && let Some(Err(candidates)) = &sig.event_publisher
+    {
+        let found = if candidates.is_empty() {
+            "no context the target declares or consumes declares it".to_string()
+        } else {
+            format!(
+                "it is declared by {}",
+                candidates
+                    .iter()
+                    .map(|c| format!("`{c}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.event_publisher_ambiguous",
+                err_span,
+                format!("`{svc}.event(e)` has no single publisher to name in its default envelope: {found}"),
+            )
+            .with_note("pass the envelope yourself: `svc.event(e, env)`"),
+        );
+    }
     let payload = &args[0];
     let expected = handler
         .params

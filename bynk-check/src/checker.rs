@@ -2137,6 +2137,11 @@ pub struct TestServiceSig {
     /// declares, so `svc.event(f)` with some other event `f` is reported as an
     /// event the service does not subscribe to. Empty for any other protocol.
     pub known_events: std::collections::BTreeSet<String>,
+    /// #2052 review: for a `from Events(E)` service, the context that
+    /// publishes `E` to it ([`crate::test_suites::event_publisher`]), which a
+    /// default envelope names; `Err` lists the candidates when there is no
+    /// unique one. `None` for any other protocol.
+    pub event_publisher: Option<Result<String, Vec<String>>>,
 }
 
 /// One service handler, as a test body sees it (v0.178 / v0.182).

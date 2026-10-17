@@ -29,7 +29,8 @@ not always available either (#2027). Issue #2052.
 - **Refusals.** An argument count other than one or two is
   `bynk.test.service_call_arity`. A payload that is another declared event is
   `bynk.test.event_not_subscribed` ("`OnPlaced` subscribes to `Placed`, not
-  `Cancelled`"). Any other wrong payload or envelope is
+  `Cancelled`"). Only the events in the target's scope count, its own and its
+  consumed contexts'. Any other wrong payload or envelope is
   `bynk.types.argument_mismatch`. `svc.event` on a service of any other
   protocol stays `bynk.test.service_bad_address`, now with a note naming the
   `from Events` form. A suite whose target doesn't consume `bynk` cannot name
@@ -50,8 +51,12 @@ not always available either (#2027). Issue #2052.
   mint it, but deterministically:
   - `eventId` is fresh on every call (`test-event-<n>`, counted across the test
     module), so two default deliveries are two emissions, not a redelivery;
-  - `publisherId` is the qualified name of the context that declares `E`, the
-    subscriber's publisher;
+  - `publisherId` is the qualified name of the subscriber's publisher. It is
+    resolved as the service's header resolves `E`: the target's own
+    declaration, else the one context the target consumes that declares `E`.
+    A same-named event in a context the target doesn't consume is never the
+    publisher. With no unique publisher, a default envelope is refused with
+    `bynk.test.event_publisher_ambiguous`, and the case passes its own;
   - `emittedAt` is the test clock's reading, `Instant.fromEpochMillis(0)`.
     This matches the `Clock` double, but the clock is not called, so a stubbed
     `Clock.now` sequence and an observation of `Clock.now` are unaffected;
@@ -73,8 +78,9 @@ not always available either (#2027). Issue #2052.
 **Consequences.** A subscriber's dedup, filter and version dispatch are
 testable without a `system` suite, and the issue's case runs as written. The
 test module gains `__bynkEvent_<svc>` helpers only when a body uses the
-address, so existing modules are unchanged. Two diagnostics are new:
-`bynk.test.event_not_subscribed` and `bynk.test.event_needs_in_process`. The
+address, so existing modules are unchanged. Three diagnostics are new:
+`bynk.test.event_not_subscribed`, `bynk.test.event_publisher_ambiguous` and
+`bynk.test.event_needs_in_process`. The
 `system` tier still has no direct event address. Admitting one would need the
 harness to sign a `/_bynk/event/` request as the publisher, and that is left
 until a case needs it.

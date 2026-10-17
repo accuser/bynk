@@ -2720,7 +2720,13 @@ fn emit_test_module(
     let event_services = runtime_use.test_event_services();
     if !event_services.is_empty() {
         stmts.push(TsStmt::raw(
-            event_delivery_helpers(target_name, &event_services, unit_tables, schema_versions),
+            event_delivery_helpers(
+                target_name,
+                &event_services,
+                unit_tables,
+                unit_consumes,
+                schema_versions,
+            ),
             None,
         ));
     }
@@ -3153,6 +3159,7 @@ fn event_delivery_helpers(
     target_name: &str,
     services: &[String],
     unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
     schema_versions: &HashMap<String, i64>,
 ) -> String {
     use bynk_syntax::ast::ServiceProtocol;
@@ -3182,36 +3189,41 @@ fn event_delivery_helpers(
             || decl.handlers.iter().any(|h| {
                 matches!(h.kind, bynk_syntax::ast::HandlerKind::Event) && h.params.len() == 2
             });
-        // The publisher is the context that declares the event: the target
-        // itself, or the context it consumes it from.
-        let mut owners: Vec<&String> = unit_tables
-            .iter()
-            .filter(|(_, t)| t.events.contains_key(&event))
-            .map(|(name, _)| name)
-            .collect();
-        owners.sort();
-        let owner = if unit_tables
-            .get(target_name)
-            .is_some_and(|t| t.events.contains_key(&event))
-        {
-            target_name.to_string()
-        } else {
-            owners.first().map(|o| o.to_string()).unwrap_or_default()
-        };
-        let version = schema_versions
-            .get(&format!("{owner}.{event}"))
-            .copied()
-            .or_else(|| {
-                unit_tables
-                    .get(&owner)
-                    .and_then(|t| t.events.get(&event))
-                    .map(|d| d.schema_version())
-            })
-            .unwrap_or(1);
+        // #2052 review: the publisher resolves as the service's header
+        // resolves `E` (the target's own event, else the one consumed context
+        // declaring it). With no unique one the checker refuses a default
+        // envelope (`bynk.test.event_publisher_ambiguous`), so the helper then
+        // only forwards a case's own.
+        let consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
+        let defaults =
+            bynk_check::test_suites::event_publisher(target_name, &event, unit_tables, &consumed)
+                .ok()
+                .map(|owner| {
+                    let version = schema_versions
+                        .get(&format!("{owner}.{event}"))
+                        .copied()
+                        .or_else(|| {
+                            unit_tables
+                                .get(&owner)
+                                .and_then(|t| t.events.get(&event))
+                                .map(|d| d.schema_version())
+                        })
+                        .unwrap_or(1);
+                    (owner, version)
+                });
         if takes_envelope {
-            counts = true;
+            let env = match &defaults {
+                Some((owner, version)) => {
+                    counts = true;
+                    format!(
+                        "envelope ?? {{ eventId: `test-event-${{++__bynkEventSeq}}`, publisherId: \"{}\", emittedAt: 0, schemaVersion: {version} }}",
+                        crate::emitter::escape_ts_string(owner)
+                    )
+                }
+                None => "envelope".to_string(),
+            };
             out.push_str(&format!(
-                "function __bynkEvent_{svc}(payload: unknown, envelope: unknown, deps: unknown) {{\n  const env = envelope ?? {{ eventId: `test-event-${{++__bynkEventSeq}}`, publisherId: {owner:?}, emittedAt: 0, schemaVersion: {version} }};\n  return {ns}.{svc}.event(payload as never, env as never, deps as never);\n}}\n"
+                "function __bynkEvent_{svc}(payload: unknown, envelope: unknown, deps: unknown) {{\n  const env = {env};\n  return {ns}.{svc}.event(payload as never, env as never, deps as never);\n}}\n"
             ));
         } else {
             // The handler cannot observe an envelope, so a case's own is dropped.

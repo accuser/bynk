@@ -1407,14 +1407,16 @@ type can be named in source. An asset fetch (`svc.GET(asset)`) has type
 An event address `svc.event(e)` or `svc.event(e, env)` (#2052) MUST name a
 `from Events(E)` service (`bynk.test.service_bad_address`) and pass one or two
 arguments (`bynk.test.service_call_arity`). `e` MUST have type `E`: another
-declared event is `bynk.test.event_not_subscribed`, any other type
-`bynk.types.argument_mismatch`. `env` MUST have type `EventEnvelope`
+event the target declares or consumes is `bynk.test.event_not_subscribed`, any
+other type `bynk.types.argument_mismatch`. `env` MUST have type `EventEnvelope`
 (`bynk.types.argument_mismatch`). The address MUST NOT occur in a `system`-tier
 `case` (`bynk.test.event_needs_in_process`). Delivery evaluates the service's
 pattern filter and `via schema(N)` guard as a fan-out delivery does. An omitted
-`env` is a fresh envelope: a new `eventId` per call, the declaring context of
-`E` as `publisherId`, `Instant.fromEpochMillis(0)` as `emittedAt`, and `E`'s
-current schema version.
+`env` is a fresh envelope: a new `eventId` per call, `E`'s publisher as
+`publisherId`, `Instant.fromEpochMillis(0)` as `emittedAt`, and `E`'s current
+schema version. The publisher is the target if it declares `E`, else the one
+context it consumes that declares `E`. With no such unique context, `env` MUST
+be given (`bynk.test.event_publisher_ambiguous`).
 
 ### §5.9c Tiers (v0.118)
 

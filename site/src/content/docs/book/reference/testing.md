@@ -89,7 +89,7 @@ With no envelope, the case supplies one as an emission would mint it:
 | field | default |
 |---|---|
 | `eventId` | fresh on every call (`"test-event-1"`, `"test-event-2"`, …), so two deliveries are two emissions |
-| `publisherId` | the context that declares `E` |
+| `publisherId` | the context that publishes `E` to the target: the target itself, or the one context it consumes that declares `E` |
 | `emittedAt` | the test clock's reading, `Instant.fromEpochMillis(0)`; the clock is not called |
 | `schemaVersion` | the event's current version, the one an emission embeds |
 
@@ -97,7 +97,9 @@ The payload must be the event the service subscribes to. Another event is
 `bynk.test.event_not_subscribed`, and any other wrong payload or envelope is
 `bynk.types.argument_mismatch`. `EventEnvelope` comes from `bynk`, so a suite can
 build one only when its target `consumes bynk`. `svc.event` on a service of
-another protocol is `bynk.test.service_bad_address`.
+another protocol is `bynk.test.service_bad_address`. When two consumed contexts
+both declare `E`, a default envelope has no single publisher, so the case must
+pass its own (`bynk.test.event_publisher_ambiguous`).
 
 The address works at `unit` and `integration`. A `system` case can't use it
 (`bynk.test.event_needs_in_process`). There, an event reaches a subscriber only
