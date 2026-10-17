@@ -41,6 +41,25 @@ export default {
             const body = handlers.__serialise_Batch(result);
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
+          case "sample": {
+            __route = "call sample";
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "4736c99a4848e569") {
+              globalThis.console.error("ContractMismatch ev.store call sample", { service: "sample", expected: "4736c99a4848e569", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "sample", expected: "4736c99a4848e569", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
+            let args: __JsonValue;
+            try {
+              args = globalThis.JSON.parse(__body) as __JsonValue;
+            } catch {
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            }
+            if (typeof args !== "object" || args === null || globalThis.Array.isArray(args)) return new globalThis.Response(globalThis.JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
+            const argsObj = args as { [k: string]: __JsonValue };
+            const result = await surface.sample();
+            const body = handlers.__serialise_Batch(result);
+            return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+          }
           default:
             return new globalThis.Response("Not found", { status: 404 });
         }

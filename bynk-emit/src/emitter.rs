@@ -616,6 +616,20 @@ pub(crate) fn emit_project(
     // its `note`). Each is implied, so `settle_implied` imports it when a
     // helper spells it.
     references.imply_names(boundary_names.iter().chain(&json_names), commons, ctx);
+    // #2027: an instantiation codec spells a commons type by its unbranded
+    // alias (`__CommonsPage`), and a generic one has no codec of its own to
+    // import, so nothing above implies it. Each alias the body spells
+    // implies its type, which `settle_implied` then keeps.
+    let unbranded = unbranded_commons_qual(commons, ctx);
+    if !unbranded.is_empty() {
+        let spelled = body_words(&body);
+        let reached: Vec<String> = unbranded
+            .into_iter()
+            .filter(|(_, alias)| spelled.contains(alias))
+            .map(|(name, _)| name)
+            .collect();
+        references.imply_names(reached.iter(), commons, ctx);
+    }
     references.settle_implied(&body);
     let mut project_imports = emit_project_imports(commons, ctx, &references);
     let mut cross_context_imports = emit_cross_context_namespace_imports(commons, ctx);
@@ -2385,21 +2399,14 @@ impl ExternalReferences {
     /// once the body is built and before the imports and rebrands are, which
     /// read only `by_commons`/`by_sibling`.
     fn settle_implied(&mut self, body: &[bynk_ts::TsStmt]) {
-        let mut spelled: HashSet<String> = HashSet::new();
-        for stmt in body {
-            let text = bynk_ts::print_stmt(stmt, 0);
-            for w in text
-                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
-                .filter(|w| !w.is_empty())
-            {
-                // #2027: `__CommonsLine` (`unbranded_commons_qual`) is
-                // `Line`'s own import alias, so it spells `Line`.
-                if let Some(name) = w.strip_prefix("__Commons") {
-                    spelled.insert(name.to_string());
-                }
-                spelled.insert(w.to_string());
-            }
-        }
+        let mut spelled = body_words(body);
+        // #2027: `__CommonsLine` (`unbranded_commons_qual`) is `Line`'s own
+        // import alias, so it spells `Line`.
+        let aliased: Vec<String> = spelled
+            .iter()
+            .filter_map(|w| w.strip_prefix("__Commons").map(str::to_string))
+            .collect();
+        spelled.extend(aliased);
         for (unit, names) in std::mem::take(&mut self.implied_by_commons) {
             let kept: HashSet<String> = names.intersection(&spelled).cloned().collect();
             if !kept.is_empty() {
@@ -2419,6 +2426,20 @@ impl ExternalReferences {
             }
         }
     }
+}
+
+/// Every whole TypeScript identifier `body` spells, as printed.
+fn body_words(body: &[bynk_ts::TsStmt]) -> HashSet<String> {
+    let mut words = HashSet::new();
+    for stmt in body {
+        let text = bynk_ts::print_stmt(stmt, 0);
+        words.extend(
+            text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+                .filter(|w| !w.is_empty())
+                .map(str::to_string),
+        );
+    }
+    words
 }
 
 /// The names this file declares, so a reference to one needs no import. A

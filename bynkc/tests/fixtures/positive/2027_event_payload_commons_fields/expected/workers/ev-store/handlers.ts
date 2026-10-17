@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
-import { Line as __CommonsLine, Page as __CommonsPage, Qty as __CommonsQty } from "../../ev/values.js";
+import { Line as __CommonsLine, Page as __CommonsPage, Qty as __CommonsQty, Tag as __CommonsTag, someTag } from "../../ev/values.js";
 import { __serialise_Line, __deserialise_Line, __serialise_Qty, __deserialise_Qty, __serialise_Tag, __deserialise_Tag } from "../../ev/values.js";
 
 export type Line = __CommonsLine & { readonly __ctxBrand?: "ev.store" };
@@ -11,6 +11,11 @@ export type Page<T> = __CommonsPage<T> & { readonly __ctxBrand?: "ev.store" };
 export type Qty = __CommonsQty & { readonly __ctxBrand?: "ev.store" };
 export const Qty = {
   of(value: number): Result<Qty, ValidationError> { return __CommonsQty.of(value); },
+};
+export type Tag = __CommonsTag & { readonly __ctxBrand?: "ev.store" };
+export const Tag = {
+  of(value: string): Result<Tag, ValidationError> { return __CommonsTag.of(value); },
+  unsafe(value: string): Tag { return __CommonsTag.unsafe(value); },
 };
 
 export interface Batch {
@@ -26,6 +31,13 @@ export const Batch = {
 export const batch = {
   async call(b: Batch, deps: {}): globalThis.Promise<Batch> {
     return b;
+  },
+};
+
+export const sample = {
+  async call(deps: {}): globalThis.Promise<Batch> {
+    const line = { qty: (1 as Qty), tag: someTag() };
+    return { lines: [line], first: None, qtys: [(1 as Qty)], page: { items: [] } };
   },
 };
 

@@ -13,5 +13,8 @@ export function compose(env: Env) {
     async batch(b: handlers.Batch) {
       return handlers.batch.call(b, deps);
     },
+    async sample() {
+      return handlers.sample.call(deps);
+    },
   };
 }
