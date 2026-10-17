@@ -1222,7 +1222,9 @@ pub(crate) fn kv_title_collision(
 /// account's live ids, when fetched: another environment's recorded namespace
 /// whose id is not among them no longer holds its title (though one this
 /// source declares there still counts, since that deploy would create it).
-/// `None` counts every recorded namespace.
+/// `None` counts every recorded namespace, which is always the case at plan
+/// time: [`kv_title_collision`] runs before the live ids are fetched, so the
+/// relaxation applies only to the deploy-time re-check.
 pub(crate) fn cross_environment_title_clash(
     resources: &BTreeMap<String, Resources>,
     lock: &DeployLock,

@@ -1150,24 +1150,39 @@ mod tests {
         );
     }
 
-    /// Another environment's recorded namespace whose id has gone, and which
-    /// this source no longer declares, no longer holds its title, so a create
-    /// under that title goes ahead.
+    /// At the deploy-time re-check, another environment's recorded namespace
+    /// whose id has gone, and which this source no longer declares, no longer
+    /// holds its title. Only there: the plan-time check runs before the live
+    /// ids are fetched, so it counts every recorded namespace.
+    ///
+    /// `api` no longer uses the bare `Kv`, but staging still records its bare
+    /// namespace (`api-staging`), an orphan. The default environment records
+    /// `capability Staging` (`api-staging`), and its id has gone too, so the
+    /// default deploy re-creates it under that title.
     #[cfg(unix)]
     #[test]
     fn a_gone_namespace_in_another_environment_holds_no_title() {
-        // `api` no longer uses the bare `Kv`; staging still records its bare
-        // namespace (`api-staging`), an orphan. A first default deploy creates
-        // `capability Staging`, also `api-staging`.
         let declared = || Resources::default().kv_instances(&["KV_STAGING"]);
         let lock = || {
             let mut lock = DeployLock::default();
+            lock.record_kv("default", "api", "KV_STAGING", "gone-default-id");
             lock.record_kv("staging", "api", "KV", "orphan-id");
             lock
         };
+        // The plan passes: `KV_STAGING` is recorded, so it creates nothing.
+        let plan_time = BTreeMap::from([("api".to_string(), declared())]);
+        assert_eq!(
+            crate::deploy::plan::kv_title_collision(&plan_time, &lock(), "default"),
+            None
+        );
 
-        // Unchecked (no live ids), the orphan holds its title: refused.
-        let (calls, _, pushed) = provision_api("default", declared(), lock(), None);
+        // The orphan is still on the account: the re-create is refused.
+        let (calls, _, pushed) = provision_api(
+            "default",
+            declared(),
+            lock(),
+            Some(BTreeSet::from(["orphan-id".to_string()])),
+        );
         assert!(
             pushed
                 .expect_err("refused")
@@ -1176,7 +1191,8 @@ mod tests {
         );
         assert!(calls.is_empty(), "nothing ran: {calls:?}");
 
-        // Its id gone from the account, it holds nothing: created.
+        // The orphan's id has gone too: it holds nothing, so the re-create
+        // goes ahead and is recorded.
         let (calls, lock, pushed) =
             provision_api("default", declared(), lock(), Some(BTreeSet::new()));
         assert_eq!(pushed, Ok(Pushed::Ok));
