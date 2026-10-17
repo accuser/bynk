@@ -2428,6 +2428,7 @@ fn run_checks(
         &mut emitted_barrels,
         &test_asset_files,
         &test_binding_modules,
+        &unit_callees,
         &mut test_errors,
         &mut refs,
         tys,
