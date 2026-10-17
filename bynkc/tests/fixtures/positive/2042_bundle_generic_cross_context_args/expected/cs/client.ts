@@ -3,12 +3,16 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
-import { Line as __CommonsLine, Page as __CommonsPage } from "./values.js";
+import { Line as __CommonsLine, Page as __CommonsPage, Qty as __CommonsQty } from "./values.js";
 
 import * as cs_store from "./store.js";
 
 export type Line = __CommonsLine & { readonly __ctxBrand?: "cs.client" };
 export type Page<T> = __CommonsPage<T> & { readonly __ctxBrand?: "cs.client" };
+export type Qty = __CommonsQty & { readonly __ctxBrand?: "cs.client" };
+export const Qty = {
+  of(value: number): Result<Qty, ValidationError> { return __CommonsQty.of(value); },
+};
 
 export const go = {
   async call(l: Line, ls: readonly Line[], deps: { surface: { store: globalThis.ReturnType<typeof cs_store.__makeSurface> } }): globalThis.Promise<number> {
@@ -24,7 +28,9 @@ export const go = {
     const d = await deps.surface.store.counts([1, 2]);
     const e = await deps.surface.store.paged((page as unknown as cs_store.Page<cs_store.Line>));
     const f = await deps.surface.store.paged(({ items: [] } as unknown as cs_store.Page<cs_store.Line>));
-    return a + b + c + d + e + f;
+    const qs: readonly Qty[] = [(1 as Qty), (2 as Qty)];
+    const g = await deps.surface.store.quantities((qs as unknown as readonly cs_store.Qty[]));
+    return a + b + c + d + e + f + g;
   },
 };
 

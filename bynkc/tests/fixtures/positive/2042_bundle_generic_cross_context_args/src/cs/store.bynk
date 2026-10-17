@@ -17,6 +17,11 @@ service paged {
   on call(p: Page[Line]) -> Effect[Int] { p.items.length() }
 }
 
+-- A refined commons element in a generic parameter.
+service quantities {
+  on call(qs: List[Qty]) -> Effect[Int] { qs.length() }
+}
+
 service counts {
   on call(ns: List[Int]) -> Effect[Int] { ns.length() }
 }

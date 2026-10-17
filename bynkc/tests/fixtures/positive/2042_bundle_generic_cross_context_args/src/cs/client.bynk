@@ -21,6 +21,8 @@ service go {
     let d <- cs.store.counts([1, 2])
     let e <- cs.store.paged(page)
     let f <- cs.store.paged(Page { items: [] })
-    a + b + c + d + e + f
+    let qs: List[Qty] = [1, 2]
+    let g <- cs.store.quantities(qs)
+    a + b + c + d + e + f + g
   }
 }

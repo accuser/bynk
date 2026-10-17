@@ -3,10 +3,14 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
-import { Line as __CommonsLine, Page as __CommonsPage } from "./values.js";
+import { Line as __CommonsLine, Page as __CommonsPage, Qty as __CommonsQty } from "./values.js";
 
 export type Line = __CommonsLine & { readonly __ctxBrand?: "cs.store" };
 export type Page<T> = __CommonsPage<T> & { readonly __ctxBrand?: "cs.store" };
+export type Qty = __CommonsQty & { readonly __ctxBrand?: "cs.store" };
+export const Qty = {
+  of(value: number): Result<Qty, ValidationError> { return __CommonsQty.of(value); },
+};
 
 export const many = {
   async call(ls: readonly Line[], first: Option<Line>, byKey: ReadonlyMap<string, Line>, deps: {}): globalThis.Promise<number> {
@@ -23,6 +27,12 @@ export const nested = {
 export const paged = {
   async call(p: Page<Line>, deps: {}): globalThis.Promise<number> {
     return (p.items).length;
+  },
+};
+
+export const quantities = {
+  async call(qs: readonly Qty[], deps: {}): globalThis.Promise<number> {
+    return (qs).length;
   },
 };
 
@@ -45,6 +55,9 @@ export function __makeSurface(deps: __CsStoreDeps) {
     },
     async paged(p: Page<Line>): globalThis.Promise<number> {
       return paged.call(p, deps);
+    },
+    async quantities(qs: readonly Qty[]): globalThis.Promise<number> {
+      return quantities.call(qs, deps);
     },
     async counts(ns: readonly number[]): globalThis.Promise<number> {
       return counts.call(ns, deps);
