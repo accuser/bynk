@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (v0.341)
 
-**Context.** The interop track's D2 (`design/tracks/interop.md` §8, §11 Q3,
+**Context.** The interop track's D2 (`design/archive/retired-tracks.md`, interop track Q3,
 Q4, Q5) settled how code that is not Bynk calls a context. ADR 0485
 (I2) proves every caller by a per-edge signature, so
 the mechanism exists. What a handler needs is to tell a foreign caller from a

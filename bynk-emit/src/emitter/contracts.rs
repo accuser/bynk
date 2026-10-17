@@ -57,7 +57,7 @@ pub(crate) const MANIFEST_VERSION: u32 = 1;
 /// that actor may call. A foreign caller has no `bynk-contracts.json` of its
 /// own to state its `expects`, so `deploy` holds this against the pin the
 /// callee's project records for it (`bynk.foreign.toml`) and refuses a build
-/// that would break it (`design/tracks/interop.md` §8 D3, §11 Q6). Additive
+/// that would break it (`design/archive/retired-tracks.md`, interop track D3, Q6). Additive
 /// within version 1, and absent when empty, so every manifest of a context
 /// with no foreign caller is byte-identical to before.
 pub(crate) fn emit_contracts_manifest(

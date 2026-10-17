@@ -1,4 +1,4 @@
-//! I4 (#1970, `design/tracks/interop.md` §8 D3, §11 Q6): `bynk deploy` holds a
+//! I4 (#1970, `design/archive/retired-tracks.md`, interop track D3, Q6): `bynk deploy` holds a
 //! build to each declared foreign caller's pin (`bynk.foreign.toml`).
 //!
 //! Driven through `bynk deploy --dry-run`, which compiles, checks and prints

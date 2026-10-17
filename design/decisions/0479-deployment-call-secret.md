@@ -14,7 +14,7 @@ every deployed context has a public address. Anyone could call any `on call`
 service from the internet, claim any context as the caller, and inject events
 into any subscriber. The contract hash is no credential: it is in
 `bynk-contracts.json`, and a 409 echoes it back. The interop track
-(`design/tracks/interop.md` §3.3, §11 Q1, §12) settled a fix outside the
+(`design/archive/retired-tracks.md`, interop track Q1) settled a fix outside the
 track: its D2 option (d), a shared per-deployment secret, until per-edge
 signatures (its slice I2) replace it.
 

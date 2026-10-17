@@ -19,7 +19,7 @@ for another wire version is a `tsc` error in the caller's build.
 
 It is deliberately separate from the bynk runtime (`bynk-emit/runtime`, ADR
 0310's emit ABI), which is versioned with the compiler and embedded in every
-Bynk build (`design/tracks/interop.md` §11 Q7).
+Bynk build (`design/archive/retired-tracks.md`, interop track Q7).
 
 ## Not a copy
 

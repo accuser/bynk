@@ -1378,3 +1378,72 @@ imposed; entries keep the order they were retired in.
     `doctor` reports, so it is left as a question for 1.0 rather than a filed issue.
 
   Retired 5 October 2026.
+- **`interop.md`** — spine [#1973](https://github.com/bynk-lang/bynk/issues/1973): adopting Bynk one
+  context at a time beside existing TypeScript Workers, in both directions. The cross-context wire
+  format becomes a published contract, a caller that is not Bynk gets an identity a handler can tell
+  apart from a Bynk context, that caller builds against a generated typed client, and a Bynk context
+  can call a Worker that is not Bynk over a Service Binding. Settled 16 October 2026 (settling PR
+  [#1996](https://github.com/bynk-lang/bynk/pull/1996)), with all nine settling questions resolved
+  with the maintainer that day.
+
+  **The settling survey found a live defect before any slice ran** (§3.3): `/_bynk/call/` was
+  reachable on every route a Worker served, so `X-Bynk-Caller` could be forged from the public
+  internet, not only by a Worker holding a Service Binding. That contradicted ADR 0092's premise. It
+  was fixed first, outside the track (Q1).
+
+  **What shipped**, in order (all 16 October 2026):
+  - **I0, out of track:** a per-deployment call secret, `BYNK_CALL_SECRET`, sent as
+    `X-Bynk-Call-Secret` and checked on every `/_bynk/call/` and `/_bynk/event/` request before
+    anything is decoded ([#2004](https://github.com/bynk-lang/bynk/pull/2004), v0.335.0,
+    [ADR 0479](../decisions/0479-deployment-call-secret.md)).
+  - **I5 (D4, #1972):** experimental `bynk.cloudflare` `Service`,
+    `capability Billing = Service @worker("legacy-billing")`, a derived capability bound as
+    `SERVICE_BILLING`. `bynk deploy` warns when the named Worker is missing, and `bynk dev` binds a
+    stand-in ([#2008](https://github.com/bynk-lang/bynk/pull/2008), v0.335.1,
+    [ADR 0480](../decisions/0480-foreign-worker-service-capability.md)).
+  - **I1 (D1, #1969):** wire format version 1, generated from the compiler's `WireModel` with a drift
+    guard, published as the [wire format reference](../../site/src/content/docs/book/reference/wire-format.md); callers send
+    `X-Bynk-Wire: 1` ([#2009](https://github.com/bynk-lang/bynk/pull/2009), v0.338.0,
+    [ADR 0483](../decisions/0483-wire-format-is-a-published-surface.md)).
+  - **I2 (D2 mechanism, #1971):** every cross-context call and event delivery is signed with
+    HMAC-SHA256 under a key one caller shares with one callee (`BYNK_CALL_TO_<CALLEE>` /
+    `BYNK_CALL_FROM_<CALLER>`), replacing I0's shared secret
+    ([#2012](https://github.com/bynk-lang/bynk/pull/2012), v0.340.0,
+    [ADR 0485](../decisions/0485-per-edge-call-signature.md)).
+  - **I3 (D2 surface, #1971):** a context admits callers that are not Bynk by declaring each as an
+    actor with the `Foreign` scheme, `actor Ledger { auth = Foreign(secret = "…", worker = "…") }`;
+    `bynk deploy` mints the edge key and prints the `wrangler secret put` hand-off
+    ([#2015](https://github.com/bynk-lang/bynk/pull/2015), v0.341.0,
+    [ADR 0486](../decisions/0486-foreign-caller-actors.md)).
+  - **I4 (D3, #1970):** a context that declares a foreign caller gets a typed TypeScript client,
+    `workers/<worker>/bynk-client.ts`, typed per caller so an unadmitted call fails `tsc`, with its
+    runtime in `@bynk/wire-client` (`bynk-emit/wire-client`) and foreign callers pinned in
+    `bynk.foreign.toml`, whose breaking hash change `bynk deploy` refuses
+    ([#2023](https://github.com/bynk-lang/bynk/pull/2023), v0.343.0; no ADR, per §10).
+
+  **The settled decisions**, for the code comments that cite them:
+  - **D1 / Q2:** the wire format is versioned independently of the compiler, like ADR 0310's ABI;
+    the callee accepts a range of `X-Bynk-Wire` versions, and the contract hash still detects
+    signature skew within a version (ADR 0483).
+  - **D2 / Q3–Q5:** a `Foreign` actor scheme, with `CallerId` staying a `String`; the deploy mints
+    edge secrets and prints the hand-off; every internal request is signed, binder-less `on call`
+    handlers included (ADRs 0485, 0486).
+  - **D3 / Q6–Q7:** the callee's deploy *refuses* a hash change that breaks a declared foreign
+    caller's pin (updating the pin is the override); the client runtime is a separate package
+    versioned with the wire format, not part of ADR 0310's emit ABI.
+  - **D4 / Q8:** deploy warns, never refuses, on a missing named Worker; dev binds a per-instance
+    stand-in (ADR 0480).
+  - **Q9:** native `WorkerEntrypoint` RPC is recorded as a candidate for a future track, not built.
+
+  **Follow-ons, named rather than left implicit:**
+  - Native `WorkerEntrypoint` RPC (Q9): a candidate for a future track, worth doing if Bynk-to-Bynk
+    calls move to RPC too.
+  - `@bynk/wire-client` is not published to npm; the docs say to depend on it from a file path or
+    git. The generated client does not compile under `noUncheckedIndexedAccess`, documented as a
+    limitation.
+  - [ADR 0490](../decisions/0490-contract-mismatch-body-keeps-expected.md) (#2054) keeps `expected`
+    in the `409 ContractMismatch` body, since only an authenticated caller can reach it and removing
+    it would need wire format version 2.
+
+  This track's doc, `design/tracks/interop.md`, is removed. Code comments that cited its sections now
+  cite this entry. Retired 17 October 2026.

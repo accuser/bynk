@@ -1,5 +1,5 @@
 //! I4 (#1970): the typed TypeScript client for a context's foreign callers,
-//! `workers/<context>/bynk-client.ts` (`design/tracks/interop.md` §8 D3).
+//! `workers/<context>/bynk-client.ts` (`design/archive/retired-tracks.md`, interop track D3).
 //!
 //! A Bynk caller of another context gets a typed call: the compiler builds the
 //! path, stamps the contract hash, encodes the arguments and decodes the

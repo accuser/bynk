@@ -1,6 +1,6 @@
 //! I4 (#1970): the typed TypeScript client a context's foreign callers import
 //! (`workers/<context>/bynk-client.ts`) and its runtime package,
-//! `@bynk/wire-client` (`design/tracks/interop.md` §8 D3).
+//! `@bynk/wire-client` (`design/archive/retired-tracks.md`, interop track D3).
 //!
 //! Three kinds of guard:
 //!

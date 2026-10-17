@@ -8,7 +8,7 @@ one trust domain". ADR 0479 (#2004) showed `/_bynk/call/` and `/_bynk/event/`
 answer on every Worker's public address, and contained that with one shared
 `BYNK_CALL_SECRET`. A shared secret admits members of the deployment but cannot
 tell them apart: any holder can claim any caller, and the interop track
-(`design/tracks/interop.md` §8 D2) cannot let a non-Bynk caller in on those
+(`design/archive/retired-tracks.md`, interop track D2) cannot let a non-Bynk caller in on those
 terms. D2 settled option (c), a signed caller header under a per-edge secret,
 as the mechanism, with this slice (I2) replacing the shared secret for every
 Bynk edge.

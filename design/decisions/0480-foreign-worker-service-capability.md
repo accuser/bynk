@@ -5,7 +5,7 @@
 **Context.** A Bynk context could reach a Worker that is not part of its project only through
 `Fetch`, over the public internet: every generated `wrangler.toml` sets
 `global_fetch_strictly_public`, and `consumes` reaches only Bynk contexts. The interop track
-(`design/tracks/interop.md`, spine #1935) settled D4 (#1972) as option (a): a first-party platform
+(`design/archive/retired-tracks.md`, interop track spine #1973) settled D4 (#1972) as option (a): a first-party platform
 capability used through the standard-library track's derived capabilities (its D3, ADR 0469), and
 listed this as its front-loaded ADR 4, landing with slice I5. §11 Q8 settled the two platform
 behaviours: `bynk deploy` warns, never refuses, when the named Worker is missing, and `bynk dev`

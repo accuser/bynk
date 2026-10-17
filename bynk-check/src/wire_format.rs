@@ -1,6 +1,6 @@
 //! #1969: the cross-context wire format, version 1, as a published surface.
 //!
-//! The interop track's D1 (`design/tracks/interop.md` §8) makes the format a
+//! The interop track's D1 (`design/archive/retired-tracks.md`, interop track) makes the format a
 //! caller outside the project can speak a contract with its own version,
 //! apart from the compiler's: the path, method and headers of a call; the
 //! order of the callee's checks, with their status codes and error bodies; the

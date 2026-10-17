@@ -1,5 +1,5 @@
 //! I4 (#1970): a declared foreign caller's pin, and the deploy gate that holds a
-//! build to it (`design/tracks/interop.md` §8 D3, §11 Q6).
+//! build to it (`design/archive/retired-tracks.md`, interop track D3, Q6).
 //!
 //! A Bynk caller's view of a callee's contract travels in its own
 //! `bynk-contracts.json` (`expects`), and `deploy` refuses a build that would
