@@ -1,0 +1,10 @@
+-- #2087 review: `Ticket` is `shop.ledger`'s own, unexported.
+context shop.ledger
+
+type Ticket = { s: String }
+
+service take {
+  on call(t: Ticket) -> Effect[String] {
+    t.s
+  }
+}

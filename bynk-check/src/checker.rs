@@ -404,10 +404,13 @@ impl Ty {
             // level up) reads as "type error" rather than a blank or `unknown`.
             Ty::Error => "<type error>".to_string(),
             Ty::Base(b) => b.name().to_string(),
-            Ty::Named { name, args, .. } if args.is_empty() => name.clone(),
+            // #2087: a qualified key reads as the declaration's own name.
+            Ty::Named { name, args, .. } if args.is_empty() => {
+                crate::symbols::display_type_name(name).to_string()
+            }
             Ty::Named { name, args, .. } => format!(
                 "{}[{}]",
-                name,
+                crate::symbols::display_type_name(name),
                 args.iter()
                     .map(|a| types.display(*a))
                     .collect::<Vec<_>>()
@@ -4710,6 +4713,31 @@ fn structurally_compatible_inner(
     }
 }
 
+/// #2087: whether two declarations have the same members by name: the
+/// fields of a record, or the variants (and their payload fields) of a sum,
+/// in order. With the name and span, this tells one declaration (or a copy of
+/// it with its references renamed) from another at the same byte range of a
+/// different file.
+fn same_members(a: &TypeDecl, b: &TypeDecl) -> bool {
+    let fields = |fs: &[RecordField]| fs.iter().map(|f| f.name.name.clone()).collect::<Vec<_>>();
+    match (&a.body, &b.body) {
+        (TypeBody::Record(x), TypeBody::Record(y)) => fields(&x.fields) == fields(&y.fields),
+        (TypeBody::Sum(x), TypeBody::Sum(y)) => {
+            x.variants.len() == y.variants.len()
+                && x.variants.iter().zip(&y.variants).all(|(v, w)| {
+                    v.name.name == w.name.name
+                        && v.payload
+                            .iter()
+                            .map(|f| &f.name.name)
+                            .eq(w.payload.iter().map(|f| &f.name.name))
+                })
+        }
+        (TypeBody::Refined { base: x, .. }, TypeBody::Refined { base: y, .. })
+        | (TypeBody::Opaque { base: x, .. }, TypeBody::Opaque { base: y, .. }) => x == y,
+        _ => false,
+    }
+}
+
 fn structural_compare_named(
     (arg_name, arg_args): (&str, &[TyId]),
     (param_name, param_args): (&str, &[TyId]),
@@ -4731,8 +4759,15 @@ fn structural_compare_named(
     // resolve in the caller's table: a borrowed type's field may name a type
     // the caller cannot bind unambiguously (#1941), which the callee's table
     // holds under a qualified key (`shop_order__Code`).
+    //
+    // The name stays in the test: most spans carry `FileId::UNKNOWN` (they
+    // come from the lexer), so two declarations in different files at the
+    // same byte range have equal spans. The name, the span and the members'
+    // names together identify one declaration; a copy `contract_types_for`
+    // made (its references renamed) keeps all three.
     if arg_name == param_name
-        && (Arc::ptr_eq(arg_decl, param_decl) || arg_decl.span == param_decl.span)
+        && (Arc::ptr_eq(arg_decl, param_decl)
+            || (arg_decl.span == param_decl.span && same_members(arg_decl, param_decl)))
     {
         return true;
     }

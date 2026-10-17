@@ -1521,6 +1521,49 @@ pub fn contract_types_for(
     (table, owners)
 }
 
+/// #2087: the name a user reads for a type `contract_types_for` may have
+/// filed under a qualified key. A key is the declaring context's namespace,
+/// `__`, and the declaration's own name (`shop_order__Code`); the declaration
+/// carries the key as its name too, so every path that prints a type name to a
+/// user goes through this, and reads `Code`. Any other name is returned as is:
+/// a key's prefix is a lowercase namespace and its last segment a capitalised
+/// type name, which a declared type name never is.
+pub fn display_type_name(name: &str) -> &str {
+    match name.rsplit_once("__") {
+        Some((prefix, last))
+            if prefix.starts_with(|c: char| c.is_ascii_lowercase())
+                && prefix
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                && last.starts_with(|c: char| c.is_ascii_uppercase()) =>
+        {
+            last
+        }
+        _ => name,
+    }
+}
+
+/// #2087: `text` (a contract's normal form, say) with every qualified key in
+/// it shown by its declaration's own name ([`display_type_name`]).
+pub fn display_type_names_in(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        out.push_str(display_type_name(word));
+        word.clear();
+    };
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
 /// A context's contract table and the declaring context of each borrowed type.
 type ContractView = (HashMap<String, Arc<TypeDecl>>, HashMap<String, String>);
 
@@ -2344,6 +2387,32 @@ mod contract_types_tests {
         let svc = crate::resolver::cross_context_service_for(service, &info.services[service])
             .expect("an `on call` service");
         crate::contract::service_normal_form(&svc, &info.types)
+    }
+
+    /// #2087: a qualified key reads as its declaration's own name wherever a
+    /// type is shown to a user. `Ty::display` is the renderer behind every
+    /// checker diagnostic that names a type.
+    #[test]
+    fn a_qualified_key_displays_as_its_declarations_name() {
+        use super::{display_type_name, display_type_names_in};
+        assert_eq!(display_type_name("shop_order__Code"), "Code");
+        assert_eq!(display_type_name("shop_ledger__shop_order__Code"), "Code");
+        assert_eq!(display_type_name("Code"), "Code");
+        assert_eq!(display_type_name("My__Thing"), "My__Thing");
+        assert_eq!(display_type_name("shop_order__lower"), "shop_order__lower");
+        assert_eq!(
+            display_type_names_in("orderId(o: Order{code: shop_order__Code(String)})"),
+            "orderId(o: Order{code: Code(String)})"
+        );
+        let tys = crate::checker::Types::default();
+        let key = tys.intern(crate::checker::Ty::Named {
+            name: "shop_order__Code".to_string(),
+            kind: crate::checker::NamedKind::Opaque(bynk_syntax::ast::BaseType::String),
+            args: Vec::new(),
+        });
+        assert_eq!(tys.display(key), "Code");
+        let listed = tys.intern(crate::checker::Ty::List(key));
+        assert_eq!(tys.display(listed), "List[Code]");
     }
 
     #[test]
