@@ -585,7 +585,7 @@ pub(crate) fn prepare_secrets(
     for want in &wanted {
         match secret_action(&want.name, present.as_ref(), secrets.force) {
             SecretAction::SkipPresent => {
-                eprint!("{}", secret_kept_notice(environment, worker, &want.name));
+                eprint!("{}", kept_binding_notice(environment, worker, &want.name));
                 continue;
             }
             SecretAction::Set | SecretAction::Overwrite => {}
@@ -627,18 +627,22 @@ pub(crate) fn unseen_reads_notice(environment: &str, worker: &str) -> String {
 }
 
 /// A secret already set, kept because `--force` is off.
-pub(crate) fn secret_kept_notice(environment: &str, worker: &str, name: &str) -> String {
+pub(crate) fn kept_binding_notice(environment: &str, worker: &str, binding_name: &str) -> String {
     format!(
-        "bynk: secret `{name}` is already set on `{}`, skipping — use --force to overwrite\n",
+        "bynk: secret `{binding_name}` is already set on `{}`, skipping — use --force to overwrite\n",
         deployed_worker_name(environment, worker)
     )
 }
 
 /// An optional read with no value supplied (ADR 0196 D3).
-pub(crate) fn unsupplied_read_notice(environment: &str, worker: &str, name: &str) -> String {
+pub(crate) fn unsupplied_read_notice(
+    environment: &str,
+    worker: &str,
+    binding_name: &str,
+) -> String {
     format!(
-        "bynk: `{}` reads the secret `{name}`, but no value was supplied — it will see None.\n  \
-         Supply it with --secrets-file or --secret {name}, if it is meant to be set.\n",
+        "bynk: `{}` reads the secret `{binding_name}`, but no value was supplied — it will see None.\n  \
+         Supply it with --secrets-file or --secret {binding_name}, if it is meant to be set.\n",
         deployed_worker_name(environment, worker)
     )
 }
@@ -646,18 +650,27 @@ pub(crate) fn unsupplied_read_notice(environment: &str, worker: &str, name: &str
 /// A required secret with no value, on a Worker whose secrets could not be
 /// listed: left as it is. The check it suggests names the deployed Worker,
 /// so it asks about the right one whatever directory it is run from.
-pub(crate) fn unknown_presence_notice(environment: &str, worker: &str, name: &str) -> String {
+pub(crate) fn unknown_presence_notice(
+    environment: &str,
+    worker: &str,
+    binding_name: &str,
+) -> String {
     let worker = deployed_worker_name(environment, worker);
     format!(
-        "bynk: could not ask Cloudflare which secrets `{worker}` has, and no value for `{name}` was supplied — leaving it as it is.\n  \
+        "bynk: could not ask Cloudflare which secrets `{worker}` has, and no value for `{binding_name}` was supplied — leaving it as it is.\n  \
          If it is not set, `{worker}` will answer 401. Check with `wrangler secret list --name {worker}`, or supply a value to set it.\n"
     )
 }
 
 /// `wrangler secret put` failed.
-pub(crate) fn secret_set_failure(environment: &str, worker: &str, name: &str, e: &str) -> String {
+pub(crate) fn binding_put_failure(
+    environment: &str,
+    worker: &str,
+    binding_name: &str,
+    e: &str,
+) -> String {
     format!(
-        "could not set the secret `{name}` on `{}`: {e}",
+        "could not set the secret `{binding_name}` on `{}`: {e}",
         deployed_worker_name(environment, worker)
     )
 }
@@ -674,7 +687,7 @@ pub(crate) fn apply_secrets(
 ) -> Result<(), DeployFailure> {
     for (name, value) in prepared {
         set_secret(provenance, worker_dir, name, value, environment).map_err(|e| {
-            DeployFailure::driver(secret_set_failure(environment, worker, name, &e))
+            DeployFailure::driver(binding_put_failure(environment, worker, name, &e))
         })?;
     }
     Ok(())
@@ -701,7 +714,7 @@ fn resolve_secret_value(
     let value = match value_from(name, secrets.source, from_env) {
         Some(value) => value,
         None => prompt_for_secret(name).ok_or_else(|| {
-            DeployFailure::driver(missing_secret_message(environment, name, origin, worker))
+            DeployFailure::driver(missing_binding_message(environment, name, origin, worker))
         })?,
     };
     secrets.resolved.insert(name.to_string(), value.clone());
@@ -731,25 +744,25 @@ fn prompt_for_secret(name: &str) -> Option<String> {
 /// Why a secret could not be resolved, in the vocabulary of where its name came
 /// from — the two origins are missing for different reasons and want different
 /// remedies. The Worker by its [`deployed_worker_name`] (#2047).
-pub(crate) fn missing_secret_message(
+pub(crate) fn missing_binding_message(
     environment: &str,
-    name: &str,
+    binding_name: &str,
     origin: Origin,
     worker: &str,
 ) -> String {
     let worker = deployed_worker_name(environment, worker);
     match origin {
         Origin::Declared => format!(
-            "`{worker}` declares the secret `{name}` (an actor's `auth` secret) but no value was supplied — \
-             pass it in --secrets-file, or set {name} in the environment. \
+            "`{worker}` declares the secret `{binding_name}` (an actor's `auth` secret) but no value was supplied — \
+             pass it in --secrets-file, or set {binding_name} in the environment. \
              Deploying without it would answer every request with 401."
         ),
         // Reached only when a read is *required*, which it never is — kept
         // total rather than unreachable!(), since the compiler cannot know that
         // and a panic here would be a poor way to learn otherwise.
         Origin::Read | Origin::Supplied | Origin::Managed => format!(
-            "the secret `{name}` was named but no value was supplied — \
-             set {name} in the environment, or give it a value in --secrets-file."
+            "the secret `{binding_name}` was named but no value was supplied — \
+             set {binding_name} in the environment, or give it a value in --secrets-file."
         ),
     }
 }
@@ -955,14 +968,14 @@ WITH_EQUALS=a=b
         // The error is the whole mitigation for the silent-blank risk, so it
         // must name the secret and the remedy rather than saying "failed".
         let declared =
-            missing_secret_message("default", "AUTH_JWT_SECRET", Origin::Declared, "api");
+            missing_binding_message("default", "AUTH_JWT_SECRET", Origin::Declared, "api");
         assert!(declared.contains("AUTH_JWT_SECRET"), "{declared}");
         assert!(declared.contains("api"), "{declared}");
         assert!(
             declared.contains("401"),
             "a declared secret's absence is fail-closed — say so: {declared}"
         );
-        let supplied = missing_secret_message("default", "STRIPE_KEY", Origin::Supplied, "api");
+        let supplied = missing_binding_message("default", "STRIPE_KEY", Origin::Supplied, "api");
         assert!(supplied.contains("STRIPE_KEY"), "{supplied}");
         assert!(
             !supplied.contains("401"),

@@ -651,7 +651,7 @@ mod tests {
                 "permission denied",
             ));
             section(&mut out, "foreign caller's secret may be set");
-            out.push_str(&foreign_secret_maybe_set_notice(
+            out.push_str(&foreign_binding_maybe_set_notice(
                 environment,
                 "commerce-orders",
                 &caller,
@@ -666,7 +666,7 @@ mod tests {
             section(&mut out, "unseen secret reads");
             out.push_str(&unseen_reads_notice(environment, "commerce-orders"));
             section(&mut out, "secret already set");
-            out.push_str(&secret_kept_notice(
+            out.push_str(&kept_binding_notice(
                 environment,
                 "commerce-orders",
                 "API_KEY",
@@ -684,7 +684,7 @@ mod tests {
                 "AUTH_SECRET",
             ));
             section(&mut out, "secret put failed");
-            out.push_str(&secret_set_failure(
+            out.push_str(&binding_put_failure(
                 environment,
                 "commerce-orders",
                 "API_KEY",
@@ -692,7 +692,7 @@ mod tests {
             ));
             out.push('\n');
             section(&mut out, "declared secret missing");
-            out.push_str(&missing_secret_message(
+            out.push_str(&missing_binding_message(
                 environment,
                 "AUTH_SECRET",
                 Origin::Declared,

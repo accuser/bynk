@@ -734,7 +734,7 @@ pub fn run(
                     {
                         eprint!(
                             "{}",
-                            foreign_secret_maybe_set_notice(&opts.environment, worker, caller)
+                            foreign_binding_maybe_set_notice(&opts.environment, worker, caller)
                         );
                         eprint!(
                             "{}",
@@ -913,7 +913,7 @@ pub(crate) fn unrecorded_deploy_failure(
 /// I3 (#1971): a failed push may have set a secret minted for `caller`. The
 /// Worker by its [`deployed_worker_name`], which the suggested `wrangler
 /// secret list` names too, so it asks about the right Worker (#2047).
-pub(crate) fn foreign_secret_maybe_set_notice(
+pub(crate) fn foreign_binding_maybe_set_notice(
     environment: &str,
     worker: &str,
     caller: &ForeignCaller,
