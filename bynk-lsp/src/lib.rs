@@ -3386,12 +3386,14 @@ impl LanguageServer for Backend {
             overlay.insert(abs, edited);
         }
         let roots = bynk_ide::AnalysisRoots::Project(analysis.project_root.clone());
-        // #2081: the same schema lock the baseline round saw, so the
-        // validators compare like with like and a lock diagnostic is never
-        // read as one the rename introduced or removed.
-        let schema_lock = self.schema_lock_for(&analysis.project_root).await;
+        // #2081: `Off`. Schema-lock diagnostics are project-level: they land
+        // in `unattributed`, which neither validator compares (both read
+        // `post.files`), so reading the lock here would cost a `stat` and an
+        // event sweep for nothing. A rename that changes an event
+        // non-additively is not refused; the next diagnostics round reports
+        // it on `bynk.toml`.
         let Ok(post) = tokio::task::spawn_blocking(move || {
-            bynk_ide::diagnose_project_with(&roots, &overlay, &schema_lock)
+            bynk_ide::diagnose_project_with(&roots, &overlay, &bynk_ide::SchemaLock::Off)
         })
         .await
         else {
@@ -5030,7 +5032,7 @@ mod tests {
             published.lock().unwrap()
         );
 
-        // No lock at all: a fresh project, nothing to report.
+        // Restore the stale lock: it is read again and the diagnostic returns.
         std::fs::write(canonical.join("bynk.schema.lock"), LOCK_V1).unwrap();
         backend.run_project_diagnostics(canonical.clone()).await;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -5038,6 +5040,7 @@ mod tests {
             reported(&published.lock().unwrap()),
             "the old lock is read again"
         );
+        // No lock at all: a fresh project, nothing to report.
         std::fs::remove_file(canonical.join("bynk.schema.lock")).unwrap();
         backend.run_project_diagnostics(canonical.clone()).await;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -6778,6 +6781,59 @@ mod tests {
             backend.state.read().await.projects.len(),
             1,
             "a created bynk.toml warms its project via the watcher event",
+        );
+    }
+
+    /// #2081: a `bynk.schema.lock` watcher event clears that project's cached
+    /// lock, so a rewrite the stamp cannot see (same length, same mtime: an
+    /// edit within one mtime tick) is still read on the next round.
+    #[tokio::test]
+    async fn a_schema_lock_watcher_event_invalidates_the_cached_lock() {
+        const OLD: &str = "version = 1\n# aaaa\n";
+        const NEW: &str = "version = 1\n# bbbb\n";
+        let s = scratch_project(
+            "lock_watch",
+            &[
+                ("bynk.toml", "[project]\nname = \"p\"\n"),
+                ("bynk.schema.lock", OLD),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let root = backend.test_root().await;
+        let lock = root.join("bynk.schema.lock");
+        let on = |text: &str| bynk_ide::SchemaLock::On {
+            existing: Some(text.to_string()),
+        };
+        assert_eq!(backend.schema_lock_for(&root).await, on(OLD));
+
+        // Rewrite with the same length, then put the old mtime back: the
+        // stamp is unchanged, so only the watcher can tell the cache.
+        let mtime = std::fs::metadata(&lock).unwrap().modified().unwrap();
+        std::fs::write(&lock, NEW).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&lock)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+        assert_eq!(
+            backend.schema_lock_for(&root).await,
+            on(OLD),
+            "an unchanged stamp serves the cache"
+        );
+
+        backend
+            .did_change_watched_files(DidChangeWatchedFilesParams {
+                changes: vec![FileEvent {
+                    uri: Url::from_file_path(&lock).unwrap(),
+                    typ: FileChangeType::CHANGED,
+                }],
+            })
+            .await;
+        assert_eq!(
+            backend.schema_lock_for(&root).await,
+            on(NEW),
+            "the watcher event must clear the cached lock"
         );
     }
 
