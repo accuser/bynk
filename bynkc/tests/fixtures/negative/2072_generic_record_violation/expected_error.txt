@@ -1,0 +1,4 @@
+bynk.refine.literal_violates literal 5000 does not satisfy `InRange` required by type `Cents`
+bynk.boundary.structural_mismatch cross-context argument 1 to `t.pay.paged` has type `Page[Cents]` in `t.shadow`, but parameter `page` expects `Page[Cents]` in `t.pay`
+bynk.boundary.structural_mismatch cross-context argument 1 to `t.pay.paged` has type `Page[Cents]` in `t.shadow`, but parameter `page` expects `Page[Cents]` in `t.pay`
+# exact

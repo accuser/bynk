@@ -3936,6 +3936,10 @@ fn type_ref_names_any(t: &TypeRef, renames: &HashMap<String, String>) -> bool {
         TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
             type_ref_names_any(a, renames) || type_ref_names_any(b, renames)
         }
+        // #2072: a generic record (`Page[Cents]`), its head and arguments.
+        TypeRef::App { name, args, .. } => {
+            renames.contains_key(&name.name) || args.iter().any(|a| type_ref_names_any(a, renames))
+        }
         _ => false,
     }
 }
@@ -4344,6 +4348,13 @@ fn type_ref_names(r: &TypeRef, out: &mut HashSet<String>) {
         TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
             type_ref_names(a, out);
             type_ref_names(b, out);
+        }
+        // #2072: a generic record (`Page[Cents]`), its head and arguments.
+        TypeRef::App { name, args, .. } => {
+            out.insert(name.name.clone());
+            for a in args {
+                type_ref_names(a, out);
+            }
         }
         _ => {}
     }
