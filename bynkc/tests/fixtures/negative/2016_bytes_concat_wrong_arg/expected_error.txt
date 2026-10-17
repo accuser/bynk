@@ -1,0 +1,1 @@
+bynk.types.type_mismatch the `Bytes.concat` argument has type `String`, but `Bytes` is required

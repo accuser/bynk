@@ -259,9 +259,7 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
     write_header_single(
         &mut out,
         commons,
-        dummy_ctx.runtime_use.bytes(),
-        dummy_ctx.runtime_use.eq(),
-        dummy_ctx.runtime_use.int(),
+        &dummy_ctx.runtime_use,
         uses_http,
         uses_queue,
     );
@@ -3840,6 +3838,13 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
         if ctx.runtime_use.bytes() {
             parts.extend(BYTES_RUNTIME_IMPORTS.trim_start_matches(", ").split(", "));
         }
+        if ctx.runtime_use.bytes_ops() {
+            parts.extend(
+                BYTES_OPS_RUNTIME_IMPORTS
+                    .trim_start_matches(", ")
+                    .split(", "),
+            );
+        }
         if ctx.runtime_use.eq() {
             parts.extend(EQ_RUNTIME_IMPORTS.trim_start_matches(", ").split(", "));
         }
@@ -3873,9 +3878,7 @@ fn write_header(commons: &TypedCommons, ctx: &EmitProjectCtx) -> Vec<bynk_ts::Ts
 fn write_header_single(
     out: &mut String,
     commons: &TypedCommons,
-    uses_bytes: bool,
-    uses_eq: bool,
-    uses_int: bool,
+    runtime_use: &RuntimeUse,
     uses_http: bool,
     uses_queue: bool,
 ) {
@@ -3902,17 +3905,31 @@ fn write_header_single(
         };
         // v0.110 (ADR 0142): the `Bytes` runtime helpers, imported only when a
         // `Bytes` value is constructed or compared in the body.
-        let bytes_imports = if uses_bytes {
+        let bytes_imports = if runtime_use.bytes() {
             BYTES_RUNTIME_IMPORTS
+        } else {
+            ""
+        };
+        // #2016: the `Bytes` operation helpers, imported only when called.
+        let bytes_ops_imports = if runtime_use.bytes_ops() {
+            BYTES_OPS_RUNTIME_IMPORTS
         } else {
             ""
         };
         // #1652: the structural-equality walker, imported only when a
         // non-primitive `==`/`!=` lowered to it.
-        let eq_imports = if uses_eq { EQ_RUNTIME_IMPORTS } else { "" };
+        let eq_imports = if runtime_use.eq() {
+            EQ_RUNTIME_IMPORTS
+        } else {
+            ""
+        };
         // #1657: the `Int` domain traps, imported only when a division or a
         // Float→`Int` conversion lowered to them.
-        let int_imports = if uses_int { INT_RUNTIME_IMPORTS } else { "" };
+        let int_imports = if runtime_use.int() {
+            INT_RUNTIME_IMPORTS
+        } else {
+            ""
+        };
         // v0.153 (ADR 0177): `HttpResult` is a value (its variant namespace) and
         // a type, so it imports without a `type` prefix — one binding serves
         // both `HttpResult.NotFound` and the `HttpResult<T>` annotation.
@@ -3927,7 +3944,7 @@ fn write_header_single(
         // group's own name list a second time (the string-building above,
         // unchanged, already gets this exactly right).
         let inside = format!(
-            "Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports}{eq_imports}{int_imports}{http_imports}{queue_imports}"
+            "Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports}{bytes_ops_imports}{eq_imports}{int_imports}{http_imports}{queue_imports}"
         );
         out.push_str(&bynk_ts::print_stmt(
             &bynk_ts::TsStmt::decl(
@@ -3949,6 +3966,11 @@ fn write_header_single(
 /// the base64/UTF-8 helpers back the kernel and codec.
 pub(crate) const BYTES_RUNTIME_IMPORTS: &str =
     ", __bynkBytesEqual, __bynkBytesToBase64, __bynkBytesFromBase64, __bynkBytesDecodeUtf8";
+
+/// #2016: the `Bytes` operation helpers (`concat`, `compare`, hex, base64url),
+/// appended only when the body calls one, so a module that merely builds or
+/// compares `Bytes` keeps the [`BYTES_RUNTIME_IMPORTS`] list it had.
+pub(crate) const BYTES_OPS_RUNTIME_IMPORTS: &str = ", __bynkBytesConcat, __bynkBytesCompare, __bynkBytesToHex, __bynkBytesFromHex, __bynkBytesToBase64Url, __bynkBytesFromBase64Url";
 
 /// #1652 (runtime-semantics track §3.1): the structural-equality walker,
 /// appended to a module's import list when `==`/`!=` on a non-primitive,
@@ -5083,6 +5105,12 @@ impl<'a> LowerCtx<'a> {
     /// helpers, so the module imports them.
     fn note_bytes(&self) {
         self.runtime_use().note_bytes();
+    }
+
+    /// Record that this lowering emitted a `Bytes` operation helper (#2016), so
+    /// the module imports that group.
+    fn note_bytes_ops(&self) {
+        self.runtime_use().note_bytes_ops();
     }
 
     /// Record that this lowering constructed an `HttpResult` variant (#1934),
@@ -6783,6 +6811,29 @@ mod conditional_runtime_import_tests {
             runtime_import_line(&ts).contains("__bynkBytesEqual"),
             "{ts}"
         );
+    }
+
+    /// #2016: the operation helpers are their own group. A module that only
+    /// builds or compares `Bytes` keeps its import list, and one that calls an
+    /// operation gets that group without the base one.
+    #[test]
+    fn bytes_ops_helpers_are_imported_only_when_an_operation_is_called() {
+        let base = emit_source("commons b\n\nfn same(a: Bytes, b: Bytes) -> Bool {\n  a == b\n}\n");
+        assert!(
+            !runtime_import_line(&base).contains("__bynkBytesConcat"),
+            "{base}"
+        );
+        let ops = emit_source("commons b\n\nfn hex(b: Bytes) -> String {\n  b.toHex()\n}\n");
+        let line = runtime_import_line(&ops);
+        assert!(line.contains("__bynkBytesToHex"), "{ops}");
+        assert!(!line.contains("__bynkBytesEqual"), "{ops}");
+    }
+
+    /// #2016: `slice` lowers inline, so it pulls in no helper at all.
+    #[test]
+    fn bytes_slice_needs_no_helper() {
+        let ts = emit_source("commons b\n\nfn tag(b: Bytes) -> Bytes {\n  b.slice(0, 4)\n}\n");
+        assert!(!runtime_import_line(&ts).contains("__bynkBytes"), "{ts}");
     }
 
     #[test]

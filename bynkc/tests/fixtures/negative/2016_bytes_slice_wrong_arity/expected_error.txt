@@ -1,0 +1,1 @@
+bynk.types.method_arity `Bytes.slice` takes 2 arguments, got 1

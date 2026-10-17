@@ -1,0 +1,33 @@
+commons frames
+
+-- #2016 (standard-library K1): each `Bytes` operation, run.
+
+fn frame(header: Bytes, payload: Bytes) -> Bytes {
+  header.concat(payload)
+}
+
+fn hexOf(s: String) -> String {
+  Bytes.fromUtf8(s).toHex()
+}
+
+fn hexRoundTrips(b: Bytes) -> Bool {
+  match Bytes.fromHex(b.toHex()) {
+    Some(back) => back == b
+    None => false
+  }
+}
+
+fn urlRoundTrips(b: Bytes) -> Bool {
+  match Bytes.fromBase64Url(b.toBase64Url()) {
+    Some(back) => back == b
+    None => false
+  }
+}
+
+-- 0x80 sorts after 0x7f: octets compare unsigned.
+fn unsignedOrder() -> Int {
+  match Bytes.fromHex("807f") {
+    Some(b) => b.slice(0, 1).compare(b.slice(1, 2))
+    None => 0
+  }
+}

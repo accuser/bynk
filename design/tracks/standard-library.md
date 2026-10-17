@@ -7,7 +7,9 @@
   platform and per operation (R-12, R-13 met for the shipped bindings).
   S3 done (#1963): stable/experimental marking with the `[unstable] allow`
   opt-in, extensible enums (`FetchError`, `Method`), the D2 tiers ADR and the
-  Gate 1 amendment (R-17 met; §11 Q5, Q6 built).
+  Gate 1 amendment (R-17 met; §11 Q5, Q6 built). S4 done (#1966, #1967):
+  derived KV capabilities, built and deployed. K1 done (#2016): `Bytes` joins,
+  slices, compares, and converts to and from hex and base64url.
 - **Realises:** `design/bynk-design-notes.md` "Three-tier output" (the runtime
   library and per-platform bindings, including the unbuilt `Crypto`),
   [ADR 0034](../decisions/0034-collections-hybrid-kernel-stdlib.md)'s promise
@@ -291,14 +293,14 @@ unit and is indicative only, not decided.
 | Hashing (SHA-256/384/512), HMAC, constant-time compare | A (internal only, in `runtime/auth.ts`) | L2 `bynk.crypto` `Crypto` (D5/D6), `Effect`-returning over Web Crypto | Design notes name `Crypto`. Security review (R-16) |
 | Signing/verification (Ed25519, ECDSA, RSA), JWK import | A | L2 `bynk.crypto` `Crypto` | Key material is a secret: interacts with `Secrets` |
 | Random bytes | A (`Random.uuid`/`int` only) | L2 `Random` | Trivial extension |
-| Hex, base64url, percent-encoding | P (base64, UTF-8 on `Bytes`) | L0 statics | Pure |
+| Hex, base64url, percent-encoding | P (base64, hex, base64url and UTF-8 on `Bytes`, K1 #2016; percent-encoding is K2) | L0 statics | Pure |
 | URL parse/build, query strings | A | L0 type + L1 helpers | Needed by Fetch users and HTTP handlers |
 | `Set[T]` value type | A | L0 | Store kind `Set` exists; value type does not |
 | Math (`pow`, `sqrt`, `log`, trig, integer `div`/`mod` semantics) | A | L0 statics | Check against ADR 0041/0042 |
 | Regex match/capture/replace | A (`Matches` refinement only) | L0 | Engine/flag semantics must be stated (JS `RegExp`) |
 | ISO-8601 parse/format for `Instant` (UTC) | P (`toString`, epoch millis) | L0 | Pure. Time zones and calendar fields deferred (D7) |
 | String formatting (pad, repeat, `codePoints`) | P | L0/L1 | |
-| `Bytes` ops (concat, slice, compare, hex) | P | L0 | Prerequisite for R2, crypto, binary Fetch bodies |
+| `Bytes` ops (concat, slice, compare, hex) | S (K1 #2016; octet access and orderability are follow-ons) | L0 | Prerequisite for R2, crypto, binary Fetch bodies |
 | Fetch: more methods (`Patch`/`Head`/`Options`), `Bytes`/stream bodies, redirect & timeout options, `AbortSignal` | P (`Method` is Get/Post/Put/Delete; `String` bodies) | L2 `Fetch` | ADR 0022/0453 shape |
 | Logger levels (`warn`/`debug`) and structured fields | P (`info`/`error`) | L2 `Logger` | Workers Logs / Observability ingest JSON |
 | Config / non-secret env vars (`[vars]`) | A | Existing `Secrets.get` (reads `env[name]`) | No new capability (D6). The gap is `[vars]` emission and deploy, which is deploy work |
@@ -627,7 +629,7 @@ increment** (ADR 0023), and the ordering follows §13.
 
 | Slice | What | Needs |
 |---|---|---|
-| K1 | `Bytes` operations (concat, slice, compare), hex, base64url | — |
+| K1 ✅ #2016 | `Bytes` operations: `concat`, `slice` (clamped like `String.slice`), a `compare` method (`Bytes` stays unorderable), `toHex`/`fromHex` and `toBase64Url`/`fromBase64Url`, all L0 and none constant-time | — |
 | K2 | URL type, query strings, percent-encoding | — |
 | K3 | ISO-8601 parse and format for `Instant`, UTC | D7 |
 | K4 | `bynk.crypto`: digests, HMAC, sign/verify, key import, `Effect` over Web Crypto; `Random.bytes`; security review | K1, D5, D6, S2 |

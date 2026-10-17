@@ -1054,6 +1054,8 @@ pub const BUILTIN_STATICS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("fromUtf8", "fromUtf8(s: String) -> Bytes"),
             ("fromBase64", "fromBase64(s: String) -> Option[Bytes]"),
+            ("fromHex", "fromHex(s: String) -> Option[Bytes]"),
+            ("fromBase64Url", "fromBase64Url(s: String) -> Option[Bytes]"),
             ("empty", "empty() -> Bytes"),
         ],
     ),
