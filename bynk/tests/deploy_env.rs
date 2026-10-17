@@ -156,6 +156,11 @@ fn a_context_refusal_names_the_deployed_workers() {
         ),
         "{err}"
     );
+    // #2047: the remedy deploys the environment that needs it.
+    assert!(
+        err.contains("Deploy the whole project once (`bynk deploy --env staging`)"),
+        "{err}"
+    );
 
     let (ok, text, err) = dry_run(&dir, &["--context", "shop.orders"]);
     assert!(!ok, "a never-deployed target refuses:\n{text}{err}");
