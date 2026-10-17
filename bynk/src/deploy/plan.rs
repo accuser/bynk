@@ -633,6 +633,7 @@ pub fn run(
             &workers_dir,
             worker,
             &resources[worker],
+            &resources,
             &mut lock,
             &lock_path,
             &mut attempted_queues,
@@ -1167,7 +1168,10 @@ pub(crate) fn derive_plan<'a>(
 ///   `shop`'s bare namespace under `--env staging` and its `capability
 ///   Staging` in the default environment are both `shop-staging`. A namespace
 ///   already recorded here is not created, so it cannot fail; that clash is
-///   refused by the other environment's deploy instead.
+///   refused by the other environment's deploy instead. A recorded namespace
+///   whose id has gone from the account is created again, and that is only
+///   known once the deploy fetches the live ids, so `deploy_one` runs
+///   [`cross_environment_title_clash`] again at that point (#2059).
 ///
 /// Checked across the whole project, not just `--context`'s selection, since
 /// titles are account-wide. The ledger records ids, not titles, so a recorded
@@ -1195,19 +1199,48 @@ pub(crate) fn kv_title_collision(
     }
 
     // What this deploy creates: each declared namespace with no recorded id.
+    let creates: Vec<(&str, &str)> = resources
+        .iter()
+        .flat_map(|(worker, declared)| {
+            kv_bindings(declared).map(move |binding| (worker.as_str(), binding))
+        })
+        .filter(|(worker, binding)| {
+            recorded_kv_binding(lock, worker, binding, environment).is_none()
+        })
+        .collect();
+    cross_environment_title_clash(resources, lock, environment, &creates, None)
+}
+
+/// The cross-environment half of [`kv_title_collision`]: does any of
+/// `creates`, the `(worker, binding)` namespaces about to be created under
+/// `environment`, take a title another environment the ledger knows holds or
+/// would create? The message names both namespaces and both environments.
+///
+/// Also run by `deploy_one` at the moment it decides to create (#2059), since
+/// that is the only point that knows a recorded id has gone from the account
+/// and its namespace is about to be created again. There `live_kv_ids` is the
+/// account's live ids, when fetched: another environment's recorded namespace
+/// whose id is not among them no longer holds its title (though one this
+/// source declares there still counts, since that deploy would create it).
+/// `None` counts every recorded namespace, which is always the case at plan
+/// time: [`kv_title_collision`] runs before the live ids are fetched, so the
+/// relaxation applies only to the deploy-time re-check.
+pub(crate) fn cross_environment_title_clash(
+    resources: &BTreeMap<String, Resources>,
+    lock: &DeployLock,
+    environment: &str,
+    creates: &[(&str, &str)],
+    live_kv_ids: Option<&BTreeSet<String>>,
+) -> Option<String> {
+    if creates.is_empty() {
+        return None;
+    }
+    let is_live = |id: &str| live_kv_ids.is_none_or(|live| live.contains(id));
     let declared = || {
         resources.iter().flat_map(|(worker, declared)| {
             kv_bindings(declared).map(move |binding| (worker.as_str(), binding))
         })
     };
-    let creates: Vec<(&str, &str)> = declared()
-        .filter(|(worker, binding)| {
-            recorded_kv_binding(lock, worker, binding, environment).is_none()
-        })
-        .collect();
-    if creates.is_empty() {
-        return None;
-    }
     for (other, recorded) in &lock.environments {
         if other == environment {
             continue;
@@ -1216,8 +1249,9 @@ pub(crate) fn kv_title_collision(
         // ledger records first, then what this source declares.
         let held = recorded
             .kv
-            .keys()
-            .map(|worker| {
+            .iter()
+            .filter(|(_, kv)| is_live(&kv.id))
+            .map(|(worker, _)| {
                 (
                     worker.as_str(),
                     bynk_emit::emitter::wrangler::KV_BINDING_NAME,
@@ -1229,8 +1263,9 @@ pub(crate) fn kv_title_collision(
                     .iter()
                     .flat_map(|(worker, instances)| {
                         instances
-                            .keys()
-                            .map(move |binding| (worker.as_str(), binding.as_str()))
+                            .iter()
+                            .filter(|(_, kv)| is_live(&kv.id))
+                            .map(move |(binding, _)| (worker.as_str(), binding.as_str()))
                     }),
             );
         let mut taken: BTreeMap<String, (&str, &str)> = BTreeMap::new();
@@ -1239,7 +1274,7 @@ pub(crate) fn kv_title_collision(
                 .entry(kv_title(worker, binding, other))
                 .or_insert((worker, binding));
         }
-        for &(worker, binding) in &creates {
+        for &(worker, binding) in creates {
             let title = kv_title(worker, binding, environment);
             if let Some(&(other_worker, other_binding)) = taken.get(&title) {
                 return Some(format!(
