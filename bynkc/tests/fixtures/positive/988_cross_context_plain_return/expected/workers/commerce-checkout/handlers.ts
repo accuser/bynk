@@ -7,6 +7,8 @@ import { Receipt } from "../commerce-payment/handlers.js";
 
 import type * as commerce_payment from "../commerce-payment/handlers.js";
 
+export { type Receipt };
+
 export const pay = {
   async call(id: string, deps: { env: { COMMERCE_PAYMENT: __ServiceBinding } }): globalThis.Promise<Receipt> {
     return __callService(deps.env.COMMERCE_PAYMENT, "authorise", id as __JsonValue, __deserialise_Receipt, "commerce.checkout", "da78d5301d8df299", deps.env, "commerce.payment");
