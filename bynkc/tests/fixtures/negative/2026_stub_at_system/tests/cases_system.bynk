@@ -1,0 +1,10 @@
+-- #2026: a suite with no tier whose cases are all `as system` refuses its
+-- suite-scoped `stub` too.
+suite r {
+	stub Secrets.get(_) returns Some("suite")
+
+	case "every case steps up to system" as system {
+		let m <- r.mode() by Caller("other")
+		expect m == "unset"
+	}
+}
