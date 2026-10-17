@@ -7,6 +7,8 @@ import { Item } from "../ev-store/handlers.js";
 
 import type * as ev_store from "../ev-store/handlers.js";
 
+export { type Item };
+
 export const bound = {
   async call(deps: { env: { EV_STORE: __ServiceBinding } }): globalThis.Promise<number> {
     const i = { code: (1 as ev_store.Code), name: "a" };
