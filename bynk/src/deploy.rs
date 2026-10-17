@@ -656,6 +656,13 @@ mod tests {
                 "commerce-orders",
                 &caller,
             ));
+            section(&mut out, "foreign caller's binding refused");
+            out.push_str(&foreign_binding_refusal(
+                environment,
+                "commerce-orders",
+                &caller,
+                "the supplied value is empty — every call from it would be refused",
+            ));
             section(&mut out, "foreign caller hand-off");
             out.push_str(&foreign_hand_off(
                 environment,

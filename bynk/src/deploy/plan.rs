@@ -604,9 +604,9 @@ pub fn run(
                     foreign_keys.insert((worker.clone(), caller.binding.clone()), decision);
                 }
                 Err(e) => {
-                    eprintln!(
-                        "bynk: `{}` (the foreign caller `{}` of `{worker}`): {e}",
-                        caller.binding, caller.actor
+                    eprint!(
+                        "{}",
+                        foreign_binding_refusal(&opts.environment, worker, caller, &e)
                     );
                     return ExitCode::FAILURE;
                 }
@@ -906,6 +906,23 @@ pub(crate) fn unrecorded_deploy_failure(
 ) -> String {
     format!(
         "bynk: deployed `{}` but could not record it in {lock_path}: {error}\n",
+        deployed_worker_name(environment, worker)
+    )
+}
+
+/// I3 (#1971): the run could not decide `caller`'s binding on `worker`
+/// (`reason`, from `decide_foreign_key`). The Worker by its
+/// [`deployed_worker_name`] (#2047).
+pub(crate) fn foreign_binding_refusal(
+    environment: &str,
+    worker: &str,
+    caller: &ForeignCaller,
+    reason: &str,
+) -> String {
+    format!(
+        "bynk: `{}` (the foreign caller `{}` of `{}`): {reason}\n",
+        caller.binding,
+        caller.actor,
         deployed_worker_name(environment, worker)
     )
 }

@@ -17,6 +17,8 @@ bynk: deploying `commerce-orders` (2/2)…
 bynk: deployed `commerce-orders` but could not record it in bynk.deploy.lock: permission denied
 # foreign caller's secret may be set, environment default
 bynk: `commerce-orders` may already hold the LEDGER_CALL_KEY minted for its foreign caller `Ledger`. If `wrangler secret list --name commerce-orders` shows it, hand this off; if not, the next deploy mints another.
+# foreign caller's binding refused, environment default
+bynk: `LEDGER_CALL_KEY` (the foreign caller `Ledger` of `commerce-orders`): the supplied value is empty — every call from it would be refused
 # foreign caller hand-off, environment default
 bynk: minted LEDGER_CALL_KEY for `Ledger`, a foreign caller of `commerce.orders`. Its operator sets it on their Worker:
 
@@ -57,6 +59,8 @@ bynk: deploying `commerce-orders-staging` (2/2)…
 bynk: deployed `commerce-orders-staging` but could not record it in bynk.deploy.lock: permission denied
 # foreign caller's secret may be set, environment staging
 bynk: `commerce-orders-staging` may already hold the LEDGER_CALL_KEY minted for its foreign caller `Ledger`. If `wrangler secret list --name commerce-orders-staging` shows it, hand this off; if not, the next deploy mints another.
+# foreign caller's binding refused, environment staging
+bynk: `LEDGER_CALL_KEY` (the foreign caller `Ledger` of `commerce-orders-staging`): the supplied value is empty — every call from it would be refused
 # foreign caller hand-off, environment staging
 bynk: minted LEDGER_CALL_KEY for `Ledger`, a foreign caller of `commerce.orders`. Its operator sets it on their Worker:
 
