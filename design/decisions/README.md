@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0489](0489-test-principal-refinement-and-sum.md) | **A test acts as a refinement actor with its base identity, and as any member of an actor sum** (v0.345) — Refinements resolve through their base's identity and sign a witness of their predicate at `system`; a sum `by` takes any member and builds `deps.who` | Accepted (v0.345) |
 | [0488](0488-bare-kv-title-env-qualified.md) | **The bare KV namespace's title is environment-qualified** (v0.344.1) — Cloudflare refuses a duplicate KV title on one account, so the bare `Kv` namespace takes `-<env>` outside the default environment | Accepted (v0.344.1) |
 | [0487](0487-no-send-in-agent-handler.md) | **An agent handler cannot `~>` send; a store operation is refused with its own code** (v0.342) — `~>` needs an execution context to keep the effect alive, and an agent handler has none, so the checker refuses it there (`bynk.send.in_agent_handler`), and refuses a sent store operation as `bynk.send.store_op` | Accepted (v0.342) |
 | [0486](0486-foreign-caller-actors.md) | **Foreign callers are declared actors with their own `call` scheme** (v0.341) — A non-Bynk caller is a `Foreign` actor the callee declares; it signs as the actor under a deploy-minted secret, resolves to that actor and never to `Caller`, and `bynk deploy` prints the hand-off | Accepted (v0.341) |

@@ -1,11 +1,6 @@
----
-level: minor
-changelog: In a test case, a route guarded by a refinement actor takes `by Admin("root")` with the base actor's identity, and a `system` case signs the claims the refinement checks; a route guarded by an actor sum (`by who: User | Visitor`) takes any member, `by Visitor` or `by User("ada")`, and runs with that member's arm
----
+# 0489 — A test acts as a refinement actor with its base identity, and as any member of an actor sum
 
-## ADR: test-principal-refinement-and-sum
-title: A test acts as a refinement actor with its base identity, and as any member of an actor sum
-summary: Refinements resolve through their base's identity and sign a witness of their predicate at `system`; a sum `by` takes any member and builds `deps.who`
+- **Status:** Accepted (v0.345)
 
 **Context.** ADR 0205 checks a case's call-site `by <Actor>(<identity>)`
 against the addressed handler. It resolved an actor's identity from its own
