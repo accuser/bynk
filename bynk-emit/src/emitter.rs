@@ -3927,6 +3927,10 @@ pub(crate) struct ModuleCtx<'a> {
     /// 1`, exactly every event's behaviour before this map existed, not a
     /// hard failure the way a missing `runtime_use` would be.
     event_schema_versions: HashMap<String, i64>,
+    /// #2058: the namespace each consumed context's type is named under in
+    /// this module (mirrors [`crate::emitter::emit::consumed_type_ns`]).
+    /// Default-empty: a miss names the type bare, as before.
+    consumed_type_ns: HashMap<String, String>,
     /// #934: true when the unit being emitted is the reserved first-party
     /// `bynk` adapter itself. `bynk` is a reserved namespace, so a capability
     /// literally named `Idempotency` declared *in this unit* is unambiguously
@@ -3952,6 +3956,7 @@ impl<'a> ModuleCtx<'a> {
             target: BuildTarget::Bundle,
             agent_method_givens: HashMap::new(),
             event_schema_versions: HashMap::new(),
+            consumed_type_ns: HashMap::new(),
             in_bynk_unit: false,
             agent_called_contexts: Vec::new(),
         }
@@ -4886,6 +4891,15 @@ impl<'a> LowerCtx<'a> {
     /// ever names an owned event, checker-enforced, so a miss here can only
     /// mean a broken build already reported elsewhere, and this degrades to
     /// today's pre-existing output rather than panicking).
+    /// #2058: `name` as this module spells it in a type position: qualified
+    /// under its context's namespace when a consumed context declares it.
+    pub(crate) fn consumed_type_name(&self, name: &str) -> String {
+        match self.module.consumed_type_ns.get(name) {
+            Some(ns) => [ns.as_str(), ".", name].concat(),
+            None => name.to_string(),
+        }
+    }
+
     pub(crate) fn event_schema_version(&self, name: &str) -> i64 {
         self.module
             .event_schema_versions

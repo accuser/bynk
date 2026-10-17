@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "provides": {
+    "bound": "ca650fc30d20ca42",
+    "direct": "76f6dbd04a55794f"
+  },
+  "expects": {
+    "ev.store": {
+      "put": "8e24320cd24578cb"
+    }
+  }
+}

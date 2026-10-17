@@ -1,0 +1,18 @@
+context ev.client
+
+consumes ev.store
+
+-- #2058: the caller never names `Code`, so a literal admitted to it is cast
+-- to `ev_store.Code`, under the namespace the module already imports.
+service bound {
+  on call() -> Effect[Int] {
+    let i = Item { code: 1, name: "a" }
+    ev.store.put(i)
+  }
+}
+
+service direct {
+  on call() -> Effect[Int] {
+    ev.store.put(Item { code: 2, name: "b" })
+  }
+}
