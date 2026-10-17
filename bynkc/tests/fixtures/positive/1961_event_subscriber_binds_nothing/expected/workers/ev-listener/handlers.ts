@@ -7,6 +7,8 @@ import { type Pinged } from "../ev-emitter/handlers.js";
 
 import type * as ev_emitter from "../ev-emitter/handlers.js";
 
+export { type Pinged };
+
 export interface TallyState {
   readonly seen: number;
 }

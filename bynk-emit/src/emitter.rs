@@ -676,6 +676,7 @@ pub(crate) fn emit_project(
     // rebranded type nominally distinct (v0.4 §6.2).
     if ctx.unit_kind == UnitKind::Context {
         stmts.extend(emit_context_rebrands(&references, commons, ctx));
+        stmts.extend(emit_consumed_type_reexports(&references, ctx));
     }
     stmts.append(&mut body);
     // #1476: `ctx.runtime_use` is fully populated now — every producer above has
@@ -1472,8 +1473,41 @@ fn emit_boundary_helpers(
                 emitted_names.extend(names.iter().cloned());
             }
             let mut emitted_insts: HashSet<String> = insts.iter().map(|i| i.ts_name()).collect();
+            // #2036: a consumed context's type on this context's *own* boundary
+            // (`on call(b: Batch)`) needs its codecs here even when no call to
+            // that context reaches it: the entry decodes the argument through
+            // `handlers.__deserialise_Batch`. Neither path above emits it (it is
+            // not declared here, and no commons owns it), so it roots the
+            // consumed context's codec closure alongside the called services.
+            let mut own_roots: HashMap<String, Vec<TypeRef>> = HashMap::new();
+            for n in &boundary_types_all {
+                if locally_declared.contains(n)
+                    || ctx.imported_from_kind.get(n) != Some(&UnitKind::Context)
+                {
+                    continue;
+                }
+                let Some(owner) = ctx.imported_from.get(n) else {
+                    continue;
+                };
+                if ctx.consumed_adapters.contains(owner) {
+                    continue;
+                }
+                own_roots
+                    .entry(owner.clone())
+                    .or_default()
+                    .push(TypeRef::Named(Ident {
+                        name: n.clone(),
+                        span: Default::default(),
+                    }));
+            }
             let (consumed_stmts, consumed_names, consumed_insts, foreign_names) =
-                emit_consumed_context_helpers(program, ctx, &mut emitted_names, &mut emitted_insts);
+                emit_consumed_context_helpers(
+                    program,
+                    ctx,
+                    &own_roots,
+                    &mut emitted_names,
+                    &mut emitted_insts,
+                );
             stmts.extend(consumed_stmts);
             // #1823: codecs of commons types a call to another context needs,
             // beyond those this context's own boundary already imports.
@@ -1711,6 +1745,7 @@ fn unbranded_commons_qual(commons: &TypedCommons, ctx: &EmitProjectCtx) -> HashM
 fn emit_consumed_context_helpers(
     program: &CheckedProgram,
     ctx: &EmitProjectCtx,
+    own_roots: &HashMap<String, Vec<bynk_syntax::ast::TypeRef>>,
     emitted_names: &mut HashSet<String>,
     emitted_insts: &mut HashSet<String>,
 ) -> (Vec<bynk_ts::TsStmt>, Vec<String>, Vec<String>, Vec<String>) {
@@ -1805,16 +1840,16 @@ fn emit_consumed_context_helpers(
 
     let mut consumed_keys: HashSet<&String> = info.consumed_services.keys().collect();
     consumed_keys.extend(consumed_event_roots.keys());
+    consumed_keys.extend(own_roots.keys());
     let mut consumed_keys: Vec<&String> = consumed_keys.into_iter().collect();
     consumed_keys.sort();
     for c in consumed_keys {
         let svcs = info.consumed_services.get(c).unwrap_or(&empty_svcs);
         let event_roots = consumed_event_roots.get(c).unwrap_or(&empty_event_roots);
-        if svcs.is_empty() && event_roots.is_empty() {
-            continue;
-        }
+        // #2036: `c`'s types on this context's own boundary.
+        let own = own_roots.get(c).unwrap_or(&empty_event_roots);
         let called_here = called.get(c).unwrap_or(&empty_called);
-        if called_here.is_empty() && event_roots.is_empty() {
+        if (svcs.is_empty() || called_here.is_empty()) && event_roots.is_empty() && own.is_empty() {
             continue;
         }
         let Some(types_table) = info.consumed_types.get(c) else {
@@ -1852,6 +1887,7 @@ fn emit_consumed_context_helpers(
             svcs.keys().filter(|s| called_here.contains(*s)).collect();
         svc_names.sort();
         let mut roots: Vec<bynk_syntax::ast::TypeRef> = event_roots.clone();
+        roots.extend(own.iter().cloned());
         for sn in svc_names {
             let svc = &svcs[sn];
             for (_, t) in &svc.params {
@@ -2123,6 +2159,42 @@ fn called_consumed_services(
 /// #1478: real-node-internally already — returns its real declarations
 /// (a rebrand type alias, and — for a refined/opaque base — a forwarding
 /// const, per name) instead of writing into `out: &mut String`.
+/// #2036: on `workers`, re-export as types the names this `handlers.ts`
+/// imports from a consumed context. `compose.ts` names every type in a
+/// wrapper's signature as `handlers.<Name>` (it imports no type names of its
+/// own), so a consumed `Batch` in a handler's parameters must be a member of
+/// `handlers` too, the way a `uses`d commons type is through its rebrand
+/// alias. Type-only (`export { type Batch }`): `compose.ts` uses the name in
+/// type position only, a consumed refined alias has no value to re-export
+/// (TS1205 under `isolatedModules`), and a value re-export would deepen the
+/// caller's dependency on the callee's module. Only names the module imports
+/// are re-exported, so each is bound here.
+fn emit_consumed_type_reexports(
+    refs: &ExternalReferences,
+    ctx: &EmitProjectCtx,
+) -> Vec<bynk_ts::TsStmt> {
+    if ctx.target != BuildTarget::Workers {
+        return Vec::new();
+    }
+    let mut names: Vec<String> = refs
+        .by_commons
+        .iter()
+        .filter(|(unit, _)| !ctx.consumed_adapters.contains(unit.as_str()))
+        .flat_map(|(_, set)| set.iter())
+        .filter(|n| ctx.imported_from_kind.get(n.as_str()) == Some(&UnitKind::Context))
+        .map(|n| format!("type {}", ts_ident(n)))
+        .collect();
+    if names.is_empty() {
+        return Vec::new();
+    }
+    names.sort();
+    names.dedup();
+    vec![bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::ExportNames { names },
+        None,
+    )]
+}
+
 fn emit_context_rebrands(
     refs: &ExternalReferences,
     commons: &TypedCommons,

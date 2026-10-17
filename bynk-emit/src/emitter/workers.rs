@@ -1008,7 +1008,8 @@ fn emit_call_wrapper(
     // types with this same name in its own scope — so `handlers.<Name>` resolves
     // by construction, for a context-declared type and for a `uses`-imported
     // commons type alike (the latter is re-exported rebranded, and is exactly
-    // the case a `table.types`-derived scope would miss).
+    // the case a `table.types`-derived scope would miss), and for a consumed
+    // context's type (#2036: re-exported as a type, `export { type Batch }`).
     let scope: HashSet<String> = h
         .params
         .iter()
