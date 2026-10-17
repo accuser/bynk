@@ -5,7 +5,6 @@
 //! is covered by `compile_once_warnings_behaviour.rs`.
 #![cfg(unix)]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -18,15 +17,30 @@ fn fake_bynkc(name: &str, version: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("bynkc");
-    std::fs::write(
+    write_stand_in(
         &path,
-        format!(
+        &format!(
             "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"bynkc {version}\"; exit 0; fi\necho \"FAKE BYNKC RAN: $*\"\n"
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     path
+}
+
+/// Write an executable stand-in at `path` through a child `sh`, never by
+/// this process (#2064). A test thread that forks while this process holds
+/// the script open for writing carries the descriptor into its child until
+/// exec, and running the script in that window fails with ETXTBSY ("Text file
+/// busy").
+fn write_stand_in(path: &std::path::Path, script: &str) {
+    let wrote = Command::new("sh")
+        .arg("-c")
+        .arg("printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"")
+        .arg("sh")
+        .arg(script)
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(wrote.success(), "the stand-in is written");
 }
 
 fn bynk_test(bynkc: &PathBuf, extra: &[&str], allow_env: bool) -> Output {

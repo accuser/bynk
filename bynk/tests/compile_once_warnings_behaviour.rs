@@ -117,8 +117,6 @@ fn compile_once_surfaces_non_failing_warnings() {
 #[test]
 #[cfg(unix)]
 fn compile_once_refuses_a_major_skewed_override_without_running_it() {
-    use std::os::unix::fs::PermissionsExt;
-
     if std::env::var_os(bynk::compiler::ALLOW_SKEW_ENV).is_some_and(|v| !v.is_empty()) {
         eprintln!("skipped: BYNK_ALLOW_SKEW is set in this environment");
         return;
@@ -128,8 +126,18 @@ fn compile_once_refuses_a_major_skewed_override_without_running_it() {
     std::fs::create_dir_all(&dir).unwrap();
     let ran = dir.join("ran");
     let bynkc = dir.join("bynkc");
-    std::fs::write(&bynkc, format!("#!/bin/sh\ntouch '{}'\n", ran.display())).unwrap();
-    std::fs::set_permissions(&bynkc, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Written through a child `sh`, never by this process (#2064): a test
+    // thread forking while this process held it open for writing would make
+    // a run of it fail with ETXTBSY ("Text file busy").
+    let wrote = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"")
+        .arg("sh")
+        .arg(format!("#!/bin/sh\ntouch '{}'\n", ran.display()))
+        .arg(&bynkc)
+        .status()
+        .unwrap();
+    assert!(wrote.success(), "the stand-in is written");
     let compiler = Compiler {
         path: Some(bynkc),
         origin: Some(Origin::Override),
