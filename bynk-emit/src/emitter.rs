@@ -4201,6 +4201,14 @@ pub(crate) struct LowerCtx<'a> {
     /// by walking the stack innermost-out and falls back to the natural
     /// `ts_ident` name when no frame renamed it.
     pub shadow_scopes: Vec<HashMap<String, String>>,
+    /// #2024: identifiers the generated scaffold around this body already
+    /// binds in the body's own JS scope — a test runner's `deps`, `__obs`, and
+    /// the target's destructured services, agents, functions and assets. A
+    /// `let` whose natural name is one of these gets a fresh name from
+    /// [`Self::bind_local_name`], as a re-`let` does: the scaffold binding is
+    /// not a Bynk local (so [`Self::is_local`] ignores it), but a second
+    /// `const` of its name in that scope is `TS2451` under `tsc`.
+    pub harness_bound: HashSet<String>,
     /// When an `is` receiver is not a simple, repeatable lvalue (e.g. a call
     /// like `parse(x) is Ok(n)`), it is evaluated once into a temp; the temp
     /// name is cached here keyed by the receiver expression's span so the
@@ -4311,6 +4319,7 @@ impl<'a> LowerCtx<'a> {
             // at `__r0`.
             next_tmp: 0,
             shadow_scopes: vec![HashMap::new()],
+            harness_bound: HashSet::new(),
             is_receiver_temps: HashMap::new(),
             is_temp_hoist: None,
             unnarrowed_is_tests: HashSet::new(),
@@ -4896,7 +4905,9 @@ impl<'a> LowerCtx<'a> {
             return self.fresh();
         }
         let natural = ts_ident(name);
-        let js_name = if self.shadow_scopes.iter().any(|f| f.contains_key(name)) {
+        let js_name = if self.shadow_scopes.iter().any(|f| f.contains_key(name))
+            || self.harness_bound.contains(&natural)
+        {
             self.fresh()
         } else {
             natural

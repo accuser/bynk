@@ -76,6 +76,8 @@ pub fn lower_test_case_body(
     call_sum_services: HashSet<String>,
     test_agents: HashSet<String>,
     settle_sends: bool,
+    // #2024: the names the runner scaffold binds in the body's scope.
+    harness_bound: HashSet<String>,
     source: &str,
     rel_path: &str,
     runtime_use: &RuntimeUse,
@@ -104,6 +106,7 @@ pub fn lower_test_case_body(
         )
         .with_source_map(Some(&smb));
         cx.local_agents = test_agents;
+        cx.harness_bound = harness_bound;
         for stmt in &block.statements {
             emit_statement(&mut out, stmt, &mut cx, 0);
         }
@@ -137,6 +140,8 @@ pub fn lower_integration_case_body(
     system_http_routes: std::collections::HashSet<(String, String, String)>,
     system_http_route_body: HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>,
     system_http_type_ns: String,
+    // #2024: the names the case scaffold binds in the body's scope.
+    harness_bound: HashSet<String>,
     source: &str,
     rel_path: &str,
     runtime_use: &RuntimeUse,
@@ -163,6 +168,7 @@ pub fn lower_integration_case_body(
             },
         )
         .with_source_map(Some(&smb));
+        cx.harness_bound = harness_bound;
         for stmt in &block.statements {
             emit_statement(&mut out, stmt, &mut cx, 0);
         }
@@ -2497,8 +2503,10 @@ fn lower_method_call(
             all.join(", ")
         ));
     }
+    // #2024: a case `let` may shadow a service of the target; the local wins.
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.is_test_service(&id.name)
+        && !cx.is_local(&id.name)
     {
         // #1994: a target whose handlers send with `~>` settles each addressed
         // call — awaits the promises the handler handed `deps.__exec.waitUntil`

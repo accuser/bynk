@@ -1,0 +1,28 @@
+---
+#2024: a test case's `let` may take the name of a service, an agent or an
+asset of the unit under test, which the generated runner already binds.
+---
+context r.counter
+
+asset style = "assets/board.css"
+
+agent Counter {
+  key id: String
+
+  store count: Cell[Int]
+
+  on call bump() -> Effect[Int] {
+    let _ <- count.update((n) => n + 1)
+    count
+  }
+}
+
+service level {
+  on call(id: String) -> Effect[Int] { Counter(id).bump() }
+}
+
+service api from http {
+  on GET("/") () -> Effect[HttpResult[String]] by Visitor {
+    Ok("<link href=\"\(style.url)\">")
+  }
+}
