@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.349.3** | On `workers`, a cross-context call argument of a named type is cast to the callee's type, so a caller's own commons values built into it, such as `Map.empty()` in a field of a consumed record, pass `tsc` |
 | **v0.349.2** | A test case's `Json.encode`/`Json.decode[T]` on a consumed context's type now runs, its generated codecs naming the type through that context, instead of failing `tsc` |
 | **v0.349.1** | A test case that names a consumed context's nullary variant bare (`Domestic` for `Region.Domestic`) now runs, as the same name does in a handler, instead of failing `tsc` |
 | **v0.349.0** | A test case delivers an event to a `from Events(E)` service with `svc.event(e)` or `svc.event(e, env)`, honouring its pattern filter and `via schema(N)` guard |
