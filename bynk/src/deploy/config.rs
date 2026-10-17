@@ -488,6 +488,18 @@ pub(crate) fn deployed_worker_name(environment: &str, worker: &str) -> String {
     env_qualify(environment, worker)
 }
 
+/// The `bynk deploy` command a message suggests, for the environment the run
+/// is deploying (#2047): `bynk deploy` for `default`, `bynk deploy --env
+/// <env>` otherwise. A remedy that dropped `--env` would deploy the default
+/// environment, not the one that needs it.
+pub(crate) fn deploy_command(environment: &str) -> String {
+    if environment == "default" {
+        "bynk deploy".to_string()
+    } else {
+        format!("bynk deploy --env {environment}")
+    }
+}
+
 /// The account-facing title of one of `worker`'s KV namespaces under
 /// `environment` (S4b, #1967), always environment-qualified ([`env_qualify`]).
 /// The bare `KV`'s is the Worker's name: `shop-cart` in the default

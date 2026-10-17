@@ -34,8 +34,10 @@ impl DeployFailure {
 }
 
 /// Map a finished `wrangler deploy` to an outcome. Pure, so the propagation
-/// rule is tested without spawning wrangler.
-fn wrangler_outcome(
+/// rule is tested without spawning wrangler. A failure names the Worker the
+/// push was creating, its [`deployed_worker_name`] (#2047).
+pub(crate) fn wrangler_outcome(
+    environment: &str,
     worker: &str,
     status: &std::process::ExitStatus,
 ) -> Result<Pushed, DeployFailure> {
@@ -49,7 +51,10 @@ fn wrangler_outcome(
     match exit_status_byte(status) {
         0 => Ok(Pushed::Interrupted),
         code => Err(DeployFailure {
-            message: format!("wrangler deploy failed for `{worker}` (exit {code})"),
+            message: format!(
+                "wrangler deploy failed for `{}` (exit {code})",
+                deployed_worker_name(environment, worker)
+            ),
             code,
         }),
     }
@@ -71,6 +76,9 @@ pub(crate) fn deploy_one(
     workers_dir: &Path,
     worker: &str,
     declared: &Resources,
+    // #2059: the whole project, for the cross-environment title check a
+    // create re-runs ([`cross_environment_title_clash`]).
+    project: &BTreeMap<String, Resources>,
     lock: &mut DeployLock,
     lock_path: &Path,
     attempted_queues: &mut BTreeSet<String>,
@@ -96,6 +104,19 @@ pub(crate) fn deploy_one(
         let id = if trust_recorded {
             recorded.expect("trust_recorded is only true when recorded is Some")
         } else {
+            // #2059: the plan-time check covered only namespaces with no
+            // recorded id. One whose recorded id has gone from the account is
+            // created again here, under its current title, so compare that
+            // title across environments now, before `kv namespace create`.
+            if let Some(message) = cross_environment_title_clash(
+                project,
+                lock,
+                environment,
+                &[(worker, binding)],
+                live_kv_ids,
+            ) {
+                return Err(DeployFailure::driver(message));
+            }
             let what = kv_namespace_noun(worker, binding);
             let id = create_kv(
                 provenance,
@@ -249,9 +270,10 @@ fn push(
         command.arg("--env").arg(environment);
     }
     match command.status() {
-        Ok(status) => wrangler_outcome(worker, &status),
+        Ok(status) => wrangler_outcome(environment, worker, &status),
         Err(e) => Err(DeployFailure::driver(format!(
-            "could not run wrangler deploy for `{worker}`: {e}"
+            "could not run wrangler deploy for `{}`: {e}",
+            deployed_worker_name(environment, worker)
         ))),
     }
 }
@@ -744,7 +766,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_clean_push_is_ok() {
-        assert_eq!(wrangler_outcome("api", &status(0)), Ok(Pushed::Ok));
+        assert_eq!(
+            wrangler_outcome("default", "api", &status(0)),
+            Ok(Pushed::Ok)
+        );
     }
 
     #[cfg(unix)]
@@ -753,7 +778,7 @@ mod tests {
         // Slice 0 exited with `exit_status_byte(&status)`; the multi-context
         // loop must not lose that. A CI job reads the code, so a wrangler exit
         // 2 must not surface as a generic 1.
-        let Err(failure) = wrangler_outcome("api", &status(2 << 8)) else {
+        let Err(failure) = wrangler_outcome("default", "api", &status(2 << 8)) else {
             panic!("a non-zero wrangler exit is a failure");
         };
         assert_eq!(failure.code, 2, "wrangler's own code reaches the caller");
@@ -764,6 +789,29 @@ mod tests {
         );
     }
 
+    /// #2047: a failed push names the Worker it was creating, `-staging`
+    /// under `--env staging`.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_push_names_the_deployed_worker() {
+        for (environment, expected) in [
+            (
+                "default",
+                "wrangler deploy failed for `commerce-orders` (exit 2)",
+            ),
+            (
+                "staging",
+                "wrangler deploy failed for `commerce-orders-staging` (exit 2)",
+            ),
+        ] {
+            let Err(failure) = wrangler_outcome(environment, "commerce-orders", &status(2 << 8))
+            else {
+                panic!("a non-zero wrangler exit is a failure");
+            };
+            assert_eq!(failure.message, expected);
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_shared_ctrl_c_is_a_clean_stop_not_a_failure() {
@@ -771,7 +819,10 @@ mod tests {
         // `exit_status_byte` maps it to 0. Reporting it as a failure would print
         // "wrangler deploy failed … (exit 0)" — an error whose own code says
         // success — and slice 0 exited 0 here.
-        assert_eq!(wrangler_outcome("api", &status(2)), Ok(Pushed::Interrupted));
+        assert_eq!(
+            wrangler_outcome("default", "api", &status(2)),
+            Ok(Pushed::Interrupted)
+        );
     }
 
     #[cfg(unix)]
@@ -779,11 +830,11 @@ mod tests {
     fn a_real_signal_death_is_a_failure_at_128_plus_the_signal() {
         // Not every signal is a clean stop: a SIGSEGV or the OOM killer's
         // SIGKILL is a genuine failure, and `exit_status_byte` says `128 + sig`.
-        let Err(segv) = wrangler_outcome("api", &status(11)) else {
+        let Err(segv) = wrangler_outcome("default", "api", &status(11)) else {
             panic!("a SIGSEGV is a failure, not a clean stop");
         };
         assert_eq!(segv.code, 139);
-        let Err(kill) = wrangler_outcome("api", &status(9)) else {
+        let Err(kill) = wrangler_outcome("default", "api", &status(9)) else {
             panic!("a SIGKILL is a failure, not a clean stop");
         };
         assert_eq!(kill.code, 137);
@@ -971,6 +1022,22 @@ mod tests {
     /// ledger it left, for one Worker `api` that binds only the bare `KV`.
     #[cfg(unix)]
     fn provision_bare_kv(environment: &str, lock: DeployLock) -> (Vec<String>, DeployLock) {
+        let (calls, lock, pushed) =
+            provision_api(environment, Resources::default().needs_kv(), lock, None);
+        assert_eq!(pushed, Ok(Pushed::Ok));
+        (calls, lock)
+    }
+
+    /// `deploy_one` for Worker `api` declaring `declared` (the whole project),
+    /// with the account's live KV ids `live_kv_ids`: the `wrangler`
+    /// invocations, the ledger it left, and its outcome.
+    #[cfg(unix)]
+    fn provision_api(
+        environment: &str,
+        declared: Resources,
+        lock: DeployLock,
+        live_kv_ids: Option<BTreeSet<String>>,
+    ) -> (Vec<String>, DeployLock, Result<Pushed, DeployFailure>) {
         use std::os::unix::fs::PermissionsExt;
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -982,11 +1049,14 @@ mod tests {
         ));
         let workers_dir = root.join("workers");
         std::fs::create_dir_all(workers_dir.join("api")).unwrap();
-        std::fs::write(
-            workers_dir.join("api/wrangler.toml"),
-            "name = \"api\"\nmain = \"index.ts\"\n\n[[kv_namespaces]]\nbinding = \"KV\"\nid = \"<KV_NAMESPACE_ID>\" # set at deploy time\n",
-        )
-        .unwrap();
+        let mut config = String::from("name = \"api\"\nmain = \"index.ts\"\n");
+        for binding in kv_bindings(&declared) {
+            config.push_str(&format!(
+                "\n[[kv_namespaces]]\nbinding = \"{binding}\"\nid = \"{}\" # set at deploy time\n",
+                bynk_emit::emitter::wrangler::kv_id_placeholder(binding)
+            ));
+        }
+        std::fs::write(workers_dir.join("api/wrangler.toml"), config).unwrap();
         let log = root.join("calls.log");
         let fake = root.join("wrangler");
         std::fs::write(
@@ -1006,12 +1076,14 @@ mod tests {
         let foreign_secrets = BTreeSet::new();
         let listed = BTreeMap::from([("api".to_string(), Some(BTreeSet::new()))]);
         let mut resolved = BTreeMap::new();
+        let project = BTreeMap::from([("api".to_string(), declared)]);
         let pushed = deploy_one(
             &Provenance::Path(fake),
             &root,
             &workers_dir,
             "api",
-            &Resources::default().needs_kv(),
+            &project["api"],
+            &project,
             &mut lock,
             &root.join(LOCK_FILE),
             &mut BTreeSet::new(),
@@ -1026,16 +1098,144 @@ mod tests {
             },
             &[],
             environment,
-            None,
+            live_kv_ids.as_ref(),
         );
-        assert_eq!(pushed, Ok(Pushed::Ok));
         let calls = std::fs::read_to_string(&log)
             .unwrap_or_default()
             .lines()
             .map(str::to_owned)
             .collect();
         let _ = std::fs::remove_dir_all(root);
-        (calls, lock)
+        (calls, lock, pushed)
+    }
+
+    // ---- #2059: a namespace created again re-runs the cross-environment
+    // title check ----
+    //
+    // Worker `api` with the bare `Kv` and `capability Staging`. The default
+    // environment records `api`'s `KV_STAGING`, titled `api-staging`, and
+    // staging records the bare `KV`, also `api-staging` under `--env staging`.
+    // The plan passes: staging's bare id is recorded, so nothing is created.
+
+    #[cfg(unix)]
+    fn api_with_staging_instance() -> (Resources, DeployLock) {
+        let declared = Resources::default()
+            .needs_kv()
+            .kv_instances(&["KV_STAGING"]);
+        let mut lock = DeployLock::default();
+        lock.record_kv("default", "api", "KV", "default-bare-id");
+        lock.record_kv("default", "api", "KV_STAGING", "default-staging-id");
+        lock.record_kv("staging", "api", "KV", "staging-bare-id");
+        (declared, lock)
+    }
+
+    /// Staging's bare id has gone from the account, so `deploy_one` would
+    /// create it again as `api-staging`, the title the default environment's
+    /// instance holds. Refused before any `kv namespace create` or push.
+    #[cfg(unix)]
+    #[test]
+    fn a_namespace_created_again_under_a_title_another_environment_holds_is_refused() {
+        let (declared, lock) = api_with_staging_instance();
+        let plan_time = BTreeMap::from([("api".to_string(), api_with_staging_instance().0)]);
+        assert_eq!(
+            crate::deploy::plan::kv_title_collision(&plan_time, &lock, "staging"),
+            None,
+            "the plan cannot see it: the bare id is recorded"
+        );
+        let live = BTreeSet::from([
+            "default-bare-id".to_string(),
+            "default-staging-id".to_string(),
+        ]);
+        let (calls, lock, pushed) = provision_api("staging", declared, lock, Some(live));
+        let failure = pushed.expect_err("refused");
+        assert_eq!(
+            failure.message,
+            "KV namespace for `api` in `--env staging` and KV namespace `KV_STAGING` for `api` \
+             in the default environment would both be titled `api-staging` on the account, \
+             which holds one namespace per title; rename a capability or context so they differ"
+        );
+        assert!(calls.is_empty(), "nothing ran: {calls:?}");
+        assert_eq!(
+            recorded_kv_binding(&lock, "api", "KV", "staging"),
+            Some("staging-bare-id"),
+            "the ledger is untouched"
+        );
+    }
+
+    /// The same project with staging's bare id still live: nothing is created
+    /// for it, the instance's distinct `api-staging-staging` is created, and
+    /// the push goes ahead.
+    #[cfg(unix)]
+    #[test]
+    fn a_live_recorded_namespace_is_not_checked_again() {
+        let (declared, lock) = api_with_staging_instance();
+        let live = BTreeSet::from([
+            "default-bare-id".to_string(),
+            "default-staging-id".to_string(),
+            "staging-bare-id".to_string(),
+        ]);
+        let (calls, _, pushed) = provision_api("staging", declared, lock, Some(live));
+        assert_eq!(pushed, Ok(Pushed::Ok));
+        assert_eq!(
+            calls,
+            [
+                "kv namespace create api-staging-staging --json",
+                "deploy --env staging"
+            ]
+        );
+    }
+
+    /// At the deploy-time re-check, another environment's recorded namespace
+    /// whose id has gone, and which this source no longer declares, no longer
+    /// holds its title. Only there: the plan-time check runs before the live
+    /// ids are fetched, so it counts every recorded namespace.
+    ///
+    /// `api` no longer uses the bare `Kv`, but staging still records its bare
+    /// namespace (`api-staging`), an orphan. The default environment records
+    /// `capability Staging` (`api-staging`), and its id has gone too, so the
+    /// default deploy re-creates it under that title.
+    #[cfg(unix)]
+    #[test]
+    fn a_gone_namespace_in_another_environment_holds_no_title() {
+        let declared = || Resources::default().kv_instances(&["KV_STAGING"]);
+        let lock = || {
+            let mut lock = DeployLock::default();
+            lock.record_kv("default", "api", "KV_STAGING", "gone-default-id");
+            lock.record_kv("staging", "api", "KV", "orphan-id");
+            lock
+        };
+        // The plan passes: `KV_STAGING` is recorded, so it creates nothing.
+        let plan_time = BTreeMap::from([("api".to_string(), declared())]);
+        assert_eq!(
+            crate::deploy::plan::kv_title_collision(&plan_time, &lock(), "default"),
+            None
+        );
+
+        // The orphan is still on the account: the re-create is refused.
+        let (calls, _, pushed) = provision_api(
+            "default",
+            declared(),
+            lock(),
+            Some(BTreeSet::from(["orphan-id".to_string()])),
+        );
+        assert!(
+            pushed
+                .expect_err("refused")
+                .message
+                .contains("KV namespace for `api` in `--env staging`"),
+        );
+        assert!(calls.is_empty(), "nothing ran: {calls:?}");
+
+        // The orphan's id has gone too: it holds nothing, so the re-create
+        // goes ahead and is recorded.
+        let (calls, lock, pushed) =
+            provision_api("default", declared(), lock(), Some(BTreeSet::new()));
+        assert_eq!(pushed, Ok(Pushed::Ok));
+        assert_eq!(calls, ["kv namespace create api-staging --json", "deploy"]);
+        assert_eq!(
+            recorded_kv_binding(&lock, "api", "KV_STAGING", "default"),
+            Some("minted-id")
+        );
     }
 
     #[cfg(unix)]

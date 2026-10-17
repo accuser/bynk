@@ -28,7 +28,7 @@ export default {
 
       return new globalThis.Response("Not Found", { status: 404 });
     } catch (e) {
-      globalThis.console.error(`jobs ${__route} faulted`, e instanceof globalThis.Error ? (e.stack ?? globalThis.String(e)) : e);
+      globalThis.console.error(`jobs ${__route} faulted`, e instanceof globalThis.Error ? (e.stack || globalThis.String(e)) : e);
       return new globalThis.Response("Internal Server Error", { status: 500 });
     }
   },
@@ -44,7 +44,7 @@ export default {
             if (result.tag === "Ack") msg.ack();
             else { globalThis.console.error("queue high-priority retry", result.reason); msg.retry(); }
           } catch (e) {
-            globalThis.console.error("queue high-priority threw", e instanceof globalThis.Error ? (e.stack ?? globalThis.String(e)) : e); msg.retry();
+            globalThis.console.error("queue high-priority threw", e instanceof globalThis.Error ? (e.stack || globalThis.String(e)) : e); msg.retry();
           }
         }
         return;
@@ -58,7 +58,7 @@ export default {
             if (result.tag === "Ack") msg.ack();
             else { globalThis.console.error("queue low-priority retry", result.reason); msg.retry(); }
           } catch (e) {
-            globalThis.console.error("queue low-priority threw", e instanceof globalThis.Error ? (e.stack ?? globalThis.String(e)) : e); msg.retry();
+            globalThis.console.error("queue low-priority threw", e instanceof globalThis.Error ? (e.stack || globalThis.String(e)) : e); msg.retry();
           }
         }
         return;

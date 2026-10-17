@@ -495,12 +495,16 @@ order commerce-payment-staging → commerce-orders-staging
 The plan and the deploy take these names from the same place: the
 environment's section of the generated config states the Worker's `name`
 (`commerce-orders-staging`) rather than leaving it to Wrangler's default, which
-is the same name. The `--context` refusal for a binding target that has never
-been deployed, and the list of contexts a failed run did not reach, name
-Workers the same way.
+is the same name. Every message the deploy prints names Workers the same way,
+and a command it suggests repeats your `--env`: under `--env staging`, the
+`--context` refusal reads "`commerce-orders-staging` binds to
+`commerce-payment-staging`, which has never been deployed" and suggests
+`bynk deploy --env staging`.
 
 In `--format json`, `orphans.workers` and `orphans.queues` hold these
-account names too (`gone-staging`, `old-jobs-staging`). `orphans.kv` does not:
+account names too. With the [orphans](#orphans) example's removed `payment`
+context and its `old-jobs` queue, under `--env staging` they are
+`payment-staging` and `old-jobs-staging`. `orphans.kv` does not:
 each entry's `worker` is the Worker's ledger key, its bare name, alongside the
 `binding` (absent for the bare `Kv`), because that pair is what the ledger
 records the namespace under.
@@ -514,6 +518,33 @@ are unchanged (`shop-cart`, `shop-cart-sessions`). The title only matters when
 the namespace is created: one whose id the lock file already records for the
 environment is reused, whatever it was titled when it was made, and the plan
 shows the title Bynk would give it.
+
+Suffixes can still make two titles coincide: Worker `shop`'s bare namespace
+under `--env staging` and its `capability Staging` in the default environment
+are both `shop-staging`. `bynk deploy` refuses that before the plan,
+`--dry-run` included, naming both namespaces and both environments. It
+compares the namespaces this deploy would create against every environment
+`bynk.deploy.lock` knows, both the namespaces recorded there and the ones that
+environment's next deploy would create.
+
+A namespace can also be created again during the deploy itself: one whose
+recorded id has gone from the account, deleted outside Bynk, is re-created
+under its current title. The plan can't see that, because it runs before
+the deploy fetches the account's live ids. So `bynk deploy` makes the same
+comparison at that point and stops with the same message before running
+`wrangler kv namespace create`.
+
+At that deploy-time check, and only there, another environment's recorded
+namespace whose id has gone from the account no longer holds its title,
+unless your source still declares it in that environment. The plan-time
+check runs before the live ids are fetched, so it counts every namespace
+the lock file records. If the plan refuses a title held by an orphan you
+already deleted outside Bynk, clear that stale entry. Either run
+`bynk deploy --prune` in the orphan's own environment (for example
+`bynk deploy --env staging --prune`), which counts a namespace that is
+already gone as deleted and drops it from `bynk.deploy.lock` after that
+environment's deploy pushes cleanly. Or remove the entry from
+`bynk.deploy.lock` by hand.
 
 `--env` is the driver's own flag; putting `--env` or `--environment` after
 `--` as well is rejected rather than silently resolved one way or the other:

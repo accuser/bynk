@@ -177,12 +177,14 @@ fn set_fault_route(what: String) -> TsStmt {
 }
 
 /// #2053: what a fault handler logs for a caught `e`, the expression
-/// `e instanceof globalThis.Error ? (e.stack ?? globalThis.String(e)) : e`.
+/// `e instanceof globalThis.Error ? (e.stack || globalThis.String(e)) : e`.
 ///
 /// Logging the error as a value reaches `wrangler tail` as its string,
 /// `Error: <message>`, with no frames, so an uploaded source map had nothing
 /// to map. A V8 stack's own first line is that same string, so nothing is
-/// lost; a thrown non-`Error` is logged as itself, as before.
+/// lost; a thrown non-`Error` is logged as itself, as before. `||`, not `??`,
+/// so an empty `stack` (assignable on any `Error`) falls back to the string
+/// too, rather than logging nothing.
 pub(crate) fn fault_detail(e: &str) -> TsExpr {
     cond_expr(
         binary(
@@ -191,7 +193,7 @@ pub(crate) fn fault_detail(e: &str) -> TsExpr {
             ident("globalThis.Error"),
         ),
         paren(binary(
-            bynk_ts::TsBinaryOp::NullishCoalescing,
+            bynk_ts::TsBinaryOp::Or,
             member(ident(e), "stack"),
             call(ident("globalThis.String"), vec![ident(e)]),
         )),

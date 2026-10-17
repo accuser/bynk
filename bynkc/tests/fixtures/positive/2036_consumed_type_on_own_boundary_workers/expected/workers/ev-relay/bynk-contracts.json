@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "provides": {
+    "echo": "e4ac65945b1cb740",
+    "many": "354c78a41f3bf9d6",
+    "relay": "b7abab77f593fb65",
+    "shelve": "f68b2c374a38dd44"
+  },
+  "expects": {}
+}

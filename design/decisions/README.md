@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0490](0490-contract-mismatch-body-keeps-expected.md) | **The 409 ContractMismatch body keeps `expected`, because only an authenticated caller can reach it** (v0.346.4) — The signature check precedes the contract check on every internal path; the published 409 body is unchanged | Accepted (v0.346.4) |
 | [0489](0489-test-principal-refinement-and-sum.md) | **A test acts as a refinement actor with its base identity, and as any member of an actor sum** (v0.345) — Refinements resolve through their base's identity and sign a witness of their predicate at `system`; a sum `by` takes any member and builds `deps.who` | Accepted (v0.345) |
 | [0488](0488-bare-kv-title-env-qualified.md) | **The bare KV namespace's title is environment-qualified** (v0.344.1) — Cloudflare refuses a duplicate KV title on one account, so the bare `Kv` namespace takes `-<env>` outside the default environment | Accepted (v0.344.1) |
 | [0487](0487-no-send-in-agent-handler.md) | **An agent handler cannot `~>` send; a store operation is refused with its own code** (v0.342) — `~>` needs an execution context to keep the effect alive, and an agent handler has none, so the checker refuses it there (`bynk.send.in_agent_handler`), and refuses a sent store operation as `bynk.send.store_op` | Accepted (v0.342) |

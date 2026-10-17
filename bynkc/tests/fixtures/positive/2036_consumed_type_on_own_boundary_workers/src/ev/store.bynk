@@ -1,0 +1,13 @@
+-- #2036: `ev.store` exports a record that `ev.relay` puts on its own
+-- boundary without ever calling `ev.store`.
+context ev.store
+
+exports transparent { Batch }
+
+type Batch = { id: String, size: Int }
+
+service latest {
+  on call() -> Effect[Batch] {
+    Effect.pure(Batch { id: "b1", size: 3 })
+  }
+}

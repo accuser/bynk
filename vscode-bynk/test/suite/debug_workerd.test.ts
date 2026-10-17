@@ -13,6 +13,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { spawn, spawnSync, ChildProcess } from "child_process";
 import * as vscode from "vscode";
+import { stopTree } from "./stopTree";
 
 function have(tool: string, args: string[] = ["--version"]): boolean {
   try {
@@ -26,13 +27,8 @@ describe("Bynk debug attach (workerd)", () => {
   let dir: string;
   let wrangler: ChildProcess | undefined;
 
-  after(() => {
-    wrangler?.kill();
-    try {
-      spawnSync("pkill", ["-f", "workerd"], { stdio: "ignore" });
-    } catch {
-      /* best-effort */
-    }
+  after(async () => {
+    await stopTree(wrangler);
     if (dir) {
       try {
         fs.rmSync(dir, { recursive: true, force: true });
@@ -84,7 +80,8 @@ describe("Bynk debug attach (workerd)", () => {
         "--port",
         String(appPort),
       ],
-      { cwd: workerDir, stdio: ["ignore", "ignore", "pipe"] },
+      // #2069: its own process group, so `stopTree` reaches workerd too.
+      { cwd: workerDir, stdio: ["ignore", "ignore", "pipe"], detached: process.platform !== "win32" },
     );
     const verbose = process.env.BYNK_DEBUG_SPIKE === "verbose";
     let wlog = "";
