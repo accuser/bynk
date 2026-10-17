@@ -22,7 +22,10 @@ export const go = {
     const page: Page<Line> = { items: ls };
     const c = await deps.surface.store.nested((groups as unknown as ReadonlyMap<string, readonly cs_store.Line[]>), (maybe as unknown as readonly Option<cs_store.Line>[]), (page as unknown as cs_store.Page<cs_store.Line>), (Some(page) as unknown as Option<cs_store.Page<cs_store.Line>>));
     const d = await deps.surface.store.counts([1, 2]);
-    return a + b + c + d;
+    const e = await deps.surface.store.paged((page as unknown as cs_store.Page<cs_store.Line>));
+    const blank: Page<Line> = { items: [] };
+    const f = await deps.surface.store.paged((blank as unknown as cs_store.Page<cs_store.Line>));
+    return a + b + c + d + e + f;
   },
 };
 

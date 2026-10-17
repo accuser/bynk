@@ -20,6 +20,12 @@ export const nested = {
   },
 };
 
+export const paged = {
+  async call(p: Page<Line>, deps: {}): globalThis.Promise<number> {
+    return (p.items).length;
+  },
+};
+
 export const counts = {
   async call(ns: readonly number[], deps: {}): globalThis.Promise<number> {
     return (ns).length;
@@ -36,6 +42,9 @@ export function __makeSurface(deps: __CsStoreDeps) {
     },
     async nested(groups: ReadonlyMap<string, readonly Line[]>, maybe: readonly Option<Line>[], page: Page<Line>, pages: Option<Page<Line>>): globalThis.Promise<number> {
       return nested.call(groups, maybe, page, pages, deps);
+    },
+    async paged(p: Page<Line>): globalThis.Promise<number> {
+      return paged.call(p, deps);
     },
     async counts(ns: readonly number[]): globalThis.Promise<number> {
       return counts.call(ns, deps);

@@ -12,6 +12,11 @@ service nested {
   on call(groups: Map[String, List[Line]], maybe: List[Option[Line]], page: Page[Line], pages: Option[Page[Line]]) -> Effect[Int] { maybe.length() }
 }
 
+-- A commons generic record as the whole parameter.
+service paged {
+  on call(p: Page[Line]) -> Effect[Int] { p.items.length() }
+}
+
 service counts {
   on call(ns: List[Int]) -> Effect[Int] { ns.length() }
 }

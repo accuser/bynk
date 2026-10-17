@@ -19,6 +19,9 @@ service go {
     let page: Page[Line] = Page { items: ls }
     let c <- cs.store.nested(groups, maybe, page, Some(page))
     let d <- cs.store.counts([1, 2])
-    a + b + c + d
+    let e <- cs.store.paged(page)
+    let blank: Page[Line] = Page { items: [] }
+    let f <- cs.store.paged(blank)
+    a + b + c + d + e + f
   }
 }
