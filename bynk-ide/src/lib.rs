@@ -37,6 +37,9 @@ pub use bynk_check::analysis::ContextBoundaryInfo;
 /// IDE-appropriate as-is, so this is a plain re-export rather than a lowering.
 pub use bynk_check::analysis::ContextSequenceInfo;
 pub use bynk_project::LabelFile;
+/// #2081: how a caller hands [`diagnose_project_with`] the project's
+/// `bynk.schema.lock` (ADR 0321's type, shared with the build).
+pub use bynk_project::SchemaLock;
 
 pub mod architecture;
 pub mod completion;
@@ -306,8 +309,16 @@ pub fn renamed_unit_name(old_rel: &Path, old_name: &str, new_rel: &Path) -> Opti
 /// manifest, which is what every caller handing in a fixture root already
 /// means. A manifest-backed project wants
 /// `diagnose_project_with(&AnalysisRoots::Project(root), …)`.
+///
+/// #2081: it passes [`SchemaLock::Off`], so it never reconciles events
+/// against `bynk.schema.lock`. Every caller is a test or a test kit; the
+/// language server calls [`diagnose_project_with`] with the lock it read.
 pub fn diagnose_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> ProjectDiagnostics {
-    diagnose_project_with(&AnalysisRoots::SingleTree(root.to_path_buf()), overlay)
+    diagnose_project_with(
+        &AnalysisRoots::SingleTree(root.to_path_buf()),
+        overlay,
+        &SchemaLock::Off,
+    )
 }
 
 /// Slice A: project diagnostics over manifest-resolved roots — the LSP analyses
@@ -316,9 +327,15 @@ pub fn diagnose_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proj
 ///
 /// Every path in the result is **project-relative** (ADR 0198), so a file is
 /// named uniquely across `include` roots.
+///
+/// `schema_lock` (#2081) is the project's `bynk.schema.lock`, read by the
+/// caller (this crate reads no disk): under [`SchemaLock::On`] events are
+/// reconciled against it, read-only, so a non-additive change is reported as
+/// `bynk check` reports it; [`SchemaLock::Off`] skips that.
 pub fn diagnose_project_with(
     roots: &AnalysisRoots,
     overlay: &HashMap<PathBuf, String>,
+    schema_lock: &SchemaLock,
 ) -> ProjectDiagnostics {
     // #43: destructured (not `analysis.field`-by-field) so that a field added
     // to `ProjectAnalysis` without a matching update *here* is a compile
@@ -339,7 +356,7 @@ pub fn diagnose_project_with(
         sequence_info,
         boundary_info,
         doc_scope,
-    } = bynk_check::analysis::analyse_project(&roots.lower(overlay), overlay);
+    } = bynk_check::analysis::analyse_project(&roots.lower(overlay), overlay, schema_lock);
     let mut by_file: HashMap<PathBuf, Vec<Diagnostic>> = HashMap::new();
     let mut unattributed = Vec::new();
     for ae in errors {

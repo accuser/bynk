@@ -79,7 +79,7 @@ fn sequence_model_at_resolves_for_a_cursor_anywhere_in_the_handler_body() {
     // sources map instead of relying on bynk-emit's disk fallback.
     let roots = bynk_ide::AnalysisRoots::SingleTree(root.0.clone());
     let sources = bynk_testkit::read_project_sources(&roots);
-    let diag = bynk_ide::diagnose_project_with(&roots, &sources);
+    let diag = bynk_ide::diagnose_project_with(&roots, &sources, &bynk_ide::SchemaLock::Off);
     let info = diag
         .sequence_info
         .get("ratelimit")
