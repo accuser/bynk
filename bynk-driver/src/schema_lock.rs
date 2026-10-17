@@ -48,6 +48,22 @@ pub fn read(project_root: &Path) -> io::Result<Option<String>> {
     }
 }
 
+/// The committed lock as a **read-only** [`SchemaLock::On`] — how `check` and
+/// `test` reconcile events against `bynk.schema.lock` (#2078). Nothing is
+/// written back: the caller drops `ProjectOutput::schema_lock` (and a
+/// `ProjectCheck` carries none), so a passing additive change leaves the lock
+/// byte-identical for `bynkc compile`, `bynk dev` or `bynk deploy` to record.
+/// A missing lock is a fresh project, which baselines silently, exactly as a
+/// build treats it. A read failure is a message naming the file, for the
+/// caller to report.
+///
+/// [`SchemaLock::On`]: bynk_emit::project::SchemaLock::On
+pub fn read_only(project_root: &Path) -> Result<bynk_emit::project::SchemaLock, String> {
+    read(project_root)
+        .map(|existing| bynk_emit::project::SchemaLock::On { existing })
+        .map_err(|e| format!("could not read {}: {e}", lock_path(project_root).display()))
+}
+
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Write `bynk.schema.lock` to `project_root`, atomically (temp file +

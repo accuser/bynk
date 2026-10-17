@@ -211,11 +211,17 @@ pub fn run_test(program: &str, args: TestArgs) -> ExitCode {
         // v0.115: `test` compiles the dev/test profile — the function
         // contract call-site guard is emitted (DECISION J). `compile`
         // leaves it off, so contract checks never reach production.
-        let o = match crate::try_project_options(&input) {
+        // #2078: reconcile events against the committed `bynk.schema.lock`,
+        // read-only — a non-additive change fails `test` as it fails a
+        // build, and `out.schema_lock` is never written back.
+        let o = match crate::try_project_options(&input)
+            .map_err(|e| e.to_string())
+            .and_then(|o| Ok(o.schema_registry(crate::schema_lock::read_only(&input)?)))
+        {
             Ok(o) => o.contracts(true),
             Err(e) => {
                 if json {
-                    print!("{}", TestRun::runtime_error(e.to_string(), None).render());
+                    print!("{}", TestRun::runtime_error(e, None).render());
                 } else {
                     eprintln!("{program} test: {e}");
                 }
