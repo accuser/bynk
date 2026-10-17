@@ -501,8 +501,12 @@ mixed pair, is `bynk.types.no_numeric_coercion`.
 A **literal** written where a refined type is expected is admitted at compile
 time ([§6.4](/book/spec/type-system/#64-admission--construction)) in these positions:
 return (block tail), a `let` with a type annotation, an `Ok`/`Some`/`Err`
-payload, and a refined-typed call argument. The literal MUST satisfy the
-predicate, or it is rejected (`bynk.refine.literal_violates`); an admitted
+payload, and a refined-typed call argument — including a cross-context call's
+(`t.pay.charge(250)`, from a consuming context or a `system` case). A literal
+passed directly as a cross-context argument is checked against the parameter
+type's own declaration, in the consumed context, so the caller need not `uses`
+its commons, and a type of the same name the caller declares plays no part. The
+literal MUST satisfy the predicate, or it is rejected (`bynk.refine.literal_violates`); an admitted
 literal MUST be a compile-time literal, not an expression or identifier. A refined
 type is thus constructed at run time through `.of` alone and has **no** unchecked
 `.unsafe` — the unchecked escape hatch is opaque-only (`Age.unsafe(x)` is rejected
