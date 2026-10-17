@@ -322,7 +322,7 @@ pub(crate) fn secrets_file_supported(probe: &probe::Probe) -> bool {
 /// are deferred until wrangler has exited ([`push_holding_secrets_file`]), so
 /// they end the run only after the drop. SIGKILL (or a power cut) cannot be
 /// caught and leaves the file, still 0600 in its 0700 directory, until the
-/// next `bynk deploy` by this user runs [`sweep_stale_secrets_dirs`]. The
+/// next `bynk deploy` by this user runs [`sweep_stale_upload_dirs`]. The
 /// directory name carries the pid (`bynk-secrets-<pid>-<nanos>-<n>`) so the
 /// sweep can tell a dead run's file from a live one's.
 pub(crate) struct SecretsFile {
@@ -425,7 +425,7 @@ fn push(
 /// Wrangler's exit is mapped as any push's is. If it exited 0 but `bynk` was
 /// asked to stop, the run stops: as an interrupt for SIGINT, as a failure
 /// with the signal's exit code otherwise. SIGKILL cannot be deferred, and
-/// leaves the file for the next deploy's [`sweep_stale_secrets_dirs`].
+/// leaves the file for the next deploy's [`sweep_stale_upload_dirs`].
 fn push_holding_secrets_file(
     mut command: std::process::Command,
     worker: &str,
@@ -478,7 +478,7 @@ fn push_holding_secrets_file(
 /// left alone, and so is one whose pid has since been reused, until that
 /// process ends. Returns how many were removed. Never reads the files.
 /// Windows has no liveness check here, so it removes nothing there.
-pub(crate) fn sweep_stale_secrets_dirs(temp_dir: &Path) -> usize {
+pub(crate) fn sweep_stale_upload_dirs(temp_dir: &Path) -> usize {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -1677,7 +1677,7 @@ mod tests {
             std::fs::create_dir_all(d).unwrap();
         }
 
-        let removed = sweep_stale_secrets_dirs(&tmp);
+        let removed = sweep_stale_upload_dirs(&tmp);
         let _ = alive.kill();
         let _ = alive.wait();
         let kept = |d: &Path| d.exists();

@@ -666,10 +666,10 @@ pub fn run(
     let mut resolved_secrets = BTreeMap::new();
     // #2055: a first deploy's secrets file that a SIGKILLed run left behind
     // goes before this run might write one of its own.
-    let swept = sweep_stale_secrets_dirs(&std::env::temp_dir());
-    if swept > 0 {
+    let stale_removed = sweep_stale_upload_dirs(&std::env::temp_dir());
+    if stale_removed > 0 {
         eprintln!(
-            "bynk: removed {swept} secrets file(s) an interrupted deploy left in the temp directory"
+            "bynk: removed {stale_removed} secrets file(s) an interrupted deploy left in the temp directory"
         );
     }
     for (i, worker) in order.iter().enumerate() {
