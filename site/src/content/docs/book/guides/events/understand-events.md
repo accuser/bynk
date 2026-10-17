@@ -269,6 +269,12 @@ or `bynk dev`/`bynk deploy` records the bump, so run one of those before you
 commit. A project with no lock yet is a fresh project, and neither command
 complains or creates one.
 
+The editor does the same, also read-only: the language server reads the lock,
+re-reads it whenever it changes (a `git checkout`, or a `bynkc compile` that
+records a bump), and shows a non-additive change, a corrupt lock or a mismatched
+`@schema(N)` as a diagnostic at the top of `bynk.toml`, without waiting for you
+to run `bynkc check`.
+
 ## Asserting a schema version with `@schema(N)`
 
 An event may also declare its current version explicitly:

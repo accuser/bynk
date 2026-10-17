@@ -38,7 +38,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use bynk_check::analysis;
-use bynk_project::{AttributedError, Roots};
+use bynk_project::{AttributedError, Roots, SchemaLock};
 
 const SHARED_SRC: &str = r#"commons demo.shared
 
@@ -222,7 +222,7 @@ fn new_entry_point_reports_no_errors_on_a_clean_project() {
     );
     let roots = Roots::Single(root);
 
-    let analysed = analysis::analyse_project(&roots, &overlay);
+    let analysed = analysis::analyse_project(&roots, &overlay, &SchemaLock::Off);
 
     assert!(
         analysed.errors.is_empty(),
@@ -266,7 +266,7 @@ fn new_entry_point_reports_errors_on_a_broken_project() {
     );
     let roots = Roots::Single(root);
 
-    let analysed = analysis::analyse_project(&roots, &overlay);
+    let analysed = analysis::analyse_project(&roots, &overlay, &SchemaLock::Off);
 
     let mut rendered = render(&analysed.errors);
     rendered.sort();
@@ -328,7 +328,7 @@ fn new_entry_point_reports_a_function_type_boundary_violation() {
     let (root, overlay) = setup_project("fn_boundary", &[("src/hof/api.bynk", API)]);
     let roots = Roots::Single(root);
 
-    let analysed = analysis::analyse_project(&roots, &overlay);
+    let analysed = analysis::analyse_project(&roots, &overlay, &SchemaLock::Off);
     let rendered = render(&analysed.errors);
 
     assert!(
@@ -362,7 +362,7 @@ fn new_entry_point_reports_a_test_bodys_own_type_error() {
     );
     let roots = Roots::Single(root);
 
-    let analysed = analysis::analyse_project(&roots, &overlay);
+    let analysed = analysis::analyse_project(&roots, &overlay, &SchemaLock::Off);
 
     let categories: Vec<&str> = analysed.errors.iter().map(|a| a.error.category).collect();
     assert!(
@@ -378,4 +378,75 @@ fn new_entry_point_reports_a_test_bodys_own_type_error() {
         total_refs, 1,
         "the test body's call to `double` must be recorded as a binding edge"
     );
+}
+
+/// #2081: under the caller's `SchemaLock::On`, `analyse_project` reconciles
+/// events against the lock exactly as `run_checks` does — a non-additive
+/// change and a corrupt lock are both reported, as `bynk check` reports them.
+/// Under `Off`, or with no lock yet, neither can appear.
+#[test]
+fn new_entry_point_reconciles_events_against_the_callers_lock() {
+    const EVENT_SRC: &str = r#"context commerce.order
+
+consumes bynk { Events }
+
+event PaymentConfirmed = {
+  orderId: String,
+  region: String,
+}
+
+service markPaid {
+  on call(orderId: String) -> Effect[()] given Events {
+    Events.emit[PaymentConfirmed](PaymentConfirmed { orderId: orderId, region: "US" })
+  }
+}
+"#;
+    const LOCK: &str = r#"version = 1
+
+[events."commerce.order.PaymentConfirmed"]
+schema = 1
+
+[[events."commerce.order.PaymentConfirmed".fields]]
+name = "orderId"
+type = "String"
+default = false
+"#;
+    let (root, overlay) = setup_project("schema-lock", &[("commerce/order.bynk", EVENT_SRC)]);
+    let roots = Roots::Single(root);
+    let categories = |lock: &SchemaLock| -> Vec<&'static str> {
+        analysis::analyse_project(&roots, &overlay, lock)
+            .errors
+            .iter()
+            .map(|e| e.error.category)
+            .collect()
+    };
+
+    let on = categories(&SchemaLock::On {
+        existing: Some(LOCK.to_string()),
+    });
+    assert!(
+        on.contains(&"bynk.event.non_additive_schema_change"),
+        "a non-additive change against the lock must be reported: {on:?}"
+    );
+
+    let corrupt = categories(&SchemaLock::On {
+        existing: Some(String::new()),
+    });
+    assert!(
+        corrupt.contains(&"bynk.project.schema_registry_corrupt"),
+        "a corrupt lock must be reported: {corrupt:?}"
+    );
+
+    for (what, lock) in [
+        ("Off", SchemaLock::Off),
+        ("a fresh project", SchemaLock::On { existing: None }),
+    ] {
+        let found = categories(&lock);
+        assert!(
+            !found
+                .iter()
+                .any(|c| c.starts_with("bynk.event.") || c.ends_with("_corrupt")),
+            "{what} has no lock to disagree with: {found:?}"
+        );
+    }
 }

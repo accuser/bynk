@@ -216,3 +216,106 @@ fn no_lock_means_no_error_and_no_lock_written() {
         );
     }
 }
+
+/// #2081 (a test gap from #2080's review): a garbage lock is corruption, not
+/// a fresh project. `check` and `test` refuse it with
+/// `bynk.project.schema_registry_corrupt`, as a build does, and leave it as
+/// they found it.
+#[test]
+fn a_garbage_lock_fails_check_and_test_as_corrupt() {
+    const CORRUPT: &str = "bynk.project.schema_registry_corrupt";
+    let proj = Scratch::new("garbage");
+    proj.write_source(SOURCE_V1);
+    let garbage = b"this is [[[ not a schema lock\n".to_vec();
+    fs::write(proj.lock(), &garbage).unwrap();
+
+    for (what, (ok, out)) in [
+        ("check", check(proj.root())),
+        ("test --no-run --format json", test_discover(proj.root())),
+    ] {
+        assert!(!ok, "`bynkc {what}` must fail a corrupt lock:\n{out}");
+        assert!(
+            out.contains(CORRUPT),
+            "`bynkc {what}` must report {CORRUPT}:\n{out}"
+        );
+        assert_eq!(
+            fs::read(proj.lock()).unwrap(),
+            garbage,
+            "`bynkc {what}` must not touch the corrupt lock"
+        );
+    }
+}
+
+/// #2081 (a test gap from #2080's review): a declared `@schema(N)` that
+/// disagrees with the version the lock computes fails `check` and `test`
+/// with `bynk.event.schema_version_mismatch`, as it fails a build.
+#[test]
+fn a_schema_annotation_the_lock_disagrees_with_fails_check_and_test() {
+    const MISMATCH: &str = "bynk.event.schema_version_mismatch";
+    let proj = Scratch::new("mismatch");
+    let committed = proj.commit_v1_lock();
+    // Same shape as V1, so the lock computes version 1; the annotation says 2.
+    proj.write_source(&SOURCE_V1.replace(
+        "event PaymentConfirmed = {",
+        "event PaymentConfirmed @schema(2) = {",
+    ));
+
+    for (what, (ok, out)) in [("check", check(proj.root())), ("test", test(proj.root()))] {
+        assert!(!ok, "`bynkc {what}` must fail the mismatch:\n{out}");
+        assert!(
+            out.contains(MISMATCH),
+            "`bynkc {what}` must report {MISMATCH}:\n{out}"
+        );
+        assert_eq!(fs::read(proj.lock()).unwrap(), committed);
+    }
+}
+
+/// #2081 (a test gap from #2080's review): `bynkc test` emits the version the
+/// registry computes, as a build does. After an additive change the lock
+/// still records schema 1 (test never writes it), but the reconciled version
+/// is 2, and that is what the emitted mint site carries.
+#[test]
+fn test_emits_the_registry_computed_schema_version() {
+    let proj = Scratch::new("emitted-version");
+    let committed = proj.commit_v1_lock();
+    proj.write_source(SOURCE_V2_ADDITIVE);
+    let out_dir = proj.root().join("test-out");
+
+    let (ok, out) = bynkc(&[
+        "test".as_ref(),
+        "--no-run".as_ref(),
+        "-o".as_ref(),
+        out_dir.as_os_str(),
+        proj.root().as_os_str(),
+    ]);
+    assert!(
+        ok,
+        "`bynkc test --no-run` must pass an additive change:\n{out}"
+    );
+
+    let mut emitted = String::new();
+    let mut stack = vec![out_dir];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "ts") {
+                emitted.push_str(&fs::read_to_string(&path).unwrap());
+            }
+        }
+    }
+    assert!(
+        emitted.contains("schemaVersion: 2"),
+        "the emitted mint site must carry the registry's bumped version 2"
+    );
+    assert!(
+        !emitted.contains("schemaVersion: 1"),
+        "no mint site may carry the unreconciled version 1"
+    );
+    assert_eq!(
+        fs::read(proj.lock()).unwrap(),
+        committed,
+        "`bynkc test` must still not record the bump"
+    );
+}
