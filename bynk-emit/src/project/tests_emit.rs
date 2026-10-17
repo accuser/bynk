@@ -3639,10 +3639,12 @@ fn synthetic_typed_commons_for_target(
         .iter()
         .map(|(n, c)| (n.clone(), c.clone()))
         .collect();
+    // #2062: a consumed *context*'s types too. The scope setup destructures
+    // them (`emit_test_scope_setup`), and the lowering qualifies a bare
+    // nullary variant (`Domestic` → `Region.Domestic`) only when its sum is
+    // here, as a handler body's lowering does from the context's own view.
     for unit in unit_consumes.get(target_name).into_iter().flatten() {
-        if let Some(t) = unit_tables.get(unit)
-            && t.kind == Some(UnitKind::Adapter)
-        {
+        if let Some(t) = unit_tables.get(unit) {
             for (n, d) in &t.types {
                 types.entry(n.clone()).or_insert_with(|| d.clone());
             }
