@@ -517,7 +517,7 @@ pub(crate) struct Secrets<'a> {
 /// value only once the push was under way. Nothing here touches Cloudflare
 /// except the advisory presence read.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prepare_secrets(
+pub(crate) fn prepare_bindings(
     provenance: &Provenance,
     worker_dir: &Path,
     worker: &str,

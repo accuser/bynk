@@ -214,11 +214,11 @@ pub(crate) fn deploy_one(
     // touches disk, and a file — however briefly, 0600, in a private temp
     // directory — does, so a redeploy keeps the stdin path.
     //
-    // What does **not** straddle is the deciding and resolving: `prepare_secrets`
+    // What does **not** straddle is the deciding and resolving: `prepare_bindings`
     // runs before the push on *both* paths, so a missing value is found before
     // anything is uploaded.
     let first_deploy = !lock.is_deployed(environment, worker);
-    let prepared = prepare_secrets(
+    let prepared = prepare_bindings(
         provenance,
         &worker_dir,
         worker,
@@ -802,7 +802,7 @@ pub(crate) fn list_secrets(
 /// not a prose match.
 ///
 /// A shape change reads as `None`, "could not tell", which is the same answer as
-/// a network or auth failure and is handled once in [`prepare_secrets`]: where a
+/// a network or auth failure and is handled once in [`prepare_bindings`]: where a
 /// value is available, every secret is re-set (noisy and idempotent); where one
 /// is not, a **redeploy leaves the secret alone and says so** rather than failing
 /// on the strength of a read failure in an advisory check. Only a first deploy
