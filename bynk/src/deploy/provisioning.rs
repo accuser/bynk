@@ -202,15 +202,21 @@ pub(crate) fn deploy_one(
     //
     // So: a Worker the ledger has pushed before exists, and its secrets are set
     // **before** the push, as the phase order intends — the running code never
-    // sees a request without them. A first deploy pushes first and sets after.
-    // That window is fail-closed by construction (a handler whose auth secret is
-    // unset answers 401, it does not serve unauthenticated), and it is a Worker
-    // that did not exist a moment earlier, so there is no traffic to lose.
+    // sees a request without them.
+    //
+    // A first deploy uploads its secrets **with** the push (#2055):
+    // `wrangler deploy --secrets-file` puts them in the new Worker's first
+    // version, so it is never live without them. Setting them after the push,
+    // as this did before, left a new Worker serving for a few seconds with no
+    // auth secret (fail-closed, answering 401, but contrary to what the guide
+    // promised). The file is the only way in for a Worker that does not exist
+    // yet, and it is used only there: a value piped to `secret put` never
+    // touches disk, and a file — however briefly, 0600, in a private temp
+    // directory — does, so a redeploy keeps the stdin path.
     //
     // What does **not** straddle is the deciding and resolving: `prepare_secrets`
-    // runs before the push on *both* paths. Only the `wrangler secret put` waits.
-    // Otherwise the first-deploy path would discover a missing value after making
-    // a live Worker — the very outcome the straddle is arranged to avoid.
+    // runs before the push on *both* paths, so a missing value is found before
+    // anything is uploaded.
     let first_deploy = !lock.is_deployed(environment, worker);
     let prepared = prepare_secrets(
         provenance,
@@ -221,17 +227,156 @@ pub(crate) fn deploy_one(
         first_deploy,
         environment,
     )?;
+    let deployed = deployed_worker_name(environment, worker);
     if !first_deploy {
         apply_secrets(provenance, &worker_dir, worker, &prepared, environment)?;
+        return push(
+            provenance,
+            &worker_dir,
+            worker,
+            wrangler_args,
+            environment,
+            None,
+        );
     }
-    let pushed = push(provenance, &worker_dir, worker, wrangler_args, environment)?;
-    if first_deploy && pushed == Pushed::Ok {
-        apply_secrets(provenance, &worker_dir, worker, &prepared, environment)?;
+    if prepared.is_empty() {
+        return push(
+            provenance,
+            &worker_dir,
+            worker,
+            wrangler_args,
+            environment,
+            None,
+        );
+    }
+    if !secrets.with_upload {
+        // An installed wrangler older than `--secrets-file`: the old order,
+        // said out loud, since the guide promises otherwise.
+        eprintln!(
+            "bynk: this wrangler is older than {SECRETS_FILE_MIN}, which cannot upload secrets with a new Worker, so `{deployed}` will be live for a moment before its secrets are set. Upgrade wrangler to close that window."
+        );
+        let pushed = push(
+            provenance,
+            &worker_dir,
+            worker,
+            wrangler_args,
+            environment,
+            None,
+        )?;
+        if pushed == Pushed::Ok {
+            apply_secrets(provenance, &worker_dir, worker, &prepared, environment)?;
+        }
+        return Ok(pushed);
+    }
+    let file = SecretsFile::write(&prepared).map_err(|e| {
+        DeployFailure::driver(format!(
+            "could not write the secrets for `{deployed}`'s first version to a temporary file: {e}"
+        ))
+    })?;
+    let pushed = push(
+        provenance,
+        &worker_dir,
+        worker,
+        wrangler_args,
+        environment,
+        Some(file.path()),
+    );
+    // Removed whatever the push did, before anything else can fail.
+    drop(file);
+    let pushed = pushed?;
+    if pushed == Pushed::Ok {
+        for (name, _) in &prepared {
+            eprintln!("{}", secret_set_line(name, &deployed, true));
+        }
     }
     Ok(pushed)
 }
 
-/// `wrangler deploy` in one worker directory. `--env` is appended for a
+/// #2055: the first wrangler whose `deploy` takes `--secrets-file`
+/// (workers-sdk #10896, released in wrangler 4.74.0). Below
+/// [`bynk_emit::WRANGLER_MIN`], so only an installed wrangler a project with
+/// no agent still deploys on can be older.
+pub(crate) const SECRETS_FILE_MIN: &str = "4.74.0";
+
+/// #2055: can this wrangler upload secrets with a new Worker? An unknown
+/// version (npx-provisioned, whose version is not known without running it)
+/// counts as able, by the rule [`doctor::wrangler_below_min`] uses: npx resolves
+/// `wrangler@4`, the newest 4.x.
+pub(crate) fn secrets_file_supported(probe: &probe::Probe) -> bool {
+    let min = probe::Version::parse(SECRETS_FILE_MIN).expect("SECRETS_FILE_MIN is a version");
+    probe
+        .version
+        .is_none_or(|v| (v.major, v.minor, v.patch) >= (min.major, min.minor, min.patch))
+}
+
+/// #2055: a first deploy's secrets, as the JSON object
+/// `wrangler deploy --secrets-file` reads (`{"NAME": "value"}`; wrangler tries
+/// JSON before dotenv, and JSON escaping is exact for any value).
+///
+/// Written to a fresh directory under the system temp dir — never the project,
+/// so it cannot be committed or land beside the ledger — the directory 0700 and
+/// the file 0600, created new so nothing already there is reused. Dropping it
+/// removes the directory, so the file is gone however the push ends, a panic
+/// included. Its contents are never logged; only its path reaches wrangler's
+/// argv.
+pub(crate) struct SecretsFile {
+    dir: std::path::PathBuf,
+    path: std::path::PathBuf,
+}
+
+impl SecretsFile {
+    pub(crate) fn write(prepared: &[(String, String)]) -> io::Result<Self> {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        let dir = std::env::temp_dir().join(format!(
+            "bynk-secrets-{}-{unique}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        // Not recursive: the directory must be new, or someone else's.
+        builder.create(&dir)?;
+        let file = Self {
+            path: dir.join("secrets.json"),
+            dir,
+        };
+        let object: BTreeMap<&str, &str> = prepared
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect();
+        let body = serde_json::to_vec(&object).map_err(io::Error::other)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(&file.path)?.write_all(&body)?;
+        Ok(file)
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for SecretsFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// `wrangler deploy` in one worker directory. `--secrets-file` is appended when
+/// a first deploy uploads its secrets with the Worker (#2055), and `--env` for a
 /// non-default environment (slice 4) — the one place Wrangler needs telling
 /// which of the synthesised `[env.<name>]` tables to read.
 fn push(
@@ -240,11 +385,15 @@ fn push(
     worker: &str,
     wrangler_args: &[String],
     environment: &str,
+    secrets_file: Option<&Path>,
 ) -> Result<Pushed, DeployFailure> {
     let Some(mut command) = workers::wrangler_command(provenance, "deploy") else {
         return Err(DeployFailure::driver("wrangler not found".into()));
     };
     command.current_dir(worker_dir).args(wrangler_args);
+    if let Some(file) = secrets_file {
+        command.arg("--secrets-file").arg(file);
+    }
     if environment != "default" {
         command.arg("--env").arg(environment);
     }
@@ -1023,6 +1172,7 @@ mod tests {
                 foreign_secrets: &foreign_secrets,
                 listed: &listed,
                 resolved: &mut resolved,
+                with_upload: true,
             },
             &[],
             environment,
@@ -1082,5 +1232,302 @@ mod tests {
             recorded_kv_binding(&lock, "api", "KV", "staging"),
             Some("staging-id")
         );
+    }
+
+    // ---- #2055: a new Worker's first version carries its secrets ----
+    //
+    // `deploy_one` against a stand-in `wrangler` that records its arguments,
+    // drains a `secret put`'s stdin, and notes whether a `--secrets-file` it
+    // is handed exists and names the secret. Nothing reaches Cloudflare.
+
+    const SECRET: &str = "LEDGER_CALL_KEY";
+    const VALUE: &str = "s3cret-value-2055";
+
+    /// What one `deploy_one` of a Worker `api` with one secret to set left
+    /// behind.
+    #[cfg(unix)]
+    struct SecretRun {
+        /// One line per `wrangler` invocation.
+        calls: Vec<String>,
+        /// What the stand-in saw of the `--secrets-file`, one line per upload.
+        seen: Vec<String>,
+        pushed: Result<Pushed, DeployFailure>,
+        /// Whether the run left a `bynk-secrets-*` directory in the project.
+        left_in_project: bool,
+    }
+
+    #[cfg(unix)]
+    fn deploy_with_secret(
+        environment: &str,
+        already_deployed: bool,
+        with_upload: bool,
+        deploy_exit: i32,
+    ) -> SecretRun {
+        use std::os::unix::fs::PermissionsExt;
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "bynk-2055-{environment}-{}-{unique}",
+            std::process::id()
+        ));
+        let workers_dir = root.join("workers");
+        std::fs::create_dir_all(workers_dir.join("api")).unwrap();
+        std::fs::write(
+            workers_dir.join("api/wrangler.toml"),
+            "name = \"api\"\nmain = \"index.ts\"\n",
+        )
+        .unwrap();
+        let log = root.join("calls.log");
+        let seen = root.join("seen.log");
+        let fake = root.join("wrangler");
+        // A `--secrets-file` is checked while the upload runs: it must exist
+        // then, and hold the name. Its value is never echoed.
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\n\
+                 echo \"$*\" >> '{log}'\n\
+                 if [ \"$1\" = secret ] && [ \"$2\" = put ]; then cat > /dev/null; fi\n\
+                 if [ \"$1\" = deploy ]; then\n\
+                 prev=\n\
+                 for a in \"$@\"; do\n\
+                 if [ \"$prev\" = --secrets-file ]; then\n\
+                 if [ -f \"$a\" ] && grep -q '\"{SECRET}\":\"{VALUE}\"' \"$a\"; then echo present >> '{seen}'; else echo missing >> '{seen}'; fi\n\
+                 fi\n\
+                 prev=$a\n\
+                 done\n\
+                 exit {deploy_exit}\n\
+                 fi\n\
+                 exit 0\n",
+                log = log.display(),
+                seen = seen.display(),
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut lock = DeployLock::default();
+        if already_deployed {
+            lock.record_deployed(environment, "api", None);
+        }
+        let source = SecretSource::default();
+        let edge_keys = BTreeMap::new();
+        let foreign_keys = BTreeMap::from([(
+            ("api".to_string(), SECRET.to_string()),
+            ForeignKey::Set {
+                value: VALUE.to_string(),
+                minted: false,
+            },
+        )]);
+        let foreign_secrets = BTreeSet::from([SECRET.to_string()]);
+        let listed = BTreeMap::from([("api".to_string(), Some(BTreeSet::new()))]);
+        let mut resolved = BTreeMap::new();
+        let pushed = deploy_one(
+            &Provenance::Path(fake),
+            &root,
+            &workers_dir,
+            "api",
+            &Resources::default(),
+            &mut lock,
+            &root.join(LOCK_FILE),
+            &mut BTreeSet::new(),
+            &mut Secrets {
+                source: &source,
+                force: false,
+                edge_keys: &edge_keys,
+                foreign_keys: &foreign_keys,
+                foreign_secrets: &foreign_secrets,
+                listed: &listed,
+                resolved: &mut resolved,
+                with_upload,
+            },
+            &[],
+            environment,
+            None,
+        );
+        let read = |path: &Path| -> Vec<String> {
+            std::fs::read_to_string(path)
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        };
+        let left_in_project = walk(&root)
+            .iter()
+            .any(|p| p.to_string_lossy().contains("bynk-secrets"));
+        let lock_text = std::fs::read_to_string(root.join(LOCK_FILE)).unwrap_or_default();
+        assert!(
+            !lock_text.contains(VALUE),
+            "the ledger never carries a secret"
+        );
+        let run = SecretRun {
+            calls: read(&log),
+            seen: read(&seen),
+            pushed,
+            left_in_project,
+        };
+        let _ = std::fs::remove_dir_all(root);
+        run
+    }
+
+    #[cfg(unix)]
+    fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(walk(&path));
+            }
+            out.push(path);
+        }
+        out
+    }
+
+    /// The `--secrets-file` path in a logged `deploy` line, checked to be the
+    /// only thing besides `rest` and to sit under the system temp dir.
+    #[cfg(unix)]
+    fn secrets_file_of(call: &str, rest: &[&str]) -> std::path::PathBuf {
+        let tokens: Vec<&str> = call.split(' ').collect();
+        assert_eq!(&tokens[..2], ["deploy", "--secrets-file"], "{call}");
+        assert_eq!(&tokens[3..], rest, "{call}");
+        let path = std::path::PathBuf::from(tokens[2]);
+        assert!(
+            path.starts_with(std::env::temp_dir()),
+            "the secrets file is written under the temp dir, not the project: {call}"
+        );
+        assert!(
+            !call.contains(VALUE),
+            "only the path reaches argv, never a value"
+        );
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_first_deploy_uploads_its_secrets_with_the_worker() {
+        let run = deploy_with_secret("default", false, true, 0);
+        assert_eq!(run.pushed, Ok(Pushed::Ok));
+        // One call, and no `secret put` after it: the first version has them.
+        assert_eq!(run.calls.len(), 1, "{:?}", run.calls);
+        let file = secrets_file_of(&run.calls[0], &[]);
+        assert_eq!(run.seen, ["present"], "the file existed during the upload");
+        assert!(!file.exists(), "and is removed once it succeeded");
+        assert!(!file.parent().unwrap().exists(), "with its directory");
+        assert!(!run.left_in_project);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_first_upload_still_removes_the_secrets_file() {
+        let run = deploy_with_secret("default", false, true, 1);
+        assert!(run.pushed.is_err(), "wrangler's failure is the deploy's");
+        assert_eq!(run.calls.len(), 1, "{:?}", run.calls);
+        let file = secrets_file_of(&run.calls[0], &[]);
+        assert_eq!(run.seen, ["present"]);
+        assert!(!file.exists(), "removed although the upload failed");
+        assert!(!file.parent().unwrap().exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_first_deploy_under_an_environment_uploads_to_the_suffixed_worker() {
+        // `--env staging` is what makes wrangler upload `api-staging`, the
+        // secrets with it.
+        let run = deploy_with_secret("staging", false, true, 0);
+        assert_eq!(run.pushed, Ok(Pushed::Ok));
+        assert_eq!(run.calls.len(), 1, "{:?}", run.calls);
+        let file = secrets_file_of(&run.calls[0], &["--env", "staging"]);
+        assert_eq!(run.seen, ["present"]);
+        assert!(!file.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_redeploy_sets_its_secrets_before_the_push_on_stdin() {
+        // The Worker exists, so its secrets go first, as their own version,
+        // and never through a file.
+        let run = deploy_with_secret("default", true, true, 0);
+        assert_eq!(run.pushed, Ok(Pushed::Ok));
+        assert_eq!(run.calls, [format!("secret put {SECRET}"), "deploy".into()]);
+        assert!(run.seen.is_empty());
+        let run = deploy_with_secret("staging", true, true, 0);
+        assert_eq!(
+            run.calls,
+            [
+                format!("secret put {SECRET} --env staging"),
+                "deploy --env staging".into()
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_wrangler_without_the_secrets_file_falls_back_to_setting_after_the_push() {
+        let run = deploy_with_secret("default", false, false, 0);
+        assert_eq!(run.pushed, Ok(Pushed::Ok));
+        assert_eq!(
+            run.calls,
+            ["deploy".to_string(), format!("secret put {SECRET}")]
+        );
+        // And a failed push sets nothing on a Worker that may not exist.
+        let run = deploy_with_secret("default", false, false, 1);
+        assert!(run.pushed.is_err());
+        assert_eq!(run.calls, ["deploy"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_secrets_file_is_private_json_of_exactly_the_prepared_secrets() {
+        use std::os::unix::fs::PermissionsExt;
+        let prepared = vec![
+            (
+                "A".to_string(),
+                "with \"quotes\"\nand a newline".to_string(),
+            ),
+            ("B".to_string(), "plain".to_string()),
+        ];
+        let file = SecretsFile::write(&prepared).unwrap();
+        let path = file.path().to_path_buf();
+        let dir = path.parent().unwrap().to_path_buf();
+        assert!(path.starts_with(std::env::temp_dir()));
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&dir), 0o700);
+        let parsed: BTreeMap<String, String> =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(parsed, prepared.into_iter().collect());
+        drop(file);
+        assert!(!dir.exists(), "dropping it removes the directory");
+    }
+
+    #[test]
+    fn the_set_line_names_the_secret_and_the_deployed_worker_never_the_value() {
+        let line = secret_set_line(SECRET, &deployed_worker_name("staging", "api"), true);
+        assert_eq!(
+            line,
+            "bynk: set secret `LEDGER_CALL_KEY` on `api-staging`, with its first version"
+        );
+        assert!(!line.contains(VALUE));
+        assert_eq!(
+            secret_set_line(SECRET, "api", false),
+            "bynk: set secret `LEDGER_CALL_KEY` on `api`"
+        );
+    }
+
+    #[test]
+    fn only_an_installed_wrangler_known_to_be_older_lacks_the_secrets_file() {
+        let wrangler = |version: Option<&str>| probe::Probe {
+            tool: "wrangler".to_string(),
+            version: version.map(|v| probe::Version::parse(v).unwrap()),
+            provenance: Provenance::Path("/usr/bin/wrangler".into()),
+        };
+        assert!(!secrets_file_supported(&wrangler(Some("4.73.9"))));
+        assert!(secrets_file_supported(&wrangler(Some(SECRETS_FILE_MIN))));
+        assert!(secrets_file_supported(&wrangler(Some(
+            bynk_emit::WRANGLER_MIN
+        ))));
+        assert!(secrets_file_supported(&wrangler(None)), "npx: newest 4.x");
     }
 }

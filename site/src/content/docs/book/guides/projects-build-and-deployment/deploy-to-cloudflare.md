@@ -126,9 +126,25 @@ key-value storage API.
 
 ## Secrets
 
-`bynk deploy` sets your secrets before it pushes, and forgets them. Values move
-from wherever you keep them straight to `wrangler secret put` — they are never
-written to `bynk.deploy.lock`, to generated config, or to the plan.
+`bynk deploy` sets your secrets before your code can serve a request, and
+forgets them. A Worker that is already deployed gets them first, with
+`wrangler secret put`, and then the push. A new Worker gets them in the same
+upload as its code (`wrangler deploy --secrets-file`), so its first version
+already has them. Values go from wherever you keep them straight to wrangler —
+on stdin, or for a new Worker in a temporary file only you can read, which is
+deleted as soon as the upload ends. They are never written to
+`bynk.deploy.lock`, to generated config, or to the plan.
+
+Each secret set prints its name, never its value:
+
+```
+bynk: set secret `AUTH_JWT_SECRET` on `api`
+```
+
+On a new Worker the line ends `, with its first version`. If your wrangler is
+older than 4.74.0, which can't upload secrets with a new Worker, the deploy says
+so and sets them just after the first push. For that moment the new Worker
+answers `401` to any route that needs a secret.
 
 Every line of the plan is marked with how Bynk came to know the name:
 

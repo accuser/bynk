@@ -644,6 +644,7 @@ pub fn run(
                 foreign_secrets: &foreign_secrets,
                 listed: &listed,
                 resolved: &mut resolved_secrets,
+                with_upload: secrets_file_supported(&probe),
             },
             &opts.wrangler_args,
             &opts.environment,
