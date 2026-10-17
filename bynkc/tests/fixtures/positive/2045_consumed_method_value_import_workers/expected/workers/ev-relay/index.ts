@@ -24,9 +24,9 @@ export default {
           case "big": {
             __route = "call big";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "313b663c6461865b") {
-              globalThis.console.error("ContractMismatch ev.relay call big", { service: "big", expected: "313b663c6461865b", actual: globalThis.String(__contract).slice(0, 16) });
-              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "big", expected: "313b663c6461865b", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "f276b0ce9a96daad") {
+              globalThis.console.error("ContractMismatch ev.relay call big", { service: "big", expected: "f276b0ce9a96daad", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "big", expected: "f276b0ce9a96daad", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
             let args: __JsonValue;
             try {

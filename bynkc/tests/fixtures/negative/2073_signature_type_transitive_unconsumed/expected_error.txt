@@ -1,0 +1,3 @@
+bynk.consumes.signature_type_unconsumed `shop.order.place` takes or returns `Base`, declared in `shop.base`, but this context does not consume `shop.base`
+bynk.consumes.signature_type_unconsumed `shop.ledger.take` takes or returns `Base`, declared in `shop.base`, but this context does not consume `shop.base`
+# exact

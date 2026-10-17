@@ -24,9 +24,9 @@ export default {
           case "pay": {
             __route = "call pay";
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "aaf73c4200082f27") {
-              globalThis.console.error("ContractMismatch commerce.checkout call pay", { service: "pay", expected: "aaf73c4200082f27", actual: globalThis.String(__contract).slice(0, 16) });
-              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "pay", expected: "aaf73c4200082f27", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "f3e3b1a532216754") {
+              globalThis.console.error("ContractMismatch commerce.checkout call pay", { service: "pay", expected: "f3e3b1a532216754", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "pay", expected: "f3e3b1a532216754", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             }
             let args: __JsonValue;
             try {

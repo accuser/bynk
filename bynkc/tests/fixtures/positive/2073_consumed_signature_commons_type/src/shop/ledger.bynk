@@ -1,0 +1,19 @@
+-- #2073 review: `shop.ledger` consumes `shop.order` without `uses geo`.
+-- `Order.region` is `geo`'s `Region`, which reaches this boundary only
+-- through `shop.order`. (Declaring a `Region` here too is
+-- `bynk.uses.name_conflict`, #1814.)
+context shop.ledger
+
+consumes shop.order
+
+service orderId {
+  on call(o: Order) -> Effect[String] {
+    o.id
+  }
+}
+
+service echo {
+  on call(o: Order) -> Effect[Order] {
+    o
+  }
+}

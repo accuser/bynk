@@ -1,0 +1,23 @@
+-- #2073: services whose signatures name `shop.order`'s types, which this
+-- context consumes: a record parameter, an enum parameter, a record result.
+context shop.ledger
+
+consumes shop.order
+
+service domestic {
+  on call(id: String) -> Effect[Order] {
+    Order { id: id, region: Region.Domestic }
+  }
+}
+
+service isDomestic {
+  on call(o: Order) -> Effect[Bool] {
+    o.region == Region.Domestic
+  }
+}
+
+service isHome {
+  on call(r: Region) -> Effect[Bool] {
+    r == Region.Domestic
+  }
+}

@@ -4326,7 +4326,7 @@ fn type_owner_in_scope<'a, S: ScopeTables + ?Sized>(
 
 /// #1807: the type names a type declaration's body references, its own type
 /// parameters excluded.
-fn type_decl_ref_names(d: &TypeDecl) -> Vec<String> {
+pub(crate) fn type_decl_ref_names(d: &TypeDecl) -> Vec<String> {
     let vars: HashSet<&str> = d.type_params.iter().map(|p| p.name.name.as_str()).collect();
     let mut out = Vec::new();
     match &d.body {

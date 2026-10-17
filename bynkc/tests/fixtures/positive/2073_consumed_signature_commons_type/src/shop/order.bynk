@@ -1,0 +1,15 @@
+-- #2073 review: `Order.region` is `geo`'s `Region`, which this context
+-- reaches through `uses`.
+context shop.order
+
+uses geo
+
+exports transparent { Order }
+
+type Order = { id: String, region: Region }
+
+service place {
+  on call(id: String) -> Effect[Order] {
+    Order { id: id, region: international() }
+  }
+}

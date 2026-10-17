@@ -1,0 +1,20 @@
+-- #2073 review: a caller that consumes `shop.base` too, so `Base` crosses
+-- `shop.ledger`'s boundary named through `shop.base` (`shop_base.Base`).
+context shop.front
+
+consumes shop.base
+consumes shop.order
+consumes shop.ledger
+
+service check {
+  on call(id: String) -> Effect[Int] {
+    let o <- shop.order.place(id)
+    shop.ledger.take(o)
+  }
+}
+
+service direct {
+  on call(id: String) -> Effect[Int] {
+    shop.ledger.take(Order { id: id, b: Base { n: 3 } })
+  }
+}

@@ -1162,9 +1162,14 @@ pub fn build_cross_context_info(
     // already resolves ownership this same way for wiring.
     let mut consumed_event_names: HashMap<String, std::collections::HashSet<String>> =
         HashMap::new();
+    let mut consumed_type_owners: HashMap<String, HashMap<String, String>> = HashMap::new();
     for t in &consumed_contexts {
-        let other_types_combined = combined_types_for(t, unit_tables, unit_uses);
-        consumed_types.insert(t.clone(), other_types_combined.clone());
+        let (other_types_combined, owners) =
+            contract_types_for(t, unit_tables, unit_uses, unit_consumes);
+        consumed_types.insert(t.clone(), other_types_combined);
+        if !owners.is_empty() {
+            consumed_type_owners.insert(t.clone(), owners);
+        }
         let Some(other_table) = unit_tables.get(t) else {
             continue;
         };
@@ -1240,6 +1245,7 @@ pub fn build_cross_context_info(
             .map(|t| t.flattened_caps.clone())
             .unwrap_or_default(),
         consumed_event_names,
+        consumed_type_owners,
     }
 }
 
@@ -1483,6 +1489,244 @@ pub fn resolve_given_cap_ref(
 /// canonicalise the callee's contract from the *same* table or their hashes
 /// diverge and every call 409s. Routing both through one function makes that
 /// agreement structural rather than a thing to keep in step by hand.
+/// #2073: the type table a context's service signatures resolve in, as a
+/// caller and the context itself both see it: [`combined_types_for`] (its own
+/// types and its `uses` commons'), plus the types of the contexts it consumes,
+/// which a signature may name (`on call(o: Order)` in `shop.ledger`, `Order`
+/// from `shop.order`). Its own types win a name clash. The second map names
+/// the declaring context of each type that came from a consumed context.
+///
+/// A borrowed type's body resolves in its declaring context's view, not this
+/// one's: `shop.order`'s `Order { region: Region }` names `shop.order`'s
+/// `Region` even when `shop.ledger` declares a `Region` of its own. Where the
+/// two would differ, the reference is renamed to a key qualified by the
+/// declaring context (`shop_order__Region`) under which that context's
+/// declaration is added, so canonicalising (the contract hash) and walking
+/// the table both see the right shape. A name two consumed contexts both
+/// declare is added bare for neither; a signature cannot name it bare
+/// anyway (an exported clash is `bynk.consumes.name_conflict`), and a body
+/// that reaches it does so through its own context's qualified key.
+///
+/// Both sides of a cross-context call build the contract hash from this one
+/// table, so they agree by construction.
+pub fn contract_types_for(
+    unit: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+) -> (HashMap<String, Arc<TypeDecl>>, HashMap<String, String>) {
+    let mut walk = ContractWalk::default();
+    let (table, owners, _) =
+        contract_types_inner(unit, unit_tables, unit_uses, unit_consumes, &mut walk);
+    (table, owners)
+}
+
+/// A context's contract table and the declaring context of each borrowed type.
+type ContractView = (HashMap<String, Arc<TypeDecl>>, HashMap<String, String>);
+
+/// #2073 review: one `contract_types_for` walk. `visiting` breaks a `consumes`
+/// cycle; `memo` holds each context's view once it is computed, so a layered
+/// `consumes` DAG costs one walk per context, not one per path. A view that
+/// met a cycle depends on where the walk entered it, so it is not memoised.
+#[derive(Default)]
+struct ContractWalk {
+    visiting: std::collections::HashSet<String>,
+    memo: HashMap<String, ContractView>,
+}
+
+/// The view, its owners, and whether computing it met a `consumes` cycle.
+fn contract_types_inner(
+    unit: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    walk: &mut ContractWalk,
+) -> (
+    HashMap<String, Arc<TypeDecl>>,
+    HashMap<String, String>,
+    bool,
+) {
+    if let Some((table, owners)) = walk.memo.get(unit) {
+        return (table.clone(), owners.clone(), false);
+    }
+    let mut out = combined_types_for(unit, unit_tables, unit_uses);
+    let mut owners: HashMap<String, String> = HashMap::new();
+    if !walk.visiting.insert(unit.to_string()) {
+        // A `consumes` cycle: stop at the unit's own view.
+        return (out, owners, true);
+    }
+    let mut consumed: Vec<&String> = unit_consumes
+        .get(unit)
+        .into_iter()
+        .flatten()
+        .filter(|u| {
+            unit_tables
+                .get(*u)
+                .is_some_and(|t| t.kind == Some(UnitKind::Context))
+        })
+        .collect();
+    consumed.sort();
+    consumed.dedup();
+    // Each consumed context's own view, in which its types' bodies resolve.
+    let mut cyclic = false;
+    let views: HashMap<String, ContractView> = consumed
+        .iter()
+        .map(|u| {
+            let (table, owners, met) =
+                contract_types_inner(u, unit_tables, unit_uses, unit_consumes, walk);
+            cyclic |= met;
+            ((*u).clone(), (table, owners))
+        })
+        .collect();
+    // The context that declares `r` as `owner`'s view resolves it: `owner`
+    // itself, a context `owner` consumes, or none (a commons type, whose
+    // codecs and namespace are the commons').
+    let declarer = |owner: &str, r: &str, target: &Arc<TypeDecl>| -> Option<String> {
+        if unit_tables
+            .get(owner)
+            .and_then(|t| t.types.get(r))
+            .is_some_and(|d| Arc::ptr_eq(d, target) || d.span == target.span)
+        {
+            return Some(owner.to_string());
+        }
+        views.get(owner).and_then(|(_, o)| o.get(r).cloned())
+    };
+    let mut by_name: std::collections::BTreeMap<&String, Vec<&String>> = Default::default();
+    for u in &consumed {
+        for n in unit_tables[*u].types.keys() {
+            if !out.contains_key(n) {
+                by_name.entry(n).or_default().push(u);
+            }
+        }
+    }
+    let mut queue: Vec<(String, String)> = Vec::new();
+    for (n, us) in by_name {
+        if let [u] = us.as_slice() {
+            out.insert(n.clone(), unit_tables[*u].types[n].clone());
+            owners.insert(n.clone(), (*u).clone());
+            queue.push((n.clone(), (*u).clone()));
+        }
+    }
+    queue.sort();
+    let same = |a: &Arc<TypeDecl>, b: &Arc<TypeDecl>| Arc::ptr_eq(a, b) || a.span == b.span;
+    // `via`: the consumed context whose view the key came from, in which its
+    // body's references resolve (the declarer, for `owners`, may be a context
+    // `via` itself consumes).
+    while let Some((key, via)) = queue.pop() {
+        let owner = via;
+        let Some((view, _)) = views.get(&owner) else {
+            continue;
+        };
+        let decl = out[&key].clone();
+        let mut subst: HashMap<String, String> = HashMap::new();
+        for r in crate::project_model::type_decl_ref_names(&decl) {
+            let Some(target) = view.get(&r) else {
+                continue;
+            };
+            match out.get(&r) {
+                Some(here) if same(here, target) => {}
+                None => {
+                    out.insert(r.clone(), target.clone());
+                    if let Some(d) = declarer(&owner, &r, target) {
+                        owners.insert(r.clone(), d);
+                    }
+                    queue.push((r, owner.clone()));
+                }
+                Some(_) => {
+                    let d = declarer(&owner, &r, target);
+                    let qualified = format!(
+                        "{}__{r}",
+                        d.as_deref().unwrap_or(owner.as_str()).replace('.', "_")
+                    );
+                    if !out.contains_key(&qualified) {
+                        out.insert(qualified.clone(), target.clone());
+                        if let Some(d) = d {
+                            owners.insert(qualified.clone(), d);
+                        }
+                        queue.push((qualified.clone(), owner.clone()));
+                    }
+                    subst.insert(r, qualified);
+                }
+            }
+        }
+        if !subst.is_empty() {
+            out.insert(key, Arc::new(rename_decl_refs(&decl, &subst)));
+        }
+    }
+    walk.visiting.remove(unit);
+    if !cyclic {
+        walk.memo
+            .insert(unit.to_string(), (out.clone(), owners.clone()));
+    }
+    (out, owners, cyclic)
+}
+
+/// #2073: `decl` with every type it names renamed by `subst` (its own name
+/// kept).
+fn rename_decl_refs(decl: &TypeDecl, subst: &HashMap<String, String>) -> TypeDecl {
+    let mut out = decl.clone();
+    match &mut out.body {
+        TypeBody::Record(r) => {
+            for f in &mut r.fields {
+                rename_type_ref(&mut f.type_ref, subst);
+            }
+        }
+        TypeBody::Sum(sum) => {
+            for v in &mut sum.variants {
+                for f in &mut v.payload {
+                    rename_type_ref(&mut f.type_ref, subst);
+                }
+            }
+        }
+        TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
+    }
+    out
+}
+
+/// #2073: rename every user type `r` names, in place. Exhaustive over
+/// `TypeRef`, like [`crate::project_model::type_ref_names`].
+fn rename_type_ref(r: &mut TypeRef, subst: &HashMap<String, String>) {
+    match r {
+        TypeRef::Named(id) => {
+            if let Some(to) = subst.get(&id.name) {
+                id.name = to.clone();
+            }
+        }
+        TypeRef::App { name, args, .. } => {
+            if let Some(to) = subst.get(&name.name) {
+                name.name = to.clone();
+            }
+            for a in args {
+                rename_type_ref(a, subst);
+            }
+        }
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            rename_type_ref(a, subst);
+            rename_type_ref(b, subst);
+        }
+        TypeRef::Option(t, _)
+        | TypeRef::Effect(t, _)
+        | TypeRef::HttpResult(t, _)
+        | TypeRef::List(t, _)
+        | TypeRef::Query(t, _)
+        | TypeRef::Stream(t, _)
+        | TypeRef::Connection(t, _)
+        | TypeRef::History(t, _) => rename_type_ref(t, subst),
+        TypeRef::Fn(params, ret, _) => {
+            for p in params {
+                rename_type_ref(p, subst);
+            }
+            rename_type_ref(ret, subst);
+        }
+        TypeRef::Base(..)
+        | TypeRef::QueueResult(_)
+        | TypeRef::Asset(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => {}
+    }
+}
+
 pub fn combined_types_for(
     unit: &str,
     unit_tables: &HashMap<String, UnitTable>,
@@ -2070,5 +2314,43 @@ mod value_namespace_tests {
         let src = "context app\n\ncapability A {\n  fn go() -> Effect[Int]\n}\n\ncapability B {\n  fn go() -> Effect[Int]\n}\n\nprovides A = Impl {\n  fn go() -> Effect[Int] {\n    Effect.pure(1)\n  }\n}\n\nprovides B = Impl {\n  fn go() -> Effect[Int] {\n    Effect.pure(2)\n  }\n}\n";
         let r = analyse(&[("app/main.bynk", src)]);
         assert_eq!(r.error_categories(), vec!["bynk.resolve.name_conflict"]);
+    }
+}
+
+/// #2073 review: a borrowed type's body resolves in its declaring context's
+/// view, so the contract table hashes the shape the wire carries.
+#[cfg(test)]
+mod contract_types_tests {
+    use crate::testkit::analyse;
+
+    const ORDER: &str = "context shop.order\n\nexports transparent { Order }\n\ntype Region = enum { Domestic, International }\n\ntype Order = { id: String, region: Region }\n";
+    const POST: &str = "context shop.post\n\nexports transparent { Parcel }\n\ntype Region = enum { North, South }\n\ntype Parcel = { ref: String, region: Region }\n";
+    const LEDGER: &str = "context shop.ledger\n\nconsumes shop.order\nconsumes shop.post\n\ntype Region = enum { Here, There }\n\nservice orderId {\n  on call(o: Order) -> Effect[String] {\n    o.id\n  }\n}\n\nservice parcelRef {\n  on call(p: Parcel) -> Effect[String] {\n    p.ref\n  }\n}\n";
+
+    fn normal_form(service: &str) -> String {
+        let a = analyse(&[
+            ("shop/order.bynk", ORDER),
+            ("shop/post.bynk", POST),
+            ("shop/ledger.bynk", LEDGER),
+        ]);
+        a.assert_clean();
+        let info = &a.analysis.boundary_info["shop.ledger"];
+        let svc = crate::resolver::cross_context_service_for(service, &info.services[service])
+            .expect("an `on call` service");
+        crate::contract::service_normal_form(&svc, &info.types)
+    }
+
+    #[test]
+    fn a_borrowed_record_names_its_own_contexts_field_type() {
+        let order = normal_form("orderId");
+        assert!(
+            order.contains("Domestic") && !order.contains("Here") && !order.contains("North"),
+            "{order}"
+        );
+        let parcel = normal_form("parcelRef");
+        assert!(
+            parcel.contains("North") && !parcel.contains("Here") && !parcel.contains("Domestic"),
+            "{parcel}"
+        );
     }
 }

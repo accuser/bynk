@@ -1,0 +1,15 @@
+-- #2073 review: a borrowed record whose field is a commons type the target
+-- doesn't use crosses the target's boundary.
+suite shop.ledger as system {
+  case "a borrowed record with a commons field crosses the wire" {
+    let o <- shop.order.place("o1")
+    let id <- shop.ledger.orderId(o)
+    expect id == "o1"
+  }
+
+  case "a borrowed record with a commons field crosses back" {
+    let o <- shop.order.place("o2")
+    let back <- shop.ledger.echo(o)
+    expect back.id == "o2"
+  }
+}

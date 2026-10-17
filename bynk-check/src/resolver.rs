@@ -265,6 +265,12 @@ pub struct CrossContextInfo {
     /// consumed context, mirroring how `discover_event_subscribers`
     /// (`bynk-emit/src/project.rs`) already resolves ownership for wiring.
     pub consumed_event_names: HashMap<String, HashSet<String>>,
+    /// #2073: for each consumed context, the types in its `consumed_types`
+    /// table that it does not declare but consumes from another context,
+    /// mapped to that declaring context (`Order` → `shop.order` for a consumed
+    /// `shop.ledger`). A boundary cast or codec names such a type through its
+    /// declaring context, not the consumed one.
+    pub consumed_type_owners: HashMap<String, HashMap<String, String>>,
 }
 
 /// Snapshot of one exported capability in a consumed context, as needed for

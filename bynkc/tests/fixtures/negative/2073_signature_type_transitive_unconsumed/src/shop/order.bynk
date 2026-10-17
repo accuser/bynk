@@ -1,0 +1,14 @@
+-- #2073 review: `Order.b` is `shop.base`'s `Base`.
+context shop.order
+
+consumes shop.base
+
+exports transparent { Order }
+
+type Order = { id: String, b: Base }
+
+service place {
+  on call(id: String) -> Effect[Order] {
+    Order { id: id, b: Base { n: 7 } }
+  }
+}

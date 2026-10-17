@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "provides": {
+    "check": "b88fda3a9003fdb4",
+    "direct": "1ac27c2999bfe931"
+  },
+  "expects": {
+    "shop.ledger": {
+      "take": "0cb3df41e793ac30"
+    },
+    "shop.order": {
+      "place": "8168b2b203446bfe"
+    }
+  }
+}

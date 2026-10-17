@@ -1,0 +1,45 @@
+-- #2073 review: `shop.ledger` declares a `Region` of its own and takes and
+-- returns `shop.order`'s and `shop.post`'s records, bare and wrapped. Each
+-- borrowed record's `region` is its own context's `Region`, not this one's.
+context shop.ledger
+
+consumes shop.order
+consumes shop.post
+
+type Region = enum { Here, There }
+
+service orderId {
+  on call(o: Order) -> Effect[String] {
+    o.id
+  }
+}
+
+service parcelRef {
+  on call(p: Parcel) -> Effect[String] {
+    p.ref
+  }
+}
+
+service echo {
+  on call(os: List[Order]) -> Effect[List[Order]] {
+    os
+  }
+}
+
+service first {
+  on call(os: List[Order]) -> Effect[Option[Order]] {
+    os.first()
+  }
+}
+
+service present {
+  on call(o: Option[Parcel]) -> Effect[Bool] {
+    o is Some(_)
+  }
+}
+
+service here {
+  on call() -> Effect[Region] {
+    Region.Here
+  }
+}

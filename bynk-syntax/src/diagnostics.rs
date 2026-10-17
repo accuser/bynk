@@ -556,6 +556,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["consumes_decl"],
     ),
     dg(
+        "bynk.consumes.signature_type_unconsumed",
+        "A cross-context call reaches a service whose signature names a type the consumed context itself consumes from a third context, which the caller does not consume.",
+        &["consumes_decl"],
+    ),
+    dg(
         "bynk.consumes.target_is_commons",
         "`consumes` targets a `commons` instead of a context.",
         &["consumes_decl"],
