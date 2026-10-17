@@ -7,6 +7,8 @@ import { Envelope } from "../demo-vault/handlers.js";
 
 import type * as demo_vault from "../demo-vault/handlers.js";
 
+export { type Envelope };
+
 /**
  * #1736: consumes demo.vault's generic types across the boundary, in both
  * directions: returned, sent back, and built here and sent.
