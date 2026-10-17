@@ -85,6 +85,22 @@ fn stop_tree(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
+/// #2069 review: owns the spawned `wrangler` and stops its whole process group
+/// on drop, so a panic between `spawn()` and the end of the test (an `expect`
+/// in `drive`, say) can't leak the tree. That leak is the one #2069 fixes.
+///
+/// One case it does not cover: because wrangler leads its own process group,
+/// a Ctrl-C at the terminal no longer reaches it, and an interrupted
+/// `cargo test` dies without unwinding, so no `Drop` runs. Stopping the group
+/// then would need a `SIGINT`/`SIGTERM` handler in the test.
+struct Group(std::process::Child);
+
+impl Drop for Group {
+    fn drop(&mut self) {
+        stop_tree(&mut self.0);
+    }
+}
+
 #[test]
 fn workerd_breakpoint_in_bynk_handler_binds_and_pauses() {
     if !have("wrangler") || !have("node") {
@@ -129,8 +145,10 @@ fn workerd_breakpoint_in_bynk_handler_binds_and_pauses() {
     // workerd on the machine.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    let mut wrangler = cmd
-        .args([
+    // Held in a `Group`, so a panic anywhere below (`drive`'s `.expect`s among
+    // them) still stops the tree as the stack unwinds.
+    let wrangler = Group(
+        cmd.args([
             "dev",
             "--inspector-port",
             &inspector_port.to_string(),
@@ -141,11 +159,12 @@ fn workerd_breakpoint_in_bynk_handler_binds_and_pauses() {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .expect("spawn wrangler dev");
+        .expect("spawn wrangler dev"),
+    );
 
     let result = drive(&worker_dir, inspector_port, app_port, bynk_line);
 
-    stop_tree(&mut wrangler);
+    drop(wrangler);
     let _ = std::fs::remove_dir_all(&dir);
 
     let (status, stdout, stderr) = result;

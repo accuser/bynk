@@ -6,6 +6,12 @@
 // (`process.kill(-pid)`) reaches exactly that tree. This replaces a
 // `pkill -f workerd`, which also killed every other test's workerd and any
 // `bynk dev` running alongside.
+//
+// Callers run it from mocha's `after()` hook. Mocha runs that hook even when
+// the test throws or times out, so it does the job a `finally` would. One case
+// it misses: a detached child leads its own group, so a Ctrl-C at the terminal
+// no longer reaches wrangler, and a test process killed outright runs no
+// hooks. Stopping the group then would need a `SIGINT`/`SIGTERM` handler.
 
 import { ChildProcess } from "child_process";
 
