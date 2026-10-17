@@ -1,0 +1,11 @@
+context t.other
+
+consumes t.pay
+
+-- #2025: a caller's own `Cents` is a different type, so a literal admitted
+-- to it still does not cross as `t.pay`'s commons `Cents`.
+type Cents = Int where InRange(1, 5000)
+
+service go {
+	on call() -> Effect[Int] by c: Caller { t.pay.charge(250) }
+}

@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "charge": "7cab123919f1cc13"
+  },
+  "expects": {}
+}

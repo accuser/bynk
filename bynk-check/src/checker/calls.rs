@@ -4174,7 +4174,10 @@ fn check_cross_context_capability_call(
         let param_ty = resolve_type_ref_in(ptype_ref, &consumed_types, &vars, tys)
             .unwrap_or(tys.intern(Ty::Unit));
         let param_ty = substitute(param_ty, &subst, tys);
-        let Some(arg_ty) = type_of(arg, None, ctx) else {
+        // #2025: the parameter's type is the hint, so a literal is admitted
+        // to a refined parameter as at a local call; the structural check
+        // below still decides whether the argument crosses.
+        let Some(arg_ty) = type_of(arg, Some(param_ty), ctx) else {
             all_ok = false;
             continue;
         };
@@ -4366,8 +4369,12 @@ fn check_cross_context_call(
         record_param_hint(ctx.hints, pname, arg);
         let param_ty =
             resolve_type_ref(ptype_ref, &consumed_types, tys).unwrap_or(tys.intern(Ty::Unit));
-        // Type-check the argument in the caller's context.
-        let arg_ty = type_of(arg, None, ctx);
+        // Type-check the argument in the caller's context. #2025: against
+        // the parameter's type, so a literal is admitted to a refined
+        // parameter (`t.pay.charge(250)` for `cents: Cents`) as it is at a
+        // local call; the structural check below still decides whether the
+        // argument crosses.
+        let arg_ty = type_of(arg, Some(param_ty), ctx);
         let Some(arg_ty) = arg_ty else {
             all_ok = false;
             continue;
