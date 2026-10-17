@@ -1386,7 +1386,7 @@ imposed; entries keep the order they were retired in.
   [#1996](https://github.com/bynk-lang/bynk/pull/1996)), with all nine settling questions resolved
   with the maintainer that day.
 
-  **The settling survey found a live defect before any slice ran** (§3.3): `/_bynk/call/` was
+  **The settling survey found a live defect before any slice ran:** `/_bynk/call/` was
   reachable on every route a Worker served, so `X-Bynk-Caller` could be forged from the public
   internet, not only by a Worker holding a Service Binding. That contradicted ADR 0092's premise. It
   was fixed first, outside the track (Q1).
@@ -1419,7 +1419,7 @@ imposed; entries keep the order they were retired in.
     `workers/<worker>/bynk-client.ts`, typed per caller so an unadmitted call fails `tsc`, with its
     runtime in `@bynk/wire-client` (`bynk-emit/wire-client`) and foreign callers pinned in
     `bynk.foreign.toml`, whose breaking hash change `bynk deploy` refuses
-    ([#2023](https://github.com/bynk-lang/bynk/pull/2023), v0.343.0; no ADR, per §10).
+    ([#2023](https://github.com/bynk-lang/bynk/pull/2023), v0.343.0; no ADR: the track's ADR plan assigned none to I4, whose decisions D3/Q6–Q7 are recorded below).
 
   **The settled decisions**, for the code comments that cite them:
   - **D1 / Q2:** the wire format is versioned independently of the compiler, like ADR 0310's ABI;

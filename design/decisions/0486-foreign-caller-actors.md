@@ -63,7 +63,7 @@ Bynk context in the type of its `by` binder. `CallerId` must stay `String` and
     told apart by name.
   - `caller_binder_for` no longer resolves for a sum, whose binder is the
     resolved actor, not a `CallerId`.
-- **The secret's hand-off (§11 Q4).** The compiler lists each context's foreign
+- **The secret's hand-off (interop track Q4).** The compiler lists each context's foreign
   callers in `bynk-secrets.json` as `foreign` (`actor`, `secret`, `worker`).
   This is additive within manifest version 2: an absent list means none.
   - `bynk deploy` lists each secret as `managed` on that context.

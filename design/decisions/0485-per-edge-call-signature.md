@@ -63,7 +63,7 @@ Bynk edge.
   in-place change to version 1: from here on, the signature, its headers and
   the check order are frozen with the version like everything else.
 - **Every request, every handler.** A binder-less `on call` and every event
-  subscriber verify too (track §11 Q5). An undeclared caller has no key, so it
+  subscriber verify too (interop track Q5). An undeclared caller has no key, so it
   cannot reach any internal route.
 - **Provisioning.** `bynk deploy` derives the edges from the build's own
   `[[services]]` bindings between the project's Workers, lists each key as a

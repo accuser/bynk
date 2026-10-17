@@ -57,7 +57,7 @@ const HEADER = [
 // (`bynk-client.ts`). It is not a copy of anything: it is the same modules the
 // emitted runtime is built from, the ones the call boundary needs, plus the
 // package's own `surface.ts`. So a foreign caller encodes, signs and decodes
-// with the code a Bynk caller runs (`design/tracks/interop.md` §8 D3, I-1).
+// with the code a Bynk caller runs (`design/archive/retired-tracks.md`, interop track D3, I4).
 // Versioned with the wire format, not with this runtime (§11 Q7).
 const CLIENT_ROOT = join(pkgRoot, "..", "wire-client");
 const CLIENT_TARGET = join(CLIENT_ROOT, "index.ts");

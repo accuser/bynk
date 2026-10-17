@@ -25,7 +25,7 @@ own `env`. Each throws, naming the binding, rather than send without it. On
 the receiving side, the first statement of the `/_bynk/call/` and
 `/_bynk/event/` dispatches checks it. The check comes before the service
 lookup, the contract check and the body read. It runs for every handler,
-whether or not it binds `by c: Caller` (track §11 Q5). A failure answers `401`
+whether or not it binds `by c: Caller` (interop track Q5). A failure answers `401`
 with the body `Unauthorized`, so a sender without the secret cannot tell
 services apart (no 404 against 409), never sees a contract hash, and cannot
 write the skew log line. The comparison runs over SHA-256 digests of both

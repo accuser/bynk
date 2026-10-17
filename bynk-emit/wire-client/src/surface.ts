@@ -6,7 +6,7 @@
 // the client is the code it writes into a Bynk caller, byte for byte.
 //
 // The package follows the published wire format's version, not the compiler's
-// and not ADR 0310's emit ABI (`design/tracks/interop.md` §11 Q7): its major
+// and not ADR 0310's emit ABI (`design/archive/retired-tracks.md`, interop track Q7): its major
 // version is the wire version it speaks.
 import {
   boundaryError,
