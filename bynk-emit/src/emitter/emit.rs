@@ -2545,6 +2545,7 @@ pub(crate) fn emit_provider(
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
+        module.consumed_type_ns = consumed_type_ns(ctx);
         module.consumed_context_types = ctx.consumed_context_types();
         module.target = ctx.target;
         module.in_bynk_unit = ctx.commons_name == "bynk";
@@ -2863,6 +2864,7 @@ pub(crate) fn emit_service(
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
+        module.consumed_type_ns = consumed_type_ns(ctx);
         module.consumed_context_types = ctx.consumed_context_types();
         module.target = ctx.target;
         let mut cx = LowerCtx::new(
@@ -3570,6 +3572,21 @@ fn surface_ty(cross_context: &bynk_check::resolver::CrossContextInfo) -> bynk_ts
             })
             .collect(),
     )
+}
+
+/// #2058: each type name this unit reaches from a consumed *context*, mapped
+/// to the namespace the module names that context's types under
+/// (`ev_store`). A literal admitted to such a refined type is cast to
+/// `ev_store.Code`, not a bare `Code` nothing imports.
+pub(crate) fn consumed_type_ns(ctx: &EmitProjectCtx) -> HashMap<String, String> {
+    ctx.imported_from_kind
+        .iter()
+        .filter(|(_, kind)| **kind == UnitKind::Context)
+        .filter_map(|(name, _)| {
+            let owner = ctx.imported_from.get(name)?;
+            Some((name.clone(), qualified_to_ns(owner)))
+        })
+        .collect()
 }
 
 /// Turn a qualified context name (e.g. `commerce.payment`) into the JS
@@ -5328,6 +5345,7 @@ pub(crate) fn emit_agent(
             module.agent_method_givens = ctx.agent_method_givens.clone();
             module.agent_called_contexts = ctx.agent_called_contexts.clone();
             module.event_schema_versions = ctx.event_schema_versions.clone();
+            module.consumed_type_ns = consumed_type_ns(ctx);
             module.consumed_context_types = ctx.consumed_context_types();
             let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
             icx.local_agents = ctx.local_agents.clone();
@@ -6192,6 +6210,7 @@ pub(crate) fn emit_agent(
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
+        module.consumed_type_ns = consumed_type_ns(ctx);
         module.consumed_context_types = ctx.consumed_context_types();
         let mut cx = LowerCtx::new(
             module,
@@ -7210,6 +7229,7 @@ fn emit_ws_do_method(
     module.agent_method_givens = ctx.agent_method_givens.clone();
     module.agent_called_contexts = ctx.agent_called_contexts.clone();
     module.event_schema_versions = ctx.event_schema_versions.clone();
+    module.consumed_type_ns = consumed_type_ns(ctx);
     module.consumed_context_types = ctx.consumed_context_types();
     module.target = ctx.target;
     let mut cx = LowerCtx::new(

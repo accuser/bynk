@@ -1063,7 +1063,13 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
         if cx.in_test_scaffold() {
             return Lowered::bare(unchecked_construct_test(name, &raw, false));
         }
-        return Lowered::bare(unchecked_construct(name, &raw, false));
+        // #2058: a consumed context's refined type is named under its
+        // namespace; the module imports no bare name for it.
+        return Lowered::bare(unchecked_construct(
+            &cx.consumed_type_name(name),
+            &raw,
+            false,
+        ));
     }
     let mut pre = Pre::new();
     let expr = match &e.kind {
