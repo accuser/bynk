@@ -285,9 +285,7 @@ pub(crate) fn deploy_one(
     drop(file);
     let pushed = pushed?;
     if pushed == Pushed::Ok {
-        for (binding_name, _) in &prepared {
-            eprintln!("{}", binding_set_line(binding_name, &deployed, true));
-        }
+        report_first_version_bindings(&prepared, &deployed);
     }
     Ok(pushed)
 }

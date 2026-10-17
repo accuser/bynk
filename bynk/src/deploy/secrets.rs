@@ -645,6 +645,14 @@ pub(crate) fn apply_secrets(
     Ok(())
 }
 
+/// #2055: say, by name only, each binding a new Worker's first version was
+/// uploaded with. The values beside the names are never read here.
+pub(crate) fn report_first_version_bindings(prepared: &[(String, String)], deployed: &str) {
+    for (binding_name, _) in prepared {
+        eprintln!("{}", binding_set_line(binding_name, deployed, true));
+    }
+}
+
 /// #2055: the line a deploy prints once it has set a secret — the **name**
 /// only, never the value — beside the "already set, skipping" line, so a run
 /// says what it changed as well as what it left alone. `deployed` is the
