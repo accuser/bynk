@@ -1,0 +1,22 @@
+-- #2075: `Json.encode` and `Json.decode[T]` in a case, on a consumed
+-- context's record (with an enum field) and enum. The module generates their
+-- codecs, which name the types through `shop.order`'s namespace.
+suite shop.ledger {
+  case "encodes a consumed record with an enum field" {
+    expect Json.encode(Order { id: "o1", region: Domestic }) == "{\"id\":\"o1\",\"region\":{\"kind\":\"Domestic\"}}"
+  }
+
+  case "decodes a consumed record with an enum field" {
+    match Json.decode[Order]("{\"id\": \"o2\", \"region\": {\"kind\": \"International\"}}") {
+      Ok(o) => expect o.region == International
+      Err(_) => expect false
+    }
+  }
+
+  case "decodes a consumed enum" {
+    match Json.decode[Region]("{\"kind\": \"Domestic\"}") {
+      Ok(r) => expect r == Domestic
+      Err(_) => expect false
+    }
+  }
+}
