@@ -117,8 +117,11 @@ export function __bynkBytesToBase64Url(bytes: Uint8Array): string {
 }
 
 // Partial decode: the URL-safe alphabet, with no padding or exactly the padding
-// the length needs. A standard-alphabet character (`+`, `/`), wrong padding or
-// an impossible length (`length % 4 == 1`) is `None`.
+// the length needs. A standard-alphabet character (`+`, `/`), wrong padding, an
+// impossible length (`length % 4 == 1`) or non-zero spare bits in the last
+// character is `None`. That last rule makes the decode canonical: `atob` drops
+// the spare bits, so without it `"Zh"` and `"Zg"` would both decode to `"f"`,
+// and a signed token segment could be re-spelled without changing its bytes.
 export function __bynkBytesFromBase64Url(s: string): Option<Uint8Array> {
   const m = /^([A-Za-z0-9_-]*)(={0,2})$/.exec(s);
   if (m === null) {
@@ -133,5 +136,9 @@ export function __bynkBytesFromBase64Url(s: string): Option<Uint8Array> {
   if (pad.length !== 0 && pad.length !== need) {
     return None;
   }
-  return __bynkBytesFromBase64(body.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat(need));
+  const decoded = __bynkBytesFromBase64(body.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat(need));
+  if (decoded.tag === "Some" && __bynkBytesToBase64Url(decoded.value) !== body) {
+    return None;
+  }
+  return decoded;
 }

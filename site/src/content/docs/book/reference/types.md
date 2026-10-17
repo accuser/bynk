@@ -64,8 +64,9 @@ one base type that does **not** emit to `number`: a `Bytes` erases to a host
   `None`. `""` decodes to `Bytes.empty()`.
 - `Bytes.fromBase64Url(s: String) -> Option[Bytes]` — decode base64url (RFC 4648
   §5, the `-`/`_` alphabet), with no padding or exactly the padding the length
-  needs. A standard-alphabet `+` or `/`, wrong padding or an impossible length
-  gives `None`.
+  needs. A standard-alphabet `+` or `/`, wrong padding, an impossible length or
+  non-zero spare bits in the last character gives `None`, so each value has exactly
+  one accepted spelling (`"Zg"` decodes, `"Zh"` doesn't).
 - `Bytes.empty() -> Bytes` — the zero value (the empty sequence).
 
 The methods:

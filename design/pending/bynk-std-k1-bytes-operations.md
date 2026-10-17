@@ -47,9 +47,14 @@ values (P1), D1 (P4) and R2 (P5). Slice K1 (#2016) builds them.
 - **D5 — base64url: RFC 4648 §5, unpadded out, padding optional in.** `toBase64Url` uses the `-`
   and `_` alphabet with no padding: the JWT (RFC 7515) form. `fromBase64Url` accepts no padding or
   exactly the padding the length needs. A standard-alphabet `+` or `/`, any other padding or an
-  impossible length (`length % 4 == 1`) is `None`. The two alphabets stay disjoint: `fromBase64`
-  refuses `-`/`_` and `fromBase64Url` refuses `+`/`/`. The JSON wire form of `Bytes` stays
-  standard base64 (ADR 0142 D5).
+  impossible length (`length % 4 == 1`) is `None`. So is non-zero spare bits in the last
+  character: `"Zh"` is refused, and only `"Zg"` decodes to `"f"`. That makes the decode canonical,
+  with exactly one spelling per value, so a signed token segment can't be re-spelled without
+  changing its bytes. The two alphabets stay disjoint: `fromBase64` refuses `-`/`_` and
+  `fromBase64Url` refuses `+`/`/`. The JSON wire form of `Bytes` stays standard base64 (ADR 0142
+  D5). `fromBase64`, which is also that wire codec's decoder, still accepts non-zero spare bits.
+  Tightening it would change what the codec accepts, which is a decision for ADR 0142 and not
+  this slice.
 - **D6 — Not constant-time.** `compare`, like `==`, stops at the first differing octet. The
   reference says so and points secret comparison at K4's `verify` (track §12).
 - **D7 — The helpers are their own import group.** `__bynkBytesConcat`, `__bynkBytesCompare`,

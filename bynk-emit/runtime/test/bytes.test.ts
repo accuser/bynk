@@ -121,13 +121,13 @@ test("__bynkBytesToBase64Url: RFC 4648 vectors, unpadded", () => {
   assert.equal(__bynkBytesToBase64Url(new Uint8Array([0xfb, 0xff])), "-_8");
 });
 
-test("__bynkBytesFromBase64Url: padding optional, alphabets disjoint", () => {
+test("__bynkBytesFromBase64Url: padding optional, alphabets disjoint, canonical only", () => {
   assert.equal(__bynkBytesEqual(some(__bynkBytesFromBase64Url("Zm8")), utf8("fo")), true);
   assert.equal(__bynkBytesEqual(some(__bynkBytesFromBase64Url("Zm8=")), utf8("fo")), true);
   assert.equal(__bynkBytesEqual(some(__bynkBytesFromBase64Url("Zg==")), utf8("f")), true);
   assert.equal(__bynkBytesEqual(some(__bynkBytesFromBase64Url("-_8")), new Uint8Array([0xfb, 0xff])), true);
   assert.equal(some(__bynkBytesFromBase64Url("")).length, 0);
-  for (const bad of ["+/8", "+/8=", "Zm9v=", "Zm9v==", "Zg=", "Zg===", "Z", "Zm9vY", "Zm 8", "=", "Zm=8"]) {
+  for (const bad of ["+/8", "+/8=", "Zm9v=", "Zm9v==", "Zg=", "Zg===", "Z", "Zm9vY", "Zm 8", "=", "Zm=8", "Zh", "Zh==", "Zm9", "Zm9="]) {
     assert.equal(__bynkBytesFromBase64Url(bad).tag, "None", `expected None for ${JSON.stringify(bad)}`);
   }
   for (const b of randomBuffers()) {
