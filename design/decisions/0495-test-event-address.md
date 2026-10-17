@@ -1,12 +1,6 @@
----
-level: minor
-probes: diagnostic_coverage, emit_diagnostics, ts_writes
-changelog: A test case delivers an event to a `from Events(E)` service with `svc.event(e)` or `svc.event(e, env)`, honouring its pattern filter and `via schema(N)` guard
----
+# 0495 — A test case delivers an event to a `from Events` service by address
 
-## ADR: test-event-address
-title: A test case delivers an event to a `from Events` service by address
-summary: `svc.event(e[, env])` at `unit` and `integration`, through the generated `event` method; refused at `system`
+- **Status:** Accepted (v0.349)
 
 **Context.** A case addresses a service by its natural surface: `svc.call(…)`,
 an HTTP verb, `svc.schedule("…")` or `svc.message(m)` (ADR 0205). A `from

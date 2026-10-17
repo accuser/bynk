@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.348**.
+written against **v0.349**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.349.0** | A test case delivers an event to a `from Events(E)` service with `svc.event(e)` or `svc.event(e, env)`, honouring its pattern filter and `via schema(N)` guard |
 | **v0.348.1** | A literal set on a consumed context's refined field (`Item { code: 1, … }` for `ev.store`'s `Code`) is now cast to `ev_store.Code` under the namespace the module already imports, instead of a bare `Code` it never imported, which failed `tsc` with `TS2304` |
 | **v0.348.0** | A refined literal in a field of a generic record passed to a cross-context call (`Page { items: [250] }` for a `Page[Cents]` parameter), or in a record literal that also has a shorthand field, is admitted against the callee's own declaration, as other nested literals are, so it crosses from a caller with its own type of that name; a shorthand field is checked by its binding's type |
 | **v0.347.1** | On `workers`, a context imports a consumed context's types type-only (`import { type Receipt }`) and builds that context's sum variants inline (`({ tag: "Held", reason } as Status)`), so the callee's module stays out of the caller's Worker bundle; a consumed type with attached methods still imports as a value |
