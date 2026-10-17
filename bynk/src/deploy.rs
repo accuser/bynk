@@ -409,8 +409,9 @@ mod tests {
 
         // A renamed capability (`Carts` → `PriceCache`) is a new binding: a
         // create beside the reuse, and the old instance an orphan, never
-        // pruned without `--prune`'s confirmation. Under `--env staging` the
-        // instances' titles are qualified; the bare one's is not.
+        // pruned without `--prune`'s confirmation. Under `--env staging` every
+        // title is qualified, the bare one's too (#2037); the recorded ids are
+        // reused, whatever their namespaces were titled when made.
         out.push_str("\n# S4b: an instance renamed, under --env staging\n");
         let mut staged = DeployLock::default();
         staged.record_deployed("staging", "shop-cart", Some(Default::default()));
@@ -433,8 +434,8 @@ mod tests {
         out.push_str(&plan_report(&renamed, DeployFormat::Json));
 
         // #2028: under `--env staging` every Worker, binding target and queue
-        // is named as the push creates it, `-staging`; the bare `KV`'s
-        // namespace title is not.
+        // is named as the push creates it, `-staging`, and so is the bare
+        // `KV`'s namespace title (#2037).
         out.push_str("\n# --env staging: several contexts and a queue, first deploy\n");
         let staging_resources = project(vec![
             (
@@ -456,6 +457,28 @@ mod tests {
         out.push_str(&plan_report(&staging, DeployFormat::Short));
         out.push_str("\n# --format json, the same plan under --env staging\n");
         out.push_str(&plan_report(&staging, DeployFormat::Json));
+
+        // #2037: the bare `KV`'s title, first deploy, default and staging. An
+        // account holds one namespace per title, so staging's is qualified
+        // and the default's is the title it has always had.
+        let bare = project(vec![("api", Resources::default().needs_kv())]);
+        let bare_order = names(&["api"]);
+        for environment in ["default", "staging"] {
+            out.push_str(&format!(
+                "\n# #2037: the bare namespace, first deploy, --env {environment}\n"
+            ));
+            out.push_str(&plan_report(
+                &derive_plan(
+                    &bare_order,
+                    &bare,
+                    &DeployLock::default(),
+                    &SecretSource::default(),
+                    false,
+                    environment,
+                ),
+                DeployFormat::Short,
+            ));
+        }
 
         out.push_str("\n# S4b: a removed context's bare namespace and instance, both orphans\n");
         out.push_str(&plan_report(
