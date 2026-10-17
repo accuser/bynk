@@ -16,6 +16,21 @@ suite t.shadow as system {
 		expect r == 0
 	}
 
+	case "a negative literal from a caller with its own Delta" {
+		let r <- t.shadow.shifted() by Caller("t.other")
+		expect r == -3
+	}
+
+	case "an Err payload from a caller with its own Cents" {
+		let r <- t.shadow.refunded() by Caller("t.other")
+		expect r == 5
+	}
+
+	case "a parenthesised literal from a caller with its own Cents" {
+		let r <- t.shadow.parenthesised() by Caller("t.other")
+		expect r == 12
+	}
+
 	case "a Result payload from a caller with its own Cents" {
 		let r <- t.shadow.settled() by Caller("t.other")
 		expect r == 9

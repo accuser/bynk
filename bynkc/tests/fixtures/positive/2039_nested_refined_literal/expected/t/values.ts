@@ -17,6 +17,20 @@ export const Cents = {
   },
 };
 
+export type Delta = number & { readonly __brand: "Delta" };
+
+export const Delta = {
+  of(value: number): Result<Delta, ValidationError> {
+    if (!globalThis.Number.isSafeInteger(value)) {
+      return Err({ field: "Delta", message: "must be a safe integer", value });
+    }
+    if (!(value >= -10 && value <= 10)) {
+      return Err({ field: "Delta", message: "must be in range [-10, 10]", value });
+    }
+    return Ok(value as Delta);
+  },
+};
+
 export function __serialise_Cents(value: Cents): __JsonValue {
   return value as unknown as number;
 }
@@ -32,5 +46,22 @@ export function __deserialise_Cents(json: __JsonValue, path: string = "$"): Resu
     return Err({ kind: "RefinementViolation", path, violation: validated.error });
   }
   return Ok(validated.value as Cents);
+}
+
+export function __serialise_Delta(value: Delta): __JsonValue {
+  return value as unknown as number;
+}
+
+export function __deserialise_Delta(json: __JsonValue, path: string = "$"): Result<Delta, __BoundaryError> {
+  if (typeof json !== "number") {
+    return Err({ kind: "StructuralMismatch", path, expected: "number", actual: typeof json });
+  }
+  const validated = (typeof (Delta as unknown as { of?: (json: unknown) => Result<unknown, ValidationError> }).of === "function")
+    ? (Delta as unknown as { of: (json: unknown) => Result<unknown, ValidationError> }).of(json)
+    : (Ok(json as unknown as Delta) as Result<unknown, ValidationError>);
+  if (validated.tag === "Err") {
+    return Err({ kind: "RefinementViolation", path, violation: validated.error });
+  }
+  return Ok(validated.value as Delta);
 }
 

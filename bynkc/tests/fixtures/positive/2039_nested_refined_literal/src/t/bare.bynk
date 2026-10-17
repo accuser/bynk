@@ -23,6 +23,18 @@ service empties {
 	on call() -> Effect[Int] by c: Caller { t.pay.many([], None, Map.empty()) }
 }
 
+service shifted {
+	on call() -> Effect[Int] by c: Caller { t.pay.shift(Some(-3)) }
+}
+
+service refunded {
+	on call() -> Effect[Int] by c: Caller { t.pay.refund(Err(5)) }
+}
+
+service parenthesised {
+	on call() -> Effect[Int] by c: Caller { t.pay.maybe(Some((12))) }
+}
+
 service placed {
 	on call() -> Effect[Int] by c: Caller { t.pay.place(Order { cents: 40, note: "n" }) }
 }

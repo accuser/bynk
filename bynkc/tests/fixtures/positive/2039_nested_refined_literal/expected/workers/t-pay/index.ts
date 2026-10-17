@@ -92,6 +92,27 @@ export default {
             const body = ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(result);
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
+          case "refund": {
+            __route = "call refund";
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "e12d6bac496ce10c") {
+              globalThis.console.error("ContractMismatch t.pay call refund", { service: "refund", expected: "e12d6bac496ce10c", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "refund", expected: "e12d6bac496ce10c", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
+            let args: __JsonValue;
+            try {
+              args = globalThis.JSON.parse(__body) as __JsonValue;
+            } catch {
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            }
+            const __caller = request.headers.get("X-Bynk-Caller") as string;
+            const __r_r = handlers.__deserialise_Result_Int_Cents(args, "$");
+            if (__r_r.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_r.error), { status: 400, headers: { "content-type": "application/json" } });
+            const r = __r_r.value;
+            const result = await surface.refund(__caller, r);
+            const body = ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(result);
+            return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+          }
           case "settle": {
             __route = "call settle";
             const __contract = request.headers.get("X-Bynk-Contract");
@@ -110,6 +131,27 @@ export default {
             if (__r_r.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_r.error), { status: 400, headers: { "content-type": "application/json" } });
             const r = __r_r.value;
             const result = await surface.settle(__caller, r);
+            const body = ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(result);
+            return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+          }
+          case "shift": {
+            __route = "call shift";
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "7f37b80c889cbe3f") {
+              globalThis.console.error("ContractMismatch t.pay call shift", { service: "shift", expected: "7f37b80c889cbe3f", actual: globalThis.String(__contract).slice(0, 16) });
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "ContractMismatch", service: "shift", expected: "7f37b80c889cbe3f", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            }
+            let args: __JsonValue;
+            try {
+              args = globalThis.JSON.parse(__body) as __JsonValue;
+            } catch {
+              return new globalThis.Response(globalThis.JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            }
+            const __caller = request.headers.get("X-Bynk-Caller") as string;
+            const __r_d = handlers.__deserialise_Option_Delta(args, "$");
+            if (__r_d.tag === "Err") return new globalThis.Response(globalThis.JSON.stringify(__r_d.error), { status: 400, headers: { "content-type": "application/json" } });
+            const d = __r_d.value;
+            const result = await surface.shift(__caller, d);
             const body = ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(result);
             return new globalThis.Response(globalThis.JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }

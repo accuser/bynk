@@ -21,6 +21,21 @@ suite t.bare as system {
 		expect r == 0
 	}
 
+	case "a negative literal from a caller with no uses" {
+		let r <- t.bare.shifted() by Caller("t.other")
+		expect r == -3
+	}
+
+	case "an Err payload from a caller with no uses" {
+		let r <- t.bare.refunded() by Caller("t.other")
+		expect r == 5
+	}
+
+	case "a parenthesised literal from a caller with no uses" {
+		let r <- t.bare.parenthesised() by Caller("t.other")
+		expect r == 12
+	}
+
 	case "a record field from a caller with no uses" {
 		let r <- t.bare.placed() by Caller("t.other")
 		expect r == 40

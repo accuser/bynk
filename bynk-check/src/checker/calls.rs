@@ -4380,8 +4380,9 @@ fn rebranded_return_mismatch(
 ///
 /// Every other part of the argument is a *leaf*, typed in the caller's own
 /// scope with its position's type as the hint, and the structural check
-/// decides whether each leaf crosses. An argument with no admitted literal
-/// is checked whole, as before.
+/// decides whether each leaf crosses. An argument with no literal or empty
+/// constructor in it is a single leaf, so it is checked whole, as before;
+/// a leaf `type_of` did not record falls back to the whole argument too.
 fn type_cross_context_arg(
     arg: &Expr,
     param_ty: TyId,
@@ -4463,14 +4464,19 @@ fn collect_crossing_positions<'e>(
             leaves,
         )
     };
-    match (&e.kind, &*node) {
-        (
-            ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } | ExprKind::StrLit(_),
+    // A compile-time literal, negated ones (`-3`) included.
+    if const_literal(e).is_some()
+        && matches!(
+            &*node,
             Ty::Named {
                 kind: NamedKind::Refined(_),
                 ..
-            },
-        ) => literals.push((e, pos)),
+            }
+        )
+    {
+        return literals.push((e, pos));
+    }
+    match (&e.kind, &*node) {
         (ExprKind::Paren(inner), _) => walk(inner, pos, literals, leaves),
         // Typed from the hint: the parameter's own type at this position.
         (ExprKind::None, Ty::Option(_)) => {}

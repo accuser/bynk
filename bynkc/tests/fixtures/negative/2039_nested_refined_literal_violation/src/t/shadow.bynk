@@ -14,6 +14,19 @@ service listed {
 	on call() -> Effect[Int] by c: Caller { t.pay.total([1, 5000]) }
 }
 
+-- A `Result` payload outside `t.pay`'s `Cents`.
+service settled {
+	on call() -> Effect[Int] by c: Caller { t.pay.settle(Ok(5000)) }
+}
+
+-- An admitted literal does not carry a caller's value beside it across.
+service mixed {
+	on call() -> Effect[Int] by c: Caller {
+		let mine: Cents = 250
+		t.pay.total([mine, 5])
+	}
+}
+
 -- A value of the caller's own `Cents` is still a different type.
 service own {
 	on call() -> Effect[Int] by c: Caller {

@@ -20,11 +20,20 @@ export function compose(env: Env) {
     async optional(__caller: string) {
       return handlers.optional.call({ ...deps, identity: __caller });
     },
+    async parenthesised(__caller: string) {
+      return handlers.parenthesised.call({ ...deps, identity: __caller });
+    },
     async placed(__caller: string) {
       return handlers.placed.call({ ...deps, identity: __caller });
     },
+    async refunded(__caller: string) {
+      return handlers.refunded.call({ ...deps, identity: __caller });
+    },
     async settled(__caller: string) {
       return handlers.settled.call({ ...deps, identity: __caller });
+    },
+    async shifted(__caller: string) {
+      return handlers.shifted.call({ ...deps, identity: __caller });
     },
   };
 }

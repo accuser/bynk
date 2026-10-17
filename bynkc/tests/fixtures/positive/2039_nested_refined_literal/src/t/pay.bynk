@@ -33,6 +33,24 @@ service many {
 	}
 }
 
+service shift {
+	on call(d: Option[Delta]) -> Effect[Int] by c: Caller {
+		match d {
+			Some(v) => v,
+			None => 0,
+		}
+	}
+}
+
+service refund {
+	on call(r: Result[Int, Cents]) -> Effect[Int] by c: Caller {
+		match r {
+			Ok(v) => v,
+			Err(e) => e,
+		}
+	}
+}
+
 service place {
 	on call(order: Order) -> Effect[Int] by c: Caller { order.cents }
 }

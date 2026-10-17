@@ -19,6 +19,20 @@ export const Cents = {
   },
 };
 
+export type Delta = number & { readonly __brand: "t.shadow.Delta" };
+
+export const Delta = {
+  of(value: number): Result<Delta, ValidationError> {
+    if (!globalThis.Number.isSafeInteger(value)) {
+      return Err({ field: "Delta", message: "must be a safe integer", value });
+    }
+    if (!(value >= -100 && value <= 100)) {
+      return Err({ field: "Delta", message: "must be in range [-100, 100]", value });
+    }
+    return Ok(value as Delta);
+  },
+};
+
 export const optional = {
   async call(deps: { env: { T_PAY: __ServiceBinding }; identity: string }): globalThis.Promise<number> {
     return __callService(deps.env.T_PAY, "maybe", __serialise_Option_t_pay__Cents((Some((250 as Cents)) as unknown as globalThis.Parameters<typeof __serialise_Option_t_pay__Cents>[0])), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "t.shadow", "160020c3334955d4", deps.env, "t.pay");
@@ -34,6 +48,24 @@ export const listed = {
 export const empties = {
   async call(deps: { env: { T_PAY: __ServiceBinding }; identity: string }): globalThis.Promise<number> {
     return __callService(deps.env.T_PAY, "many", { all: __serialise_List_t_pay__Cents([]), one: __serialise_Option_t_pay__Cents(None), by_name: __serialise_Map_String_t_pay__Cents((new globalThis.Map<string, Cents>() as unknown as globalThis.Parameters<typeof __serialise_Map_String_t_pay__Cents>[0])) }, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "t.shadow", "c785c4ac35bc6a9d", deps.env, "t.pay");
+  },
+};
+
+export const shifted = {
+  async call(deps: { env: { T_PAY: __ServiceBinding }; identity: string }): globalThis.Promise<number> {
+    return __callService(deps.env.T_PAY, "shift", __serialise_Option_t_pay__Delta((Some((-3 as Delta)) as unknown as globalThis.Parameters<typeof __serialise_Option_t_pay__Delta>[0])), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "t.shadow", "7f37b80c889cbe3f", deps.env, "t.pay");
+  },
+};
+
+export const refunded = {
+  async call(deps: { env: { T_PAY: __ServiceBinding }; identity: string }): globalThis.Promise<number> {
+    return __callService(deps.env.T_PAY, "refund", __serialise_Result_Int_t_pay__Cents((Err((5 as Cents)) as unknown as globalThis.Parameters<typeof __serialise_Result_Int_t_pay__Cents>[0])), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "t.shadow", "e12d6bac496ce10c", deps.env, "t.pay");
+  },
+};
+
+export const parenthesised = {
+  async call(deps: { env: { T_PAY: __ServiceBinding }; identity: string }): globalThis.Promise<number> {
+    return __callService(deps.env.T_PAY, "maybe", __serialise_Option_t_pay__Cents((Some(((12 as Cents))) as unknown as globalThis.Parameters<typeof __serialise_Option_t_pay__Cents>[0])), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "t.shadow", "160020c3334955d4", deps.env, "t.pay");
   },
 };
 
@@ -58,6 +90,23 @@ export function __deserialise_t_pay__Cents(json: __JsonValue, path: string = "$"
     return Err({ kind: "RefinementViolation", path, violation: { field: "Cents", message: "must be in range [1, 1000]", value: json } });
   }
   return Ok(json as unknown as t_pay.Cents);
+}
+
+export function __serialise_t_pay__Delta(value: t_pay.Delta): __JsonValue {
+  return value as unknown as number;
+}
+
+export function __deserialise_t_pay__Delta(json: __JsonValue, path: string = "$"): Result<t_pay.Delta, __BoundaryError> {
+  if (typeof json !== "number") {
+    return Err({ kind: "StructuralMismatch", path, expected: "number", actual: typeof json });
+  }
+  if (!globalThis.Number.isSafeInteger(json)) {
+    return Err({ kind: "RefinementViolation", path, violation: { field: "Delta", message: "must be a safe integer", value: json } });
+  }
+  if (!(json >= -10 && json <= 10)) {
+    return Err({ kind: "RefinementViolation", path, violation: { field: "Delta", message: "must be in range [-10, 10]", value: json } });
+  }
+  return Ok(json as unknown as t_pay.Delta);
 }
 
 
@@ -152,6 +201,34 @@ export function __deserialise_Map_String_t_pay__Cents(json: __JsonValue, path: s
   return Ok(out);
 }
 
+export function __serialise_Result_Int_t_pay__Cents(value: Result<number, t_pay.Cents>): __JsonValue {
+  if (value.tag === "Ok") return { kind: "Ok", value: ((v: number) => { if (!globalThis.Number.isSafeInteger(v)) throw new globalThis.Error("Int outside the safe-integer range at boundary"); return v as __JsonValue; })(value.value) };
+  return { kind: "Err", error: __serialise_t_pay__Cents(value.error) };
+}
+
+export function __deserialise_Result_Int_t_pay__Cents(json: __JsonValue, path: string = "$"): Result<Result<number, t_pay.Cents>, __BoundaryError> {
+  if (typeof json !== "object" || json === null || globalThis.Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: __JsonValue };
+  if (obj["kind"] === "Ok") {
+  if (typeof obj["value"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "number", actual: typeof obj["value"] });
+  }
+  if (!globalThis.Number.isSafeInteger(obj["value"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "safe integer", actual: String(obj["value"]) });
+  }
+  const __v = obj["value"];
+    return Ok(Ok(__v) as Result<number, t_pay.Cents>);
+  } else if (obj["kind"] === "Err") {
+  const __r_e = __deserialise_t_pay__Cents(obj["error"], `${path}.error`);
+  if (__r_e.tag === "Err") return __r_e;
+  const __e = __r_e.value;
+    return Ok(Err(__e) as Result<number, t_pay.Cents>);
+  }
+  return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
+}
+
 export function __serialise_Result_t_pay__Cents_String(value: Result<t_pay.Cents, string>): __JsonValue {
   if (value.tag === "Ok") return { kind: "Ok", value: __serialise_t_pay__Cents(value.value) };
   return { kind: "Err", error: value.error as __JsonValue };
@@ -175,4 +252,44 @@ export function __deserialise_Result_t_pay__Cents_String(json: __JsonValue, path
     return Ok(Err(__e) as Result<t_pay.Cents, string>);
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
+}
+
+export function __serialise_Option_t_pay__Delta(value: Option<t_pay.Delta>): __JsonValue {
+  if (value.tag === "Some") return { kind: "Some", value: __serialise_t_pay__Delta(value.value) };
+  return { kind: "None" };
+}
+
+function __option_value_t_pay__Delta(raw: __JsonValue, at: string): Result<unknown, __BoundaryError> {
+  const __r_v = __deserialise_t_pay__Delta(raw, at);
+  if (__r_v.tag === "Err") return __r_v;
+  const __v = __r_v.value;
+  return Ok(__v);
+}
+
+export function __deserialise_Option_t_pay__Delta(json: __JsonValue, path: string = "$"): Result<Option<t_pay.Delta>, __BoundaryError> {
+  if (json === undefined || json === null) {
+    return Ok(None as Option<t_pay.Delta>);
+  }
+  if (typeof json === "object" && !globalThis.Array.isArray(json)) {
+    const obj = json as { [k: string]: __JsonValue };
+    const __keys = globalThis.Object.keys(obj);
+    if (obj["kind"] === "None" && __keys.length === 1) {
+      return Ok(None as Option<t_pay.Delta>);
+    }
+    if (obj["kind"] === "Some" && __keys.length === 2 && "value" in obj) {
+      const __t = __option_value_t_pay__Delta(obj["value"], `${path}.value`);
+      if (__t.tag === "Err") {
+        return __t;
+      }
+      return Ok(Some(__t.value as t_pay.Delta) as Option<t_pay.Delta>);
+    }
+  }
+  const __b = __option_value_t_pay__Delta(json, path);
+  if (__b.tag === "Ok") {
+    return Ok(Some(__b.value as t_pay.Delta) as Option<t_pay.Delta>);
+  }
+  if (__b.error.kind === "StructuralMismatch" && __b.error.path === path && !__b.error.expected.endsWith(" | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}")) {
+    return Err({ ...__b.error, expected: __b.error.expected + " | null | {\"kind\": \"None\"} | {\"kind\": \"Some\", \"value\": ...}" });
+  }
+  return __b;
 }

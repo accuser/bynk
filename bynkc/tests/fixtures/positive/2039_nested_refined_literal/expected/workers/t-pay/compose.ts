@@ -19,8 +19,14 @@ export function compose(env: Env) {
     async place(__caller: string, order: handlers.Order) {
       return handlers.place.call(order, { ...deps, identity: __caller });
     },
+    async refund(__caller: string, r: Result<number, handlers.Cents>) {
+      return handlers.refund.call(r, { ...deps, identity: __caller });
+    },
     async settle(__caller: string, r: Result<handlers.Cents, string>) {
       return handlers.settle.call(r, { ...deps, identity: __caller });
+    },
+    async shift(__caller: string, d: Option<handlers.Delta>) {
+      return handlers.shift.call(d, { ...deps, identity: __caller });
     },
     async total(__caller: string, all: readonly handlers.Cents[]) {
       return handlers.total.call(all, { ...deps, identity: __caller });

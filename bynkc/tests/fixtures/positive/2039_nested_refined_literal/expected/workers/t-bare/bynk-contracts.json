@@ -4,15 +4,20 @@
     "empties": "4f13368f5b68f575",
     "listed": "f7febdbbf05f2a13",
     "optional": "dd672d33f8960d4c",
+    "parenthesised": "7d1e7cad088cabf1",
     "placed": "e09b92e804722c23",
-    "settled": "ade64568b6210661"
+    "refunded": "c93052377526220d",
+    "settled": "ade64568b6210661",
+    "shifted": "038ebfaa81479d05"
   },
   "expects": {
     "t.pay": {
       "many": "c785c4ac35bc6a9d",
       "maybe": "160020c3334955d4",
       "place": "b3f990d552f03b49",
+      "refund": "e12d6bac496ce10c",
       "settle": "548ff3eb8deb0e3f",
+      "shift": "7f37b80c889cbe3f",
       "total": "d52d2030f5c25d29"
     }
   }

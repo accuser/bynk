@@ -6,6 +6,8 @@ consumes t.pay
 -- literal is checked against `t.pay`'s `Cents` and crosses as it.
 type Cents = Int where InRange(1, 5000)
 
+type Delta = Int where InRange(-100, 100)
+
 service optional {
 	on call() -> Effect[Int] by c: Caller { t.pay.maybe(Some(250)) }
 }
@@ -18,6 +20,18 @@ service listed {
 -- caller's own `Cents` plays no part.
 service empties {
 	on call() -> Effect[Int] by c: Caller { t.pay.many([], None, Map.empty()) }
+}
+
+service shifted {
+	on call() -> Effect[Int] by c: Caller { t.pay.shift(Some(-3)) }
+}
+
+service refunded {
+	on call() -> Effect[Int] by c: Caller { t.pay.refund(Err(5)) }
+}
+
+service parenthesised {
+	on call() -> Effect[Int] by c: Caller { t.pay.maybe(Some((12))) }
 }
 
 service settled {

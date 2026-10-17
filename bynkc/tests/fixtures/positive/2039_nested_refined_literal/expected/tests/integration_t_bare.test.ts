@@ -100,11 +100,53 @@ async function test_empty_constructors_from_a_caller_with_no_uses() {
   }
 }
 
+async function test_a_negative_literal_from_a_caller_with_no_uses() {
+  try {
+    const deps = __makeHarness();
+    const r = await __callService(deps.env.T_BARE, "shifted", {  }, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "038ebfaa81479d05", deps.env, "t.bare");
+    if (!(r === -3)) { throw __bynkExpectFailure("tests/bare.bynk:26:10", 720, 727, "expect r == -3\n  expected: r == -3\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((-3))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+async function test_an_Err_payload_from_a_caller_with_no_uses() {
+  try {
+    const deps = __makeHarness();
+    const r = await __callService(deps.env.T_BARE, "refunded", {  }, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "c93052377526220d", deps.env, "t.bare");
+    if (!(r === 5)) { throw __bynkExpectFailure("tests/bare.bynk:31:10", 843, 849, "expect r == 5\n  expected: r == 5\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((5))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+async function test_a_parenthesised_literal_from_a_caller_with_no_uses() {
+  try {
+    const deps = __makeHarness();
+    const r = await __callService(deps.env.T_BARE, "parenthesised", {  }, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "7d1e7cad088cabf1", deps.env, "t.bare");
+    if (!(r === 12)) { throw __bynkExpectFailure("tests/bare.bynk:36:10", 979, 986, "expect r == 12\n  expected: r == 12\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((12))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 async function test_a_record_field_from_a_caller_with_no_uses() {
   try {
     const deps = __makeHarness();
     const r = await __callService(deps.env.T_BARE, "placed", {  }, (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "e09b92e804722c23", deps.env, "t.bare");
-    if (!(r === 40)) { throw __bynkExpectFailure("tests/bare.bynk:26:10", 715, 722, "expect r == 40\n  expected: r == 40\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((40))); }
+    if (!(r === 40)) { throw __bynkExpectFailure("tests/bare.bynk:41:10", 1100, 1107, "expect r == 40\n  expected: r == 40\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((40))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -121,6 +163,9 @@ export async function run(only?: string) {
   if (want("list elements from a caller with no uses")) results.push({ name: "list elements from a caller with no uses", ...(await test_list_elements_from_a_caller_with_no_uses()) });
   if (want("a Result payload from a caller with no uses")) results.push({ name: "a Result payload from a caller with no uses", ...(await test_a_Result_payload_from_a_caller_with_no_uses()) });
   if (want("empty constructors from a caller with no uses")) results.push({ name: "empty constructors from a caller with no uses", ...(await test_empty_constructors_from_a_caller_with_no_uses()) });
+  if (want("a negative literal from a caller with no uses")) results.push({ name: "a negative literal from a caller with no uses", ...(await test_a_negative_literal_from_a_caller_with_no_uses()) });
+  if (want("an Err payload from a caller with no uses")) results.push({ name: "an Err payload from a caller with no uses", ...(await test_an_Err_payload_from_a_caller_with_no_uses()) });
+  if (want("a parenthesised literal from a caller with no uses")) results.push({ name: "a parenthesised literal from a caller with no uses", ...(await test_a_parenthesised_literal_from_a_caller_with_no_uses()) });
   if (want("a record field from a caller with no uses")) results.push({ name: "a record field from a caller with no uses", ...(await test_a_record_field_from_a_caller_with_no_uses()) });
   return results;
 }

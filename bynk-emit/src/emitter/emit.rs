@@ -3944,8 +3944,20 @@ fn type_ref_names_any(t: &TypeRef, renames: &HashMap<String, String>) -> bool {
 /// `Map.empty()` typed from the parameter. Either sits at the argument
 /// itself or in a `Some`/`Ok`/`Err` payload, list element or record field.
 pub(crate) fn holds_callee_typed(e: &Expr, cx: &LowerCtx) -> bool {
+    // A compile-time literal, a negated number (`-3`) included, as the
+    // checker's `const_literal` reads one.
+    let literal = match &e.kind {
+        ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } | ExprKind::StrLit(_) => true,
+        ExprKind::UnaryOp(bynk_syntax::ast::UnaryOp::Neg, inner) => {
+            matches!(
+                inner.kind,
+                ExprKind::IntLit { .. } | ExprKind::FloatLit { .. }
+            )
+        }
+        _ => false,
+    };
     match &e.kind {
-        ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } | ExprKind::StrLit(_) => matches!(
+        _ if literal => matches!(
             cx.commons().expr_ty(e.id).as_deref(),
             Some(Ty::Named {
                 kind: NamedKind::Refined(_),
