@@ -515,18 +515,23 @@ pub(crate) struct Secrets<'a> {
     /// hand it to wrangler is unavoidable, but nothing here is ever written —
     /// the ledger records no secret, not even its presence (ADR 0195 D1).
     pub(crate) resolved: &'a mut BTreeMap<String, String>,
+    /// #2055: whether the wrangler running this deploy takes
+    /// `wrangler deploy --secrets-file`, so a first deploy can upload its
+    /// secrets with the Worker's first version. `false` only for an installed
+    /// wrangler known to be older ([`secrets_file_supported`]).
+    pub(crate) with_upload: bool,
 }
 
 /// Decide what to set and resolve every value — the non-mutating half.
 ///
 /// Returns the `(name, value)` pairs [`apply_secrets`] will put. Split from the
 /// put so that **every failure a user can act on happens before anything is
-/// pushed**, on both sides of D6's straddle: a first deploy pushes before it
-/// sets, so resolving lazily there would surface a missing value only once a
-/// live Worker existed, 401ing every request. Nothing here touches Cloudflare
+/// pushed**, on both sides of D6's straddle: a first deploy uploads its secrets
+/// with the push (#2055), so resolving lazily there would surface a missing
+/// value only once the push was under way. Nothing here touches Cloudflare
 /// except the advisory presence read.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prepare_secrets(
+pub(crate) fn prepare_bindings(
     provenance: &Provenance,
     worker_dir: &Path,
     worker: &str,
@@ -614,7 +619,7 @@ pub(crate) fn prepare_secrets(
     Ok(prepared)
 }
 
-// #2047: the notices `prepare_secrets` and `apply_secrets` print, each naming
+// #2047: the notices `prepare_bindings` and `apply_secrets` print, each naming
 // the Worker by its `deployed_worker_name` in the run's environment, the
 // Worker the secret is (or is not) set on. Pure, so they are goldened.
 
@@ -685,12 +690,47 @@ pub(crate) fn apply_secrets(
     prepared: &[(String, String)],
     environment: &str,
 ) -> Result<(), DeployFailure> {
-    for (name, value) in prepared {
-        set_secret(provenance, worker_dir, name, value, environment).map_err(|e| {
-            DeployFailure::driver(binding_put_failure(environment, worker, name, &e))
+    for (binding_name, value) in prepared {
+        set_secret(provenance, worker_dir, binding_name, value, environment).map_err(|e| {
+            DeployFailure::driver(binding_put_failure(environment, worker, binding_name, &e))
         })?;
+        eprintln!(
+            "{}",
+            binding_set_line(
+                binding_name,
+                &deployed_worker_name(environment, worker),
+                false
+            )
+        );
     }
     Ok(())
+}
+
+/// #2055: say, by name only, each binding a new Worker's first version was
+/// uploaded with. The values beside the names are never read here.
+pub(crate) fn report_first_version_bindings(prepared: &[(String, String)], deployed: &str) {
+    for (binding_name, _) in prepared {
+        eprintln!("{}", binding_set_line(binding_name, deployed, true));
+    }
+}
+
+/// #2055: the line a deploy prints once it has set a secret — the **name**
+/// only, never the value — beside the "already set, skipping" line, so a run
+/// says what it changed as well as what it left alone. `deployed` is the
+/// Worker's account name ([`deployed_worker_name`]), `-staging` under
+/// `--env staging`, since that is the Worker the secret went to.
+/// `with_first_version` is a new Worker's case: the secret went up with its
+/// first version rather than as a version of its own.
+pub(crate) fn binding_set_line(
+    binding_name: &str,
+    deployed: &str,
+    with_first_version: bool,
+) -> String {
+    if with_first_version {
+        format!("bynk: set secret `{binding_name}` on `{deployed}`, with its first version")
+    } else {
+        format!("bynk: set secret `{binding_name}` on `{deployed}`")
+    }
 }
 
 /// The value for one secret: this run's cache, then the file, then the

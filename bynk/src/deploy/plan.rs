@@ -201,6 +201,37 @@ pub(crate) fn conflicting_env_passthrough(wrangler_args: &[String]) -> Option<&s
         .map(String::as_str)
 }
 
+/// #2055: the refusal for a `--secrets-file` passed through after `--` when
+/// the run includes a first deploy. That deploy uploads the Worker's secrets
+/// with its own `wrangler deploy --secrets-file`, so the passthrough would be
+/// a second, contradictory one. Matched bare or `=`-joined, as
+/// [`conflicting_env_passthrough`] matches. `None` when there is no such
+/// argument or every Worker in `order` has been deployed in `environment`
+/// (a redeploy passes nothing of its own). Pure, so the wording is tested.
+pub(crate) fn secrets_file_passthrough_refusal(
+    wrangler_args: &[String],
+    order: &[String],
+    lock: &DeployLock,
+    environment: &str,
+) -> Option<String> {
+    let arg = wrangler_args
+        .iter()
+        .find(|arg| arg.as_str() == "--secrets-file" || arg.starts_with("--secrets-file="))?;
+    let first: Vec<String> = order
+        .iter()
+        .filter(|worker| !lock.is_deployed(environment, worker))
+        .map(|worker| format!("`{}`", deployed_worker_name(environment, worker)))
+        .collect();
+    if first.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "bynk: `{arg}` after `--` conflicts with the secrets file `bynk deploy` uploads with a new Worker's first version ({}).\n  \
+         Pass it to bynk instead, before `--`: `bynk deploy --secrets-file <file>`.\n",
+        first.join(", ")
+    ))
+}
+
 /// Run the slice-0 single-context deployment pipeline.
 pub fn run(
     tb: &dyn Toolbox,
@@ -459,6 +490,16 @@ pub fn run(
         eprintln!("bynk: {message}");
         return ExitCode::FAILURE;
     }
+    // #2055: a first deploy hands `wrangler deploy` Bynk's own
+    // `--secrets-file`, so a passthrough one would be a second, with
+    // wrangler deciding which wins. Refused before the plan, as `--env`'s
+    // clash is.
+    if let Some(refusal) =
+        secrets_file_passthrough_refusal(&opts.wrangler_args, &order, &lock, &opts.environment)
+    {
+        eprint!("{refusal}");
+        return ExitCode::FAILURE;
+    }
 
     let plan = derive_plan(
         &order,
@@ -651,6 +692,14 @@ pub fn run(
     // Shared across the loop so two contexts wanting the same secret prompt
     // once. Dropped with the run — nothing here is ever written (ADR 0195 D1).
     let mut resolved_secrets = BTreeMap::new();
+    // #2055: a first deploy's secrets file that a SIGKILLed run left behind
+    // goes before this run might write one of its own.
+    let stale_removed = sweep_stale_upload_dirs(&std::env::temp_dir());
+    if stale_removed > 0 {
+        eprintln!(
+            "bynk: removed {stale_removed} secrets file(s) an interrupted deploy left in the temp directory"
+        );
+    }
     for (i, worker) in order.iter().enumerate() {
         if order.len() > 1 {
             eprint!(
@@ -676,6 +725,7 @@ pub fn run(
                 foreign_secrets: &foreign_secrets,
                 listed: &listed,
                 resolved: &mut resolved_secrets,
+                with_upload: secrets_file_supported(&probe),
             },
             &opts.wrangler_args,
             &opts.environment,
@@ -1818,6 +1868,53 @@ pub(crate) mod tests {
             .contexts[0]
                 .queues
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_passthrough_secrets_file_is_refused_only_when_the_run_has_a_first_deploy() {
+        // #2055: a first deploy passes its own `--secrets-file`.
+        let order = names(&["api", "web"]);
+        let mut lock = DeployLock::default();
+        lock.record_deployed("staging", "api", None);
+        let args = |a: &[&str]| names(a);
+        assert_eq!(
+            secrets_file_passthrough_refusal(
+                &args(&["--secrets-file", "s.env"]),
+                &order,
+                &lock,
+                "staging"
+            )
+            .as_deref(),
+            Some(
+                "bynk: `--secrets-file` after `--` conflicts with the secrets file `bynk deploy` uploads with a new Worker's first version (`web-staging`).\n  \
+                 Pass it to bynk instead, before `--`: `bynk deploy --secrets-file <file>`.\n"
+            )
+        );
+        assert!(
+            secrets_file_passthrough_refusal(
+                &args(&["--secrets-file=s.env"]),
+                &order,
+                &lock,
+                "staging"
+            )
+            .is_some_and(|r| r.contains("`--secrets-file=s.env`")),
+            "the `=`-joined spelling is the same flag"
+        );
+        lock.record_deployed("staging", "web", None);
+        assert_eq!(
+            secrets_file_passthrough_refusal(
+                &args(&["--secrets-file", "s.env"]),
+                &order,
+                &lock,
+                "staging"
+            ),
+            None,
+            "a redeploy passes no secrets file of its own"
+        );
+        assert_eq!(
+            secrets_file_passthrough_refusal(&args(&["--minify"]), &order, &lock, "default"),
+            None
         );
     }
 
