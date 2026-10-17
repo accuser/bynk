@@ -12,6 +12,13 @@ suite r as system {
 		expect r == Ok("ada")
 	}
 
+	-- A negated `claimEquals` excludes one value, so `Staff` signs a `role`
+	-- that is present but not "banned".
+	case "a staff member is answered by the Worker" {
+		let r <- api.GET("/staff") by Staff("bo")
+		expect r == Ok("bo")
+	}
+
 	case "a plain user is forbidden by the Worker" {
 		let r <- api.GET("/admin") by User("root")
 		expect r is Forbidden

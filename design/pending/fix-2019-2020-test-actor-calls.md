@@ -27,8 +27,12 @@ refinement's claim is given, not checked: the predicate lives in the Worker's
 entry wrapper, not the handler. At the `system` tier the test driver for a
 refinement-guarded route signs, next to `sub`, a claim set that satisfies the
 acting refinement's predicate (`hasClaim("admin")` → `{ "admin": true }`,
-`claimEquals("role", "ops")` → `{ "role": "ops" }`, with `&&`, `||` and `!`
-solved over the closed vocabulary). The real seam then checks it as it would
+`claimEquals("role", "ops")` → `{ "role": "ops" }`). The search over `&&`,
+`||` and `!` is exact: each claim's requirement is the precise set of values
+that meets it, so a negated `claimEquals` excludes only its one value
+(`hasClaim("role") && !claimEquals("role", "banned")` signs
+`{ "role": true }`), and two requirements conflict only when no value meets
+both. The real seam then checks it as it would
 any token, and a case acting as the base actor signs no claims and gets the
 `403`.
 
@@ -49,7 +53,8 @@ with no subject, which the verifier rejects, so resolution falls through to
 **Consequences.** Every route a refinement or a sum guards can now be driven
 from a test at every tier, and each shape the checker accepts compiles under
 `tsc`. A refinement-guarded route's `system` drivers take a trailing claims
-argument, and other routes' drivers are unchanged. A predicate no claim set
-satisfies signs no claims, so its route answers `403` to every case. A sum's
+argument, and other routes' drivers are unchanged. Only an unsatisfiable
+predicate (`hasClaim("a") && !hasClaim("a")`) gets no claim set, and its route
+answers `403` to every case, as it would to every real token. A sum's
 `Signature` member still has no `system`-tier signer, as a single-actor
 `Signature` route has none.

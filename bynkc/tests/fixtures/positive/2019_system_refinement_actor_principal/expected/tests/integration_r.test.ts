@@ -72,6 +72,18 @@ async function __sysdrive_noauth_api_http_GET_ops(__sub: string) {
   const __res = await __h.env.R.fetch(__req);
   return __responseToUnauthOutcome(__res, (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j));
 }
+async function __sysdrive_api_http_GET_staff(__sub: string, __claims: globalThis.Record<string, unknown>) {
+  const __h = __makeHarness();
+  const __req = new globalThis.Request(`https://test/staff`, { method: "GET", headers: { "authorization": `Bearer ${await __bynkSignHs256({ ...__claims, sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: globalThis.Record<string, string> } }).process?.env?.["AUTH_JWT_SECRET"] ?? ""))}`, }, });
+  const __res = await __h.env.R.fetch(__req);
+  return __responseToHttpResult(__res, (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j));
+}
+async function __sysdrive_noauth_api_http_GET_staff(__sub: string) {
+  const __h = __makeHarness();
+  const __req = new globalThis.Request(`https://test/staff`, { method: "GET", headers: { }, });
+  const __res = await __h.env.R.fetch(__req);
+  return __responseToUnauthOutcome(__res, (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j));
+}
 async function __sysdrive_api_http_GET_gate(__sub: string, __claims: globalThis.Record<string, unknown>) {
   const __h = __makeHarness();
   const __req = new globalThis.Request(`https://test/gate`, { method: "GET", headers: { "authorization": `Bearer ${await __bynkSignHs256({ ...__claims, sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as { process?: { env?: globalThis.Record<string, string> } }).process?.env?.["AUTH_JWT_SECRET"] ?? ""))}`, }, });
@@ -119,11 +131,25 @@ async function test_an_operator_is_answered_by_the_Worker() {
   }
 }
 
+async function test_a_staff_member_is_answered_by_the_Worker() {
+  try {
+    const deps = __makeHarness();
+    const r = await __sysdrive_api_http_GET_staff(("bo" as any), { "role": true });
+    if (!(__bynkEq(r, HttpResult.Ok("bo")))) { throw __bynkExpectFailure("tests/system.bynk:19:10", 705, 718, "expect r == Ok(\"bo\")\n  expected: r == Ok(\"bo\")\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((HttpResult.Ok("bo")))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 async function test_a_plain_user_is_forbidden_by_the_Worker() {
   try {
     const deps = __makeHarness();
     const r = await __sysdrive_api_http_GET_admin(("root" as any), {});
-    if (!(r.tag === "Forbidden")) { throw __bynkExpectFailure("tests/system.bynk:17:10", 593, 607, "expect r is Forbidden"); }
+    if (!(r.tag === "Forbidden")) { throw __bynkExpectFailure("tests/system.bynk:24:10", 827, 841, "expect r is Forbidden"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -138,6 +164,7 @@ export async function run(only?: string) {
   const want = (n: string): boolean => only === undefined || only === n;
   if (want("an admin is answered by the Worker")) results.push({ name: "an admin is answered by the Worker", ...(await test_an_admin_is_answered_by_the_Worker()) });
   if (want("an operator is answered by the Worker")) results.push({ name: "an operator is answered by the Worker", ...(await test_an_operator_is_answered_by_the_Worker()) });
+  if (want("a staff member is answered by the Worker")) results.push({ name: "a staff member is answered by the Worker", ...(await test_a_staff_member_is_answered_by_the_Worker()) });
   if (want("a plain user is forbidden by the Worker")) results.push({ name: "a plain user is forbidden by the Worker", ...(await test_a_plain_user_is_forbidden_by_the_Worker()) });
   return results;
 }

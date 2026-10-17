@@ -51,6 +51,14 @@ export default {
           return method === "HEAD" ? __headResponse(__response) : __response;
         }
       }
+      {
+        if ((method === "GET" || method === "HEAD") && path === "/staff") {
+          __route = "GET /staff";
+          const result = await surface.http_GET_staff(request);
+          const __response = __applySecurityHeaders(__notModifiedIfMatch(__httpResultToResponse(result, (__v: string) => __v as __JsonValue, { weakEtag: true }), request), __security_api);
+          return method === "HEAD" ? __headResponse(__response) : __response;
+        }
+      }
       if (path === "/admin") {
         const __status = method === "OPTIONS" ? 204 : 405;
         const __res = new globalThis.Response(null, { status: __status, headers: { allow: "GET, HEAD, OPTIONS" } });
@@ -62,6 +70,11 @@ export default {
         return __applySecurityHeaders(__res, __security_api);
       }
       if (path === "/ops") {
+        const __status = method === "OPTIONS" ? 204 : 405;
+        const __res = new globalThis.Response(null, { status: __status, headers: { allow: "GET, HEAD, OPTIONS" } });
+        return __applySecurityHeaders(__res, __security_api);
+      }
+      if (path === "/staff") {
         const __status = method === "OPTIONS" ? 204 : 405;
         const __res = new globalThis.Response(null, { status: __status, headers: { allow: "GET, HEAD, OPTIONS" } });
         return __applySecurityHeaders(__res, __security_api);

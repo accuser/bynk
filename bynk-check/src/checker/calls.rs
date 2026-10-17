@@ -3476,11 +3476,13 @@ fn resolve_actor_identity(name: &str, ctx: &Ctx) -> ActorIdentity {
         // #2019: a refinement (`actor Admin = User where …`) narrows its base by
         // a claim and inherits the base's identity: the Worker's Bearer seam
         // follows the refinement to its base and mints the base identity
-        // (`bearer_seam_for`). A refinement's base is never itself a refinement.
+        // (`bearer_seam_for`). A refinement whose base is missing or is itself a
+        // refinement is malformed (`bynk.actor.refinement_base_unsupported`),
+        // so it resolves to no identity at all rather than passing as `Unit`.
         let decl = match &decl.refinement {
             Some(r) => match ctx.test_actors.get(&r.base.name) {
                 Some(base) if base.refinement.is_none() => base,
-                _ => return ActorIdentity::Unit,
+                _ => return ActorIdentity::Unknown,
             },
             None => decl,
         };
@@ -3919,6 +3921,15 @@ fn report_principal_actor(p: &bynk_syntax::ast::CallSiteActor, ctx: &mut Ctx) {
     let tys = ctx.tys;
     let name = &p.actor.name;
     match resolve_actor_identity(name, ctx) {
+        // A declared actor that resolves to nothing is a malformed refinement,
+        // already reported at its declaration
+        // (`bynk.actor.refinement_base_unsupported`). It is still an actor of
+        // the target, so `unknown_actor` would mislead.
+        ActorIdentity::Unknown if ctx.test_actors.contains_key(name) => {
+            if let Some(id) = &p.identity {
+                let _ = type_of(id, None, ctx);
+            }
+        }
         ActorIdentity::Unknown => {
             ctx.errors.push(
                 CompileError::new(

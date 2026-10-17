@@ -8,10 +8,14 @@ actor Admin = User where hasClaim("admin")
 
 actor Operator = User where claimEquals("role", "ops") && !hasClaim("suspended")
 
+actor Staff = User where hasClaim("role") && !claimEquals("role", "banned")
+
 service api from http {
 	on GET("/admin") () -> Effect[HttpResult[String]] by a: Admin { Ok(a.identity) }
 
 	on GET("/ops") () -> Effect[HttpResult[String]] by o: Operator { Ok(o.identity) }
+
+	on GET("/staff") () -> Effect[HttpResult[String]] by s: Staff { Ok(s.identity) }
 
 	on GET("/gate") () -> Effect[HttpResult[String]] by Admin { Ok("admitted") }
 }

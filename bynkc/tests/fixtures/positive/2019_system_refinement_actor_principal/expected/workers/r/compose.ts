@@ -34,6 +34,18 @@ export function compose(env: Env) {
       if (__id.tag === "Err") return HttpResult.Unauthorized;
       return handlers.api.http_GET_ops({ ...deps, identity: __id.value });
     },
+    async http_GET_staff(request: globalThis.Request) {
+      const __authz = request.headers.get("Authorization");
+      if (__authz === null || !__authz.startsWith("Bearer ")) return HttpResult.Unauthorized;
+      const __secret = (env as unknown as globalThis.Record<string, unknown>)["AUTH_JWT_SECRET"] ?? (globalThis as { process?: { env?: globalThis.Record<string, unknown> } }).process?.env?.["AUTH_JWT_SECRET"];
+      if (typeof __secret !== "string") return HttpResult.Unauthorized;
+      const __claims = await __verifyBearerJwtHs256(__authz.slice(7), __secret);
+      if (__claims.tag === "Err") return HttpResult.Unauthorized;
+      if (!((globalThis.Boolean(__claims.value.claims["role"]) && (!(__claims.value.claims["role"] === "banned"))))) return HttpResult.Forbidden;
+      const __id = handlers.UserId.of(__claims.value.sub);
+      if (__id.tag === "Err") return HttpResult.Unauthorized;
+      return handlers.api.http_GET_staff({ ...deps, identity: __id.value });
+    },
     async http_GET_gate(request: globalThis.Request) {
       const __authz = request.headers.get("Authorization");
       if (__authz === null || !__authz.startsWith("Bearer ")) return HttpResult.Unauthorized;
