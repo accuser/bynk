@@ -21,6 +21,8 @@ export const Tag = {
   unsafe(value: string): Tag { return __CommonsTag.unsafe(value); },
 };
 
+export { type Batch };
+
 export const take = {
   async call(ls: readonly Line[], first: Option<Line>, byKey: ReadonlyMap<string, Line>, qtys: readonly Qty[], page: Page<Line>, deps: {}): globalThis.Promise<number> {
     return (ls).length;
