@@ -9,7 +9,7 @@ import type * as shop_order from "../shop-order/handlers.js";
 export const check = {
   async call(id: string, deps: { env: { SHOP_LEDGER: __ServiceBinding; SHOP_ORDER: __ServiceBinding } }): globalThis.Promise<string> {
     const o = await __callService(deps.env.SHOP_ORDER, "place", id as __JsonValue, __deserialise_Order, "shop.front", "4b90703efeeb1a66", deps.env, "shop.order");
-    return __callService(deps.env.SHOP_LEDGER, "orderId", __serialise_shop_ledger__Order(o), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "shop.front", "70f6781a321de289", deps.env, "shop.ledger");
+    return __callService(deps.env.SHOP_LEDGER, "orderId", __serialise_shop_ledger__Order((o as unknown as shop_order.Order)), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "shop.front", "70f6781a321de289", deps.env, "shop.ledger");
   },
 };
 

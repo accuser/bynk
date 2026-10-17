@@ -45,7 +45,7 @@ async function test_a_borrowed_opaque_field_matches_its_own_type() {
   try {
     const deps = __makeHarness();
     const o = await __callService(deps.env.SHOP_ORDER, "place", "o1" as __JsonValue, __ns_shop_order.__deserialise_Order, "integration", "4b90703efeeb1a66", deps.env, "shop.order");
-    const id = await __callService(deps.env.SHOP_LEDGER, "orderId", __ns_shop_ledger.__serialise_Order(o), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "integration", "70f6781a321de289", deps.env, "shop.ledger");
+    const id = await __callService(deps.env.SHOP_LEDGER, "orderId", __ns_shop_ledger.__serialise_Order((o as unknown as __ns_shop_order.Order)), (__j: __JsonValue) => ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as __BoundaryError))(__j), "integration", "70f6781a321de289", deps.env, "shop.ledger");
     if (!(id === "o1")) { throw __bynkExpectFailure("tests/system.bynk:7:12", 294, 304, "expect id == \"o1\"\n  expected: id == \"o1\"\n  actual:   " + __bynkShow((id)) + " == " + __bynkShow(("o1"))); }
     return { pass: true };
   } catch (e) {
@@ -60,7 +60,7 @@ async function test_a_borrowed_opaque_field_crosses_back() {
   try {
     const deps = __makeHarness();
     const o = await __callService(deps.env.SHOP_ORDER, "place", "o2" as __JsonValue, __ns_shop_order.__deserialise_Order, "integration", "4b90703efeeb1a66", deps.env, "shop.order");
-    const back = await __callService(deps.env.SHOP_LEDGER, "echo", __ns_shop_ledger.__serialise_Order(o), __ns_shop_ledger.__deserialise_Order, "integration", "52c52cc15798950d", deps.env, "shop.ledger");
+    const back = await __callService(deps.env.SHOP_LEDGER, "echo", __ns_shop_ledger.__serialise_Order((o as unknown as __ns_shop_order.Order)), __ns_shop_ledger.__deserialise_Order, "integration", "52c52cc15798950d", deps.env, "shop.ledger");
     if (!(back.id === "o2")) { throw __bynkExpectFailure("tests/system.bynk:13:12", 441, 456, "expect back.id == \"o2\"\n  expected: back.id == \"o2\"\n  actual:   " + __bynkShow((back.id)) + " == " + __bynkShow(("o2"))); }
     return { pass: true };
   } catch (e) {
