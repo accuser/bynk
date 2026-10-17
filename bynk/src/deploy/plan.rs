@@ -664,6 +664,14 @@ pub fn run(
     // Shared across the loop so two contexts wanting the same secret prompt
     // once. Dropped with the run — nothing here is ever written (ADR 0195 D1).
     let mut resolved_secrets = BTreeMap::new();
+    // #2055: a first deploy's secrets file that a SIGKILLed run left behind
+    // goes before this run might write one of its own.
+    let swept = sweep_stale_secrets_dirs(&std::env::temp_dir());
+    if swept > 0 {
+        eprintln!(
+            "bynk: removed {swept} secrets file(s) an interrupted deploy left in the temp directory"
+        );
+    }
     for (i, worker) in order.iter().enumerate() {
         if order.len() > 1 {
             eprintln!("bynk: deploying `{worker}` ({}/{})…", i + 1, order.len());

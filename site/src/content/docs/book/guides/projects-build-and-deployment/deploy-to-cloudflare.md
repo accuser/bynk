@@ -131,9 +131,11 @@ forgets them. A Worker that is already deployed gets them first, with
 `wrangler secret put`, and then the push. A new Worker gets them in the same
 upload as its code (`wrangler deploy --secrets-file`), so its first version
 already has them. Values go from wherever you keep them straight to wrangler —
-on stdin, or for a new Worker in a temporary file only you can read, which is
-deleted as soon as the upload ends. They are never written to
-`bynk.deploy.lock`, to generated config, or to the plan.
+on stdin, or for a new Worker in a temporary file only you can read. That file
+is deleted as soon as the upload ends, even if you press Ctrl-C or CI sends
+`SIGTERM`: `bynk` waits for wrangler to stop before it exits. Only a `SIGKILL`
+can leave the file behind, and the next `bynk deploy` deletes it. Values are
+never written to `bynk.deploy.lock`, to generated config, or to the plan.
 
 Each secret set prints its name, never its value:
 

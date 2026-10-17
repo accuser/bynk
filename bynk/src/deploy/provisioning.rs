@@ -313,10 +313,18 @@ pub(crate) fn secrets_file_supported(probe: &probe::Probe) -> bool {
 ///
 /// Written to a fresh directory under the system temp dir — never the project,
 /// so it cannot be committed or land beside the ledger — the directory 0700 and
-/// the file 0600, created new so nothing already there is reused. Dropping it
-/// removes the directory, so the file is gone however the push ends, a panic
-/// included. Its contents are never logged; only its path reaches wrangler's
-/// argv.
+/// the file 0600, created new so nothing already there is reused. Its contents
+/// are never logged; only its path reaches wrangler's argv.
+///
+/// What removes it, exactly: dropping it removes the directory, so it is gone
+/// once the push returns, whether wrangler succeeded, failed or could not be
+/// started, and on a panic. SIGINT and SIGTERM to `bynk` during the upload
+/// are deferred until wrangler has exited ([`push_holding_secrets_file`]), so
+/// they end the run only after the drop. SIGKILL (or a power cut) cannot be
+/// caught and leaves the file, still 0600 in its 0700 directory, until the
+/// next `bynk deploy` by this user runs [`sweep_stale_secrets_dirs`]. The
+/// directory name carries the pid (`bynk-secrets-<pid>-<nanos>-<n>`) so the
+/// sweep can tell a dead run's file from a live one's.
 pub(crate) struct SecretsFile {
     dir: std::path::PathBuf,
     path: std::path::PathBuf,
@@ -395,12 +403,136 @@ fn push(
     if environment != "default" {
         command.arg("--env").arg(environment);
     }
+    if secrets_file.is_some() {
+        return push_holding_secrets_file(command, worker);
+    }
     match command.status() {
         Ok(status) => wrangler_outcome(worker, &status),
         Err(e) => Err(DeployFailure::driver(format!(
             "could not run wrangler deploy for `{worker}`: {e}"
         ))),
     }
+}
+
+/// #2055: run the upload that carries a secrets file without letting a
+/// signal end `bynk` first, so the caller can always remove the file.
+///
+/// SIGINT and SIGTERM are recorded for as long as wrangler runs
+/// ([`crate::stop::defer`]), then the earlier dispositions are restored. A
+/// Ctrl-C has already reached wrangler through the foreground group, so only
+/// a SIGTERM is passed on to it: one sent to `bynk` alone (a CI step's
+/// cancel) would otherwise leave wrangler running and `bynk` waiting on it.
+/// Wrangler's exit is mapped as any push's is. If it exited 0 but `bynk` was
+/// asked to stop, the run stops: as an interrupt for SIGINT, as a failure
+/// with the signal's exit code otherwise. SIGKILL cannot be deferred, and
+/// leaves the file for the next deploy's [`sweep_stale_secrets_dirs`].
+fn push_holding_secrets_file(
+    mut command: std::process::Command,
+    worker: &str,
+) -> Result<Pushed, DeployFailure> {
+    let deferred = crate::stop::defer();
+    let mut child = command.spawn().map_err(|e| {
+        DeployFailure::driver(format!("could not run wrangler deploy for `{worker}`: {e}"))
+    })?;
+    #[cfg_attr(not(unix), allow(unused_mut, unused_variables))]
+    let mut forwarded = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(e) => {
+                return Err(DeployFailure::driver(format!(
+                    "could not wait for wrangler deploy for `{worker}`: {e}"
+                )));
+            }
+        }
+        #[cfg(unix)]
+        if !forwarded && crate::stop::received() == Some(libc::SIGTERM) {
+            // SAFETY: signalling our own child, which has not been reaped.
+            unsafe {
+                libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+            }
+            forwarded = true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    let signalled = crate::stop::received();
+    drop(deferred);
+    match (wrangler_outcome(worker, &status)?, signalled) {
+        (Pushed::Ok, Some(sig)) if crate::stop::exit_byte(sig) == 0 => Ok(Pushed::Interrupted),
+        (Pushed::Ok, Some(sig)) => Err(DeployFailure {
+            message: format!(
+                "stopped by {} after wrangler deploy finished for `{worker}`",
+                crate::stop::name(sig)
+            ),
+            code: crate::stop::exit_byte(sig),
+        }),
+        (pushed, _) => Ok(pushed),
+    }
+}
+
+/// #2055: remove what a SIGKILLed first deploy left behind: each
+/// `bynk-secrets-<pid>-…` directory in `temp_dir` whose `bynk` process is no
+/// longer running, and which this user owns. Run at the start of every
+/// deploy. A directory of a live process (this one's, or another deploy's) is
+/// left alone, and so is one whose pid has since been reused, until that
+/// process ends. Returns how many were removed. Never reads the files.
+/// Windows has no liveness check here, so it removes nothing there.
+pub(crate) fn sweep_stale_secrets_dirs(temp_dir: &Path) -> usize {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(entries) = std::fs::read_dir(temp_dir) else {
+            return 0;
+        };
+        // SAFETY: `getuid` cannot fail.
+        let uid = unsafe { libc::getuid() };
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let Some(pid) = secrets_dir_pid(&entry.file_name().to_string_lossy()) else {
+                continue;
+            };
+            if pid == std::process::id() || process_alive(pid) {
+                continue;
+            }
+            let path = entry.path();
+            let owned =
+                std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir() && m.uid() == uid);
+            if owned && std::fs::remove_dir_all(&path).is_ok() {
+                removed += 1;
+            }
+        }
+        removed
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = temp_dir;
+        0
+    }
+}
+
+/// The pid in a `bynk-secrets-<pid>-<nanos>-<n>` directory name, as
+/// [`SecretsFile::write`] names them.
+fn secrets_dir_pid(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("bynk-secrets-")?;
+    let (pid, _) = rest.split_once('-')?;
+    pid.parse().ok()
+}
+
+/// Is a process with this pid running? `kill(pid, 0)` checks without
+/// signalling: it fails with `ESRCH` only when there is none. A process of
+/// another user (`EPERM`) counts as running.
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    if pid <= 0 {
+        return true;
+    }
+    // SAFETY: signal 0 only checks that the process exists.
+    let rc = unsafe { libc::kill(pid, 0) };
+    rc == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 pub(crate) fn whoami(provenance: &Provenance) -> bool {
@@ -1276,8 +1408,14 @@ mod tests {
         environment: &str,
         already_deployed: bool,
         with_upload: bool,
-        deploy_exit: i32,
+        deploy_tail: &str,
     ) -> BindingRun {
+        // One at a time: a first deploy records SIGINT/SIGTERM process-wide
+        // while its upload runs, and two tests signalling this process would
+        // see each other's signals.
+        let _lock = crate::stop::TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1310,7 +1448,7 @@ mod tests {
                  fi\n\
                  prev=$a\n\
                  done\n\
-                 exit {deploy_exit}\n\
+                 {deploy_tail}\n\
                  fi\n\
                  exit 0\n",
             log = log.display(),
@@ -1425,7 +1563,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_first_deploy_uploads_its_secrets_with_the_worker() {
-        let run = deploy_with_binding("default", false, true, 0);
+        let run = deploy_with_binding("default", false, true, "exit 0");
         assert!(run.pushed == Ok(Pushed::Ok), "the push succeeds");
         // One call, and no `secret put` after it: the first version has them.
         let file = secrets_file_of(&run.calls, &[]);
@@ -1441,7 +1579,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_failed_first_upload_still_removes_the_secrets_file() {
-        let run = deploy_with_binding("default", false, true, 1);
+        let run = deploy_with_binding("default", false, true, "exit 1");
         assert!(run.pushed.is_err(), "wrangler's failure is the deploy's");
         let file = secrets_file_of(&run.calls, &[]);
         assert!(
@@ -1457,7 +1595,7 @@ mod tests {
     fn a_first_deploy_under_an_environment_uploads_to_the_suffixed_worker() {
         // `--env staging` is what makes wrangler upload `api-staging`, the
         // secrets with it.
-        let run = deploy_with_binding("staging", false, true, 0);
+        let run = deploy_with_binding("staging", false, true, "exit 0");
         assert!(run.pushed == Ok(Pushed::Ok), "the push succeeds");
         let file = secrets_file_of(&run.calls, &["--env", "staging"]);
         assert!(
@@ -1469,17 +1607,125 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_sigterm_during_the_upload_waits_for_wrangler_and_still_removes_the_file() {
+        // What a CI cancel does to `bynk` alone, mid-upload. Without the
+        // deferral this would end the test binary with the file on disk.
+        let run = deploy_with_binding(
+            "default",
+            false,
+            true,
+            "kill -TERM $PPID; sleep 0.2; exit 0",
+        );
+        let file = secrets_file_of(&run.calls, &[]);
+        assert!(
+            run.seen == ["present"],
+            "the file existed during the upload"
+        );
+        assert!(!file.exists(), "removed although bynk was signalled");
+        assert!(!file.parent().unwrap().exists());
+        assert!(
+            run.pushed.as_ref().is_err_and(|f| f.code == 143),
+            "the run stops, exiting as SIGTERM does"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_sigterm_to_bynk_is_passed_on_to_the_upload() {
+        // Sent to `bynk` alone, a SIGTERM would otherwise leave wrangler
+        // running and `bynk` waiting on it.
+        let started = std::time::Instant::now();
+        let run = deploy_with_binding("default", false, true, "kill -TERM $PPID; exec sleep 30");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "wrangler was stopped, not waited out"
+        );
+        let file = secrets_file_of(&run.calls, &[]);
+        assert!(!file.exists(), "and the file is removed");
+        assert!(
+            run.pushed.as_ref().is_err_and(|f| f.code == 143),
+            "wrangler died of the SIGTERM"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_sweep_removes_only_a_dead_runs_secrets_directory() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp =
+            std::env::temp_dir().join(format!("bynk-2055-sweep-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        // A pid that has exited: a child, reaped.
+        let mut gone = std::process::Command::new("true").spawn().unwrap();
+        let dead = gone.id();
+        gone.wait().unwrap();
+        // A pid that is running: a child, until the end of the test.
+        let mut alive = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let dir = |pid: u32| tmp.join(format!("bynk-secrets-{pid}-1-0"));
+        for d in [dir(dead), dir(alive.id()), dir(std::process::id())] {
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("secrets.json"), "{}").unwrap();
+        }
+        let unrelated = [tmp.join("bynk-secrets-notapid"), tmp.join("other-1-0")];
+        for d in &unrelated {
+            std::fs::create_dir_all(d).unwrap();
+        }
+
+        let removed = sweep_stale_secrets_dirs(&tmp);
+        let _ = alive.kill();
+        let _ = alive.wait();
+        let kept = |d: &Path| d.exists();
+        let result = (
+            removed,
+            kept(&dir(dead)),
+            kept(&dir(alive.id())),
+            kept(&dir(std::process::id())),
+            unrelated.iter().all(|d| kept(d)),
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(result.0, 1, "one directory removed");
+        assert!(!result.1, "the dead run's directory is gone");
+        assert!(result.2, "a live run's is kept");
+        assert!(result.3, "this run's own is kept");
+        assert!(result.4, "nothing else is touched");
+    }
+
+    #[test]
+    fn a_secrets_directory_name_carries_its_pid() {
+        assert_eq!(secrets_dir_pid("bynk-secrets-4242-17-0"), Some(4242));
+        assert_eq!(secrets_dir_pid("bynk-secrets-x-17-0"), None);
+        assert_eq!(secrets_dir_pid("bynk-other-4242-17-0"), None);
+        let file = SecretsFile::write(&[]).unwrap();
+        let name = file
+            .path()
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(secrets_dir_pid(&name), Some(std::process::id()));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_redeploy_sets_its_secrets_before_the_push_on_stdin() {
         // The Worker exists, so its secrets go first, as their own version,
         // and never through a file.
-        let run = deploy_with_binding("default", true, true, 0);
+        let run = deploy_with_binding("default", true, true, "exit 0");
         assert!(run.pushed == Ok(Pushed::Ok), "the push succeeds");
         assert!(
             run.calls == [format!("secret put {BINDING}"), "deploy".into()],
             "`secret put`, then `deploy`"
         );
         assert!(run.seen.is_empty(), "no secrets file");
-        let run = deploy_with_binding("staging", true, true, 0);
+        let run = deploy_with_binding("staging", true, true, "exit 0");
         assert!(
             run.calls
                 == [
@@ -1493,14 +1739,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_wrangler_without_the_secrets_file_falls_back_to_setting_after_the_push() {
-        let run = deploy_with_binding("default", false, false, 0);
+        let run = deploy_with_binding("default", false, false, "exit 0");
         assert!(run.pushed == Ok(Pushed::Ok), "the push succeeds");
         assert!(
             run.calls == ["deploy".to_string(), format!("secret put {BINDING}")],
             "`deploy`, then `secret put`"
         );
         // And a failed push sets nothing on a Worker that may not exist.
-        let run = deploy_with_binding("default", false, false, 1);
+        let run = deploy_with_binding("default", false, false, "exit 1");
         assert!(run.pushed.is_err(), "the push fails");
         assert!(run.calls == ["deploy"], "and nothing is set after it");
     }
