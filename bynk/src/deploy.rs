@@ -522,15 +522,56 @@ mod tests {
     fn golden_deploy_stopped() {
         let mut out = String::new();
         out.push_str("# the last context failed: nothing was left to withhold\n");
-        out.push_str(&stopped_report(&[]));
+        out.push_str(&stopped_report("default", &[]));
         out.push_str("# one context was left\n");
-        out.push_str(&stopped_report(&names(&["commerce-orders"])));
+        out.push_str(&stopped_report("default", &names(&["commerce-orders"])));
         out.push_str("# several were left\n");
-        out.push_str(&stopped_report(&names(&[
-            "commerce-orders",
-            "commerce-shipping",
-        ])));
+        out.push_str(&stopped_report(
+            "default",
+            &names(&["commerce-orders", "commerce-shipping"]),
+        ));
+        // #2038: under `--env staging` each context is named as the plan's
+        // `order` line names it, `-staging`.
+        out.push_str("# --env staging: one context was left\n");
+        out.push_str(&stopped_report("staging", &names(&["commerce-orders"])));
+        out.push_str("# --env staging: several were left\n");
+        out.push_str(&stopped_report(
+            "staging",
+            &names(&["commerce-orders", "commerce-shipping"]),
+        ));
         bless_or_assert("deploy-stopped.txt", &out);
+    }
+
+    /// D4 / #2038: `--context` refuses a Worker whose binding target has never
+    /// been deployed, naming both by their deployed name in the environment.
+    #[test]
+    fn golden_deploy_context_refusal() {
+        let mut out = String::new();
+        out.push_str("# one target never deployed\n");
+        out.push_str(&absent_dependencies_refusal(
+            "default",
+            "commerce-orders",
+            &names(&["commerce-payment"]),
+        ));
+        out.push_str("# two targets never deployed\n");
+        out.push_str(&absent_dependencies_refusal(
+            "default",
+            "commerce-orders",
+            &names(&["commerce-payment", "commerce-shipping"]),
+        ));
+        out.push_str("# --env staging: one target never deployed\n");
+        out.push_str(&absent_dependencies_refusal(
+            "staging",
+            "commerce-orders",
+            &names(&["commerce-payment"]),
+        ));
+        out.push_str("# --env staging: two targets never deployed\n");
+        out.push_str(&absent_dependencies_refusal(
+            "staging",
+            "commerce-orders",
+            &names(&["commerce-payment", "commerce-shipping"]),
+        ));
+        bless_or_assert("deploy-context-refusal.txt", &out);
     }
 
     #[test]
@@ -538,14 +579,19 @@ mod tests {
         // The regression: the slice reported `order[i..]`, which included the
         // context that had just failed — so a 3-context run failing at the 2nd
         // said "1 more context was not deployed: b, c", naming two.
-        assert_eq!(
-            stopped_report(&[]),
-            "",
-            "the failure itself is already reported"
-        );
-        for n in 1..5usize {
+        for environment in ["default", "staging"] {
+            assert_eq!(
+                stopped_report(environment, &[]),
+                "",
+                "the failure itself is already reported"
+            );
+        }
+        for (environment, n) in ["default", "staging"]
+            .into_iter()
+            .flat_map(|environment| (1..5usize).map(move |n| (environment, n)))
+        {
             let rest = names(&["c0", "c1", "c2", "c3"][..n]);
-            let report = stopped_report(&rest);
+            let report = stopped_report(environment, &rest);
             let listed = report
                 .split(" not deployed: ")
                 .nth(1)

@@ -1,0 +1,31 @@
+suite r
+
+-- #2020: a case may act as any member of a handler's actor sum, and the
+-- handler runs with its binder bound to that member's arm, whatever the binder
+-- is named. A single-actor route on the same service is unaffected.
+case "a visitor is answered" {
+	let r <- api.GET("/") by Visitor
+	expect r == Ok("anyone")
+}
+
+case "a user is answered" {
+	let r <- api.GET("/") by User("ada")
+	expect r == Ok("ada")
+}
+
+case "a sum whose binder is not who" {
+	let v <- api.GET("/greet") by Visitor
+	expect v == Ok("hello")
+	let u <- api.GET("/greet") by User("ada")
+	expect u == Ok("ada")
+}
+
+case "a single-actor route beside a sum" {
+	let r <- api.GET("/plain") by User("bo")
+	expect r == Ok("bo")
+}
+
+case "a user is answered at the integration tier" as integration {
+	let r <- api.GET("/") by User("ada")
+	expect r == Ok("ada")
+}

@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.344**.
+written against **v0.345**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,9 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.345.2** | `bynk deploy` refuses, before the plan and under `--dry-run` too, a KV namespace it would create whose title another environment in `bynk.deploy.lock` already holds or would create (Worker `shop`'s bare namespace under `--env staging` and its `capability Staging` in the default environment are both `shop-staging`), naming both namespaces and both environments, where it compared titles within one environment only and left the clash to fail at `wrangler kv namespace create` (#2048). |
+| **v0.345.1** | Under `bynk deploy --env staging`, the `--context` refusal for a binding target that has never been deployed (now naming `shop-orders-staging` and `shop-payment-staging`) and a failed run's `N further contexts were not deployed` list name each Worker as the plan does, `-staging`, where they printed the bare names; the deploy guide now says that `--format json`'s `orphans.workers` and `orphans.queues` hold account names while `orphans.kv` holds ledger keys (#2038). |
+| **v0.345.0** | In a test case, a route guarded by a refinement actor takes `by Admin("root")` with the base actor's identity, and a `system` case signs the claims the refinement checks; a route guarded by an actor sum (`by who: User | Visitor`) takes any member, `by Visitor` or `by User("ada")`, and runs with that member's arm |
 | **v0.344.1** | Under `bynk deploy --env <name>`, the bare `Kv` namespace is created as `<worker>-<name>` (`kv create shop-cart-staging`), where it reused the default environment's title `shop-cart`, which Cloudflare refuses as a duplicate on the same account. The default environment's titles are unchanged, and a namespace whose id `bynk.deploy.lock` already records for the environment is reused, not recreated (#2037). |
 | **v0.344.0** | A `stub` in a `system`-tier case, or at the scope of a suite that runs `system` cases, is now `bynk.stub.at_system` instead of being accepted and ignored, since each context runs as the Worker it deploys as and builds its own capability providers; keep a case that needs a stubbed seam at `unit` or `integration` |
 | **v0.343.3** | On Workers, a context's codec for a list, option, map or generic record of a commons type names the type unbranded (`__CommonsLine`), so a subscriber's codec for an event like `{ lines: List[Line] }`, or a caller's codec for a consumed record with such a field, accepts the other context's `Line` and passes `tsc` |

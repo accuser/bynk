@@ -495,7 +495,15 @@ order commerce-payment-staging → commerce-orders-staging
 The plan and the deploy take these names from the same place: the
 environment's section of the generated config states the Worker's `name`
 (`commerce-orders-staging`) rather than leaving it to Wrangler's default, which
-is the same name.
+is the same name. The `--context` refusal for a binding target that has never
+been deployed, and the list of contexts a failed run did not reach, name
+Workers the same way.
+
+In `--format json`, `orphans.workers` and `orphans.queues` hold these
+account names too (`gone-staging`, `old-jobs-staging`). `orphans.kv` does not:
+each entry's `worker` is the Worker's ledger key, its bare name, alongside the
+`binding` (absent for the bare `Kv`), because that pair is what the ledger
+records the namespace under.
 
 KV's identity is the namespace id Cloudflare hands back, already kept apart per
 environment in `bynk.deploy.lock`. A namespace's title takes the suffix too,
@@ -506,6 +514,14 @@ are unchanged (`shop-cart`, `shop-cart-sessions`). The title only matters when
 the namespace is created: one whose id the lock file already records for the
 environment is reused, whatever it was titled when it was made, and the plan
 shows the title Bynk would give it.
+
+Suffixes can still make two titles coincide: Worker `shop`'s bare namespace
+under `--env staging` and its `capability Staging` in the default environment
+are both `shop-staging`. `bynk deploy` refuses that before the plan,
+`--dry-run` included, naming both namespaces and both environments. It
+compares the namespaces this deploy would create against every environment
+`bynk.deploy.lock` knows, both the namespaces recorded there and the ones that
+environment's next deploy would create.
 
 `--env` is the driver's own flag; putting `--env` or `--environment` after
 `--` as well is rejected rather than silently resolved one way or the other:
