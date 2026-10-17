@@ -256,6 +256,19 @@ Add a further defaulted field later and the next compile bumps `schema` to
 `2` on its own — commit the updated lock file alongside the source change,
 the same way you would `Cargo.lock`.
 
+### Checking against the lock without writing it
+
+`bynkc check` and `bynkc test` (and `bynk check`/`bynk test`) reconcile against
+the committed `bynk.schema.lock` too, but **read-only**: a non-additive change
+fails them with the same `bynk.event.non_additive_schema_change` a build
+reports, so a CI gate of format, check and test (such as
+[`bynk-lang/bynk-ci`](https://github.com/bynk-lang/bynk-ci)) goes red on a
+breaking event change before anything deploys. They never write the lock: an
+additive change passes and leaves the file untouched, and only `bynkc compile`
+or `bynk dev`/`bynk deploy` records the bump, so run one of those before you
+commit. A project with no lock yet is a fresh project, and neither command
+complains or creates one.
+
 ## Asserting a schema version with `@schema(N)`
 
 An event may also declare its current version explicitly:

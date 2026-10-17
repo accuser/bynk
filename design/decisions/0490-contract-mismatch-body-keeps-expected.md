@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A test now pins that every internal path a Worker answers (`/_bynk/call/`, `/_bynk/event/`) checks the caller's signature before anything else that can answer, so an unauthenticated request gets a bare `401` and never the `409` `ContractMismatch` body that names the expected hash; that body is unchanged (#2054).
----
+# 0490 — The 409 ContractMismatch body keeps `expected`, because only an authenticated caller can reach it
 
-## ADR: contract-mismatch-body-keeps-expected
-title: The 409 ContractMismatch body keeps `expected`, because only an authenticated caller can reach it
-summary: The signature check precedes the contract check on every internal path; the published 409 body is unchanged
+- **Status:** Accepted (v0.346.4)
 
 **Context.** A `/_bynk/call/<service>` request without the right `X-Bynk-Contract` header gets a `409` whose body is `{"kind":"ContractMismatch","service":…,"expected":…,"actual":…}`. Before ADR 0479 (the deployment call secret) and ADR 0485 (per-edge signatures), anyone who could reach a Worker could read the expected hash with a single request (#2054). The hash is not a credential (ADR 0479), but the body made finding it trivial. The issue asked for two things: confirm that the caller check precedes the contract check on every internal path, and decide whether the body should still carry `expected`.
 

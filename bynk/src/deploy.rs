@@ -574,6 +574,226 @@ mod tests {
         bless_or_assert("deploy-context-refusal.txt", &out);
     }
 
+    /// #2077: `--context` refuses a callee whose new build no longer provides
+    /// what its live callers were compiled against, naming each caller, the
+    /// contract and both hashes; and warns of a caller it cannot check.
+    #[test]
+    fn golden_deploy_callee_contract_skew() {
+        fn skew(caller: &str, service: &str, expected: &str, provided: &str) -> CalleeSkew {
+            CalleeSkew {
+                caller: caller.into(),
+                dependency: "shop.payment".into(),
+                service: service.into(),
+                expected: expected.into(),
+                provided: provided.into(),
+            }
+        }
+        let one = [skew(
+            "shop-orders",
+            "authorise",
+            "febd15c2757b72e1",
+            "da0d725f3a004040",
+        )];
+        let several = [
+            skew(
+                "shop-orders",
+                "authorise",
+                "febd15c2757b72e1",
+                "da0d725f3a004040",
+            ),
+            skew("shop-refunds", "refund", "317bdd3de84d2176", "<absent>"),
+        ];
+        let mut out = String::new();
+        out.push_str("# one live caller on the old hash\n");
+        out.push_str(&callee_contract_skew_refusal(
+            "default",
+            "shop-payment",
+            &one,
+        ));
+        out.push_str("# two live callers, one service removed\n");
+        out.push_str(&callee_contract_skew_refusal(
+            "default",
+            "shop-payment",
+            &several,
+        ));
+        out.push_str("# --env staging: one live caller on the old hash\n");
+        out.push_str(&callee_contract_skew_refusal(
+            "staging",
+            "shop-payment",
+            &one,
+        ));
+        let orphaned = [skew(
+            "shop-legacy",
+            "authorise",
+            "febd15c2757b72e1",
+            "da0d725f3a004040",
+        )];
+        out.push_str("# a live caller of a context removed from the project\n");
+        out.push_str(&orphaned_caller_skew_refusal(
+            "default",
+            "shop-payment",
+            &orphaned,
+        ));
+        out.push_str("# --env staging: a live caller of a context removed from the project\n");
+        out.push_str(&orphaned_caller_skew_refusal(
+            "staging",
+            "shop-payment",
+            &orphaned,
+        ));
+        out.push_str("# a live caller recorded before expectations were\n");
+        out.push_str(&unrecorded_caller_warning(
+            "default",
+            "shop-payment",
+            "shop-orders",
+        ));
+        out.push_str("# --env staging: a live caller recorded before expectations were\n");
+        out.push_str(&unrecorded_caller_warning(
+            "staging",
+            "shop-payment",
+            "shop-orders",
+        ));
+        bless_or_assert("deploy-callee-contract-skew.txt", &out);
+    }
+
+    /// #2047: every other deploy message that names a Worker or suggests a
+    /// command, under the default environment and `--env staging`. A Worker
+    /// is named by its deployed name, and a suggested `bynk deploy` repeats
+    /// the run's `--env`.
+    #[test]
+    fn golden_deploy_env_messages() {
+        let edge = Edge {
+            caller: "commerce-orders".into(),
+            callee: "commerce-payment".into(),
+        };
+        let skews = vec![ContractSkew {
+            dependency: "commerce.payment".into(),
+            service: "authorise".into(),
+            expected: "aaaa".into(),
+            live: "bbbb".into(),
+        }];
+        let caller = ForeignCaller {
+            actor: "Ledger".into(),
+            binding: "LEDGER_CALL_KEY".into(),
+            worker: Some("ledger-svc".into()),
+        };
+        let rotating: BTreeMap<Edge, EdgeKey> = [(
+            edge.clone(),
+            EdgeKey::Set {
+                value: "minted-value".into(),
+                rotating: true,
+            },
+        )]
+        .into_iter()
+        .collect();
+        let mut out = String::new();
+        for environment in ["default", "staging"] {
+            let section = |out: &mut String, title: &str| {
+                out.push_str(&format!("# {title}, environment {environment}\n"));
+            };
+            section(&mut out, "contract skew refusal");
+            out.push_str(&contract_skew_refusal(
+                environment,
+                "commerce-orders",
+                &skews,
+            ));
+            section(&mut out, "edge key presence unknown");
+            out.push_str(&unknown_edge_key_notice(
+                environment,
+                "commerce-payment",
+                "BYNK_CALL_FROM_COMMERCE__ORDERS",
+                &edge,
+            ));
+            section(&mut out, "edge needs a key a --context run cannot copy");
+            out.push_str(
+                &decide_edge_key(
+                    &edge,
+                    Presence::Present,
+                    Presence::Absent,
+                    false,
+                    false,
+                    &mut || panic!("a refused edge mints nothing"),
+                    environment,
+                )
+                .expect_err("refused"),
+            );
+            out.push('\n');
+            section(&mut out, "interrupted rotation");
+            out.push_str(
+                &interrupted_rotation_hint(environment, &rotating, &names(&["commerce-payment"]))
+                    .expect("a rotation was interrupted"),
+            );
+            section(&mut out, "progress");
+            out.push_str(&deploying_notice(environment, "commerce-orders", 2, 2));
+            section(&mut out, "deployed but not recorded");
+            out.push_str(&unrecorded_deploy_failure(
+                environment,
+                "commerce-orders",
+                "bynk.deploy.lock",
+                "permission denied",
+            ));
+            section(&mut out, "foreign caller's secret may be set");
+            out.push_str(&foreign_binding_maybe_set_notice(
+                environment,
+                "commerce-orders",
+                &caller,
+            ));
+            section(&mut out, "foreign caller's binding refused");
+            out.push_str(&foreign_binding_refusal(
+                environment,
+                "commerce-orders",
+                &caller,
+                "the supplied value is empty — every call from it would be refused",
+            ));
+            section(&mut out, "foreign caller hand-off");
+            out.push_str(&foreign_hand_off(
+                environment,
+                "commerce-orders",
+                &caller,
+                "abc123",
+            ));
+            section(&mut out, "unseen secret reads");
+            out.push_str(&unseen_reads_notice(environment, "commerce-orders"));
+            section(&mut out, "secret already set");
+            out.push_str(&kept_binding_notice(
+                environment,
+                "commerce-orders",
+                "API_KEY",
+            ));
+            section(&mut out, "optional read unsupplied");
+            out.push_str(&unsupplied_read_notice(
+                environment,
+                "commerce-orders",
+                "API_KEY",
+            ));
+            section(&mut out, "secret presence unknown");
+            out.push_str(&unknown_presence_notice(
+                environment,
+                "commerce-orders",
+                "AUTH_SECRET",
+            ));
+            section(&mut out, "secret put failed");
+            out.push_str(&binding_put_failure(
+                environment,
+                "commerce-orders",
+                "API_KEY",
+                "exit 1",
+            ));
+            out.push('\n');
+            section(&mut out, "declared secret missing");
+            out.push_str(&missing_binding_message(
+                environment,
+                "AUTH_SECRET",
+                Origin::Declared,
+                "commerce-orders",
+            ));
+            out.push('\n');
+        }
+        // Platform-independent by construction: the failed-push message needs
+        // a Unix `ExitStatus`, so it is pinned by
+        // `a_failed_push_names_the_deployed_worker` in provisioning.rs instead.
+        bless_or_assert("deploy-env-messages.txt", &out);
+    }
+
     #[test]
     fn the_stop_report_counts_only_what_is_left_and_agrees_with_its_list() {
         // The regression: the slice reported `order[i..]`, which included the
