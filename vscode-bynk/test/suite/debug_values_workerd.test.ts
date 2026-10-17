@@ -16,6 +16,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { spawn, spawnSync, ChildProcess } from "child_process";
 import * as vscode from "vscode";
+import { stopTree } from "./stopTree";
 
 function have(tool: string): boolean {
   try {
@@ -29,13 +30,8 @@ describe("Bynk debug values (workerd)", () => {
   let dir: string;
   let wrangler: ChildProcess | undefined;
 
-  after(() => {
-    wrangler?.kill();
-    try {
-      spawnSync("pkill", ["-f", "workerd"], { stdio: "ignore" });
-    } catch {
-      /* best-effort */
-    }
+  after(async () => {
+    await stopTree(wrangler);
     if (dir) {
       try {
         fs.rmSync(dir, { recursive: true, force: true });
@@ -90,7 +86,8 @@ describe("Bynk debug values (workerd)", () => {
     wrangler = spawn(
       "wrangler",
       ["dev", "--inspector-port", String(inspectorPort), "--port", String(appPort)],
-      { cwd: workerDir, stdio: ["ignore", "ignore", "pipe"] },
+      // #2069: its own process group, so `stopTree` reaches workerd too.
+      { cwd: workerDir, stdio: ["ignore", "ignore", "pipe"], detached: process.platform !== "win32" },
     );
 
     const ready = await waitFor(async () => {

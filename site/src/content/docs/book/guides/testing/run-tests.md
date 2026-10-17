@@ -12,8 +12,11 @@ bynkc test            # from the project root
 
 `bynkc test` compiles the project (every generated `tests/*.test.ts` module
 included), then runs the aggregated runner under Node — type-checking as it goes,
-so a type error stops you with the usual diagnostics. It exits non-zero if any
-case fails. You need `node` and `tsc` (or `tsx`) on your `PATH`; check with
+so a type error stops you with the usual diagnostics. It also checks every event
+against the committed `bynk.schema.lock`, without writing it, so a breaking event
+change fails the run with `bynk.event.non_additive_schema_change` (see
+[the schema registry](/book/guides/events/understand-events/#checking-against-the-lock-without-writing-it)).
+It exits non-zero if any case fails. You need `node` and `tsc` (or `tsx`) on your `PATH`; check with
 [`bynk doctor --only test`](/docs/editor-and-tooling/doctor/).
 
 ```text

@@ -10,6 +10,10 @@ pub(crate) struct DeployLock {
     pub(crate) environments: BTreeMap<String, Environment>,
 }
 
+/// #2077: what a Worker was compiled against — dependency (qualified context
+/// name) → service → contract hash ([`WorkerRecord::expects`]).
+pub(crate) type Expects = BTreeMap<String, BTreeMap<String, String>>;
+
 fn lock_version() -> u32 {
     1
 }
@@ -82,6 +86,23 @@ struct WorkerRecord {
     /// Additive and `default`ed, so a pre-v0.177 ledger still reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     contracts: Option<BTreeMap<String, String>>,
+    /// #2077: the contract hash this Worker was compiled against for each
+    /// dependency service it calls, as of the push that recorded it —
+    /// dependency (qualified context name) → service → hash, the build's
+    /// `bynk-contracts.json` `expects` record. What its live call sites stamp.
+    ///
+    /// The other half of [`WorkerRecord::contracts`]: a later `deploy
+    /// --context B` compares B's newly built `provides` against every other
+    /// live Worker's `expects`, and refuses rather than shipping a callee its
+    /// live callers would 409 against.
+    ///
+    /// `None` means **no record** — a Worker pushed by a driver that predates
+    /// this field, which cannot be checked (the gate warns, never refuses, on
+    /// it: silence is not a match). `Some({})` means the Worker is *known* to
+    /// call no `on call` service at all. Additive and `default`ed, so an older
+    /// ledger still reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expects: Option<Expects>,
     /// #1883, slice 1b: the static files this Worker serves, as of the push
     /// that recorded it — each one's served path (`/_assets/board.<hash>.css`).
     /// The content hash is in the path, so a changed, added or removed file
@@ -123,6 +144,7 @@ impl DeployLock {
                 WorkerRecord {
                     deployed: true,
                     contracts,
+                    expects: None,
                     assets: BTreeSet::new(),
                     foreign: BTreeMap::new(),
                 },
@@ -164,6 +186,35 @@ impl DeployLock {
         {
             record.foreign = foreign;
         }
+    }
+
+    /// #2077: record the contracts `worker` was compiled against as of this
+    /// push ([`WorkerRecord::expects`]). Called right after
+    /// [`DeployLock::record_deployed`]; a Worker not yet recorded is ignored.
+    /// `Some` even when empty: this build *knows* what the Worker calls.
+    pub(crate) fn record_expects(&mut self, environment: &str, worker: &str, expects: Expects) {
+        if let Some(record) = self
+            .environments
+            .get_mut(environment)
+            .and_then(|env| env.workers.get_mut(worker))
+        {
+            record.expects = Some(expects);
+        }
+    }
+
+    /// #2077: every Worker the ledger records as deployed in `environment`,
+    /// with what it was compiled against — `None` when its record predates
+    /// [`WorkerRecord::expects`].
+    pub(crate) fn live_expects(
+        &self,
+        environment: &str,
+    ) -> impl Iterator<Item = (&str, Option<&Expects>)> {
+        self.environments
+            .get(environment)
+            .into_iter()
+            .flat_map(|env| env.workers.iter())
+            .filter(|(_, record)| record.deployed)
+            .map(|(worker, record)| (worker.as_str(), record.expects.as_ref()))
     }
 
     /// I4 (#1970): what the ledger recorded `worker`'s foreign callers may call
@@ -817,6 +868,10 @@ pub(crate) mod tests {
                         WorkerRecord {
                             deployed: true,
                             contracts: Default::default(),
+                            expects: Some(BTreeMap::from([(
+                                "shop.payment".into(),
+                                BTreeMap::from([("authorise".into(), "febd15c2757b72e1".into())]),
+                            )])),
                             assets: BTreeSet::new(),
                             foreign: BTreeMap::from([(
                                 "Legacy".into(),
@@ -946,6 +1001,58 @@ pub(crate) mod tests {
         // A Worker never recorded is left alone.
         lock.record_foreign("default", "never", legacy);
         assert_eq!(lock.live_foreign("default", "never"), None);
+    }
+
+    /// #2077: what a Worker expects round-trips — a dotted dependency key, and
+    /// "known to expect nothing" (`Some({})`), which must not read back as "no
+    /// record" or every Worker that calls nothing would look unrecorded.
+    #[test]
+    fn a_workers_expects_round_trip_and_empty_is_not_no_record() {
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        let orders = BTreeMap::from([(
+            "shop.payment".to_string(),
+            BTreeMap::from([("authorise".to_string(), "febd15c2757b72e1".to_string())]),
+        )]);
+        lock.record_deployed("default", "shop-orders", Some(Default::default()));
+        lock.record_expects("default", "shop-orders", orders.clone());
+        lock.record_deployed("default", "shop-payment", Some(Default::default()));
+        lock.record_expects("default", "shop-payment", BTreeMap::new());
+        let text = toml::to_string_pretty(&lock).unwrap();
+        let read = toml::from_str::<DeployLock>(&text).unwrap();
+        assert_eq!(read, lock, "{text}");
+        let live: BTreeMap<_, _> = read.live_expects("default").collect();
+        assert_eq!(live["shop-orders"], Some(&orders));
+        assert_eq!(live["shop-payment"], Some(&BTreeMap::new()), "{text}");
+        // A Worker never recorded is left alone.
+        lock.record_expects("default", "never", orders);
+        assert!(lock.live_expects("default").all(|(w, _)| w != "never"));
+    }
+
+    /// #2077: a lock written before `expects` was recorded still loads; its
+    /// Workers read as deployed with no record, not as expecting nothing.
+    #[test]
+    fn a_lock_without_expects_still_reads_as_no_record() {
+        let lock: DeployLock = toml::from_str(
+            r#"
+            version = 1
+            [environments.default.workers.shop-orders]
+            deployed = true
+            [environments.default.workers.shop-payment]
+            deployed = true
+            [environments.default.workers.shop-payment.contracts]
+            authorise = "febd15c2757b72e1"
+        "#,
+        )
+        .expect("a lock without `expects` must still parse");
+        assert!(lock.is_deployed("default", "shop-orders"));
+        let live: BTreeMap<_, _> = lock.live_expects("default").collect();
+        assert_eq!(live["shop-orders"], None);
+        assert_eq!(live["shop-payment"], None);
+        // And a record that has no `expects` writes none back.
+        assert!(!toml::to_string_pretty(&lock).unwrap().contains("expects"));
     }
 
     #[test]
