@@ -1,0 +1,14 @@
+---
+level: patch
+changelog: A non-additive event change now fails `bynkc check` and `bynkc test` (and `bynk check`/`bynk test`) with `bynk.event.non_additive_schema_change`, as it already failed `bynkc compile`, `bynk dev` and `bynk deploy`: both reconcile events against the committed `bynk.schema.lock` read-only and never write it, so an additive change passes and the next build records it (#2078).
+---
+
+## ADR: check-and-test-reconcile-the-schema-lock-read-only
+title: `check` and `test` reconcile events against `bynk.schema.lock`, read-only
+summary: The schema registry is consulted by every CLI command that judges a project, and written only by a build
+
+**Context.** `bynk.schema.lock` records each event's field shape, and a build refuses a non-additive change with `bynk.event.non_additive_schema_change`. Only the building paths turned the registry on (`bynkc compile`'s directory branch, `bynk dev`, `bynk deploy`). `check_project` hardcoded `SchemaLock::Off`, as ADR 0321 recorded, and `bynkc test` built with the default `Off`. So a CI gate of format, check and test, such as `bynk-lang/bynk-ci`, stayed green on a breaking event change, and the break surfaced only at deploy (#2078).
+
+**Decision.** `check_project` now passes `options.schema_registry` through to `run_checks` instead of `Off`. `bynk-driver`'s `run_check` (directory branch) and `test_runner::run_test` read the lock with a new `schema_lock::read_only` and set `SchemaLock::On { existing }`, so both commands, in `bynkc` and `bynk`, reconcile the same way a build does and report the same diagnostics. Neither writes: a `ProjectCheck` carries no reconciled content, and `run_test` drops `ProjectOutput::schema_lock`. A missing lock is a fresh project and baselines silently, as in a build. An unreadable lock fails the command, as it fails `bynkc compile`. `bynkc test` now also emits each event's registry-computed `schemaVersion`, matching what a build emits. The editor path (`bynk_check::analyse_project`) is unchanged: it still reconciles against an empty registry, because bringing the lock to it means `bynk-lsp` reading the file and threading it through `bynk_ide::diagnose_project`, a separate change.
+
+**Consequences.** `check` and `test` can now fail on a project where they passed, only when the committed lock and the source disagree non-additively, or when the lock is corrupt (`bynk.project.schema_registry_corrupt`) or a declared `@schema(N)` disagrees with it (`bynk.event.schema_version_mismatch`). Each of these already failed a build. An additive change still needs a build to record it in the lock. `check` and `test` neither record it nor flag a stale lock.

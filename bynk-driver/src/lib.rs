@@ -963,6 +963,17 @@ pub fn run_check(prog: &str, input: &Path, short: bool) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
+        // #2078: reconcile events against the committed `bynk.schema.lock`,
+        // read-only, so a non-additive change fails `check` as it fails a
+        // build. Nothing is written: an additive change is left for a build
+        // to record.
+        let options = match schema_lock::read_only(input) {
+            Ok(lock) => options.schema_registry(lock),
+            Err(e) => {
+                eprintln!("{prog}: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
         let check = project::check_project(&options);
         let has_errors = check.has_errors();
         if short {
