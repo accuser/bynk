@@ -3048,12 +3048,14 @@ fn lower_cross_context_service_call(
                         .enumerate()
                         .map(|(i, a)| {
                             let lowered = pre.lower(a, cx);
+                            let callee_typed = holds_callee_typed(a, cx);
                             param_cast(
                                 &consumed,
                                 cx.cross_context(),
                                 method,
                                 i,
                                 lowered,
+                                callee_typed,
                                 cx.in_test_scaffold(),
                             )
                         })
