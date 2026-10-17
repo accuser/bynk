@@ -1,0 +1,62 @@
+---
+#2024: a case-local `let` shadows the unit's names the runner binds, and the
+emitted test renames the local instead of redeclaring the runner's binding.
+---
+suite r.counter
+
+case "a local named like a service" {
+  let level <- Counter("a").bump()
+  expect level == 1
+}
+
+case "a local that reads the service it shadows" {
+  let level <- level.call("b")
+  let level = level + 10
+  expect level == 11
+}
+
+case "the service before the shadow" {
+  let first <- level.call("c")
+  let level = first * 2
+  expect level == 2
+}
+
+case "a local named like an agent" {
+  let Counter = 5
+  expect Counter == 5
+}
+
+case "a local named like an asset" {
+  let r <- api.GET(style)
+  let style = "shadowed"
+  expect style == "shadowed"
+  expect r is Raw(_, _)
+}
+
+case "a local named like the deps record" {
+  let deps = 3
+  expect deps == 3
+}
+
+case "locals named like a consumed context and its asset" {
+  let other = 2
+  let badge = 3
+  expect other + badge == 5
+}
+
+property "a let shadowing the history run binder" {
+  for all run: History[Counter] {
+    let steps = run.length()
+    let run = steps
+    expect run == steps
+  }
+}
+
+property "a let rebinding a for-all binder" {
+  for all n: Int {
+    let m = n
+    let n = n + 1
+    let level = n
+    expect level == m + 1
+  }
+}

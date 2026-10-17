@@ -466,6 +466,28 @@ pub(crate) fn env_qualify(environment: &str, name: &str) -> String {
     }
 }
 
+/// The name project Worker `worker` is deployed under in `environment`, and
+/// so the name every Service Binding to it must carry (#2028).
+///
+/// The one place both sides of a deploy get this name: the plan prints it
+/// (each context's `worker`, `binds_to`, and the `order` line), and
+/// [`synthesise_environment_block`] writes it into the `[env.<name>]` block
+/// the push hands Wrangler, as the block's `name` and as each project
+/// Service Binding's `service`. So what `--dry-run` says is what the push
+/// creates, by construction rather than by agreement.
+///
+/// It is [`env_qualify`]: `default` is the bare name, any other environment
+/// `<worker>-<env>`. Writing `name` explicitly changes nothing Wrangler would
+/// have done on its own: under `--env`, Wrangler 4.149.0 names an
+/// environment that sets no `name` `<top-level name>-<env>` (`inheritable`
+/// with `appendEnvName`; its `legacy_env` removal note: "each environment is
+/// now deployed as its own Worker named `<name>-<environment>`"), and uses an
+/// environment's own `name` as given. Stating it makes Bynk, not a Wrangler
+/// default, the owner of the name the plan promises.
+pub(crate) fn deployed_worker_name(environment: &str, worker: &str) -> String {
+    env_qualify(environment, worker)
+}
+
 /// The account-facing title of one of `worker`'s KV namespaces under
 /// `environment` (S4b, #1967). The bare `KV`'s is the Worker's name, as it has
 /// always been, so a live namespace is never renamed under an existing
@@ -509,7 +531,8 @@ pub(crate) fn kv_title(worker: &str, binding: &str, environment: &str) -> String
 /// `bynk-emit`'s private `escape_toml_basic_string`), and appends the result
 /// as text. The original bytes are never touched.
 ///
-/// Queue names and the targets of Service Bindings to project contexts are
+/// The Worker's own `name` and the targets of Service Bindings to project
+/// contexts are [`deployed_worker_name`]s, and queue names are
 /// environment-qualified ([`env_qualify`]); a foreign Worker's is copied as
 /// declared, since Bynk did not name it (interop I5, #1972); each KV namespace gets its resolved id for this
 /// environment, by binding (S4b, #1967); Durable
@@ -541,6 +564,14 @@ pub(crate) fn synthesise_environment_block(
         .map_err(|e| format!("generated configuration is not valid TOML: {e}"))?;
 
     let mut env_block = toml::Table::new();
+
+    // #2028: the deployed name, from the function the plan prints it with.
+    if let Some(name) = doc.get("name").and_then(toml::Value::as_str) {
+        env_block.insert(
+            "name".to_string(),
+            toml::Value::String(deployed_worker_name(environment, name)),
+        );
+    }
 
     if !kv_ids.is_empty()
         && let Some(toml::Value::Array(namespaces)) = doc.get("kv_namespaces")
@@ -594,7 +625,7 @@ pub(crate) fn synthesise_environment_block(
             {
                 t.insert(
                     "service".to_string(),
-                    toml::Value::String(env_qualify(environment, &target)),
+                    toml::Value::String(deployed_worker_name(environment, &target)),
                 );
             }
         }
@@ -608,8 +639,9 @@ pub(crate) fn synthesise_environment_block(
     }
 
     if env_block.is_empty() {
-        // Nothing this context needs bound under this environment — leave the
-        // config exactly as emitted rather than appending an empty table.
+        // No name and nothing to bind (never true of a config `bynk build`
+        // emits, which always names its Worker) — leave the config exactly as
+        // emitted rather than appending an empty table.
         return Ok(config_text.to_string());
     }
 
@@ -860,6 +892,11 @@ max_batch_size = 10
             Some("payment-staging"),
             "the target is environment-qualified — DECISION C's Service Binding half"
         );
+        assert_eq!(
+            env["name"].as_str(),
+            Some("api-staging"),
+            "#2028: the deployed name is stated, from the plan's own function"
+        );
 
         assert_eq!(
             env["queues"]["consumers"][0]["queue"].as_str(),
@@ -919,13 +956,28 @@ max_batch_size = 10
     }
 
     #[test]
-    fn synthesise_environment_block_is_a_true_no_op_when_nothing_needs_binding() {
+    fn synthesise_environment_block_names_the_worker_even_with_nothing_to_bind() {
+        // #2028: the deployed name is stated whether or not anything needs
+        // binding, so the push never leans on Wrangler's default for it.
         let bare = "name = \"api\"\nmain = \"index.ts\"\n";
         let out = synthesise_environment_block(bare, "staging", &BTreeMap::new(), &BTreeSet::new())
             .unwrap();
+        assert!(out.starts_with(bare), "the top level is untouched: {out}");
+        let doc: toml::Table = out.parse().unwrap();
+        let block = doc["env"]["staging"].as_table().unwrap();
+        assert_eq!(block["name"].as_str(), Some("api-staging"));
+        assert_eq!(block.len(), 1, "a name and nothing else: {out}");
+    }
+
+    #[test]
+    fn synthesise_environment_block_is_a_true_no_op_with_nothing_to_state() {
+        let nameless = "main = \"index.ts\"\n";
+        let out =
+            synthesise_environment_block(nameless, "staging", &BTreeMap::new(), &BTreeSet::new())
+                .unwrap();
         assert_eq!(
-            out, bare,
-            "a context with no bindable resource appends nothing, not an empty [env.staging]"
+            out, nameless,
+            "no name and no binding appends nothing, not an empty [env.staging]"
         );
     }
 

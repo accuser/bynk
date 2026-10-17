@@ -297,6 +297,34 @@ impl Orphans {
     pub(crate) fn has_prunable(&self) -> bool {
         !self.kv.is_empty() || !self.queues.is_empty()
     }
+
+    /// These orphans as the account names them under `environment`, for the
+    /// plan to show (#2028): a queue by the [`env_qualify`]d name `--prune`
+    /// deletes, a Worker by its [`deployed_worker_name`]. A KV orphan keeps
+    /// its Worker's ledger key: its line names the ledger entry, and the bare
+    /// namespace's title is unqualified by design ([`kv_title`]).
+    pub(crate) fn as_named_in(&self, environment: &str) -> Orphans {
+        Orphans {
+            kv: self
+                .kv
+                .iter()
+                .map(|kv| OrphanKv {
+                    worker: kv.worker.clone(),
+                    binding: kv.binding.clone(),
+                })
+                .collect(),
+            workers: self
+                .workers
+                .iter()
+                .map(|worker| deployed_worker_name(environment, worker))
+                .collect(),
+            queues: self
+                .queues
+                .iter()
+                .map(|queue| env_qualify(environment, queue))
+                .collect(),
+        }
+    }
 }
 
 /// The orphan diff: ledger vs. the current build's full declared resource
@@ -604,7 +632,11 @@ pub(crate) fn confirm_prune(yes: bool, orphans: &Orphans, environment: &str) -> 
         }
     }
     for queue in &orphans.queues {
-        eprintln!("bynk: will delete queue `{queue}`");
+        // The name `prune_orphans` deletes, not the ledger key (#2028).
+        eprintln!(
+            "bynk: will delete queue `{}`",
+            env_qualify(environment, queue)
+        );
     }
     if yes {
         return true;
