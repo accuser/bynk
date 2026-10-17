@@ -65,7 +65,7 @@ async function test_a_refined_argument_over_the_wire() {
     const deps = __makeHarness();
     const { Cents } = __ns_t_values;
     type Cents = __ns_t_values.Cents;
-    const r = await __callService(deps.env.T_PAY, "charge", __ns_t_pay.__serialise_Cents((250 as any)), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "7cab123919f1cc13", deps.env, "t.pay");
+    const r = await __callService(deps.env.T_PAY, "charge", __ns_t_pay.__serialise_Cents(((250 as any) as unknown as __ns_t_pay.Cents)), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "7cab123919f1cc13", deps.env, "t.pay");
     if (!(r === 250)) { throw __bynkExpectFailure("tests/pay.bynk:8:10", 273, 281, "expect r == 250\n  expected: r == 250\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((250))); }
     return { pass: true };
   } catch (e) {
@@ -81,7 +81,7 @@ async function test_a_pinned_refined_argument_over_the_wire() {
     const deps = __makeHarness();
     const { Cents } = __ns_t_values;
     type Cents = __ns_t_values.Cents;
-    const r = await __callService(deps.env.T_PAY, "charge", __ns_t_pay.__serialise_Cents((7 as any)), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "7cab123919f1cc13", deps.env, "t.pay");
+    const r = await __callService(deps.env.T_PAY, "charge", __ns_t_pay.__serialise_Cents(((7 as any) as unknown as __ns_t_pay.Cents)), (__j: __JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: typeof __v } as __BoundaryError) : globalThis.Number.isSafeInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "safe integer", actual: String(__v) } as __BoundaryError))(__j), "integration", "7cab123919f1cc13", deps.env, "t.pay");
     if (!(r === 7)) { throw __bynkExpectFailure("tests/pay.bynk:13:10", 405, 411, "expect r == 7\n  expected: r == 7\n  actual:   " + __bynkShow((r)) + " == " + __bynkShow((7))); }
     return { pass: true };
   } catch (e) {
