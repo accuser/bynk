@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "provides": {
+    "counts": "afabc437ee876960",
+    "many": "f2ae38d7318c126c",
+    "nested": "118d7d16f04c71ad",
+    "paged": "3a90b5b16466e89c"
+  },
+  "expects": {}
+}

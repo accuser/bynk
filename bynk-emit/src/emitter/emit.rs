@@ -4128,7 +4128,7 @@ pub(crate) fn lower_workers_cross_context_call(
             // bundle path does ([`param_cast`]); the checker has already
             // matched the shapes. An admitted literal (above) already has its
             // one cast, to what the codec takes, so it gets no second. Only a
-            // named parameter type is cast here (`callee_typed: false`): a
+            // named parameter type is cast here (`cast_generic: false`): a
             // generic argument goes to this context's own instantiation codec,
             // whose commons types are unbranded (#2027).
             lowered = param_cast(
@@ -4306,9 +4306,10 @@ pub(crate) fn param_cast(
     method: &Ident,
     idx: usize,
     arg: String,
-    // #2039: whether the argument holds a part typed as the callee's type
-    // ([`holds_callee_typed`]).
-    callee_typed: bool,
+    // Whether an argument at a generic parameter that names a user type is
+    // cast too (the bundle path, #2039, #2042); the workers path casts only a
+    // named parameter type, since its instantiation codecs are unbranded.
+    cast_generic: bool,
     in_test_scaffold: bool,
 ) -> String {
     let Some(svcs) = info.consumed_services.get(consumed) else {
@@ -4349,11 +4350,12 @@ pub(crate) fn param_cast(
             ),
         )));
     }
-    // #2039: a literal nested in a composite argument (`Some(250)` for
-    // `Option[Cents]`) carries the caller's brand for the refined type the
-    // checker admitted it to; cast the argument to the consumed context's
-    // type, every name qualified under its namespace.
-    if callee_typed {
+    // #2039, #2042: a composite argument whose parameter names a user type
+    // carries the caller's brand on it: a literal the checker admitted to the
+    // callee's refined type (`Some(250)` for `Option[Cents]`), or a value the
+    // caller typed itself (`byKey: Map[String, Line]`). Cast the argument to
+    // the consumed context's type, every name qualified under its namespace.
+    if cast_generic {
         let mut names = HashSet::new();
         type_ref_names(ptype_ref, &mut names);
         if !names.is_empty() {

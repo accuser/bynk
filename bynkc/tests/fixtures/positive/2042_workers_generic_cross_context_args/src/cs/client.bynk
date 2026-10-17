@@ -1,0 +1,26 @@
+context cs.client
+
+uses cs.values
+consumes cs.store
+
+-- #2042: values typed with this context's `Line` (handler parameters and
+-- annotated bindings, empty constructors included) cross into `cs.store`'s
+-- generic parameters, whose `Line` carries `cs.store`'s brand. `counts`
+-- names no user type and is the control.
+service go {
+  on call(l: Line, ls: List[Line]) -> Effect[Int] {
+    let byKey: Map[String, Line] = Map.empty()
+    let none: Option[Line] = None
+    let empty: List[Line] = List.empty()
+    let a <- cs.store.many(ls, Some(l), byKey.insert("k", l))
+    let b <- cs.store.many(empty, none, byKey)
+    let groups: Map[String, List[Line]] = Map.empty().insert("g", ls)
+    let maybe: List[Option[Line]] = [Some(l), None]
+    let page: Page[Line] = Page { items: ls }
+    let c <- cs.store.nested(groups, maybe, page, Some(page))
+    let d <- cs.store.counts([1, 2])
+    let e <- cs.store.paged(page)
+    let f <- cs.store.paged(Page { items: [] })
+    a + b + c + d + e + f
+  }
+}

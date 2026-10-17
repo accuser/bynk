@@ -3079,14 +3079,18 @@ fn lower_cross_context_service_call(
                         .enumerate()
                         .map(|(i, a)| {
                             let lowered = pre.lower(a, cx);
-                            let callee_typed = holds_callee_typed(a, cx);
+                            // #2042: every argument at a generic parameter
+                            // that names a user type is cast, not only one
+                            // holding a callee-typed part (#2039): a value the
+                            // caller typed itself (`byKey: Map[String, Line]`)
+                            // carries the caller's brand against the callee's.
                             param_cast(
                                 &consumed,
                                 cx.cross_context(),
                                 method,
                                 i,
                                 lowered,
-                                callee_typed,
+                                true,
                                 cx.in_test_scaffold(),
                             )
                         })
