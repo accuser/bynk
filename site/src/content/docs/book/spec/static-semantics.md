@@ -501,8 +501,12 @@ mixed pair, is `bynk.types.no_numeric_coercion`.
 A **literal** written where a refined type is expected is admitted at compile
 time ([§6.4](/book/spec/type-system/#64-admission--construction)) in these positions:
 return (block tail), a `let` with a type annotation, an `Ok`/`Some`/`Err`
-payload, and a refined-typed call argument. The literal MUST satisfy the
-predicate, or it is rejected (`bynk.refine.literal_violates`); an admitted
+payload, and a refined-typed call argument — including a cross-context call's
+(`t.pay.charge(250)`, from a consuming context or a `system` case). A literal
+passed directly as a cross-context argument is checked against the parameter
+type's own declaration, in the consumed context, so the caller need not `uses`
+its commons, and a type of the same name the caller declares plays no part. The
+literal MUST satisfy the predicate, or it is rejected (`bynk.refine.literal_violates`); an admitted
 literal MUST be a compile-time literal, not an expression or identifier. A refined
 type is thus constructed at run time through `.of` alone and has **no** unchecked
 `.unsafe` — the unchecked escape hatch is opaque-only (`Age.unsafe(x)` is rejected
@@ -1462,6 +1466,11 @@ consumed seam of the unit under test (`consumes` declares, `given` requires,
 - **Scope and precedence.** A `stub` MAY appear at suite scope (applies to every
   case) and at case scope (overrides for one case); precedence is case `stub` >
   suite `stub` > the tier default.
+- **Tier (#2026).** A `stub` MUST NOT appear in a `system`-tier case, nor at the
+  scope of a suite that runs `system` cases (`suite … as system`, or one with a
+  `case … as system`) (`bynk.stub.at_system`): each participant runs as
+  the Worker it deploys as, whose composition builds its own capability providers,
+  so no seam is open to a double.
 - **Argument patterns (DECISION D3).** Each parameter takes a pattern from the one
   predicate surface — `_` (any) or a literal / pure value the recorded argument must
   equal, plus `is` narrowing. Multiple clauses for one method form an ordered match

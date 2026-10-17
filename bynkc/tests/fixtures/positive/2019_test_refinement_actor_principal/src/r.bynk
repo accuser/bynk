@@ -1,0 +1,17 @@
+context r
+
+type UserId = String where NonEmpty
+
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+
+actor Admin = User where hasClaim("admin")
+
+actor Operator = User where claimEquals("role", "ops") && !hasClaim("suspended")
+
+service api from http {
+	on GET("/admin") () -> Effect[HttpResult[String]] by a: Admin { Ok(a.identity) }
+
+	on GET("/ops") () -> Effect[HttpResult[String]] by o: Operator { Ok(o.identity) }
+
+	on GET("/gate") () -> Effect[HttpResult[String]] by Admin { Ok("admitted") }
+}

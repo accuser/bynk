@@ -11,7 +11,7 @@
 //! sets. Foundations admits only the two zero-crypto schemes (`None`,
 //! `Internal`); `Bearer`/`Signature` are reserved-and-rejected.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use bynk_syntax::ast::{
     BinOp, ByClause, Expr, ExprKind, Handler, HandlerKind, ServiceProtocol, TypeRef, UnaryOp,
@@ -696,4 +696,232 @@ pub fn claim_predicate_to_js(pred: &ClaimPredicate, claims_var: &str) -> String 
 
 fn js_str_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// #2019: what a witness claim set requires of one claim. Each need is the
+/// exact set of claim values that meets it, so two needs merge exactly when
+/// their sets intersect. The excluded strings carried by `Truthy`, `Falsy`
+/// and `NotEquals` come from negated `claimEquals`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClaimNeed {
+    /// String-equal to the value (`claimEquals`).
+    Equals(String),
+    /// Present and truthy (`hasClaim`), and none of these strings.
+    Truthy(BTreeSet<String>),
+    /// Absent or falsy (`!hasClaim`), and none of these strings.
+    Falsy(BTreeSet<String>),
+    /// Anything but these strings (`!claimEquals`), absent included.
+    NotEquals(BTreeSet<String>),
+}
+
+type ClaimSet = std::collections::BTreeMap<String, ClaimNeed>;
+
+/// The intersection of two needs on one claim, or `None` when it is empty.
+fn merge_need(a: &ClaimNeed, b: &ClaimNeed) -> Option<ClaimNeed> {
+    use ClaimNeed::*;
+    let union = |x: &BTreeSet<String>, y: &BTreeSet<String>| x.union(y).cloned().collect();
+    Some(match (a, b) {
+        (Equals(x), Equals(y)) => (x == y).then(|| Equals(x.clone()))?,
+        // A non-empty string is truthy; the empty string is falsy.
+        (Equals(v), Truthy(not)) | (Truthy(not), Equals(v)) => {
+            (!v.is_empty() && !not.contains(v)).then(|| Equals(v.clone()))?
+        }
+        (Equals(v), Falsy(not)) | (Falsy(not), Equals(v)) => {
+            (v.is_empty() && !not.contains(v)).then(|| Equals(v.clone()))?
+        }
+        (Equals(v), NotEquals(not)) | (NotEquals(not), Equals(v)) => {
+            (!not.contains(v)).then(|| Equals(v.clone()))?
+        }
+        (Truthy(_), Falsy(_)) | (Falsy(_), Truthy(_)) => return None,
+        (Truthy(x), Truthy(y) | NotEquals(y)) | (NotEquals(y), Truthy(x)) => Truthy(union(x, y)),
+        (Falsy(x), Falsy(y) | NotEquals(y)) | (NotEquals(y), Falsy(x)) => Falsy(union(x, y)),
+        (NotEquals(x), NotEquals(y)) => NotEquals(union(x, y)),
+    })
+}
+
+/// Merge two claim sets, or `None` when they contradict.
+fn merge_claims(a: &ClaimSet, b: &ClaimSet) -> Option<ClaimSet> {
+    let mut out = a.clone();
+    for (name, need) in b {
+        let merged = match out.get(name) {
+            None => need.clone(),
+            Some(have) => merge_need(have, need)?,
+        };
+        out.insert(name.clone(), merged);
+    }
+    Some(out)
+}
+
+/// Every claim set satisfying `pred` (when `want` is true) or falsifying it,
+/// one per way the `||`/`&&` alternatives can be met. The closed predicate
+/// vocabulary keeps this small.
+fn claim_witnesses(pred: &ClaimPredicate, want: bool) -> Vec<ClaimSet> {
+    let one = |name: &str, need: ClaimNeed| vec![ClaimSet::from([(name.to_string(), need)])];
+    let both = |l: Vec<ClaimSet>, r: Vec<ClaimSet>| {
+        l.iter()
+            .flat_map(|a| r.iter().filter_map(move |b| merge_claims(a, b)))
+            .collect()
+    };
+    let either = |mut l: Vec<ClaimSet>, r: Vec<ClaimSet>| {
+        l.extend(r);
+        l
+    };
+    match (pred, want) {
+        (ClaimPredicate::HasClaim(n), true) => one(n, ClaimNeed::Truthy(BTreeSet::new())),
+        (ClaimPredicate::ClaimEquals(n, v), true) => one(n, ClaimNeed::Equals(v.clone())),
+        (ClaimPredicate::HasClaim(n), false) => one(n, ClaimNeed::Falsy(BTreeSet::new())),
+        (ClaimPredicate::ClaimEquals(n, v), false) => {
+            one(n, ClaimNeed::NotEquals(BTreeSet::from([v.clone()])))
+        }
+        (ClaimPredicate::And(l, r), true) | (ClaimPredicate::Or(l, r), false) => {
+            both(claim_witnesses(l, want), claim_witnesses(r, want))
+        }
+        (ClaimPredicate::Or(l, r), true) | (ClaimPredicate::And(l, r), false) => {
+            either(claim_witnesses(l, want), claim_witnesses(r, want))
+        }
+        (ClaimPredicate::Not(inner), _) => claim_witnesses(inner, !want),
+    }
+}
+
+/// #2019: a JavaScript object literal of JWT claims that satisfies a
+/// refinement actor's predicate, for the `system`-tier test driver to sign
+/// next to `sub` when a case acts as that refinement (`by Admin("root")`):
+/// `hasClaim("admin")` → `{ "admin": true }`, `claimEquals("role", "ops")` →
+/// `{ "role": "ops" }`. The Worker's seam then checks the predicate against
+/// the verified claims exactly as it would a real token's. A `Truthy` need
+/// signs `true`: a boolean is never `===` a string, so it also lies outside
+/// every excluded value. An absent claim meets `Falsy` and `NotEquals`, so
+/// those sign nothing. The search is exact over the closed vocabulary, so
+/// `None` means no claim set satisfies the predicate
+/// (`hasClaim("a") && !hasClaim("a")`).
+pub fn claim_witness_js(pred: &ClaimPredicate) -> Option<String> {
+    let set = claim_witnesses(pred, true).into_iter().next()?;
+    let entries = set
+        .iter()
+        .filter_map(|(name, need)| {
+            let value = match need {
+                ClaimNeed::Truthy(_) => "true".to_string(),
+                ClaimNeed::Equals(v) => format!("\"{}\"", js_str_escape(v)),
+                ClaimNeed::Falsy(_) | ClaimNeed::NotEquals(_) => return None,
+            };
+            Some(format!("\"{}\": {value}", js_str_escape(name)))
+        })
+        .collect::<Vec<_>>();
+    Some(if entries.is_empty() {
+        "{}".to_string()
+    } else {
+        format!("{{ {} }}", entries.join(", "))
+    })
+}
+
+#[cfg(test)]
+mod claim_witness_tests {
+    use super::{ClaimPredicate as P, claim_witness_js};
+
+    fn has(n: &str) -> Box<P> {
+        Box::new(P::HasClaim(n.to_string()))
+    }
+    fn eq(n: &str, v: &str) -> Box<P> {
+        Box::new(P::ClaimEquals(n.to_string(), v.to_string()))
+    }
+
+    #[test]
+    fn a_single_claim_is_signed() {
+        assert_eq!(
+            claim_witness_js(&has("admin")).as_deref(),
+            Some("{ \"admin\": true }")
+        );
+        assert_eq!(
+            claim_witness_js(&eq("role", "ops")).as_deref(),
+            Some("{ \"role\": \"ops\" }")
+        );
+    }
+
+    #[test]
+    fn a_conjunction_signs_both_and_a_disjunction_its_first_arm() {
+        assert_eq!(
+            claim_witness_js(&P::And(has("a"), eq("role", "ops"))).as_deref(),
+            Some("{ \"a\": true, \"role\": \"ops\" }")
+        );
+        assert_eq!(
+            claim_witness_js(&P::Or(has("a"), has("b"))).as_deref(),
+            Some("{ \"a\": true }")
+        );
+    }
+
+    #[test]
+    fn a_negation_leaves_the_claim_out_and_steers_the_disjunction() {
+        assert_eq!(
+            claim_witness_js(&P::Not(has("banned"))).as_deref(),
+            Some("{}")
+        );
+        // `(a || b) && !a` is met only by `b`.
+        assert_eq!(
+            claim_witness_js(&P::And(
+                Box::new(P::Or(has("a"), has("b"))),
+                Box::new(P::Not(has("a")))
+            ))
+            .as_deref(),
+            Some("{ \"b\": true }")
+        );
+        // `!(a && b)` is met by leaving `a` out.
+        assert_eq!(
+            claim_witness_js(&P::Not(Box::new(P::And(has("a"), has("b"))))).as_deref(),
+            Some("{}")
+        );
+    }
+
+    #[test]
+    fn a_negated_equality_excludes_one_value_only() {
+        let not = |p: Box<P>| Box::new(P::Not(p));
+        // `hasClaim("role") && !claimEquals("role", "banned")`: any truthy
+        // non-"banned" value; `true` is never `===` a string.
+        assert_eq!(
+            claim_witness_js(&P::And(has("role"), not(eq("role", "banned")))).as_deref(),
+            Some("{ \"role\": true }")
+        );
+        // `claimEquals("role", "ops") && !claimEquals("role", "admin")`.
+        assert_eq!(
+            claim_witness_js(&P::And(eq("role", "ops"), not(eq("role", "admin")))).as_deref(),
+            Some("{ \"role\": \"ops\" }")
+        );
+        // `!claimEquals("role", "banned")` alone: leave the claim out.
+        assert_eq!(
+            claim_witness_js(&P::Not(eq("role", "banned"))).as_deref(),
+            Some("{}")
+        );
+        // `!claimEquals("r", "x") && !hasClaim("r")`: absent meets both.
+        assert_eq!(
+            claim_witness_js(&P::And(not(eq("r", "x")), not(has("r")))).as_deref(),
+            Some("{}")
+        );
+    }
+
+    #[test]
+    fn an_excluded_value_still_contradicts_its_own_equality() {
+        let not = |p: Box<P>| Box::new(P::Not(p));
+        // `hasClaim("r") && !claimEquals("r", "x") && claimEquals("r", "x")`.
+        assert_eq!(
+            claim_witness_js(&P::And(
+                Box::new(P::And(has("r"), not(eq("r", "x")))),
+                eq("r", "x")
+            )),
+            None
+        );
+        // An empty string is falsy, so it cannot meet `hasClaim`.
+        assert_eq!(claim_witness_js(&P::And(has("r"), eq("r", ""))), None);
+        assert_eq!(
+            claim_witness_js(&P::And(not(has("r")), eq("r", ""))).as_deref(),
+            Some("{ \"r\": \"\" }")
+        );
+    }
+
+    #[test]
+    fn a_contradiction_has_no_witness() {
+        assert_eq!(
+            claim_witness_js(&P::And(has("a"), Box::new(P::Not(has("a"))))),
+            None
+        );
+        assert_eq!(claim_witness_js(&P::And(eq("r", "x"), eq("r", "y"))), None);
+    }
 }
