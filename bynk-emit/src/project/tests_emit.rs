@@ -86,6 +86,8 @@ pub(crate) fn process_tests(
     // (`emit_project`'s `schema_effective_versions`), for the default envelope
     // of a `svc.event(e)` address.
     schema_versions: &HashMap<String, i64>,
+    // #2050: each unit's resolved callees, for [`target_uses_emit`].
+    unit_callees: &HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     tys: &Arc<Types>,
@@ -150,6 +152,13 @@ pub(crate) fn process_tests(
             ),
             binding_modules,
             schema_versions,
+            target_uses_emit(
+                target_name,
+                target_kind,
+                unit_tables,
+                unit_flattened,
+                unit_callees,
+            ),
             tys,
         );
         if let Some((path, program, source_map, runnable)) = emit_out {
@@ -2066,6 +2075,8 @@ fn emit_test_module(
     asset_harness: Option<String>,
     binding_modules: &HashMap<String, String>,
     schema_versions: &HashMap<String, i64>,
+    // #2050: whether the target's handlers emit ([`target_uses_emit`]).
+    uses_emit: bool,
     tys: &Arc<Types>,
 ) -> Option<(PathBuf, TsProgram, Option<String>, RunnableTest)> {
     // #914: the test-scaffold module's runtime import list is emitted below as a
@@ -2164,6 +2175,7 @@ fn emit_test_module(
         unit_flattened,
         (target_kind == UnitKind::Adapter).then_some(binding_modules),
         "__makeTestDeps",
+        uses_emit,
     );
     let has_integration_case = indices.iter().any(|&i| {
         parsed[i].test().is_some_and(|t| {
@@ -2183,6 +2195,7 @@ fn emit_test_module(
             unit_flattened,
             Some(binding_modules),
             name,
+            uses_emit,
         )
     };
     let integration_deps = (target_kind == UnitKind::Context
@@ -3264,6 +3277,27 @@ fn target_uses_send(
         })
 }
 
+/// #2050: whether a context target has a handler — a service's or an agent's
+/// — that emits through the first-party `Events`, so the `deps` its handlers
+/// run on require `__eventsDispatch`: the same gate (`unit_table_uses_emit`)
+/// the composition root builds its own dispatch closure on.
+fn target_uses_emit(
+    target_name: &str,
+    target_kind: UnitKind,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+    unit_callees: &HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>>,
+) -> bool {
+    target_kind == UnitKind::Context
+        && unit_flattened
+            .get(target_name)
+            .and_then(|f| f.get("Events"))
+            .is_some_and(|owner| owner == bynk_check::firstparty::BYNK_UNIT)
+        && unit_tables
+            .get(target_name)
+            .is_some_and(|t| unit_table_uses_emit(t, unit_callees.get(target_name)))
+}
+
 /// #1485: the test-only HS256 JWT signer `emit_system_http_support`'s own
 /// `system` suite driver relies on to sign a `by User("bob")`-style actor's
 /// `Authorization: Bearer …` — `__bynkNow`/`__b64url`/`__bytesB64url`/
@@ -4057,6 +4091,9 @@ fn emit_test_deps(
     bindings: Option<&HashMap<String, String>>,
     // The factory's name: `__makeTestDeps`, or `__makeIntegrationDeps`.
     name: &str,
+    // #2050: whether the target's handlers emit, so their `deps` require
+    // `__eventsDispatch` ([`target_uses_emit`]).
+    uses_emit: bool,
 ) -> TestDeps {
     let mut units: BTreeSet<String> = BTreeSet::new();
     let mut doubles: Vec<(String, String, String)> = Vec::new();
@@ -4278,6 +4315,39 @@ fn emit_test_deps(
     if target_uses_send(target_name, target_kind, unit_tables) {
         entries.push(("__exec".to_string(), call(ident("__bynkExec"), Vec::new())));
     }
+    let mut entries: Vec<TsObjectEntry> = entries
+        .into_iter()
+        .map(|(k, v)| TsObjectEntry::Prop(k, v))
+        .collect();
+    // #2050: the release-at-commit flush of an emitting handler — a service's,
+    // or an agent's, which runs on its caller's `deps` — calls
+    // `deps.__eventsDispatch`. In a test it hands each event to the `Events`
+    // double, which records the call and delivers nothing, so `expect
+    // Events.emit called …` observes what the handler released. A method
+    // reading `this.Events` rather than a captured value: the recording
+    // wrapper lands on the deps object after this factory runs.
+    if uses_emit {
+        entries.push(TsObjectEntry::Method {
+            name: "__eventsDispatch".to_string(),
+            is_async: true,
+            generics: Vec::new(),
+            params: vec![TsParam {
+                name: "events".to_string(),
+                ty: Some(TsType::named_with_args(
+                    "globalThis.Array",
+                    vec![TsType::named(crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE)],
+                )),
+                optional: false,
+            }],
+            return_type: None,
+            doc: None,
+            inline: true,
+            body: vec![TsStmt::raw(
+                "for (const ev of events) await this.Events.emit(ev.payload);",
+                None,
+            )],
+        });
+    }
     // The same `"{  }"` double-space quirk `workers.rs`/`project.rs`/
     // `emit.rs`/`gen_ts_for_ty` (this file, Arc C slice 31) already carry as
     // opaque text: the pre-conversion `format!("  return {{ {} }};\n",
@@ -4292,7 +4362,7 @@ fn emit_test_deps(
     let return_value = if entries.is_empty() {
         ident("{  }")
     } else {
-        TsExpr::object(entries)
+        TsExpr::object_entries(entries)
     };
     body.push(TsStmt::return_stmt(Some(return_value), None));
     doubles.extend(given_doubles.into_inner());

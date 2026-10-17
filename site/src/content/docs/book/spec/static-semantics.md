@@ -1279,7 +1279,9 @@ every added field has a default and no field is removed, retyped, or loses a
 default, increments it by one; any other change is
 `bynk.event.non_additive_schema_change`. A declared `@schema(N)` MUST equal the
 version so computed (`bynk.event.schema_version_mismatch`). The computed version
-is the envelope's `schemaVersion`.
+is the envelope's `schemaVersion`. A check (`bynkc check`) and a test run
+(`bynkc test`) reconcile against the committed registry the same way and report
+the same diagnostics, but never write it; only a build records a new version.
 
 **Idempotent handling.** `Idempotency` is a first-party capability of the `bynk`
 adapter with two operations, `dedup[T](key: String) -> Effect[Option[T]]` and

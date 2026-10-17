@@ -178,7 +178,7 @@ bynk deploy [PATH] [--context NAME] [--dry-run] [--format short|json] [--yes]
 | Argument | Default | Meaning |
 |---|---|---|
 | `PATH` | `.` | A directory inside the project. The root is found by walking up for `bynk.toml`. |
-| `--context NAME` | every context | Deploy this context alone, assuming the contexts it consumes are already live. A dependency that has never been deployed is named and refused rather than pushed into — as is one that is live but no longer provides the contract this context was compiled against (`bynk.deploy.contract_skew`, since v0.177; see [Contract skew](/book/guides/projects-build-and-deployment/contract-skew/)). Accepts the dotted name (`a.b`) or its worker-directory form (`a-b`). |
+| `--context NAME` | every context | Deploy this context alone, assuming the contexts it consumes are already live. A dependency that has never been deployed is named and refused rather than pushed into — as is one that is live but no longer provides the contract this context was compiled against, and a build of this context that no longer provides what a live caller was compiled against (`bynk.deploy.contract_skew`; see [Contract skew](/book/guides/projects-build-and-deployment/contract-skew/)). Accepts the dotted name (`a.b`) or its worker-directory form (`a-b`). |
 | `--dry-run`, `--plan` | off | Print the per-context plan and resolved order, then exit without changing Cloudflare or `bynk.deploy.lock`. Works offline — it never authenticates. |
 | `--format FORMAT` | `short` | Plan output: line-oriented `short` or machine-readable `json`. |
 | `--yes` | off | Skip the confirmation required before a resource is created or a Worker is published. Required for non-interactive calls. |
@@ -266,7 +266,8 @@ authentication, declined confirmation, compilation failures, an unrecorded CI
 resource, a `--context` whose dependency was never deployed, and a `--context`
 whose live dependency has drifted from the contract it was compiled against
 (`bynk.deploy.contract_skew`) — deploying that would ship a caller its callee
-rejects on every call — and a build that breaks a declared foreign caller's pin
+rejects on every call — or whose new build no longer provides what a live
+caller was compiled against (the same code, from the callee's side), and a build that breaks a declared foreign caller's pin
 in `bynk.foreign.toml` (`bynk.deploy.foreign_contract_skew`; see
 [TypeScript client](/book/reference/typescript-client/#pins)).
 
