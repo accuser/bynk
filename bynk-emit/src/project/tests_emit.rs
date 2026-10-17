@@ -643,6 +643,9 @@ fn emit_integration_module(
         let mut case_out = String::new();
         case_out.push_str("  try {\n");
         case_out.push_str("    const deps = __makeHarness();\n");
+        // #2024: every name this scaffold binds in the case's scope, so the
+        // body's lowering renames a `let` that would redeclare one.
+        let mut harness_bound: HashSet<String> = HashSet::from(["deps".to_string()]);
         // Bring `uses` commons names into scope for argument construction.
         for u in uses_targets {
             let ns = test_ns(u);
@@ -656,6 +659,7 @@ fn emit_integration_module(
                 names.sort();
                 names.dedup();
                 let type_names = aliased_types(table, |_| true);
+                harness_bound.extend(names.iter().cloned());
                 crate::emitter::extend_printed_at(
                     &mut case_out,
                     emit_ns_destructure(&ns, &names, &type_names),
@@ -664,8 +668,10 @@ fn emit_integration_module(
             }
         }
         extend_hidden_destructures(&mut case_out, &hidden, unit_tables);
+        harness_bound.extend(hidden.values().flatten().cloned());
         // #1883, slice 3: the assets a case may name, from their owners.
         for (owner, names) in &asset_owners {
+            harness_bound.extend(names.iter().cloned());
             crate::emitter::extend_printed_at(
                 &mut case_out,
                 emit_ns_destructure(&test_ns(owner), names, &[]),
@@ -706,6 +712,7 @@ fn emit_integration_module(
             http_support.declared_routes.clone(),
             http_support.route_body.clone(),
             http_support.type_ns.clone(),
+            harness_bound,
             input.source,
             &input.rel_path,
             &runtime_use,
@@ -4332,7 +4339,10 @@ fn emit_test_scope_setup(
     // scoped to a suite.
     suite: Option<usize>,
     hidden: &BTreeMap<String, String>,
-) {
+) -> HashSet<String> {
+    // #2024: every name this setup binds in the runner's scope, returned so the
+    // body's lowering renames a case `let` that would redeclare one.
+    let mut bound: HashSet<String> = ["deps", "__obs"].map(String::from).into();
     let deps_args: Vec<TsExpr> = match suite {
         Some(n) => vec![
             case_name.map_or_else(|| ident("undefined"), str_lit),
@@ -4486,6 +4496,7 @@ fn emit_test_scope_setup(
         names.sort();
         names.dedup();
         let type_names = aliased_types(table, |_| true);
+        bound.extend(names.iter().cloned());
         crate::emitter::extend_printed_at(
             out,
             emit_ns_destructure(&target_ns, &names, &type_names),
@@ -4558,6 +4569,7 @@ fn emit_test_scope_setup(
                 names.sort();
                 names.dedup();
                 let type_names = aliased_types(table, |n| !target_local.contains(n));
+                bound.extend(names.iter().cloned());
                 crate::emitter::extend_printed_at(
                     out,
                     emit_ns_destructure(&ns, &names, &type_names),
@@ -4569,6 +4581,7 @@ fn emit_test_scope_setup(
     // #1814: the types the target's view reaches but does not import, from
     // their owning commons (imported by `emit_test_module`).
     extend_hidden_destructures(out, &hidden_by_owner(hidden), unit_tables);
+    bound.extend(hidden.keys().cloned());
     // Bring consumed-context exported names into scope, plus a `Payment`
     // alias for the consumed surface (so `Payment.authorise.call(...)` works).
     if let Some(consumed) = unit_consumes.get(target_name) {
@@ -4589,6 +4602,7 @@ fn emit_test_scope_setup(
             if let Some(table) = unit_tables.get(q) {
                 let types = aliased_types(table, |_| true);
                 let names: Vec<String> = types.iter().map(|(n, _)| n.clone()).collect();
+                bound.extend(names.iter().cloned());
                 crate::emitter::extend_printed_at(out, emit_ns_destructure(&ns, &names, &types), 2);
                 // #1883 (review of #1923): a consumed context's content-hashed
                 // assets, which the target's Worker ships too (its fixed paths
@@ -4601,6 +4615,7 @@ fn emit_test_scope_setup(
                     .map(|(n, _)| n.clone())
                     .collect();
                 hashed.sort();
+                bound.extend(hashed.iter().cloned());
                 if !hashed.is_empty() {
                     crate::emitter::extend_printed_at(
                         out,
@@ -4643,8 +4658,10 @@ fn emit_test_scope_setup(
                 None,
             );
             out.push_str(&bynk_ts::print_stmt(&alias_stmt, 2));
+            bound.insert(key);
         }
     }
+    bound
 }
 
 /// #1484: the `async function {name}() { ... }` wrapper every test-generation
@@ -4722,7 +4739,7 @@ fn emit_test_case_function(
     });
     let mut out = String::new();
     out.push_str("  try {\n");
-    emit_test_scope_setup(
+    let harness_bound = emit_test_scope_setup(
         &mut out,
         deps_factory,
         target_name,
@@ -4799,6 +4816,7 @@ fn emit_test_case_function(
         target_call_sum_services(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
+        harness_bound,
         source,
         rel_path,
         runtime_use,
@@ -5833,7 +5851,7 @@ fn emit_test_property_function(
     tys: &Arc<Types>,
 ) -> TsStmt {
     let mut out = String::new();
-    emit_test_scope_setup(
+    let mut harness_bound = emit_test_scope_setup(
         &mut out,
         "__makeTestDeps",
         target_name,
@@ -6026,6 +6044,8 @@ fn emit_test_property_function(
     // Property bodies are collaborator-free predicate scaffolding; like mock op
     // bodies, their source map is a deliberate scope cut (the `expect` location
     // still binds through `assert_loc`).
+    // #2024: the `for all` binders share the body closure's scope.
+    harness_bound.extend(binding_names.iter().cloned());
     let (body_src, _body_smb) = emitter::lower_test_case_body(
         &prop.forall.body,
         &mut typed,
@@ -6035,6 +6055,7 @@ fn emit_test_property_function(
         target_call_sum_services(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
+        harness_bound,
         source,
         rel_path,
         runtime_use,
@@ -6105,7 +6126,7 @@ fn emit_test_history_property_function(
     tys: &Arc<Types>,
 ) -> TsStmt {
     let mut out = String::new();
-    emit_test_scope_setup(
+    let mut harness_bound = emit_test_scope_setup(
         &mut out,
         "__makeTestDeps",
         target_name,
@@ -6248,6 +6269,8 @@ fn emit_test_history_property_function(
         .get(target_name)
         .map(|t| t.agents.keys().cloned().collect())
         .unwrap_or_default();
+    // #2024: the driven history's binder shares the body closure's scope.
+    harness_bound.insert(run_var.to_string());
     let (body_src, _body_smb) = emitter::lower_test_case_body(
         &prop.forall.body,
         &mut typed,
@@ -6257,6 +6280,7 @@ fn emit_test_history_property_function(
         target_call_sum_services(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
+        harness_bound,
         source,
         rel_path,
         runtime_use,
@@ -6374,7 +6398,8 @@ fn emit_contract_attack_function(
         return None;
     };
     let mut out = String::new();
-    emit_test_scope_setup(
+    // The attack lowers no case body, so it has no `let` to rename.
+    let _ = emit_test_scope_setup(
         &mut out,
         "__makeTestDeps",
         target_name,
