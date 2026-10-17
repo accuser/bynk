@@ -1,0 +1,14 @@
+-- #2073 review: a caller with no `uses geo` passing `shop.order`'s `Order`
+-- to `shop.ledger`.
+context shop.front
+
+consumes shop.order
+consumes shop.ledger
+
+service check {
+  on call(id: String) -> Effect[String] {
+    let o <- shop.order.place(id)
+    let back <- shop.ledger.echo(o)
+    shop.ledger.orderId(back)
+  }
+}

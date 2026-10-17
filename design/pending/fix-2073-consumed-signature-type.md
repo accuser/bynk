@@ -34,6 +34,13 @@ same table on both sides, so it hashed such a type as unresolved.
   that two consumed contexts both declare is added bare for neither. A
   signature cannot name it bare anyway, because an exported clash is already
   `bynk.consumes.name_conflict`.
+- **A commons type behind a borrowed type stays the commons'.** Take
+  `shop.order`'s `Order { region: Region }`, with `Region` from a commons that
+  `shop.order` uses. `Region` is added to the table under its own name, with
+  no owning context, and its codecs come from the commons, as for any commons
+  type. It can never land under a qualified key, because a consuming context
+  that binds `Region` to something else is already
+  `bynk.uses.name_conflict` (#1814).
 - **The caller must consume the declaring context.** A value of the type
   crosses the call as the declaring context's type, so the caller names it,
   and builds its codecs, through that context. A caller that does not consume

@@ -1918,12 +1918,17 @@ fn emit_consumed_context_helpers(
         // otherwise). Its codecs keep `c`'s renamed names, which the call sites
         // share.
         // A key `contract_types_for` qualified (`shop_order__Region`) is named in
-        // TS by its declaration's own name (`shop_order.Region`).
+        // TS by its declaration's own name (`shop_order.Region`). The declaring
+        // context's namespace is reached when this module consumes it
+        // (imported by `emit_cross_context_namespace_imports`); otherwise
+        // through `c`'s, whose `handlers.ts` re-exports each consumed type it
+        // imports (#2044).
         let owners = info.consumed_type_owners.get(c);
         let declared = info.consumed_types.get(c);
         for (renamed, original) in &hidden {
             let owner_ns = owners
                 .and_then(|o| o.get(original))
+                .filter(|owner| info.consumed_contexts.contains(*owner))
                 .map(|owner| format!("{}.", qualified_to_ns(owner)))
                 .unwrap_or_else(|| ns.clone());
             let ts_name = declared
@@ -3212,6 +3217,23 @@ fn emit_cross_context_namespace_imports(
                 .filter(|c| {
                     let ns = qualified_to_ns(c);
                     named.contains(&ns) && spelled.contains(&ns)
+                })
+                .cloned(),
+        );
+    }
+    // #2073: on workers, any consumed context whose alias this module's codecs
+    // spell, even one with no service this context calls: the declaring
+    // context of a type a borrowed signature type reaches (`shop_base.Base` in
+    // `shop.order`'s `Order`), or of a field of a type on this context's own
+    // boundary (#2044's codecs, `shop_base.Base` for `Order.b`).
+    if matches!(ctx.target, BuildTarget::Workers) {
+        let spelled = body_words(body);
+        needed.extend(
+            info.consumed_contexts
+                .iter()
+                .filter(|c| {
+                    !ctx.consumed_adapters.contains(c.as_str())
+                        && spelled.contains(&qualified_to_ns(c))
                 })
                 .cloned(),
         );

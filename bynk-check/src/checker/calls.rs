@@ -4793,7 +4793,7 @@ fn check_signature_owners_consumed(
                 "bynk.consumes.signature_type_unconsumed",
                 method.span,
                 format!(
-                    "`{consumed}.{}` takes or returns `{ty}`, which `{consumed}` consumes from `{owner}`, but this context does not consume `{owner}`",
+                    "`{consumed}.{}` takes or returns `{ty}`, declared in `{owner}`, but this context does not consume `{owner}`",
                     method.name
                 ),
             )

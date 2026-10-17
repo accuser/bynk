@@ -1,0 +1,11 @@
+-- #2073 review: `shop.ledger` consumes `shop.order` only; its signature
+-- reaches `shop.base`'s `Base` through `Order`.
+context shop.ledger
+
+consumes shop.order
+
+service take {
+  on call(o: Order) -> Effect[Int] {
+    o.b.n
+  }
+}

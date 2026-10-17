@@ -1515,22 +1515,45 @@ pub fn contract_types_for(
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
 ) -> (HashMap<String, Arc<TypeDecl>>, HashMap<String, String>) {
-    let mut visiting = std::collections::HashSet::new();
-    contract_types_inner(unit, unit_tables, unit_uses, unit_consumes, &mut visiting)
+    let mut walk = ContractWalk::default();
+    let (table, owners, _) =
+        contract_types_inner(unit, unit_tables, unit_uses, unit_consumes, &mut walk);
+    (table, owners)
 }
 
+/// A context's contract table and the declaring context of each borrowed type.
+type ContractView = (HashMap<String, Arc<TypeDecl>>, HashMap<String, String>);
+
+/// #2073 review: one `contract_types_for` walk. `visiting` breaks a `consumes`
+/// cycle; `memo` holds each context's view once it is computed, so a layered
+/// `consumes` DAG costs one walk per context, not one per path. A view that
+/// met a cycle depends on where the walk entered it, so it is not memoised.
+#[derive(Default)]
+struct ContractWalk {
+    visiting: std::collections::HashSet<String>,
+    memo: HashMap<String, ContractView>,
+}
+
+/// The view, its owners, and whether computing it met a `consumes` cycle.
 fn contract_types_inner(
     unit: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
-    visiting: &mut std::collections::HashSet<String>,
-) -> (HashMap<String, Arc<TypeDecl>>, HashMap<String, String>) {
+    walk: &mut ContractWalk,
+) -> (
+    HashMap<String, Arc<TypeDecl>>,
+    HashMap<String, String>,
+    bool,
+) {
+    if let Some((table, owners)) = walk.memo.get(unit) {
+        return (table.clone(), owners.clone(), false);
+    }
     let mut out = combined_types_for(unit, unit_tables, unit_uses);
     let mut owners: HashMap<String, String> = HashMap::new();
-    if !visiting.insert(unit.to_string()) {
+    if !walk.visiting.insert(unit.to_string()) {
         // A `consumes` cycle: stop at the unit's own view.
-        return (out, owners);
+        return (out, owners, true);
     }
     let mut consumed: Vec<&String> = unit_consumes
         .get(unit)
@@ -1545,15 +1568,16 @@ fn contract_types_inner(
     consumed.sort();
     consumed.dedup();
     // Each consumed context's own view, in which its types' bodies resolve.
-    #[allow(clippy::type_complexity)]
-    let views: HashMap<String, (HashMap<String, Arc<TypeDecl>>, HashMap<String, String>)> =
-        consumed
-            .iter()
-            .map(|u| {
-                let view = contract_types_inner(u, unit_tables, unit_uses, unit_consumes, visiting);
-                ((*u).clone(), view)
-            })
-            .collect();
+    let mut cyclic = false;
+    let views: HashMap<String, ContractView> = consumed
+        .iter()
+        .map(|u| {
+            let (table, owners, met) =
+                contract_types_inner(u, unit_tables, unit_uses, unit_consumes, walk);
+            cyclic |= met;
+            ((*u).clone(), (table, owners))
+        })
+        .collect();
     // The context that declares `r` as `owner`'s view resolves it: `owner`
     // itself, a context `owner` consumes, or none (a commons type, whose
     // codecs and namespace are the commons').
@@ -1629,8 +1653,12 @@ fn contract_types_inner(
             out.insert(key, Arc::new(rename_decl_refs(&decl, &subst)));
         }
     }
-    visiting.remove(unit);
-    (out, owners)
+    walk.visiting.remove(unit);
+    if !cyclic {
+        walk.memo
+            .insert(unit.to_string(), (out.clone(), owners.clone()));
+    }
+    (out, owners, cyclic)
 }
 
 /// #2073: `decl` with every type it names renamed by `subst` (its own name

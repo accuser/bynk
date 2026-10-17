@@ -872,34 +872,63 @@ fn emit_integration_module(
 /// #2073: whether the lowered TypeScript `src` names the identifier `name`,
 /// as a whole word outside a member access (`x.Region` names a property) and
 /// outside a string literal (an `expect`'s failure message quotes the source).
-/// A template literal's `${…}` holes are code, but the lowering never puts a
-/// type's name in one, so a template is skipped whole.
+/// A template literal's text is skipped too, but its `${…}` holes are code.
 fn names_ident(src: &str, name: &str) -> bool {
     let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
-    let bytes = src.as_bytes();
+    // `code` is `src` with every literal character blanked, so offsets and
+    // word boundaries are kept.
     let mut code = String::with_capacity(src.len());
-    let mut quote: Option<u8> = None;
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
+    // `None`: code. `Some(q)`: inside a string quoted by `q`. A template's
+    // hole pushes the template, and its braces, on `stack`.
+    let mut quote: Option<char> = None;
+    let mut stack: Vec<usize> = Vec::new(); // brace depth in each open hole
+    let mut chars = src.chars().peekable();
+    while let Some(c) = chars.next() {
         match quote {
             Some(q) => {
-                if b == b'\\' {
-                    i += 2;
+                if c == '\\' {
+                    code.push(' ');
+                    if chars.next().is_some() {
+                        code.push(' ');
+                    }
                     continue;
                 }
-                if b == q {
+                if q == '`' && c == '$' && chars.peek() == Some(&'{') {
+                    chars.next();
+                    code.push_str("  ");
+                    stack.push(0);
+                    quote = None;
+                    continue;
+                }
+                if c == q {
                     quote = None;
                 }
                 code.push(' ');
             }
-            None if b == b'"' || b == b'\'' || b == b'`' => {
-                quote = Some(b);
-                code.push(' ');
-            }
-            None => code.push(b as char),
+            None => match c {
+                '"' | '\'' | '`' => {
+                    quote = Some(c);
+                    code.push(' ');
+                }
+                '{' if !stack.is_empty() => {
+                    *stack.last_mut().expect("non-empty") += 1;
+                    code.push(c);
+                }
+                '}' if !stack.is_empty() => {
+                    let depth = stack.last_mut().expect("non-empty");
+                    if *depth == 0 {
+                        // The hole closes; the template resumes.
+                        stack.pop();
+                        quote = Some('`');
+                        code.push(' ');
+                    } else {
+                        *depth -= 1;
+                        code.push(c);
+                    }
+                }
+                _ => code.push(c),
+            },
         }
-        i += 1;
     }
     code.match_indices(name).any(|(i, _)| {
         let before = code[..i].chars().next_back();
@@ -7903,6 +7932,25 @@ mod tests {
         };
         let printed = bynk_ts::print(&program, "", "", "");
         assert_eq!(printed.text, expected);
+    }
+
+    #[test]
+    fn names_ident_ignores_literals_and_members_but_reads_template_holes() {
+        // #2073 review: a name in a string, a template's text or after a `.`
+        // is not a reference; one in a template's `${…}` hole is.
+        assert!(names_ident("const r = Region.Here;", "Region"));
+        assert!(!names_ident("x.Region", "Region"));
+        assert!(!names_ident("__serialise_Region(v)", "Region"));
+        assert!(!names_ident("fail(\"expect r == Region.Here\")", "Region"));
+        assert!(!names_ident("fail('Region')", "Region"));
+        assert!(!names_ident("fail(`expected Region`)", "Region"));
+        assert!(names_ident("fail(`got ${show(Region.Here)}`)", "Region"));
+        assert!(names_ident(
+            "fail(`a ${ { k: 1 }.k } b`) + Region.Here",
+            "Region"
+        ));
+        assert!(!names_ident("fail(`a ${ { k: 1 }.k } Region`)", "Region"));
+        assert!(!names_ident("fail(\"a \\\" Region\")", "Region"));
     }
 
     #[test]
