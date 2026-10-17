@@ -71,6 +71,12 @@ const MANIFEST_VERSION: u32 = 2;
 /// a shared value — and a sum's `None` member (a catch-all such as `Visitor`)
 /// verifies nothing. Both are skipped rather than defaulted: inventing a name
 /// for them would ask the user to set a secret that nothing reads.
+///
+/// I3 (#1971): a `Foreign` actor's secret is **not** declared here, on purpose.
+/// A declared secret is the user's to supply, and `deploy` prompts for one it
+/// lacks; a foreign caller's is minted by `deploy` and handed to the foreign
+/// Worker's operator ([`foreign_callers`]). None of the resolvers above match a
+/// `Foreign` actor, and a test pins that.
 pub(crate) fn declared_secrets(table: &UnitTable) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for handler in table.services.values().flat_map(|s| s.handlers.iter()) {
@@ -96,6 +102,26 @@ pub(crate) fn declared_secrets(table: &UnitTable) -> BTreeSet<String> {
         }
     }
     names
+}
+
+/// I3 (#1971): the foreign callers this context's `on call` handlers admit, by
+/// actor name, each with the secret its calls verify under and the foreign
+/// Worker's name when declared. `deploy` mints each secret, sets it on this
+/// Worker, and prints the command that hands it to the foreign Worker.
+pub(crate) fn foreign_callers(table: &UnitTable) -> Vec<bynk_check::actors::ForeignCaller> {
+    let mut callers: Vec<bynk_check::actors::ForeignCaller> = Vec::new();
+    for handler in table.services.values().flat_map(|s| s.handlers.iter()) {
+        for f in bynk_check::actors::call_admission_for(handler, &table.actors)
+            .map(|a| a.foreign)
+            .unwrap_or_default()
+        {
+            if !callers.iter().any(|g| g.actor == f.actor) {
+                callers.push(f);
+            }
+        }
+    }
+    callers.sort_by(|a, b| a.actor.cmp(&b.actor));
+    callers
 }
 
 /// The reads half of what a Worker knows about its own `bynk.Secrets` use —
@@ -134,7 +160,7 @@ pub(crate) fn secret_reads(
 /// secrets but declares none, which is exactly the context this file now exists
 /// to describe.
 pub(crate) fn emit_secrets_manifest(table: &UnitTable, reads: &SecretReads) -> Option<String> {
-    render(&declared_secrets(table), reads)
+    render(&declared_secrets(table), reads, &foreign_callers(table))
 }
 
 /// Render a resolved name set. Split from the derivation so the file's shape is
@@ -144,17 +170,45 @@ pub(crate) fn emit_secrets_manifest(table: &UnitTable, reads: &SecretReads) -> O
 /// file into every worker directory for a feature it does not use — and "no
 /// file" is the same answer as "an empty list" to a driver that must tolerate a
 /// build tree from a compiler predating this file anyway.
-fn render(declared: &BTreeSet<String>, reads: &SecretReads) -> Option<String> {
+fn render(
+    declared: &BTreeSet<String>,
+    reads: &SecretReads,
+    foreign: &[bynk_check::actors::ForeignCaller],
+) -> Option<String> {
     // `complete` is the third thing worth saying: a context that reads one
     // computed name and nothing else knows something — that it does not know —
     // and the file has to carry it or the driver cannot.
-    if declared.is_empty() && reads.names.is_empty() && reads.complete {
+    if declared.is_empty() && reads.names.is_empty() && reads.complete && foreign.is_empty() {
         return None;
     }
+    // I3 (#1971): `foreign` only when there is one. It is additive within
+    // version 2 rather than a version 3: a manifest without it says, truly,
+    // that the context admits no foreign caller, so an older file reads the
+    // same as before and every existing manifest stays byte-identical.
+    let foreign = if foreign.is_empty() {
+        String::new()
+    } else {
+        let rendered: Vec<String> = foreign
+            .iter()
+            .map(|f| {
+                let worker = f
+                    .worker
+                    .as_ref()
+                    .map(|w| format!(", \"worker\": {}", json_string(w)))
+                    .unwrap_or_default();
+                format!(
+                    "    {{ \"actor\": {}, \"secret\": {}{worker} }}",
+                    json_string(&f.actor),
+                    json_string(&f.secret)
+                )
+            })
+            .collect();
+        format!(",\n  \"foreign\": [\n{}\n  ]", rendered.join(",\n"))
+    };
     // Hand-rendered rather than via serde: this crate does not depend on
-    // serde_json, and the shape is three fields.
+    // serde_json, and the shape is a handful of fields.
     Some(format!(
-        "{{\n  \"version\": {MANIFEST_VERSION},\n  \"declared\": {},\n  \"read\": {},\n  \"read_complete\": {}\n}}\n",
+        "{{\n  \"version\": {MANIFEST_VERSION},\n  \"declared\": {},\n  \"read\": {},\n  \"read_complete\": {}{foreign}\n}}\n",
         json_array(declared),
         json_array(&reads.names),
         reads.complete,
@@ -204,16 +258,16 @@ mod tests {
     fn a_manifest_appears_when_anything_is_known_and_not_otherwise() {
         // Nothing at all — no file. A project with no secrets must not grow one
         // into every worker directory.
-        assert_eq!(render(&set(&[]), &reads(&[], true)), None);
+        assert_eq!(render(&set(&[]), &reads(&[], true), &[]), None);
 
         // A read with no declared secret is exactly the context slice 3's rule
         // would have stayed silent about — and exactly the one worth describing.
-        assert!(render(&set(&[]), &reads(&["API_KEY"], true)).is_some());
+        assert!(render(&set(&[]), &reads(&["API_KEY"], true), &[]).is_some());
 
         // Knowing that you *don't* know is knowledge too: a context whose only
         // secret is computed still emits, or the driver cannot say its list is
         // incomplete.
-        assert!(render(&set(&[]), &reads(&[], false)).is_some());
+        assert!(render(&set(&[]), &reads(&[], false), &[]).is_some());
     }
 
     /// The committed shape, byte for byte — it is a file a reviewer reads in a
@@ -226,16 +280,40 @@ mod tests {
         // A `BTreeSet` orders the names, so the file is byte-stable for a given
         // context rather than dependent on handler iteration order.
         assert_eq!(
-            render(&set(&["B_SECRET", "A_SECRET"]), &reads(&["R"], true))
+            render(&set(&["B_SECRET", "A_SECRET"]), &reads(&["R"], true), &[])
                 .expect("a non-empty set renders"),
             "{\n  \"version\": 2,\n  \"declared\": [\n    \"A_SECRET\",\n    \"B_SECRET\"\n  ],\n  \
              \"read\": [\n    \"R\"\n  ],\n  \"read_complete\": true\n}\n",
         );
         // The empty-list and false-flag shapes, which the fixtures also carry.
         assert_eq!(
-            render(&set(&["ONLY"]), &reads(&[], false)).expect("renders"),
+            render(&set(&["ONLY"]), &reads(&[], false), &[]).expect("renders"),
             "{\n  \"version\": 2,\n  \"declared\": [\n    \"ONLY\"\n  ],\n  \
              \"read\": [],\n  \"read_complete\": false\n}\n",
+        );
+    }
+
+    /// I3 (#1971): foreign callers, and only foreign callers, make a file, with
+    /// the worker named where it was declared.
+    #[test]
+    fn foreign_callers_are_listed_apart_from_declared_secrets() {
+        let foreign = vec![
+            bynk_check::actors::ForeignCaller {
+                actor: "Ledger".into(),
+                secret: "LEDGER_CALL_KEY".into(),
+                worker: Some("ledger-svc".into()),
+            },
+            bynk_check::actors::ForeignCaller {
+                actor: "Legacy".into(),
+                secret: "LEGACY_CALL_KEY".into(),
+                worker: None,
+            },
+        ];
+        assert_eq!(
+            render(&set(&[]), &reads(&[], true), &foreign).expect("a foreign caller renders"),
+            "{\n  \"version\": 2,\n  \"declared\": [],\n  \"read\": [],\n  \"read_complete\": true,\n  \
+             \"foreign\": [\n    { \"actor\": \"Ledger\", \"secret\": \"LEDGER_CALL_KEY\", \"worker\": \"ledger-svc\" },\n    \
+             { \"actor\": \"Legacy\", \"secret\": \"LEGACY_CALL_KEY\" }\n  ]\n}\n",
         );
     }
 }

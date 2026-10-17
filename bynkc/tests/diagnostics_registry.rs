@@ -42,6 +42,8 @@ const NON_DIAGNOSTIC_LOOKALIKES: &[&str] = &[
     "bynk.locale.types",
     "bynk.schema.lock",
     "bynk.deploy.lock",
+    // I4 (#1970): the foreign-caller pin file beside `bynk.toml`.
+    "bynk.foreign.toml",
     "bynk.test.example",
     "bynk.not.a_real_code",
     "bynk.check.something",

@@ -47,6 +47,7 @@ use bynk_syntax::ast::{
     Statement, TypeBody, TypeDecl, TypeRef, expr_children,
 };
 
+pub mod client;
 pub mod contracts;
 pub(crate) mod events_fanout;
 pub mod secrets;
@@ -123,6 +124,12 @@ pub(crate) const EVENTS_WIRE_EVENT_TS_TYPE: &str = "{ type: string; payload: unk
 /// Emit the contents of `out/tsconfig.json`. The CLI uses `tsc -p` against
 /// this when running `bynkc test`; users can also drive `tsc` against it
 /// directly to produce JS for deployment.
+///
+/// I4 (#1970): a context's generated TypeScript client (`bynk-client.ts`) is
+/// excluded. It is for a foreign Worker's build, where `@bynk/wire-client`
+/// resolves; the Bynk build neither imports it nor has that package.
+/// Excluding a file drops the default `node_modules` exclusion, so it is
+/// restated.
 pub fn emit_tsconfig() -> String {
     TSCONFIG_JSON.to_string()
 }
@@ -154,7 +161,8 @@ const TSCONFIG_JSON: &str = r#"{
     "outDir": "../out-js",
     "rootDir": "."
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "**/bynk-client.ts"]
 }
 "#;
 
@@ -1966,7 +1974,7 @@ fn hidden_subst(hidden: &std::collections::BTreeMap<String, String>) -> HashMap<
 }
 
 /// #1846: `decl` with every type it names, and its own name, renamed by `subst`.
-fn rename_in_decl(decl: &TypeDecl, subst: &HashMap<String, String>) -> TypeDecl {
+pub(crate) fn rename_in_decl(decl: &TypeDecl, subst: &HashMap<String, String>) -> TypeDecl {
     let mut out = decl.clone();
     if let Some(to) = subst.get(&decl.name.name) {
         out.name.name = to.clone();
@@ -4106,6 +4114,9 @@ pub(crate) enum BodyMode {
         /// (P6.24a's own pure, unconditional mirror), not the raw AST
         /// `HandlerKind` this field used to store.
         test_service_handlers: HashMap<String, Vec<bynk_ir::IrHandlerKind>>,
+        /// I3 (#1971): the test services whose `on call` handler binds an
+        /// actor sum, whose `deps.who` a call-site principal builds.
+        call_sum_services: HashSet<String>,
         /// #1994: the target has a handler that sends with `~>`, so `deps`
         /// carries the `__exec` double and each addressed service call is
         /// wrapped in `__bynkSettle(deps, …)`.
@@ -4190,6 +4201,14 @@ pub(crate) struct LowerCtx<'a> {
     /// by walking the stack innermost-out and falls back to the natural
     /// `ts_ident` name when no frame renamed it.
     pub shadow_scopes: Vec<HashMap<String, String>>,
+    /// #2024: identifiers the generated scaffold around this body already
+    /// binds in the body's own JS scope — a test runner's `deps`, `__obs`, and
+    /// the target's destructured services, agents, functions and assets. A
+    /// `let` whose natural name is one of these gets a fresh name from
+    /// [`Self::bind_local_name`], as a re-`let` does: the scaffold binding is
+    /// not a Bynk local (so [`Self::is_local`] ignores it), but a second
+    /// `const` of its name in that scope is `TS2451` under `tsc`.
+    pub harness_bound: HashSet<String>,
     /// When an `is` receiver is not a simple, repeatable lvalue (e.g. a call
     /// like `parse(x) is Ok(n)`), it is evaluated once into a temp; the temp
     /// name is cached here keyed by the receiver expression's span so the
@@ -4222,6 +4241,9 @@ pub(crate) struct LowerCtx<'a> {
     /// address-call lowering reads it to build the handler's `deps.identity`.
     /// `None` for a unit-identity actor or a non-principal statement.
     pub call_site_identity: Option<String>,
+    /// I3 (#1971): the call-site principal's actor name, beside
+    /// [`Self::call_site_identity`], for a `call` sum's `deps.who`.
+    pub call_site_actor: Option<String>,
     /// #706: the call-site principal is `by Nobody` — drive the route with no
     /// `Authorization` header so the real auth seam rejects it (`401` →
     /// `Rejected(Unauthorized)`). Routes a `system` http address to the no-auth
@@ -4297,11 +4319,13 @@ impl<'a> LowerCtx<'a> {
             // at `__r0`.
             next_tmp: 0,
             shadow_scopes: vec![HashMap::new()],
+            harness_bound: HashSet::new(),
             is_receiver_temps: HashMap::new(),
             is_temp_hoist: None,
             unnarrowed_is_tests: HashSet::new(),
             local_agent_vars: HashMap::new(),
             call_site_identity: None,
+            call_site_actor: None,
             call_site_no_credential: false,
             source_map: None,
             emitted_await: false,
@@ -4633,6 +4657,17 @@ impl<'a> LowerCtx<'a> {
         }
     }
 
+    /// I3 (#1971): whether the test service `name`'s `on call` handler binds
+    /// an actor sum.
+    pub(crate) fn is_call_sum_service(&self, name: &str) -> bool {
+        match &self.mode {
+            BodyMode::TestCase {
+                call_sum_services, ..
+            } => call_sum_services.contains(name),
+            _ => false,
+        }
+    }
+
     /// #1975: whether this is a test `case` body.
     pub(crate) fn in_test_case(&self) -> bool {
         matches!(&self.mode, BodyMode::TestCase { .. })
@@ -4870,7 +4905,9 @@ impl<'a> LowerCtx<'a> {
             return self.fresh();
         }
         let natural = ts_ident(name);
-        let js_name = if self.shadow_scopes.iter().any(|f| f.contains_key(name)) {
+        let js_name = if self.shadow_scopes.iter().any(|f| f.contains_key(name))
+            || self.harness_bound.contains(&natural)
+        {
             self.fresh()
         } else {
             natural

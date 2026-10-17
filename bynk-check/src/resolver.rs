@@ -307,6 +307,10 @@ pub struct CrossContextService {
     pub params: Vec<(String, TypeRef)>,
     pub return_type: TypeRef,
     pub span: bynk_syntax::span::Span,
+    /// I3 (#1971): the foreign callers the handler admits, by actor name. A
+    /// system test that calls as one of them signs as that actor. Not part
+    /// of the contract.
+    pub foreign_callers: Vec<String>,
 }
 
 /// Project one local `on call` handler into the [`CrossContextService`] shape
@@ -332,6 +336,7 @@ pub fn cross_context_service_for(name: &str, sdecl: &ServiceDecl) -> Option<Cros
             .collect(),
         return_type: handler.return_type.clone(),
         span: sdecl.span,
+        foreign_callers: Vec::new(),
     })
 }
 

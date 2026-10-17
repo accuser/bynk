@@ -73,8 +73,11 @@ pub fn lower_test_case_body(
     cross_context: &bynk_check::resolver::CrossContextInfo,
     test_services: HashSet<String>,
     test_service_handlers: HashMap<String, Vec<bynk_ir::IrHandlerKind>>,
+    call_sum_services: HashSet<String>,
     test_agents: HashSet<String>,
     settle_sends: bool,
+    // #2024: the names the runner scaffold binds in the body's scope.
+    harness_bound: HashSet<String>,
     source: &str,
     rel_path: &str,
     runtime_use: &RuntimeUse,
@@ -97,11 +100,13 @@ pub fn lower_test_case_body(
                 observation_trace: Some("__obs".to_string()),
                 test_services,
                 test_service_handlers,
+                call_sum_services,
                 settle_sends,
             },
         )
         .with_source_map(Some(&smb));
         cx.local_agents = test_agents;
+        cx.harness_bound = harness_bound;
         for stmt in &block.statements {
             emit_statement(&mut out, stmt, &mut cx, 0);
         }
@@ -135,6 +140,8 @@ pub fn lower_integration_case_body(
     system_http_routes: std::collections::HashSet<(String, String, String)>,
     system_http_route_body: HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>,
     system_http_type_ns: String,
+    // #2024: the names the case scaffold binds in the body's scope.
+    harness_bound: HashSet<String>,
     source: &str,
     rel_path: &str,
     runtime_use: &RuntimeUse,
@@ -161,6 +168,7 @@ pub fn lower_integration_case_body(
             },
         )
         .with_source_map(Some(&smb));
+        cx.harness_bound = harness_bound;
         for stmt in &block.statements {
             emit_statement(&mut out, stmt, &mut cx, 0);
         }
@@ -687,6 +695,7 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             // (a test-only brand cast, like an agent key) and stash it for the
             // address-call lowering to fold into that call's deps.
             let saved_identity = cx.call_site_identity.take();
+            let saved_actor = cx.call_site_actor.take();
             let saved_no_credential = cx.call_site_no_credential;
             cx.call_site_no_credential = false;
             if let Some(principal) = &l.principal {
@@ -699,10 +708,12 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                     cx.call_site_no_credential = true;
                 } else {
                     cx.call_site_identity = principal.identity.as_ref().map(|id| pre.lower(id, cx));
+                    cx.call_site_actor = Some(principal.actor.name.clone());
                 }
             }
             let value = pre.lower(&l.value, cx);
             cx.call_site_identity = saved_identity;
+            cx.call_site_actor = saved_actor;
             cx.call_site_no_credential = saved_no_credential;
             for s in pre.stmts() {
                 write_line(out, indent, s);
@@ -1314,6 +1325,7 @@ fn cap_op_param_names(cx: &LowerCtx, cap: &str, op: &str) -> Vec<String> {
 fn lower_faults(faults: &FaultsExpr, cx: &mut LowerCtx) -> String {
     let FaultsExpr { call, principal } = faults;
     let saved_identity = cx.call_site_identity.take();
+    let saved_actor = cx.call_site_actor.take();
     let saved_no_credential = std::mem::replace(&mut cx.call_site_no_credential, false);
     let mut inner = Pre::new();
     if let Some(principal) = principal {
@@ -1324,10 +1336,12 @@ fn lower_faults(faults: &FaultsExpr, cx: &mut LowerCtx) -> String {
             cx.call_site_no_credential = true;
         } else {
             cx.call_site_identity = principal.identity.as_ref().map(|id| inner.lower(id, cx));
+            cx.call_site_actor = Some(principal.actor.name.clone());
         }
     }
     let value = inner.lower(call, cx);
     cx.call_site_identity = saved_identity;
+    cx.call_site_actor = saved_actor;
     cx.call_site_no_credential = saved_no_credential;
     // The literal `await` below is a real source of effectfulness for any
     // synchronous-looking IIFE further out — see `emitted_await`.
@@ -2489,8 +2503,10 @@ fn lower_method_call(
             all.join(", ")
         ));
     }
+    // #2024: a case `let` may shadow a service of the target; the local wins.
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.is_test_service(&id.name)
+        && !cx.is_local(&id.name)
     {
         // #1994: a target whose handlers send with `~>` settles each addressed
         // call — awaits the promises the handler handed `deps.__exec.waitUntil`
@@ -2509,9 +2525,17 @@ fn lower_method_call(
         // `bynk-check`'s actor declarations, not plumbed here today (unlike the
         // `ty: &TypeRef` available a few lines up for the sibling brand cast). A
         // guessed type risks a `tsc --strict` mismatch; left as `any`, named here.
-        let deps_expr = match cx.call_site_identity.clone() {
-            Some(identity) => format!("{{ ...deps, identity: ({identity} as any) }}"),
-            None => "deps".to_string(),
+        // I3 (#1971): a `call` sum reads the principal as the resolved actor,
+        // `deps.who`: `by Caller("shop.front")` or `by Legacy`.
+        let deps_expr = match (cx.call_site_actor.clone(), cx.call_site_identity.clone()) {
+            (Some(actor), identity) if cx.is_call_sum_service(&id.name) => match identity {
+                Some(identity) => {
+                    format!("{{ ...deps, who: {{ tag: {actor:?}, identity: {identity} }} }}")
+                }
+                None => format!("{{ ...deps, who: {{ tag: {actor:?} }} }}"),
+            },
+            (_, Some(identity)) => format!("{{ ...deps, identity: ({identity} as any) }}"),
+            (_, None) => "deps".to_string(),
         };
         // http address: the method is an HTTP verb and the first argument is the
         // route pattern string. The key is a pure function of verb + path; the

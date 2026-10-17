@@ -266,7 +266,9 @@ authentication, declined confirmation, compilation failures, an unrecorded CI
 resource, a `--context` whose dependency was never deployed, and a `--context`
 whose live dependency has drifted from the contract it was compiled against
 (`bynk.deploy.contract_skew`) — deploying that would ship a caller its callee
-rejects on every call.
+rejects on every call — and a build that breaks a declared foreign caller's pin
+in `bynk.foreign.toml` (`bynk.deploy.foreign_contract_skew`; see
+[TypeScript client](/book/reference/typescript-client/#pins)).
 
 ---
 

@@ -1454,6 +1454,11 @@ fn check_by_clause_contracts(
                     ),
                 )
                 .with_note(match protocol {
+                    // I3 (#1971): a foreign caller calls a service, and only
+                    // by `call`.
+                    _ if contract.scheme == Scheme::Foreign => {
+                        "a `Foreign` actor is admitted only on an `on call` handler"
+                    }
                     ServiceProtocol::Http => {
                         "public HTTP routes take an anonymous actor — write `by v: Visitor`"
                     }
@@ -1547,6 +1552,11 @@ fn check_by_clause_contracts(
             }
             if contract.scheme == actors::Scheme::None {
                 seen_catch_all = true;
+            } else if contract.scheme == actors::Scheme::Foreign {
+                // I3 (#1971): foreign peers are told apart by name, each
+                // verified under its own secret, so several can share a sum.
+                // That every foreign secret is the context's only use of its
+                // name is checked once per context (`check_actor_contracts`).
             } else if seen.contains(&contract.scheme) {
                 errors.push(
                     CompileError::new(
@@ -1636,9 +1646,103 @@ fn check_actor_contracts(
                     format!("unknown authentication scheme `{}`", auth.name),
                 )
                 .with_note(
-                    "the authentication schemes are `None`, `Internal`, `Bearer`, and `Signature`",
+                    "the authentication schemes are `None`, `Internal`, `Bearer`, `Signature`, `Oidc`, and `Foreign`",
                 ),
             ),
+            // I3 (#1971): a foreign caller names the secret its calls verify
+            // under; it carries no identity beyond the actor itself, and its
+            // name must never read as a Bynk context's, which is what keeps
+            // it apart from every `Caller` on the wire.
+            Some(Scheme::Foreign) => {
+                match actor.scheme_arg("secret") {
+                    None => errors.push(
+                        CompileError::new(
+                            "bynk.actor.foreign_missing_secret",
+                            auth.span,
+                            "a `Foreign` actor must name the secret its calls are signed with",
+                        )
+                        .with_note("write `auth = Foreign(secret = \"<ENV_NAME>\")`"),
+                    ),
+                    Some(arg) if arg.value.as_str().is_none() => errors.push(
+                        CompileError::new(
+                            "bynk.actor.foreign_secret_not_string",
+                            arg.span,
+                            "a `Foreign` actor's secret must name an env binding, as a string",
+                        )
+                        .with_note("write `auth = Foreign(secret = \"<ENV_NAME>\")`"),
+                    ),
+                    Some(arg) => {
+                        if arg.value.as_str().is_some_and(|v| {
+                            v.starts_with(crate::wire_format::EDGE_FROM_PREFIX)
+                                || v.starts_with(crate::wire_format::EDGE_TO_PREFIX)
+                        }) {
+                            errors.push(
+                                CompileError::new(
+                                    "bynk.actor.foreign_reserved_secret",
+                                    arg.span,
+                                    "a `Foreign` actor's secret may not use a `BYNK_CALL_` edge key's name",
+                                )
+                                .with_note(
+                                    "those names are the keys `bynk deploy` mints between contexts — \
+                                     pick another, such as `LEGACY_CALL_KEY`",
+                                ),
+                            );
+                        }
+                    }
+                }
+                if crate::wire_format::is_edge_name(&actor.name.name) {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.actor.foreign_name_is_context_name",
+                            actor.name.span,
+                            format!(
+                                "foreign actor `{}` is named like a context",
+                                actor.name.name
+                            ),
+                        )
+                        .with_note(
+                            "a foreign caller sends its actor's name as its caller, so it must \
+                             not read as a context's name: start it with a capital letter",
+                        ),
+                    );
+                }
+                // I4 (#1970): a foreign caller signs under the key its Worker
+                // holds as `BYNK_CALL_TO_<CONTEXT>`, named from this context's
+                // name, so the name must be one a key can be derived from (the
+                // domain `bynk deploy` refuses outside of, at a deploy rather
+                // than here, for Bynk-to-Bynk edges).
+                let context = resolved.commons.name.joined();
+                if !crate::wire_format::is_edge_name(&context) {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.actor.foreign_context_name_unkeyable",
+                            auth.span,
+                            format!(
+                                "context `{context}` cannot admit foreign caller `{}`: no call key can be named from the context's name",
+                                actor.name.name
+                            ),
+                        )
+                        .with_note(
+                            "an edge key is named from the context's name, which must be lowercase \
+                             letters and digits in dot-separated segments, each starting with a \
+                             letter, with single underscores between runs (no `__`, no trailing `_`)",
+                        ),
+                    );
+                }
+                if let Some(id) = &actor.identity {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.actor.foreign_identity_unsupported",
+                            id.span(),
+                            "a `Foreign` actor does not support a declared `identity`",
+                        )
+                        .with_note(
+                            "the actor is the identity: a handler tells foreign callers apart by \
+                             `match`ing its `by` sum",
+                        ),
+                    );
+                }
+            }
             // v0.47: a Bearer actor must name its signing secret and yield a
             // string-constructible identity (minted from the JWT `sub` claim).
             Some(Scheme::Bearer) => {
@@ -1820,10 +1924,11 @@ fn check_actor_contracts(
         // check predates that narrowing and needs the broader "context-owned"
         // union back, so it reads `uses_commons_type_names` alongside it
         // instead of relying on the now-narrower `local_type_names` alone.
-        // (Signature handles its own identity rule above.)
-        if Scheme::from_name(actor.auth.as_ref().map(|a| a.name.as_str()).unwrap_or(""))
-            != Some(Scheme::Signature)
-            && let Some(id) = &actor.identity
+        // (Signature and Foreign handle their own identity rule above.)
+        if !matches!(
+            Scheme::from_name(actor.auth.as_ref().map(|a| a.name.as_str()).unwrap_or("")),
+            Some(Scheme::Signature | Scheme::Foreign)
+        ) && let Some(id) = &actor.identity
         {
             let ownable = matches!(id, TypeRef::Named(n) if
                 resolved.is_local_type(&n.name) || resolved.is_uses_commons_type(&n.name));
@@ -1839,6 +1944,51 @@ fn check_actor_contracts(
                          minted only inside the context and unforgeable downstream",
                     ),
                 );
+            }
+        }
+    }
+
+    // I3 (#1971): a foreign caller's secret is the context's only use of that
+    // name. The Worker's table of foreign callers maps every one of them to
+    // its secret, and a caller is checked under the secret its claimed name
+    // selects, so two foreign actors on one secret could each pass for the
+    // other wherever either is admitted; and `bynk deploy` mints a foreign
+    // secret, which would overwrite another actor's. In declaration order, so
+    // the later one is reported.
+    let mut by_position: Vec<&ActorDecl> = table.actors.values().collect();
+    by_position.sort_by_key(|a| a.name.span.start);
+    let mut secret_owner: HashMap<&str, (&str, bool)> = HashMap::new();
+    for actor in by_position {
+        let Some(arg) = actor.scheme_arg("secret") else {
+            continue;
+        };
+        let Some(secret) = arg.value.as_str() else {
+            continue;
+        };
+        let foreign = actor
+            .auth
+            .as_ref()
+            .is_some_and(|au| Scheme::from_name(&au.name) == Some(Scheme::Foreign));
+        match secret_owner.get(secret) {
+            Some((other, other_foreign)) if foreign || *other_foreign => {
+                errors.push(
+                    CompileError::new(
+                        "bynk.actor.foreign_duplicate_secret",
+                        arg.span,
+                        format!(
+                            "actor `{}` uses the secret `{secret}` already named by actor `{other}`, and one of them is a foreign caller",
+                            actor.name.name
+                        ),
+                    )
+                    .with_note(
+                        "a foreign caller is told apart by the secret its calls verify under, and \
+                         `bynk deploy` mints it — give it a name no other actor uses",
+                    ),
+                );
+            }
+            Some(_) => {}
+            None => {
+                secret_owner.insert(secret, (&actor.name.name, foreign));
             }
         }
     }

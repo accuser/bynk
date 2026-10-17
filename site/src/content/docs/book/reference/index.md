@@ -21,6 +21,7 @@ the `bynk.toml` manifest, emission, and the editor tooling — see the
 ## Project & output
 
 - [Diagnostic index](/book/reference/diagnostics/) — every `bynk.*` code (generated).
+- [TypeScript client](/book/reference/typescript-client/) — the typed client a non-Bynk Worker calls a context through, and `bynk.foreign.toml` pins.
 - [Version compatibility & changelog](/book/reference/changelog/).
 
 The `bynk.toml` manifest and [Emission](/docs/emission/) — the TypeScript each

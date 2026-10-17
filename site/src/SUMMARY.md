@@ -79,6 +79,7 @@
     - [Run your project locally](guides/projects-build-and-deployment/run-locally.md)
     - [Deploy to Cloudflare](guides/projects-build-and-deployment/deploy-to-cloudflare.md)
     - [Target Cloudflare Workers](guides/projects-build-and-deployment/cloudflare-workers.md)
+    - [Adopt Bynk beside a TypeScript Worker](guides/projects-build-and-deployment/adopt-beside-a-typescript-worker.md)
 
 # Reference
 
@@ -103,6 +104,7 @@
   - [Actors](reference/actors.md)
   - [Testing](reference/testing.md)
   - [Wire format](reference/wire-format.md)
+  - [TypeScript client](reference/typescript-client.md)
   - [Diagnostic index](reference/diagnostics.md)
   - [Version compatibility & changelog](reference/changelog.md)
 

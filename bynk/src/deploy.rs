@@ -16,6 +16,8 @@
 //!   deploy-time contract-skew check.
 //! - `ledger.rs` — the committed `bynk.deploy.lock`: what this project has
 //!   provisioned, the orphan diff against it, and `--prune`.
+//! - `pins.rs` — a declared foreign caller's pin (`bynk.foreign.toml`) and the
+//!   gate that refuses a build breaking it (I4, #1970).
 //! - `provisioning.rs` — every call out to the `wrangler` CLI.
 //! - `secrets.rs` — which secrets a run sets, and where each value comes from.
 //! - `plan.rs` — the plan/apply flow that drives all of the above.
@@ -46,6 +48,7 @@ use bynk_emit::emitter::wrangler::KV_NAMESPACE_ID_PLACEHOLDER;
 mod config;
 mod graph;
 mod ledger;
+mod pins;
 mod plan;
 mod provisioning;
 mod secrets;
@@ -53,6 +56,7 @@ mod secrets;
 use config::*;
 use graph::*;
 use ledger::*;
+use pins::*;
 use plan::*;
 use provisioning::*;
 use secrets::*;
@@ -64,7 +68,7 @@ pub(crate) use plan::conflicting_env_passthrough;
 pub use plan::{DeployFormat, DeployOptions, run};
 
 /// I2 (#1971): for `bynk dev`, the names of the edge keys each built Worker
-/// holds (a Worker on no edge is absent), read from the build's own
+/// holds, and (I3) its foreign callers' secrets (a Worker with none is absent), read from the build's own
 /// configurations as `bynk deploy` reads them. An edge between contexts whose
 /// names no key can be derived from is an error, as it is at deploy.
 pub(crate) fn local_edge_keys(
@@ -76,9 +80,20 @@ pub(crate) fn local_edge_keys(
     for edge in &edges {
         edge.ends()?;
     }
+    // I3 (#1971): and the secret of each foreign caller a Worker admits, so a
+    // local foreign caller signing under the local key is admitted too.
     Ok(workers
         .iter()
-        .map(|w| (w.clone(), edge_keys_of(w, &edges)))
+        .map(|w| {
+            let mut keys = edge_keys_of(w, &edges);
+            keys.extend(
+                resources[w]
+                    .foreign_callers
+                    .iter()
+                    .map(|f| f.binding.clone()),
+            );
+            (w.clone(), keys)
+        })
         .filter(|(_, keys)| !keys.is_empty())
         .collect())
 }
@@ -160,6 +175,30 @@ mod tests {
         out.push_str("\n# several contexts, first deploy\n");
         out.push_str(&plan_report(
             &plan_of(&chain_order, &chain(), &DeployLock::default()),
+            DeployFormat::Short,
+        ));
+
+        // I3 (#1971): a context admitting two foreign callers lists each
+        // one's secret as managed, beside its edge keys.
+        out.push_str("\n# I3: foreign callers' secrets\n");
+        let mut foreign = chain();
+        foreign
+            .get_mut("commerce-payment")
+            .expect("the chain's callee")
+            .foreign_callers = vec![
+            ForeignCaller {
+                actor: "Ledger".into(),
+                binding: "LEDGER_CALL_KEY".into(),
+                worker: Some("ledger-svc".into()),
+            },
+            ForeignCaller {
+                actor: "Legacy".into(),
+                binding: "LEGACY_CALL_KEY".into(),
+                worker: None,
+            },
+        ];
+        out.push_str(&plan_report(
+            &plan_of(&chain_order, &foreign, &DeployLock::default()),
             DeployFormat::Short,
         ));
 
@@ -393,6 +432,31 @@ mod tests {
 
         out.push_str("\n# --format json, the same rename\n");
         out.push_str(&plan_report(&renamed, DeployFormat::Json));
+
+        // #2028: under `--env staging` every Worker, binding target and queue
+        // is named as the push creates it, `-staging`, and so is the bare
+        // `KV`'s namespace title (#2037).
+        out.push_str("\n# --env staging: several contexts and a queue, first deploy\n");
+        let staging_resources = project(vec![
+            (
+                "commerce-orders",
+                Resources::default()
+                    .binds(&["commerce-payment"])
+                    .consumes(&["job-intake"]),
+            ),
+            ("commerce-payment", Resources::default().needs_kv()),
+        ]);
+        let staging = derive_plan(
+            &chain_order,
+            &staging_resources,
+            &DeployLock::default(),
+            &SecretSource::default(),
+            false,
+            "staging",
+        );
+        out.push_str(&plan_report(&staging, DeployFormat::Short));
+        out.push_str("\n# --format json, the same plan under --env staging\n");
+        out.push_str(&plan_report(&staging, DeployFormat::Json));
 
         // #2037: the bare `KV`'s title, first deploy, default and staging. An
         // account holds one namespace per title, so staging's is qualified

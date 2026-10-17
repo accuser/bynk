@@ -90,6 +90,14 @@ struct WorkerRecord {
     /// still reads.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     assets: BTreeSet<String>,
+    /// I4 (#1970): the contract each declared foreign caller may call this
+    /// Worker at, as of the push that recorded it — actor → service → hash, the
+    /// build's `bynk-contracts.json` `foreign` record. The foreign callers are
+    /// not Bynk and record nothing themselves, so this is where the ledger
+    /// learns of them, beside what the Worker `provides`. Empty (and omitted)
+    /// for a Worker with none; additive and `default`ed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    foreign: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl DeployLock {
@@ -116,6 +124,7 @@ impl DeployLock {
                     deployed: true,
                     contracts,
                     assets: BTreeSet::new(),
+                    foreign: BTreeMap::new(),
                 },
             );
     }
@@ -136,6 +145,39 @@ impl DeployLock {
         {
             record.assets = assets;
         }
+    }
+
+    /// I4 (#1970): record the contract `worker`'s declared foreign callers may
+    /// call it at, as of this push ([`WorkerRecord::foreign`]). Called right
+    /// after [`DeployLock::record_deployed`]; a Worker not yet recorded is
+    /// ignored.
+    pub(crate) fn record_foreign(
+        &mut self,
+        environment: &str,
+        worker: &str,
+        foreign: BTreeMap<String, BTreeMap<String, String>>,
+    ) {
+        if let Some(record) = self
+            .environments
+            .get_mut(environment)
+            .and_then(|env| env.workers.get_mut(worker))
+        {
+            record.foreign = foreign;
+        }
+    }
+
+    /// I4 (#1970): what the ledger recorded `worker`'s foreign callers may call
+    /// it at, empty when it recorded none.
+    #[cfg(test)]
+    pub(crate) fn live_foreign(
+        &self,
+        environment: &str,
+        worker: &str,
+    ) -> Option<&BTreeMap<String, BTreeMap<String, String>>> {
+        self.environments
+            .get(environment)
+            .and_then(|env| env.workers.get(worker))
+            .map(|record| &record.foreign)
     }
 
     /// v0.177 (#643): what the ledger believes `worker` currently provides.
@@ -254,6 +296,35 @@ impl Orphans {
     /// not a valid state.
     pub(crate) fn has_prunable(&self) -> bool {
         !self.kv.is_empty() || !self.queues.is_empty()
+    }
+
+    /// These orphans as the account names them under `environment`, for the
+    /// plan to show (#2028): a queue by the [`env_qualify`]d name `--prune`
+    /// deletes, a Worker by its [`deployed_worker_name`]. A KV orphan keeps
+    /// its Worker's ledger key: its line names the ledger entry, not the
+    /// namespace's title ([`kv_title`]), which a namespace made before #2037
+    /// may not match.
+    pub(crate) fn as_named_in(&self, environment: &str) -> Orphans {
+        Orphans {
+            kv: self
+                .kv
+                .iter()
+                .map(|kv| OrphanKv {
+                    worker: kv.worker.clone(),
+                    binding: kv.binding.clone(),
+                })
+                .collect(),
+            workers: self
+                .workers
+                .iter()
+                .map(|worker| deployed_worker_name(environment, worker))
+                .collect(),
+            queues: self
+                .queues
+                .iter()
+                .map(|queue| env_qualify(environment, queue))
+                .collect(),
+        }
     }
 }
 
@@ -562,7 +633,11 @@ pub(crate) fn confirm_prune(yes: bool, orphans: &Orphans, environment: &str) -> 
         }
     }
     for queue in &orphans.queues {
-        eprintln!("bynk: will delete queue `{queue}`");
+        // The name `prune_orphans` deletes, not the ledger key (#2028).
+        eprintln!(
+            "bynk: will delete queue `{}`",
+            env_qualify(environment, queue)
+        );
     }
     if yes {
         return true;
@@ -743,6 +818,10 @@ pub(crate) mod tests {
                             deployed: true,
                             contracts: Default::default(),
                             assets: BTreeSet::new(),
+                            foreign: BTreeMap::from([(
+                                "Legacy".into(),
+                                BTreeMap::from([("ping".into(), "4082ce9e2b74e919".into())]),
+                            )]),
                         },
                     )]),
                     queues: BTreeSet::from(["intake".to_string()]),
@@ -829,6 +908,44 @@ pub(crate) mod tests {
             "only `board` has assets: {text}"
         );
         assert_eq!(toml::from_str::<DeployLock>(&text).unwrap(), lock);
+    }
+
+    /// I4 (#1970): a Worker's foreign callers round-trip, a later push
+    /// replaces them, and a Worker with none writes no `foreign` table.
+    #[test]
+    fn a_workers_foreign_callers_round_trip_and_none_is_not_written() {
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        let legacy = BTreeMap::from([(
+            "Legacy".to_string(),
+            BTreeMap::from([("ping".to_string(), "4082ce9e2b74e919".to_string())]),
+        )]);
+        lock.record_deployed("default", "shop-orders", Some(Default::default()));
+        lock.record_foreign("default", "shop-orders", legacy.clone());
+        lock.record_deployed("default", "shop-front", Some(Default::default()));
+        lock.record_foreign("default", "shop-front", BTreeMap::new());
+        let text = toml::to_string_pretty(&lock).unwrap();
+        assert!(text.contains("4082ce9e2b74e919"), "{text}");
+        assert_eq!(
+            text.matches("foreign").count(),
+            1,
+            "only `shop-orders`: {text}"
+        );
+        let read = toml::from_str::<DeployLock>(&text).unwrap();
+        assert_eq!(read, lock);
+        assert_eq!(read.live_foreign("default", "shop-orders"), Some(&legacy));
+        // A later push records what that build declares, not a union.
+        lock.record_deployed("default", "shop-orders", Some(Default::default()));
+        lock.record_foreign("default", "shop-orders", BTreeMap::new());
+        assert_eq!(
+            lock.live_foreign("default", "shop-orders"),
+            Some(&BTreeMap::new())
+        );
+        // A Worker never recorded is left alone.
+        lock.record_foreign("default", "never", legacy);
+        assert_eq!(lock.live_foreign("default", "never"), None);
     }
 
     #[test]

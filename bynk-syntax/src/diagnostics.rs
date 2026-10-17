@@ -226,6 +226,34 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Two peers in a multi-actor sum share an authentication scheme.",
     ),
     d(
+        "bynk.actor.foreign_context_name_unkeyable",
+        "A context declaring a `Foreign` actor has a name no call key can be named from.",
+    ),
+    d(
+        "bynk.actor.foreign_duplicate_secret",
+        "A `Foreign` actor's secret is also another actor's secret in the same context.",
+    ),
+    d(
+        "bynk.actor.foreign_identity_unsupported",
+        "A `Foreign` actor declares an `identity`.",
+    ),
+    d(
+        "bynk.actor.foreign_missing_secret",
+        "A `Foreign` actor does not name the secret its calls are signed with.",
+    ),
+    d(
+        "bynk.actor.foreign_name_is_context_name",
+        "A `Foreign` actor's name could be read as a context's name.",
+    ),
+    d(
+        "bynk.actor.foreign_reserved_secret",
+        "A `Foreign` actor's secret uses a `BYNK_CALL_` edge key's name.",
+    ),
+    d(
+        "bynk.actor.foreign_secret_not_string",
+        "A `Foreign` actor's secret is not a string.",
+    ),
+    d(
         "bynk.actor.identity_not_sealed",
         "An actor identity type is not a context-ownable (sealed) value type.",
     ),
@@ -610,6 +638,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.deploy.contract_skew",
         "A worker was compiled against a contract its live dependencies no longer provide, so `bynk deploy` refuses to ship it.",
+    ),
+    d(
+        "bynk.deploy.foreign_contract_skew",
+        "A build breaks the contract a declared foreign caller's client was generated at, as pinned in `bynk.foreign.toml`, so `bynk deploy` refuses to ship it.",
     ),
     d(
         "bynk.duration.literal_overflow",
@@ -1750,6 +1782,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `bynk.Secrets` read names its secret with a computed expression rather than a literal, so `bynk deploy` cannot plan it (warning).",
     )),
     dg(
+        "bynk.send.in_agent_handler",
+        "A `~>` send was used in an agent handler, which has no execution context to keep a fire-and-forget send alive.",
+        &["effect_send_stmt"],
+    ),
+    dg(
         "bynk.send.in_pure_context",
         "A `~>` send was used in a pure (non-effectful) context.",
         &["effect_send_stmt"],
@@ -1762,6 +1799,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.send.requires_unit",
         "A `~>` send targets an operation whose reply is not `Effect[()]`.",
+        &["effect_send_stmt"],
+    ),
+    dg(
+        "bynk.send.store_op",
+        "A `~>` send targets an agent store operation, which is part of the handler's atomic commit and cannot be sent without waiting.",
         &["effect_send_stmt"],
     ),
     dg(

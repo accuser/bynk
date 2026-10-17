@@ -1,0 +1,7 @@
+context shop.clock
+
+service now {
+  on call(n: Int) -> Effect[Int] {
+    n + 1
+  }
+}

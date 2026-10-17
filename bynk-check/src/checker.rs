@@ -1305,6 +1305,7 @@ pub fn check_handler_body(
         test_actors: HashMap::new(),
         type_vars: HashSet::new(),
         store_fields,
+        in_agent_handler: agent_state_ty.is_some(),
     };
     // Check the body and validate it matches the return type.
     let Some(body_ty) = type_of_block(body, Some(return_ty), &mut ctx) else {
@@ -1447,6 +1448,7 @@ pub fn check_body(
         test_actors,
         type_vars: HashSet::new(),
         store_fields: HashMap::new(),
+        in_agent_handler: false,
     };
     if let Some(w) = where_pred {
         let bool_ty = tys.intern(Ty::Base(BaseType::Bool));
@@ -1604,6 +1606,7 @@ pub fn check_invariants(
             test_actors: HashMap::new(),
             type_vars: HashSet::new(),
             store_fields: HashMap::new(),
+            in_agent_handler: false,
         };
         let pred_ty = type_of(&inv.predicate, Some(bool_ty), &mut ctx);
         if let Some(t) = pred_ty
@@ -1746,6 +1749,7 @@ pub fn check_contracts(
             test_actors: HashMap::new(),
             type_vars: type_vars.clone(),
             store_fields: HashMap::new(),
+            in_agent_handler: false,
         };
         let pred_ty = type_of(&c.predicate, Some(bool_ty), &mut ctx);
         if let Some(t) = pred_ty
@@ -1969,6 +1973,7 @@ pub fn check_transitions(
             test_actors: HashMap::new(),
             type_vars: HashSet::new(),
             store_fields: HashMap::new(),
+            in_agent_handler: false,
         };
         let pred_ty = type_of(&tr.predicate, Some(bool_ty), &mut ctx);
         if let Some(t) = pred_ty
@@ -2267,6 +2272,12 @@ pub(crate) struct Ctx<'a> {
     /// here, by receiver provenance. Empty outside `store`-bearing agent
     /// handlers.
     pub store_fields: HashMap<String, StoreField>,
+    /// #2017: true while checking an agent handler body, lambdas included.
+    /// Unlike [`agent_state_ty`](Self::agent_state_ty), a lambda frame does
+    /// not clear it: a `~>` inside a closure still runs in the agent's
+    /// handler, which carries no execution context, so the send gate must
+    /// see through the frame swap.
+    pub in_agent_handler: bool,
 }
 
 /// Per-capability info for checker dispatch within a handler body.
@@ -3367,7 +3378,44 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                 let unit = tys.intern(Ty::Unit);
                 let expected = tys.intern(Ty::Effect(unit));
                 let rhs_ty = type_of(&s.value, Some(expected), ctx);
+                // #2017: an agent handler has no execution context to hand a
+                // fire-and-forget promise to — it runs inside the agent's
+                // Durable Object, whose `deps` carry no `__exec` — so a `~>`
+                // there checked clean and then failed `tsc`. Refuse it here,
+                // on both targets. A store operation gets its own code: it is
+                // not a message at all but a write to the handler's staged
+                // state, committed atomically at the handler boundary.
+                // Typed first, so the RHS's own errors still surface and the
+                // `Callee::Store` classification (recorded by `type_of`) is
+                // available. When this fires, the reply-shape checks below
+                // are skipped: their remedy is moot once the send itself is
+                // refused.
+                if ctx.in_agent_handler {
+                    if let Some(Callee::Store { field, op }) = ctx.callees.get(&s.value.id) {
+                        let msg = format!(
+                            "`~> {field}.{op}(…)` sends a store operation, but a store write is part of the agent handler's atomic commit — there is nothing to send without waiting for"
+                        );
+                        let note = format!(
+                            "drop the `~>` and perform the write as a plain statement, `do {field}.{op}(…)`, or with `let _ <- {field}.{op}(…)`; it is staged and committed with the rest of the handler"
+                        );
+                        ctx.errors.push(
+                            CompileError::new("bynk.send.store_op", s.span, msg).with_note(note),
+                        );
+                    } else {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.send.in_agent_handler",
+                                s.span,
+                                "the `~>` send cannot be used in an agent handler: an agent handler has no execution context to keep a fire-and-forget send alive",
+                            )
+                            .with_note(
+                                "await the effect instead with `let _ <- ...` (or `do ...` for an `Effect[()]`), or move the send to the service handler that calls the agent",
+                            ),
+                        );
+                    }
+                }
                 match rhs_ty.map(|t| tys.get(t)).as_deref() {
+                    _ if ctx.in_agent_handler => {}
                     Some(Ty::Effect(inner)) if *inner == unit => {}
                     Some(Ty::Effect(inner)) => {
                         ctx.errors.push(

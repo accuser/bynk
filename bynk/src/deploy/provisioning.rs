@@ -1002,6 +1002,8 @@ mod tests {
         let mut lock = lock;
         let source = SecretSource::default();
         let edge_keys = BTreeMap::new();
+        let foreign_keys = BTreeMap::new();
+        let foreign_secrets = BTreeSet::new();
         let listed = BTreeMap::from([("api".to_string(), Some(BTreeSet::new()))]);
         let mut resolved = BTreeMap::new();
         let pushed = deploy_one(
@@ -1017,6 +1019,8 @@ mod tests {
                 source: &source,
                 force: false,
                 edge_keys: &edge_keys,
+                foreign_keys: &foreign_keys,
+                foreign_secrets: &foreign_secrets,
                 listed: &listed,
                 resolved: &mut resolved,
             },

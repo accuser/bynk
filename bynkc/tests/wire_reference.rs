@@ -93,8 +93,8 @@ fn the_pages_example_hashes_are_the_emitted_constants() {
     let contracts = example_contracts();
     assert_eq!(
         contracts.len(),
-        3,
-        "the example has three `on call` services"
+        4,
+        "the example has four `on call` services"
     );
     for (name, form, hash) in &contracts {
         let needle =
@@ -118,6 +118,7 @@ fn marker(check: CallCheck) -> String {
         CallCheck::Authentication => "if (typeof __body !== \"string\") return __body;".to_string(),
         CallCheck::WireVersion => format!("request.headers.get(\"{}\")", wf::WIRE_HEADER),
         CallCheck::UnknownService => "switch (servicePath)".to_string(),
+        CallCheck::NotAdmitted => "\"Forbidden\", { status: 403 }".to_string(),
         CallCheck::Contract => format!("request.headers.get(\"{}\")", wf::CONTRACT_HEADER),
         CallCheck::MalformedJson => "globalThis.JSON.parse(__body)".to_string(),
         CallCheck::Arguments => "const __r_".to_string(),
@@ -125,13 +126,13 @@ fn marker(check: CallCheck) -> String {
 }
 
 /// The emitted call dispatch makes the published checks in the published
-/// order. Fixture 216's callee binds `by c: Caller`, so it makes all eight.
+/// order. Fixture 2013's callee admits foreign callers, so it makes all nine.
 /// The two the runtime's `verifyCall` makes, the body cap and the signature,
 /// are held to the page by `the_pages_examples_and_checks_hold_on_the_generated_code`.
 #[test]
 fn the_emitted_dispatch_makes_the_published_checks_in_order() {
     let golden = repo(
-        "bynkc/tests/fixtures/positive/216_cross_context_caller/expected/workers/app-b/index.ts",
+        "bynkc/tests/fixtures/positive/2013_foreign_callers/expected/workers/shop-orders/index.ts",
     );
     let ts = fs::read_to_string(&golden).unwrap();
     let start = ts
@@ -277,7 +278,8 @@ const TSCONFIG_JSON: &str = r#"{
     "rootDir": ".",
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "**/bynk-client.ts"]
 }
 "#;
 
@@ -340,7 +342,8 @@ for (const ex of EXAMPLES) {
 const KEY = "edge-key";
 const CALLER = "shop.orders";
 const CALLEE = "wire.sample";
-const env: any = { __FROM_KEY__: KEY };
+const LEGACY_KEY = "legacy-key";
+const env: any = { __FROM_KEY__: KEY, LEGACY_CALL_KEY: LEGACY_KEY };
 const QUOTE = "__QUOTE_HASH__";
 const LINE = JSON.parse(__LINE__);
 
@@ -416,6 +419,21 @@ for (const [what, req] of [
   assert((await res.text()) === "Unauthorized", "401 is bare");
 }
 
+// 6. Admission (after the service lookup): a foreign caller only where its actor is admitted, and a
+// context only where `Caller` is.
+const LEGACY = "__LEGACY_HASH__";
+const legacy = (opts: Parameters<typeof call>[0]) =>
+  call({ service: "legacy", body: "7", ...opts, headers: { "X-Bynk-Contract": LEGACY, ...(opts.headers ?? {}) } });
+res = await expectStatus(legacy({ headers: { "X-Bynk-Caller": "Legacy" }, key: LEGACY_KEY }), 200, "Legacy calling `by Legacy`");
+body = await res.json();
+assert(body.kind === "Ok" && body.value === 7, "the foreign call's result, got " + JSON.stringify(body));
+res = await expectStatus(legacy({}), 403, "a context calling `by Legacy`");
+assert((await res.text()) === "Forbidden", "403 is bare");
+res = await expectStatus(call({ headers: { "X-Bynk-Caller": "Legacy" }, key: LEGACY_KEY }), 403, "Legacy calling the default `Caller`");
+// Legacy's name under a context's key, or a context's name under Legacy's.
+await expectStatus(legacy({ headers: { "X-Bynk-Caller": "Legacy" } }), 401, "Legacy signed with an edge key");
+await expectStatus(legacy({ key: LEGACY_KEY }), 401, "a context signed with Legacy's secret");
+
 // 4. Wire version.
 res = await expectStatus(call({ headers: { "X-Bynk-Wire": "2" }, service: "nosuch" }), 400, "wire version 2");
 body = await res.json();
@@ -425,12 +443,12 @@ assert(body.kind === "UnsupportedWireVersion" && JSON.stringify(body.accepted) =
 res = await expectStatus(call({ service: "nosuch" }), 404, "an unknown service");
 assert((await res.text()) === "Not found", "404 body");
 
-// 6. Contract.
+// 7. Contract.
 res = await expectStatus(call({ headers: { "X-Bynk-Contract": "0000000000000000" }, body: "{" }), 409, "a skewed contract");
 body = await res.json();
 assert(body.kind === "ContractMismatch" && body.expected === QUOTE, "409 body, got " + JSON.stringify(body));
 
-// 7. Malformed JSON.
+// 8. Malformed JSON.
 for (const bad of ["{", "", "{\"line\": }"]) {
   res = await expectStatus(call({ body: bad }), 400, "malformed body " + JSON.stringify(bad));
   body = await res.json();
@@ -443,7 +461,7 @@ res = await expectStatus(call({ service: "who", headers: { "X-Bynk-Contract": WH
 body = await res.json();
 assert(body.kind === "Ok" && body.value === CALLER, "the handler reads the caller, got " + JSON.stringify(body));
 
-// 8. Arguments: an inline field refinement, through the dispatch's path.
+// 9. Arguments: an inline field refinement, through the dispatch's path.
 res = await expectStatus(call({ body: JSON.stringify({ line: { ...LINE, qty: 0 }, size: 3 }) }), 400, "qty 0");
 body = await res.json();
 assert(body.kind === "RefinementViolation" && body.path === "$.line.qty", "the violation's path, got " + JSON.stringify(body));
@@ -488,6 +506,11 @@ fn the_pages_examples_and_checks_hold_on_the_generated_code() {
         .find(|(name, _, _)| name == "who")
         .expect("the example's `who` service")
         .2;
+    let legacy = example_contracts()
+        .into_iter()
+        .find(|(name, _, _)| name == "legacy")
+        .expect("the example's `legacy` service")
+        .2;
     let line = match &EXAMPLES[0].outcome {
         Outcome::Accepted { .. } => EXAMPLES[0].json,
         Outcome::Rejected { .. } => panic!("the first example is a whole, accepted `Line`"),
@@ -496,6 +519,7 @@ fn the_pages_examples_and_checks_hold_on_the_generated_code() {
         .replace("__EXAMPLES__", &examples_ts())
         .replace("__QUOTE_HASH__", &quote)
         .replace("__WHO_HASH__", &who)
+        .replace("__LEGACY_HASH__", &legacy)
         .replace("__LINE__", &ts_str(line))
         .replace(
             "__FROM_KEY__",

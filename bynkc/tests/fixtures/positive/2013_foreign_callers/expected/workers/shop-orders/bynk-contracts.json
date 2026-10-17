@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "provides": {
+    "ping": "4082ce9e2b74e919",
+    "status": "226b9939f85e69ea",
+    "total": "26a626d0a1391c3d"
+  },
+  "expects": {
+    "shop.clock": {
+      "now": "77841b8d42b1de97"
+    }
+  },
+  "foreign": {
+    "Ledger": {
+      "status": "226b9939f85e69ea"
+    },
+    "Legacy": {
+      "ping": "4082ce9e2b74e919",
+      "status": "226b9939f85e69ea"
+    }
+  }
+}

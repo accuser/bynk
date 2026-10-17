@@ -10,6 +10,16 @@ secret set BYNK_CALL_TO_COMMERCE__PAYMENT (managed)
 deploy commerce-orders
 order commerce-payment → commerce-orders
 
+# I3: foreign callers' secrets
+kv create commerce-payment
+secret set BYNK_CALL_FROM_COMMERCE__ORDERS (managed)
+secret set LEDGER_CALL_KEY (managed)
+secret set LEGACY_CALL_KEY (managed)
+deploy commerce-payment
+secret set BYNK_CALL_TO_COMMERCE__PAYMENT (managed)
+deploy commerce-orders
+order commerce-payment → commerce-orders
+
 # several contexts, already live — a re-run re-pushes
 kv reuse commerce-payment
 secret set BYNK_CALL_FROM_COMMERCE__ORDERS (managed)
@@ -241,7 +251,7 @@ orphan kv shop-cart KV_CARTS
 kv reuse shop-cart-staging
 kv create shop-cart-price-cache-staging (KV_PRICE_CACHE)
 kv reuse shop-cart-sessions-staging (KV_SESSIONS)
-redeploy shop-cart
+redeploy shop-cart-staging
 
 # --format json, the same rename
 {
@@ -257,11 +267,11 @@ redeploy shop-cart
     "queues": []
   },
   "order": [
-    "shop-cart"
+    "shop-cart-staging"
   ],
   "contexts": [
     {
-      "worker": "shop-cart",
+      "worker": "shop-cart-staging",
       "kv": [
         {
           "binding": "KV",
@@ -290,13 +300,85 @@ redeploy shop-cart
   ]
 }
 
+# --env staging: several contexts and a queue, first deploy
+kv create commerce-payment-staging
+secret set BYNK_CALL_FROM_COMMERCE__ORDERS (managed)
+deploy commerce-payment-staging
+queue create job-intake-staging
+secret set BYNK_CALL_TO_COMMERCE__PAYMENT (managed)
+deploy commerce-orders-staging
+order commerce-payment-staging → commerce-orders-staging
+
+# --format json, the same plan under --env staging
+{
+  "environment": "staging",
+  "orphans": {
+    "kv": [],
+    "workers": [],
+    "queues": []
+  },
+  "order": [
+    "commerce-payment-staging",
+    "commerce-orders-staging"
+  ],
+  "contexts": [
+    {
+      "worker": "commerce-payment-staging",
+      "kv": [
+        {
+          "binding": "KV",
+          "action": "create",
+          "namespace": "commerce-payment-staging"
+        }
+      ],
+      "queues": [],
+      "durable_objects": [],
+      "secrets": [
+        {
+          "name": "BYNK_CALL_FROM_COMMERCE__ORDERS",
+          "origin": "managed",
+          "action": "set"
+        }
+      ],
+      "secrets_complete": true,
+      "action": "deploy",
+      "binds_to": [],
+      "foreign_services": []
+    },
+    {
+      "worker": "commerce-orders-staging",
+      "kv": [],
+      "queues": [
+        {
+          "action": "create",
+          "queue": "job-intake-staging"
+        }
+      ],
+      "durable_objects": [],
+      "secrets": [
+        {
+          "name": "BYNK_CALL_TO_COMMERCE__PAYMENT",
+          "origin": "managed",
+          "action": "set"
+        }
+      ],
+      "secrets_complete": true,
+      "action": "deploy",
+      "binds_to": [
+        "commerce-payment-staging"
+      ],
+      "foreign_services": []
+    }
+  ]
+}
+
 # #2037: the bare namespace, first deploy, --env default
 kv create api
 deploy api
 
 # #2037: the bare namespace, first deploy, --env staging
 kv create api-staging
-deploy api
+deploy api-staging
 
 # S4b: a removed context's bare namespace and instance, both orphans
 orphan kv gone

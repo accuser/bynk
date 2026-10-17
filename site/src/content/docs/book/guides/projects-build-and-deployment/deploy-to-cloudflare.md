@@ -286,6 +286,58 @@ A key is a name the context is known by, so a context whose name can't be
 written as one is refused at deploy: each dot-separated part must be lowercase
 letters and digits, start with a letter, and use single underscores.
 
+#### Foreign callers
+
+A Worker that isn't Bynk can call a context's `on call` services once the context
+declares it as a foreign caller:
+
+```bynk,ignore
+actor Ledger { auth = Foreign(secret = "LEDGER_CALL_KEY", worker = "ledger-svc") }
+
+service status {
+  on call(id: String) -> Effect[Result[String, String]] by who: Caller | Ledger { … }
+}
+```
+
+The plan lists the secret on the context that declares it:
+
+```
+secret set LEDGER_CALL_KEY (managed)
+```
+
+The deploy mints the secret and sets it on your context. Your deploy never
+writes to a Worker it doesn't own, so it then prints the command that hands
+the secret to the other Worker's operator:
+
+```
+bynk: minted LEDGER_CALL_KEY for `Ledger`, a foreign caller of `shop.orders`. Its operator sets it on their Worker:
+
+  printf '%s' '<value>' | npx wrangler secret put BYNK_CALL_TO_SHOP__ORDERS --name ledger-svc
+```
+
+The deploy prints the value only this once. It can't read it back later, so if
+you lose it, run `bynk deploy --force` to mint and print a new one; the
+foreign Worker then needs the new value. To share a value you already hold,
+supply it (`--secrets-file`, or `LEDGER_CALL_KEY` in the environment). The
+deploy then sets yours and prints nothing. Only your end is yours to set, so
+`--context` can mint these too. The foreign Worker signs each call as `Ledger`,
+as the [wire format](/book/reference/wire-format/#foreign-callers) describes.
+`bynk dev` gives the secret a fixed local value.
+
+A TypeScript Worker calls through the typed client the build generates for the
+context, `bynk-client.ts` ([TypeScript client](/book/reference/typescript-client/)).
+Pin the contract that client was generated at in `bynk.foreign.toml`, beside
+`bynk.toml`, and the deploy refuses a build that would break it
+(`bynk.deploy.foreign_contract_skew`) until you regenerate the client and update
+the pin. A foreign caller with no pin is reported, with the lines to add:
+
+```
+bynk: 1 foreign caller has no pin in bynk.foreign.toml, so a contract change that breaks its client would not be refused. To pin, add:
+
+  ["shop.orders".Ledger]
+  status = "226b9939f85e69ea"
+```
+
 #### Upgrading from the shared call secret
 
 A project deployed before edge keys used one secret, `BYNK_CALL_SECRET`, on
@@ -312,10 +364,10 @@ kv create shop-cart-sessions (KV_SESSIONS)
 deploy shop-cart
 ```
 
-The first line is the bare `Kv`'s namespace, titled with the Worker's name as it
-always has been. It appears only if the context uses the bare `Kv`. An
-instance's namespace is titled `<worker>-<capability>`, and gets an
-environment suffix under `--env` (`shop-cart-sessions-staging`). Each id is
+The first line is the bare `Kv`'s namespace, titled with the Worker's name. It
+appears only if the context uses the bare `Kv`. An instance's namespace is
+titled `<worker>-<capability>`. Both get an environment suffix under `--env`
+(`shop-cart-staging`, `shop-cart-sessions-staging`). Each id is
 recorded in `bynk.deploy.lock` under its Worker and its binding, and only ever
 written into the generated `wrangler.toml` immediately before the push.
 
@@ -427,14 +479,23 @@ Omit `--env` and nothing changes from before — it is the same as
 > deploy to something other than the default. You never write it yourself,
 > and it never survives a rebuild you didn't ask `bynk deploy` to make.
 
-Queue names and Service Binding targets pick up a `-<env>` suffix under a
-non-default environment, so `staging` and `production` never collide on the
-same physical queue or bind to each other's Workers:
+Under a non-default environment, each Worker, Service Binding target and queue
+name takes a `-<env>` suffix. So `staging` and `production` are separate
+Workers on the same account, and never share a queue or bind to each other's
+Workers. The plan names them as the deploy creates them, in text and in
+`--format json` (`order`, each context's `worker` and `binds_to`, and its
+queues):
 
 ```
 queue create job-intake-staging
 deploy commerce-orders-staging
+order commerce-payment-staging → commerce-orders-staging
 ```
+
+The plan and the deploy take these names from the same place: the
+environment's section of the generated config states the Worker's `name`
+(`commerce-orders-staging`) rather than leaving it to Wrangler's default, which
+is the same name.
 
 KV's identity is the namespace id Cloudflare hands back, already kept apart per
 environment in `bynk.deploy.lock`. A namespace's title takes the suffix too,

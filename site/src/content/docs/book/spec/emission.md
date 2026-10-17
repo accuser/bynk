@@ -441,7 +441,11 @@ call surface is typed `CallError = BoundaryError | ContractMismatch`
 
 Each Worker also emits `bynk-contracts.json` beside its `wrangler.toml`, carrying
 what the context **provides** per service and what it **expects** of each
-dependency. This is a driver artifact, not part of the wire.
+dependency. This is a driver artifact, not part of the wire. A context that declares a foreign caller also records, under **`foreign`**, the
+hash each such caller may call each service at, and gets a typed TypeScript
+client beside it, `bynk-client.ts`, for that caller's build
+([TypeScript client](/book/reference/typescript-client/)). The client imports
+`@bynk/wire-client` and is excluded from the emitted `tsconfig.json`.
 
 ### §7.3.4d The request signature
 
@@ -482,6 +486,20 @@ the generated test harnesses give every edge a fixed local key, which is never
 written into a generated `wrangler.toml`; the harness calls its participants as
 `integration`.
 
+**Foreign callers** (#1971). A context that declares `Foreign` actors admits
+callers that are not Bynk. Its entry holds a table of them,
+`__FOREIGN_CALLERS` (actor name → secret), and passes it to `__verifyCall`. A
+request naming one of them as its caller is verified under that actor's secret
+rather than an edge key. An actor's name starts with a capital letter, and an
+edge name cannot, so neither kind can pass for the other. Each service case
+then checks admission, after the service is found and before its contract: the
+caller must be one its handler's `by` clause admits. A context is admitted by
+`Caller` (the default), a foreign caller only by its own actor. Anyone else gets
+`403` with the body `Forbidden`. For a `call` sum (`by who: Caller | Legacy`)
+the case builds the resolved actor, `{ tag: "Caller", identity: <name> }` or
+`{ tag: "<Actor>" }`, and passes it into the handler's `deps` as `who`. A
+context with no `Foreign` actor emits neither the table nor the check.
+
 ### §7.3.4e The published wire format
 
 The request a `/_bynk/call/` dispatch accepts, the order of its checks with
@@ -495,7 +513,8 @@ other version with `400 UnsupportedWireVersion`.
 
 The dispatch makes its checks in the published order: the method (`POST`, else
 `405` with `Allow: POST`), the body's size and the signature (§7.3.4d), the
-wire version, the service (`404`), the contract (§7.3.4c), the body's JSON
+wire version, the service (`404`), the caller's admission (`403`, §7.3.4d), the
+contract (§7.3.4c), the body's JSON
 (the verified text, parsed, else `400 MalformedJson`), then the arguments
 (§7.3.4b). A record field's inline refinement is
 checked when the record is decoded, failing as a `RefinementViolation` at the

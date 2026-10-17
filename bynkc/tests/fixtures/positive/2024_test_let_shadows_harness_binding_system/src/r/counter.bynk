@@ -1,0 +1,13 @@
+---
+#2024: a `system`-tier case's `let` may take the name of an asset, which the
+generated case scaffold already binds.
+---
+context r.counter
+
+asset style = "assets/board.css"
+
+service api from http {
+  on GET("/") () -> Effect[HttpResult[String]] by Visitor {
+    Ok("<link href=\"\(style.url)\">")
+  }
+}

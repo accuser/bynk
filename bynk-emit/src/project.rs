@@ -2956,9 +2956,14 @@ fn build_output(
                         expects.insert(dep.clone(), hashes);
                     }
                 }
+                // I4 (#1970): what each declared foreign caller's generated
+                // client embeds, recorded beside `provides` so `deploy` can
+                // hold it against the caller's pin.
+                let foreign = emitter::client::foreign_contracts(table, &own_types);
                 if let Some(manifest) = emitter::contracts::emit_contracts_manifest(
                     &bynk_check::contract::own_contract_hashes(table, &own_types),
                     &expects,
+                    &foreign,
                 ) {
                     compiled.push(StagedFile {
                         output_path: PathBuf::from(format!(
@@ -2966,6 +2971,20 @@ fn build_output(
                             emitter::contracts::CONTRACTS_MANIFEST
                         )),
                         document: Document::Json(manifest),
+                        source_map: None,
+                        debug_metadata: None,
+                    });
+                }
+
+                // I4 (#1970): the typed TypeScript client a foreign caller
+                // imports, when the context declares one.
+                if let Some(client) = emitter::client::emit_client(ctx_name, table, &own_types) {
+                    compiled.push(StagedFile {
+                        output_path: PathBuf::from(format!(
+                            "workers/{dashes}/{}",
+                            emitter::client::CLIENT_FILE
+                        )),
+                        document: Document::Ts(client),
                         source_map: None,
                         debug_metadata: None,
                     });

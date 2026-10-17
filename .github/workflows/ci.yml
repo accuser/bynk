@@ -164,6 +164,7 @@ jobs:
               # edit still runs the package's typecheck/tests and the drift guard.
               - *global
               - 'bynk-emit/runtime/**'
+              - 'bynk-emit/wire-client/**'
               - 'bynk-emit/src/emitter/runtime.ts'
             playground:
               # The in-browser REPL app. Its TypeScript is type-checked against the

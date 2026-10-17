@@ -71,6 +71,14 @@ service ping {
     Ok(())
   }
 }
+
+actor Legacy { auth = Foreign(secret = "LEGACY_CALL_KEY") }
+
+service legacy {
+  on call(n: Int) -> Effect[Result[Int, String]] by Legacy {
+    Ok(n)
+  }
+}
 "#;
 
 /// What decoding an example's JSON does.
@@ -694,8 +702,36 @@ signature does not match, compared in constant time. So:
 - **An undeclared caller cannot call.** Without a key on the callee there is
   nothing to verify against, whether or not the handler reads its caller.
 
-Calls from code that is not Bynk are signed the same way under keys the callee
-declares for them; that is the interop track's slice I3.
+### Foreign callers
+
+Code that is not Bynk calls a context the same way, once the context declares
+it as a **foreign caller**:
+
+```text
+actor Legacy {{ auth = Foreign(secret = "LEGACY_CALL_KEY") }}
+
+service legacy {{
+  on call(n: Int) -> Effect[Result[Int, String]] by Legacy {{ Ok(n) }}
+}}
+```
+
+The foreign caller sends its actor's name (`Legacy`) as `{CALLER_HEADER}` and
+signs exactly as above, under the declared secret, which the callee holds as
+`LEGACY_CALL_KEY`. `bynk deploy` mints that secret and prints the
+`wrangler secret put` that hands it to the foreign Worker's operator. An
+actor's name starts with a capital letter, so it is never a context's: a
+foreign caller is checked under its own secret and can never pass for a Bynk
+context, nor a context for it.
+
+A verified caller still has to be one the service's handler admits. A Bynk
+context is admitted by `Caller` (the default, with no `by`), a foreign caller
+only by its own actor; `by who: Caller | Legacy` admits both and tells them
+apart. Anyone else gets a bare `403`.
+
+A TypeScript Worker need not speak any of this by hand. For each context with
+a foreign caller the build emits a typed client, `bynk-client.ts`, which
+signs, stamps the contract hash and encodes exactly as this page describes;
+see [TypeScript client](/book/reference/typescript-client/).
 "#
     );
     out

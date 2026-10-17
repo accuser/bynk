@@ -1,0 +1,20 @@
+{
+  "name": "@bynk/wire-client",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "The runtime half of a bynkc-generated TypeScript client: encodes, signs and decodes calls to a Bynk context over the cross-context wire format. Its major version is the wire format version it speaks.",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bynk-lang/bynk.git",
+    "directory": "bynk-emit/wire-client"
+  },
+  "exports": {
+    ".": "./index.ts"
+  },
+  "types": "./index.ts",
+  "files": [
+    "index.ts",
+    "README.md"
+  ]
+}

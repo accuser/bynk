@@ -1,0 +1,2 @@
+bynk.actor.foreign_missing_secret
+must name the secret its calls are signed with

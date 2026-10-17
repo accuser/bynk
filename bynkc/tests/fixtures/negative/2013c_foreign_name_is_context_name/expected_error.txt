@@ -1,0 +1,2 @@
+bynk.actor.foreign_name_is_context_name
+is named like a context

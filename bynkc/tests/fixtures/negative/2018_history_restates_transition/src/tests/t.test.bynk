@@ -1,0 +1,8 @@
+suite demo.door {
+  -- #2018: the predicate is the declared `transition` over `s.old`/`s.new`.
+  property "restates the closed-is-final transition" {
+    for all run: History[Door] {
+      expect run.all((s) => s.old.status is Closed implies s.new.status is Closed)
+    }
+  }
+}

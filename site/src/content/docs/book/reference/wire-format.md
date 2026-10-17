@@ -51,7 +51,7 @@ POST /_bynk/call/<service>
 | Header | Required | Meaning |
 |---|---|---|
 | `X-Bynk-Contract` | yes | The caller's hash of the service's contract, 16 lowercase hex digits. Must equal the callee's; a missing header does not. |
-| `X-Bynk-Caller` | yes | The calling context's qualified name (`shop.orders`), which the handler reads as `c.identity`. Selects the key the signature is checked under, so it is proved, not claimed. |
+| `X-Bynk-Caller` | yes | The calling context's qualified name (`shop.orders`), which the handler reads as `c.identity`, or a foreign caller's actor name (`Legacy`). Selects the key the signature is checked under, so it is proved, not claimed. |
 | `X-Bynk-Timestamp` | yes | When the caller signed the request, in whole seconds since the Unix epoch. |
 | `X-Bynk-Signature` | yes | HMAC-SHA256 of the signing input under the edge's key, 64 lowercase hex digits. See *Authentication* below. |
 | `X-Bynk-Wire` | no | The wire version the caller speaks, exactly the decimal digits of an accepted version (`1`, not `01` or `+1`). Absent means `1`. |
@@ -79,9 +79,10 @@ request.
 | 3 | `X-Bynk-Signature` verifies, under the key the callee holds for the edge from `X-Bynk-Caller`, over the signing input, and `X-Bynk-Timestamp` is within 300 seconds of the callee's clock. Compared in constant time. | `401` | text `Unauthorized` |
 | 4 | `X-Bynk-Wire` is absent or names a version the callee accepts. | `400` | `{"kind":"UnsupportedWireVersion","accepted":[1]}` |
 | 5 | The path names a service of the callee's context with an `on call` handler. | `404` | text `Not found` |
-| 6 | `X-Bynk-Contract` equals the callee's hash of that service. | `409` | `{"kind":"ContractMismatch","service":"…","expected":"…","actual":"…"}` |
-| 7 | The body parses as JSON. | `400` | `{"kind":"MalformedJson","details":"Invalid request body"}` |
-| 8 | The body decodes as the handler's parameters (see *Encoding*). | `400` | a `StructuralMismatch` or `RefinementViolation` body |
+| 6 | The service's handler admits the caller the signature proved: a Bynk context by `Caller` (the default), a foreign caller only by its own `Foreign` actor. | `403` | text `Forbidden` |
+| 7 | `X-Bynk-Contract` equals the callee's hash of that service. | `409` | `{"kind":"ContractMismatch","service":"…","expected":"…","actual":"…"}` |
+| 8 | The body parses as JSON. | `400` | `{"kind":"MalformedJson","details":"Invalid request body"}` |
+| 9 | The body decodes as the handler's parameters (see *Encoding*). | `400` | a `StructuralMismatch` or `RefinementViolation` body |
 
 If every check passes, the handler runs:
 
@@ -201,6 +202,14 @@ service ping {
     Ok(())
   }
 }
+
+actor Legacy { auth = Foreign(secret = "LEGACY_CALL_KEY") }
+
+service legacy {
+  on call(n: Int) -> Effect[Result[Int, String]] by Legacy {
+    Ok(n)
+  }
+}
 ```
 
 | Type | JSON sent | Outcome | Note |
@@ -289,6 +298,12 @@ who(t: Tagged{n: Int where Positive, v: String}[String]) -> Result[String, Strin
 ping() -> Result[(), String]
 ```
 
+`legacy`, hash `60d1a63e5bbeb220`:
+
+```text
+legacy(n: Int) -> Result[Int, String]
+```
+
 | Changes the hash | Does not |
 |---|---|
 | the service's name; a parameter's name, order or type; the return type | field order; variant order; predicate order or duplicates |
@@ -366,5 +381,33 @@ signature does not match, compared in constant time. So:
 - **An undeclared caller cannot call.** Without a key on the callee there is
   nothing to verify against, whether or not the handler reads its caller.
 
-Calls from code that is not Bynk are signed the same way under keys the callee
-declares for them; that is the interop track's slice I3.
+### Foreign callers
+
+Code that is not Bynk calls a context the same way, once the context declares
+it as a **foreign caller**:
+
+```text
+actor Legacy { auth = Foreign(secret = "LEGACY_CALL_KEY") }
+
+service legacy {
+  on call(n: Int) -> Effect[Result[Int, String]] by Legacy { Ok(n) }
+}
+```
+
+The foreign caller sends its actor's name (`Legacy`) as `X-Bynk-Caller` and
+signs exactly as above, under the declared secret, which the callee holds as
+`LEGACY_CALL_KEY`. `bynk deploy` mints that secret and prints the
+`wrangler secret put` that hands it to the foreign Worker's operator. An
+actor's name starts with a capital letter, so it is never a context's: a
+foreign caller is checked under its own secret and can never pass for a Bynk
+context, nor a context for it.
+
+A verified caller still has to be one the service's handler admits. A Bynk
+context is admitted by `Caller` (the default, with no `by`), a foreign caller
+only by its own actor; `by who: Caller | Legacy` admits both and tells them
+apart. Anyone else gets a bare `403`.
+
+A TypeScript Worker need not speak any of this by hand. For each context with
+a foreign caller the build emits a typed client, `bynk-client.ts`, which
+signs, stamps the contract hash and encodes exactly as this page describes;
+see [TypeScript client](/book/reference/typescript-client/).

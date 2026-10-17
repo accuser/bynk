@@ -236,6 +236,12 @@ fn value_from(name: &str, source: &SecretSource, from_env: Option<String>) -> Op
     source.file.get(name).cloned().or(from_env)
 }
 
+/// I3 (#1971): a secret's value as the user supplied it, by the same
+/// precedence as any other: the file, then the environment.
+pub(crate) fn value_from_source(name: &str, source: &SecretSource) -> Option<String> {
+    value_from(name, source, std::env::var(name).ok())
+}
+
 /// Whether `deploy` could see an edge key on one Worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Presence {
@@ -289,7 +295,7 @@ impl Edge {
     pub(crate) fn ends(&self) -> Result<[(&str, String); 2], String> {
         let unnamed = |worker: &str| {
             format!(
-                "context `{}` cannot sign or verify cross-context calls: an edge key is named from the context's name, which must be lowercase letters and digits in dot-separated segments, each starting with a letter, with single underscores between runs",
+                "context `{}` cannot sign or verify cross-context calls: an edge key is named from the context's name, which must be lowercase letters and digits in dot-separated segments, each starting with a letter, with single underscores between runs (no `__`, no trailing `_`)",
                 context_of(worker)
             )
         };
@@ -400,6 +406,78 @@ pub(crate) fn mint_edge_key() -> Result<String, String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// I3 (#1971): what this run does with one foreign caller's secret, on the
+/// context that admits it. Only that end is ours: the foreign Worker's
+/// operator sets the other from the hand-off [`foreign_hand_off`] prints.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ForeignKey {
+    /// The context already holds one, and `--force` is off: leave it.
+    Keep,
+    /// Put this value on the context. `minted` when `deploy` made it, so the
+    /// foreign Worker cannot know it yet and the hand-off must be printed.
+    Set { value: String, minted: bool },
+}
+
+/// Decide one foreign caller's secret for one run. Pure; `mint` is only called
+/// when a fresh value is wanted.
+///
+/// - A value the user supplies (`--secrets-file` or the environment) is the one
+///   they already share with the foreign Worker: set it where absent, and under
+///   `--force`. Nothing is printed.
+/// - Otherwise, if the context holds one (an unknown answer about a live Worker
+///   counts as holding it), and `--force` is off, keep it.
+/// - Otherwise mint one, set it, and print the hand-off. A `--context` run may
+///   do this: the foreign end is never ours to set.
+pub(crate) fn decide_foreign_key(
+    supplied: Option<String>,
+    presence: Presence,
+    force: bool,
+    mint: &mut dyn FnMut() -> Result<String, String>,
+) -> Result<ForeignKey, String> {
+    if let Some(value) = supplied {
+        if value.is_empty() {
+            return Err("the supplied value is empty — every call from it would be refused".into());
+        }
+        if presence == Presence::Present && !force {
+            return Ok(ForeignKey::Keep);
+        }
+        return Ok(ForeignKey::Set {
+            value,
+            minted: false,
+        });
+    }
+    if presence != Presence::Absent && !force {
+        return Ok(ForeignKey::Keep);
+    }
+    Ok(ForeignKey::Set {
+        value: mint()?,
+        minted: true,
+    })
+}
+
+/// I3 (#1971): what `deploy` prints once a minted foreign caller's secret is
+/// set on `worker`: a ready-to-run `wrangler secret put` for the foreign
+/// Worker's operator (§11 Q4: `deploy` never writes to a Worker it does not
+/// own). The one place a minted value is ever shown. The foreign Worker holds
+/// it under the name a Bynk caller would (`BYNK_CALL_TO_<CALLEE>`), and the
+/// command names that Worker when the declaration did.
+pub(crate) fn foreign_hand_off(worker: &str, caller: &ForeignCaller, value: &str) -> String {
+    let context = context_of(worker);
+    let key = bynk_emit::edge_key_to(&context).unwrap_or_else(|| "BYNK_CALL_KEY".to_string());
+    let name = caller
+        .worker
+        .clone()
+        .unwrap_or_else(|| "<foreign-worker>".to_string());
+    format!(
+        "bynk: minted {binding} for `{actor}`, a foreign caller of `{context}`. Its operator sets it on their Worker:\n\n  \
+         printf '%s' '{value}' | npx wrangler secret put {key} --name {name}\n\n  \
+         It signs its calls to `{context}` as `{actor}` (X-Bynk-Caller), under that key; see the wire format reference.\n  \
+         This is the only time the value is shown: `bynk deploy --force` mints a new one.\n",
+        binding = caller.binding,
+        actor = caller.actor,
+    )
+}
+
 /// Everything the secret step needs, threaded as one value rather than as four
 /// more parameters on an already-long list.
 pub(crate) struct Secrets<'a> {
@@ -408,6 +486,11 @@ pub(crate) struct Secrets<'a> {
     /// I2 (#1971): what [`decide_edge_key`] decided for each edge this run
     /// sets a key on.
     pub(crate) edge_keys: &'a BTreeMap<Edge, EdgeKey>,
+    /// I3 (#1971): what [`decide_foreign_key`] decided, by (worker, secret).
+    pub(crate) foreign_keys: &'a BTreeMap<(String, String), ForeignKey>,
+    /// I3 (#1971): every foreign caller's secret in the project, which a
+    /// supplied value is never spread as.
+    pub(crate) foreign_secrets: &'a BTreeSet<String>,
     /// #2004: each Worker's `secret list` answer, asked once before the loop
     /// (edge keys are decided over both ends at once) and reused here.
     pub(crate) listed: &'a BTreeMap<String, Option<BTreeSet<String>>>,
@@ -438,11 +521,16 @@ pub(crate) fn prepare_secrets(
     first_deploy: bool,
     environment: &str,
 ) -> Result<Vec<(String, String)>, DeployFailure> {
-    let wanted = wanted_secrets(
+    // I3 (#1971): a foreign caller's secret, supplied or not, is decided by
+    // `decide_foreign_key` for the context that admits it, never spread.
+    let wanted: Vec<WantedSecret> = wanted_secrets(
         &declared.declared_secrets,
         &declared.read_secrets,
         secrets.source,
-    );
+    )
+    .into_iter()
+    .filter(|w| !secrets.foreign_secrets.contains(&w.name))
+    .collect();
     // Said once per context, before any of it: a reader who takes the lines
     // below for the whole story would be wrong, and this is the only place that
     // can tell them (ADR 0196 D2).
@@ -474,6 +562,12 @@ pub(crate) fn prepare_secrets(
             if end == worker {
                 prepared.push((key, value.clone()));
             }
+        }
+    }
+    // I3 (#1971): and its foreign callers' secrets.
+    for ((w, secret), decision) in secrets.foreign_keys {
+        if let (true, ForeignKey::Set { value, .. }) = (w == worker, decision) {
+            prepared.push((secret.clone(), value.clone()));
         }
     }
     for want in &wanted {
@@ -1098,5 +1192,84 @@ WITH_EQUALS=a=b
         );
         assert!(Origin::Managed.required());
         assert_eq!(Origin::Managed.label(), "managed");
+    }
+
+    // ---- I3 (#1971): foreign callers' secrets ---------------------------------
+
+    fn foreign(
+        supplied: Option<&str>,
+        presence: Presence,
+        force: bool,
+        mut mint: impl FnMut() -> Result<String, String>,
+    ) -> Result<ForeignKey, String> {
+        decide_foreign_key(supplied.map(str::to_string), presence, force, &mut mint)
+    }
+
+    #[test]
+    fn a_new_foreign_caller_gets_a_minted_secret() {
+        assert_eq!(
+            foreign(None, Absent, false, minted),
+            Ok(ForeignKey::Set {
+                value: "minted".into(),
+                minted: true
+            })
+        );
+        // `--force` rotates it.
+        assert_eq!(
+            foreign(None, Present, true, minted),
+            Ok(ForeignKey::Set {
+                value: "minted".into(),
+                minted: true
+            })
+        );
+    }
+
+    #[test]
+    fn a_held_foreign_secret_is_kept() {
+        assert_eq!(foreign(None, Present, false, never), Ok(ForeignKey::Keep));
+        assert_eq!(foreign(None, Unknown, false, never), Ok(ForeignKey::Keep));
+    }
+
+    #[test]
+    fn a_supplied_foreign_secret_is_set_and_never_handed_off() {
+        let set = Ok(ForeignKey::Set {
+            value: "theirs".into(),
+            minted: false,
+        });
+        assert_eq!(foreign(Some("theirs"), Absent, false, never), set);
+        assert_eq!(foreign(Some("theirs"), Present, true, never), set);
+        assert_eq!(
+            foreign(Some("theirs"), Present, false, never),
+            Ok(ForeignKey::Keep)
+        );
+        assert!(foreign(Some(""), Absent, false, never).is_err());
+    }
+
+    #[test]
+    fn the_hand_off_is_a_ready_to_run_command_for_the_foreign_worker() {
+        let caller = ForeignCaller {
+            actor: "Ledger".into(),
+            binding: "LEDGER_CALL_KEY".into(),
+            worker: Some("ledger-svc".into()),
+        };
+        let text = foreign_hand_off("shop-orders", &caller, "abc123");
+        assert!(
+            text.contains(
+                "printf '%s' 'abc123' | npx wrangler secret put BYNK_CALL_TO_SHOP__ORDERS --name ledger-svc"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("`Ledger`") && text.contains("`shop.orders`"),
+            "{text}"
+        );
+        let unnamed = ForeignCaller {
+            worker: None,
+            ..caller
+        };
+        assert!(
+            foreign_hand_off("shop-orders", &unnamed, "abc123").contains("--name <foreign-worker>"),
+            "an undeclared worker is a placeholder to fill in"
+        );
     }
 }
