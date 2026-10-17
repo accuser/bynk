@@ -523,6 +523,15 @@ compares the namespaces this deploy would create against every environment
 `bynk.deploy.lock` knows, both the namespaces recorded there and the ones that
 environment's next deploy would create.
 
+A namespace can also be created again during the deploy itself: one whose
+recorded id has gone from the account, deleted outside Bynk, is re-created
+under its current title. The plan can't see that, because it runs before
+the deploy fetches the account's live ids. So `bynk deploy` makes the same
+comparison at that point and stops with the same message before running
+`wrangler kv namespace create`. A recorded namespace whose id has gone no
+longer holds its title, unless your source still declares it in that
+environment.
+
 `--env` is the driver's own flag; putting `--env` or `--environment` after
 `--` as well is rejected rather than silently resolved one way or the other:
 
