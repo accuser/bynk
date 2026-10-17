@@ -67,7 +67,7 @@ use crate::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons}
 use crate::symbols::{UnitTable, build_cross_context_info};
 use bynk_project::ParsedFile;
 use bynk_project::UnitKind;
-use bynk_project::discovery::case_effective_tier;
+use bynk_project::discovery::{case_effective_tier, suite_effective_tier_is_system};
 use bynk_syntax::ast::*;
 use bynk_syntax::error::CompileError;
 use bynk_syntax::span::Span;
@@ -671,7 +671,7 @@ pub fn phase_integration_bodies(
             let suite_stubs = d
                 .stubs
                 .iter()
-                .filter(|_| d.tier == Some(system))
+                .filter(|_| suite_effective_tier_is_system(d))
                 .map(|s| (s, "suite"));
             let case_stubs = d
                 .cases

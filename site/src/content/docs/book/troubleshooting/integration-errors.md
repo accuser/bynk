@@ -104,7 +104,8 @@ instead.
 ```
 
 **Cause:** a `stub` clause sits in a `system`-tier case, or at the scope of a
-`suite … as system`. A `system` case runs each context as the Worker it deploys
+suite that runs `system` cases (`suite … as system`, or one whose cases are
+`as system`). A `system` case runs each context as the Worker it deploys
 as, and that Worker builds its own capability providers, so the stub has no seam
 to override.
 

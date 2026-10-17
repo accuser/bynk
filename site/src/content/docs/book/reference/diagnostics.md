@@ -329,7 +329,7 @@ There are **520** codes in total.
 | `bynk.store.unknown_kind` | A `store` field's type is not a known storage kind. |  | — |
 | `bynk.store.unknown_map_accessor` | A `store Map` field access is not one of its query accessors (`entries`/`keys`/`values`). |  | — |
 | `bynk.store.unknown_op` | A storage-`Map`/`Set` operation is not a recognised entry/membership method. |  | — |
-| `bynk.stub.at_system` | A test `stub` is in a `system`-tier case; each context runs as the Worker it deploys as, which builds its own capability providers, so there is no seam to override. | [`stub_clause`](/book/reference/grammar/#rule-stub_clause) | — |
+| `bynk.stub.at_system` | A test `stub` is in a `system`-tier case, or at the scope of a `suite … as system` (or a suite whose cases run `as system`); each context runs as the Worker it deploys as, which builds its own capability providers, so there is no seam to override. | [`stub_clause`](/book/reference/grammar/#rule-stub_clause) | — |
 | `bynk.stub.bad_sequence` | A `stub … returns each […]` sequence is malformed (e.g. empty). |  | — |
 | `bynk.stub.generic_op` | A test `stub` targets a capability operation that declares its own type parameter — not supported at v1. |  | — |
 | `bynk.stub.not_a_seam` | A test `stub` overrides a capability the unit under test does not consume. |  | — |

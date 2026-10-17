@@ -1905,7 +1905,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.stub.at_system",
-        "A test `stub` is in a `system`-tier case; each context runs as the Worker it deploys as, which builds its own capability providers, so there is no seam to override.",
+        "A test `stub` is in a `system`-tier case, or at the scope of a `suite … as system` (or a suite whose cases run `as system`); each context runs as the Worker it deploys as, which builds its own capability providers, so there is no seam to override.",
         &["stub_clause"],
     ),
     d(
