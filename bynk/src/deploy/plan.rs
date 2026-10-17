@@ -435,7 +435,7 @@ pub fn run(
     // instance's joins two names with the separator Worker names already use,
     // so two can coincide. Refused before the plan, `--dry-run` included,
     // rather than met as wrangler's own error partway through a deploy.
-    if let Some(message) = kv_title_collision(&resources, &opts.environment) {
+    if let Some(message) = kv_title_collision(&resources, &lock, &opts.environment) {
         eprintln!("bynk: {message}");
         return ExitCode::FAILURE;
     }
@@ -1127,14 +1127,32 @@ pub(crate) fn derive_plan<'a>(
     }
 }
 
-/// Two of the project's KV namespaces that would share one account-facing
-/// title under `environment` ([`kv_title`]), described for the user: Worker
-/// `shop` with `capability CartSessions` and Worker `shop-cart` with
-/// `capability Sessions` both give `shop-cart-sessions`. `None` when every
-/// title is distinct. Checked across the whole project, not just `--context`'s
-/// selection, since titles are account-wide.
+/// Two KV namespaces that would share one account-facing title
+/// ([`kv_title`]), described for the user. `None` when there is no clash.
+///
+/// Cloudflare refuses a namespace whose title the account already holds, in
+/// any environment ("Returns `400` if the account already owns a namespace
+/// with that title"), so there are two checks:
+///
+/// - **Within `environment`**, every namespace the project declares: Worker
+///   `shop` with `capability CartSessions` and Worker `shop-cart` with
+///   `capability Sessions` both give `shop-cart-sessions`.
+/// - **Across environments** (#2048), each namespace this deploy would create
+///   (declared, with no id recorded for `environment`) against every other
+///   environment the ledger knows: the titles of the namespaces it records,
+///   and the titles its next deploy of this source would create. Worker
+///   `shop`'s bare namespace under `--env staging` and its `capability
+///   Staging` in the default environment are both `shop-staging`. A namespace
+///   already recorded here is not created, so it cannot fail; that clash is
+///   refused by the other environment's deploy instead.
+///
+/// Checked across the whole project, not just `--context`'s selection, since
+/// titles are account-wide. The ledger records ids, not titles, so a recorded
+/// namespace counts under the title Bynk would give it now; one made under
+/// `--env` before #2037 is really titled with the bare Worker name.
 pub(crate) fn kv_title_collision(
     resources: &BTreeMap<String, Resources>,
+    lock: &DeployLock,
     environment: &str,
 ) -> Option<String> {
     let mut seen: BTreeMap<String, (&str, &str)> = BTreeMap::new();
@@ -1152,7 +1170,76 @@ pub(crate) fn kv_title_collision(
             }
         }
     }
+
+    // What this deploy creates: each declared namespace with no recorded id.
+    let declared = || {
+        resources.iter().flat_map(|(worker, declared)| {
+            kv_bindings(declared).map(move |binding| (worker.as_str(), binding))
+        })
+    };
+    let creates: Vec<(&str, &str)> = declared()
+        .filter(|(worker, binding)| {
+            recorded_kv_binding(lock, worker, binding, environment).is_none()
+        })
+        .collect();
+    if creates.is_empty() {
+        return None;
+    }
+    for (other, recorded) in &lock.environments {
+        if other == environment {
+            continue;
+        }
+        // Each title `other` holds or would create, and whose it is: what its
+        // ledger records first, then what this source declares.
+        let held = recorded
+            .kv
+            .keys()
+            .map(|worker| {
+                (
+                    worker.as_str(),
+                    bynk_emit::emitter::wrangler::KV_BINDING_NAME,
+                )
+            })
+            .chain(
+                recorded
+                    .kv_instances
+                    .iter()
+                    .flat_map(|(worker, instances)| {
+                        instances
+                            .keys()
+                            .map(move |binding| (worker.as_str(), binding.as_str()))
+                    }),
+            );
+        let mut taken: BTreeMap<String, (&str, &str)> = BTreeMap::new();
+        for (worker, binding) in held.chain(declared()) {
+            taken
+                .entry(kv_title(worker, binding, other))
+                .or_insert((worker, binding));
+        }
+        for &(worker, binding) in &creates {
+            let title = kv_title(worker, binding, environment);
+            if let Some(&(other_worker, other_binding)) = taken.get(&title) {
+                return Some(format!(
+                    "{} in {} and {} in {} would both be titled `{title}` on the account, which holds one namespace per title; rename a capability or context so they differ",
+                    kv_namespace_noun(worker, binding),
+                    environment_label(environment),
+                    kv_namespace_noun(other_worker, other_binding),
+                    environment_label(other),
+                ));
+            }
+        }
+    }
     None
+}
+
+/// How a message names an environment: `the default environment`, or
+/// `` `--env staging` ``.
+fn environment_label(environment: &str) -> String {
+    if environment == "default" {
+        "the default environment".to_string()
+    } else {
+        format!("`--env {environment}`")
+    }
 }
 
 /// The first KV namespace in `order` with no recorded id, as `(worker,
@@ -1737,7 +1824,8 @@ queue = "jobs"
                 Resources::default().kv_instances(&["KV_SESSIONS"]),
             ),
         ]);
-        let message = kv_title_collision(&colliding, "default").expect("a collision");
+        let message =
+            kv_title_collision(&colliding, &DeployLock::default(), "default").expect("a collision");
         assert!(
             message.contains("`shop-cart-sessions`")
                 && message.contains("`KV_CART_SESSIONS` for `shop`")
@@ -1749,14 +1837,120 @@ queue = "jobs"
             ("shop", Resources::default().kv_instances(&["KV_CART"])),
             ("shop-cart", Resources::default().needs_kv()),
         ]);
-        assert!(kv_title_collision(&bare, "default").is_some());
+        assert!(kv_title_collision(&bare, &DeployLock::default(), "default").is_some());
         let distinct = project(vec![(
             "shop-cart",
             Resources::default()
                 .needs_kv()
                 .kv_instances(&["KV_PRICE_CACHE", "KV_SESSIONS"]),
         )]);
-        assert_eq!(kv_title_collision(&distinct, "staging"), None);
+        assert_eq!(
+            kv_title_collision(&distinct, &DeployLock::default(), "staging"),
+            None
+        );
+    }
+
+    /// #2048: Worker `shop` with the bare `Kv` and `capability Staging`. Its
+    /// bare namespace under `--env staging` and its instance in the default
+    /// environment are both titled `shop-staging`.
+    fn shop_with_staging_instance() -> BTreeMap<String, Resources> {
+        project(vec![(
+            "shop",
+            Resources::default()
+                .needs_kv()
+                .kv_instances(&["KV_STAGING"]),
+        )])
+    }
+
+    /// #2048: a first staging deploy whose bare title the default
+    /// environment's instance already holds is refused, naming both sides
+    /// and both environments.
+    #[test]
+    fn a_title_another_environment_holds_is_refused() {
+        let resources = shop_with_staging_instance();
+        let mut lock = DeployLock::default();
+        lock.record_kv("default", "shop", "KV", "bare-id");
+        lock.record_kv("default", "shop", "KV_STAGING", "instance-id");
+        let message = kv_title_collision(&resources, &lock, "staging").expect("a collision");
+        assert_eq!(
+            message,
+            "KV namespace for `shop` in `--env staging` and KV namespace `KV_STAGING` for `shop` \
+             in the default environment would both be titled `shop-staging` on the account, \
+             which holds one namespace per title; rename a capability or context so they differ"
+        );
+    }
+
+    /// #2048: the reverse order. A default deploy that would create a title
+    /// a known staging environment would create is refused too, before
+    /// either fails at `kv namespace create`.
+    #[test]
+    fn a_title_another_environment_would_create_is_refused() {
+        let resources = shop_with_staging_instance();
+        let mut lock = DeployLock::default();
+        // Staging is known to the ledger, but has not provisioned KV yet.
+        lock.record_deployed("staging", "other", Some(Default::default()));
+        let message = kv_title_collision(&resources, &lock, "default").expect("a collision");
+        assert!(
+            message.contains("KV namespace `KV_STAGING` for `shop` in the default environment")
+                && message.contains("KV namespace for `shop` in `--env staging`")
+                && message.contains("`shop-staging`"),
+            "{message}"
+        );
+    }
+
+    /// #2048: a recorded namespace in another environment holds its title
+    /// even when the source no longer declares it (an orphan not yet
+    /// pruned).
+    #[test]
+    fn an_orphan_in_another_environment_still_holds_its_title() {
+        let resources = project(vec![(
+            "shop",
+            Resources::default().kv_instances(&["KV_STAGING"]),
+        )]);
+        let mut lock = DeployLock::default();
+        lock.record_kv("staging", "shop", "KV", "orphaned-id");
+        let message = kv_title_collision(&resources, &lock, "default").expect("a collision");
+        assert!(
+            message.contains("KV namespace for `shop` in `--env staging`"),
+            "{message}"
+        );
+    }
+
+    /// #2048: only namespaces this deploy creates are checked. One already
+    /// recorded here exists, so it cannot fail; the other environment's deploy
+    /// is where the clash is refused.
+    #[test]
+    fn a_namespace_already_recorded_here_is_not_refused() {
+        let resources = shop_with_staging_instance();
+        let mut lock = DeployLock::default();
+        lock.record_kv("default", "shop", "KV", "bare-id");
+        lock.record_kv("default", "shop", "KV_STAGING", "instance-id");
+        lock.record_deployed("staging", "other", Some(Default::default()));
+        assert_eq!(kv_title_collision(&resources, &lock, "default"), None);
+        // ...and the staging deploy is the one refused.
+        assert!(kv_title_collision(&resources, &lock, "staging").is_some());
+    }
+
+    /// #2048: an environment the ledger does not know is not compared, and
+    /// distinct titles across known environments pass.
+    #[test]
+    fn unknown_environments_and_distinct_titles_pass() {
+        let resources = shop_with_staging_instance();
+        assert_eq!(
+            kv_title_collision(&resources, &DeployLock::default(), "staging"),
+            None
+        );
+        let plain = project(vec![(
+            "shop-cart",
+            Resources::default()
+                .needs_kv()
+                .kv_instances(&["KV_SESSIONS"]),
+        )]);
+        let mut lock = DeployLock::default();
+        lock.record_kv("default", "shop-cart", "KV", "bare-id");
+        lock.record_kv("default", "shop-cart", "KV_SESSIONS", "sessions-id");
+        lock.record_kv("production", "shop-cart", "KV", "prod-id");
+        assert_eq!(kv_title_collision(&plain, &lock, "staging"), None);
     }
 
     /// S4b (#1967): CI refuses any unrecorded namespace, including an
