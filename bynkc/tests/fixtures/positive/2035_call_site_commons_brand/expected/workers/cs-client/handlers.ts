@@ -18,6 +18,8 @@ export const Qty = {
   of(value: number): Result<Qty, ValidationError> { return __CommonsQty.of(value); },
 };
 
+export { type Batch, type Holder };
+
 export const go = {
   async call(deps: { env: { CS_STORE: __ServiceBinding } }): globalThis.Promise<number> {
     const line = { qty: (2 as Qty), note: "n" };
