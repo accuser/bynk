@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **519** codes in total.
+There are **523** codes in total.
 
 ## Agents
 
@@ -249,7 +249,7 @@ There are **519** codes in total.
 | `bynk.adapter.provider_has_body` | A provider inside an `adapter` has a Bynk body; adapter providers must be external. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) | — |
 | `bynk.cell.invalid_target` | A `:=` write targets something that is not a `store Cell` field. |  | — |
 | `bynk.cell.self_reference` | A `:=` right-hand side reads the cell being written (a read-modify-write); use `.update`. |  | — |
-| `bynk.deploy.contract_skew` | A worker was compiled against a contract its live dependencies no longer provide, so `bynk deploy` refuses to ship it. |  | — |
+| `bynk.deploy.contract_skew` | A worker was compiled against a contract its live dependencies no longer provide, or no longer provides the contract its live callers were compiled against, so `bynk deploy --context` refuses to ship it. |  | — |
 | `bynk.deploy.foreign_contract_skew` | A build breaks the contract a declared foreign caller's client was generated at, as pinned in `bynk.foreign.toml`, so `bynk deploy` refuses to ship it. |  | — |
 | `bynk.duration.literal_overflow` | A `Duration` literal (`<int>.<unit>`) exceeds the representable millisecond range. |  | — |
 | `bynk.event.bad_field_default` | An event field's default expression (`field: T = expr`) is not a static, wire-representable value of the field's declared type — a literal (including one admitted to a refined type), a sum variant, `Some`/`None`/`Ok`/`Err`, a record, or `T.unsafe(lit)` for an opaque type whose literal also satisfies the refinement. |  | — |
@@ -329,6 +329,7 @@ There are **519** codes in total.
 | `bynk.store.unknown_kind` | A `store` field's type is not a known storage kind. |  | — |
 | `bynk.store.unknown_map_accessor` | A `store Map` field access is not one of its query accessors (`entries`/`keys`/`values`). |  | — |
 | `bynk.store.unknown_op` | A storage-`Map`/`Set` operation is not a recognised entry/membership method. |  | — |
+| `bynk.stub.at_system` | A test `stub` is in a `system`-tier case, or at the scope of a `suite … as system` (or a suite whose cases run `as system`); each context runs as the Worker it deploys as, which builds its own capability providers, so there is no seam to override. | [`stub_clause`](/book/reference/grammar/#rule-stub_clause) | — |
 | `bynk.stub.bad_sequence` | A `stub … returns each […]` sequence is malformed (e.g. empty). |  | — |
 | `bynk.stub.generic_op` | A test `stub` targets a capability operation that declares its own type parameter — not supported at v1. |  | — |
 | `bynk.stub.not_a_seam` | A test `stub` overrides a capability the unit under test does not consume. |  | — |
@@ -341,12 +342,15 @@ There are **519** codes in total.
 | `bynk.test.actor_no_identity` | A call-site `by <Actor>(x)` supplies an identity to an actor that takes none — a unit-identity actor (e.g. `Visitor`) or `Nobody`. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.asset_address_method` | A suite fetches an asset with a method other than `GET`; the platform serves assets to `GET` and answers other methods with 405. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.credential_needs_system` | A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it. | [`case`](/book/reference/grammar/#rule-case) | — |
+| `bynk.test.event_needs_in_process` | A `system`-tier case delivers an event with `svc.event(e)`; at `system` an event reaches a subscriber only through its publisher's fan-out, so the case drives the emitting handler instead, or delivers the event at `unit` or `integration`. | [`case`](/book/reference/grammar/#rule-case) | — |
+| `bynk.test.event_not_subscribed` | A test body's `svc.event(e)` delivers an event the `from Events(E)` service does not subscribe to. | [`case`](/book/reference/grammar/#rule-case) | — |
+| `bynk.test.event_publisher_ambiguous` | A test body's `svc.event(e)` omits the envelope, but the event's publisher, which the default envelope names, is not one context the target declares or consumes. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.faults_needs_in_process` | A `system`-tier case claims a fault with `expect <call> faults`, or a fault claim at any tier is driven `by Nobody`; at `system` a fault reaches the case as an error response from the deployed Worker, never a throw, so the claim belongs at `unit` or `integration`. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.nobody_needs_secured_route` | A case drives `by Nobody` at a route that is not Bearer-secured (e.g. a public `Visitor` route) — there is no auth seam to reject the missing credential. | [`case`](/book/reference/grammar/#rule-case) | — |
-| `bynk.test.principal_identity_mismatch` | A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor. | [`case`](/book/reference/grammar/#rule-case) | — |
+| `bynk.test.principal_identity_mismatch` | A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor, or names no member of the handler's actor sum. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.principal_on_asset` | A suite's asset fetch carries a `by` clause; an asset is public and served before the Worker runs. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.principal_on_wrong_method` | A wrong-method `405` test carries a `by <Actor>` clause; it reaches no handler, so a principal is meaningless. | [`case`](/book/reference/grammar/#rule-case) | — |
-| `bynk.test.principal_required` | A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`. | [`case`](/book/reference/grammar/#rule-case) | — |
+| `bynk.test.principal_required` | A test drives an identity-carrying handler, or one guarded by an actor sum, with no call-site `by <Actor>`. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.service_bad_address` | A test body addresses a service the wrong way for its protocol (e.g. an http route without a leading path string). | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.service_call_arity` | A test body's `svc.call(...)` passes the wrong number of arguments for the service's `on call` handler. | [`case`](/book/reference/grammar/#rule-case) | — |
 | `bynk.test.service_no_call_handler` | A test body invokes `svc.call(...)` on a service with no `on call` handler (a `from http`/`cron`/`queue` service). | [`case`](/book/reference/grammar/#rule-case) | — |

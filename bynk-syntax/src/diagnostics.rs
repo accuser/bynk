@@ -637,7 +637,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.deploy.contract_skew",
-        "A worker was compiled against a contract its live dependencies no longer provide, so `bynk deploy` refuses to ship it.",
+        "A worker was compiled against a contract its live dependencies no longer provide, or no longer provides the contract its live callers were compiled against, so `bynk deploy --context` refuses to ship it.",
     ),
     d(
         "bynk.deploy.foreign_contract_skew",
@@ -1903,6 +1903,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.store.unknown_op",
         "A storage-`Map`/`Set` operation is not a recognised entry/membership method.",
     ),
+    dg(
+        "bynk.stub.at_system",
+        "A test `stub` is in a `system`-tier case, or at the scope of a `suite … as system` (or a suite whose cases run `as system`); each context runs as the Worker it deploys as, which builds its own capability providers, so there is no seam to override.",
+        &["stub_clause"],
+    ),
     d(
         "bynk.stub.bad_sequence",
         "A `stub … returns each […]` sequence is malformed (e.g. empty).",
@@ -1968,6 +1973,21 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["case"],
     ),
     dg(
+        "bynk.test.event_needs_in_process",
+        "A `system`-tier case delivers an event with `svc.event(e)`; at `system` an event reaches a subscriber only through its publisher's fan-out, so the case drives the emitting handler instead, or delivers the event at `unit` or `integration`.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.event_not_subscribed",
+        "A test body's `svc.event(e)` delivers an event the `from Events(E)` service does not subscribe to.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.event_publisher_ambiguous",
+        "A test body's `svc.event(e)` omits the envelope, but the event's publisher, which the default envelope names, is not one context the target declares or consumes.",
+        &["case"],
+    ),
+    dg(
         "bynk.test.faults_needs_in_process",
         "A `system`-tier case claims a fault with `expect <call> faults`, or a fault claim at any tier is driven `by Nobody`; at `system` a fault reaches the case as an error response from the deployed Worker, never a throw, so the claim belongs at `unit` or `integration`.",
         &["case"],
@@ -1979,7 +1999,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.test.principal_identity_mismatch",
-        "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor.",
+        "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor, or names no member of the handler's actor sum.",
         &["case"],
     ),
     dg(
@@ -1994,7 +2014,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.test.principal_required",
-        "A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`.",
+        "A test drives an identity-carrying handler, or one guarded by an actor sum, with no call-site `by <Actor>`.",
         &["case"],
     ),
     dg(

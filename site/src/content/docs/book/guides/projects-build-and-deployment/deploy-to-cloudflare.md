@@ -126,9 +126,31 @@ key-value storage API.
 
 ## Secrets
 
-`bynk deploy` sets your secrets before it pushes, and forgets them. Values move
-from wherever you keep them straight to `wrangler secret put` — they are never
-written to `bynk.deploy.lock`, to generated config, or to the plan.
+`bynk deploy` sets your secrets before your code can serve a request, and
+forgets them. A Worker that is already deployed gets them first, with
+`wrangler secret put`, and then the push. A new Worker gets them in the same
+upload as its code (`wrangler deploy --secrets-file`), so its first version
+already has them. Values go from wherever you keep them straight to wrangler —
+on stdin, or for a new Worker in a temporary file only you can read. That file
+is deleted as soon as the upload ends, even if you press Ctrl-C or CI sends
+`SIGTERM`: `bynk` waits for wrangler to stop before it exits. Only a `SIGKILL`
+can leave the file behind, and the next `bynk deploy` deletes it. Values are
+never written to `bynk.deploy.lock`, to generated config, or to the plan.
+
+Each secret set prints its name, never its value:
+
+```
+bynk: set secret `AUTH_JWT_SECRET` on `api`
+```
+
+On a new Worker the line ends `, with its first version`. If your wrangler is
+older than 4.74.0, which can't upload secrets with a new Worker, the deploy says
+so and sets them just after the first push. For that moment the new Worker
+answers `401` to any route that needs a secret.
+
+Give secrets to `bynk deploy --secrets-file`, not to wrangler after `--`. A run
+that includes a new Worker refuses `-- --secrets-file`, because that upload
+already passes its own file.
 
 Every line of the plan is marked with how Bynk came to know the name:
 
@@ -364,10 +386,10 @@ kv create shop-cart-sessions (KV_SESSIONS)
 deploy shop-cart
 ```
 
-The first line is the bare `Kv`'s namespace, titled with the Worker's name as it
-always has been. It appears only if the context uses the bare `Kv`. An
-instance's namespace is titled `<worker>-<capability>`, and gets an
-environment suffix under `--env` (`shop-cart-sessions-staging`). Each id is
+The first line is the bare `Kv`'s namespace, titled with the Worker's name. It
+appears only if the context uses the bare `Kv`. An instance's namespace is
+titled `<worker>-<capability>`. Both get an environment suffix under `--env`
+(`shop-cart-staging`, `shop-cart-sessions-staging`). Each id is
 recorded in `bynk.deploy.lock` under its Worker and its binding, and only ever
 written into the generated `wrangler.toml` immediately before the push.
 
@@ -443,6 +465,14 @@ deployed — a Service Binding to a Worker that does not exist fails at upload.
 Bring a fresh topology up with a whole-project `bynk deploy` first; use
 `--context` for iteration after that.
 
+`--context` also refuses a push that would leave two live Workers disagreeing
+about a contract (`bynk.deploy.contract_skew`). It refuses a context compiled
+against a contract its live dependencies no longer provide. It also refuses a
+context whose new build no longer provides what a live caller was compiled
+against, naming each caller, the service and both hashes. Either way, deploy
+the whole project so both sides move together. See
+[Contract skew](/book/guides/projects-build-and-deployment/contract-skew/#better-deploy-refuses-first).
+
 ### When a deploy fails part-way
 
 A multi-context deploy is **resumable, not transactional**. If the third context
@@ -495,13 +525,56 @@ order commerce-payment-staging → commerce-orders-staging
 The plan and the deploy take these names from the same place: the
 environment's section of the generated config states the Worker's `name`
 (`commerce-orders-staging`) rather than leaving it to Wrangler's default, which
-is the same name.
+is the same name. Every message the deploy prints names Workers the same way,
+and a command it suggests repeats your `--env`: under `--env staging`, the
+`--context` refusal reads "`commerce-orders-staging` binds to
+`commerce-payment-staging`, which has never been deployed" and suggests
+`bynk deploy --env staging`.
+
+In `--format json`, `orphans.workers` and `orphans.queues` hold these
+account names too. With the [orphans](#orphans) example's removed `payment`
+context and its `old-jobs` queue, under `--env staging` they are
+`payment-staging` and `old-jobs-staging`. `orphans.kv` does not:
+each entry's `worker` is the Worker's ledger key, its bare name, alongside the
+`binding` (absent for the bare `Kv`), because that pair is what the ledger
+records the namespace under.
 
 KV's identity is the namespace id Cloudflare hands back, already kept apart per
-environment in `bynk.deploy.lock`. The bare `Kv`'s namespace keeps its plain
-title, so no live namespace is ever renamed. A derived instance's title does
-take the suffix (`shop-cart-sessions-staging`), so the environments' namespaces
-are told apart in the dashboard too.
+environment in `bynk.deploy.lock`. A namespace's title takes the suffix too,
+because Cloudflare refuses a second namespace with a title the account already
+holds. So the bare `Kv`'s namespace is `shop-cart-staging` and a derived
+instance's is `shop-cart-sessions-staging`. The default environment's titles
+are unchanged (`shop-cart`, `shop-cart-sessions`). The title only matters when
+the namespace is created: one whose id the lock file already records for the
+environment is reused, whatever it was titled when it was made, and the plan
+shows the title Bynk would give it.
+
+Suffixes can still make two titles coincide: Worker `shop`'s bare namespace
+under `--env staging` and its `capability Staging` in the default environment
+are both `shop-staging`. `bynk deploy` refuses that before the plan,
+`--dry-run` included, naming both namespaces and both environments. It
+compares the namespaces this deploy would create against every environment
+`bynk.deploy.lock` knows, both the namespaces recorded there and the ones that
+environment's next deploy would create.
+
+A namespace can also be created again during the deploy itself: one whose
+recorded id has gone from the account, deleted outside Bynk, is re-created
+under its current title. The plan can't see that, because it runs before
+the deploy fetches the account's live ids. So `bynk deploy` makes the same
+comparison at that point and stops with the same message before running
+`wrangler kv namespace create`.
+
+At that deploy-time check, and only there, another environment's recorded
+namespace whose id has gone from the account no longer holds its title,
+unless your source still declares it in that environment. The plan-time
+check runs before the live ids are fetched, so it counts every namespace
+the lock file records. If the plan refuses a title held by an orphan you
+already deleted outside Bynk, clear that stale entry. Either run
+`bynk deploy --prune` in the orphan's own environment (for example
+`bynk deploy --env staging --prune`), which counts a namespace that is
+already gone as deleted and drops it from `bynk.deploy.lock` after that
+environment's deploy pushes cleanly. Or remove the entry from
+`bynk.deploy.lock` by hand.
 
 `--env` is the driver's own flag; putting `--env` or `--environment` after
 `--` as well is rejected rather than silently resolved one way or the other:
@@ -525,7 +598,9 @@ it trusts them to three different degrees:
   same namespaces. The bare `Kv`'s are kept by Worker, under `kv`; each derived
   instance's by Worker and binding, under `kv_instances`.
 - **Which contexts have been deployed** — how `--context` knows whether the
-  contexts you bind to are actually live.
+  contexts you bind to are actually live. With each, the contract hashes it
+  provides (`contracts`) and the ones it was compiled against (`expects`), so
+  `--context` can refuse a push that would break a live caller or callee.
 - **Which queues have been created** — a note to itself, so the plan can say
   `create` or `reuse` without calling Cloudflare. Nothing depends on it being
   right: a queue is found by its name either way.

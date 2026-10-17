@@ -1,0 +1,3 @@
+commons t.values
+
+type Cents = Int where InRange(1, 1000)

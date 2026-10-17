@@ -1,0 +1,10 @@
+context t.pay
+
+uses t.values
+uses t.pages
+
+service paged {
+	on call(page: Page[Cents]) -> Effect[Int] by c: Caller {
+		page.items.fold(page.size, (acc, v) => acc + v)
+	}
+}

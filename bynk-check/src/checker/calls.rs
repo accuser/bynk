@@ -149,6 +149,7 @@ pub(crate) fn check_fn(
         callees,
         scopes: vec![param_scope],
         is_binding_cache: HashMap::new(),
+        admitted_literals: HashMap::new(),
         pattern_binding_types: HashMap::new(),
         return_ty,
         return_ty_span: f.return_type.span(),
@@ -252,6 +253,7 @@ fn check_static_initialiser(
             callees,
             scopes: vec![HashMap::new()],
             is_binding_cache: HashMap::new(),
+            admitted_literals: HashMap::new(),
             pattern_binding_types: HashMap::new(),
             return_ty: field_ty,
             return_ty_span: init.span,
@@ -3400,16 +3402,42 @@ fn check_test_service_address(
         return handler_outcome(handler, ctx);
     }
 
+    // #2052: `svc.event(payload)` / `svc.event(payload, envelope)` — one
+    // delivery to a `from Events(E)` service's `on event` handler.
+    if method.name == "event"
+        && let Some(handler) = sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Event))
+    {
+        ctx.callees.insert(
+            expr_id,
+            Callee::TestService {
+                service: id.name.clone(),
+                address: "event".to_string(),
+            },
+        );
+        let handler = handler.clone();
+        check_event_address(sig, id, &handler, args, method.span, ctx);
+        return handler_outcome(&handler, ctx);
+    }
+
     // Not a recognised address form for this service.
     let proto = sig.protocol.as_deref().unwrap_or("call");
-    ctx.errors.push(CompileError::new(
+    let mut err = CompileError::new(
         "bynk.test.service_bad_address",
         method.span,
         format!(
             "`{}.{}` is not a way to address a `from {proto}` service in a test body",
             id.name, method.name
         ),
-    ));
+    );
+    if method.name == "event" {
+        err = err.with_note(
+            "only a `from Events(E)` service is addressed with `svc.event(e)`; it delivers one event to the service's `on event` handler",
+        );
+    }
+    ctx.errors.push(err);
     for a in args {
         let _ = type_of(a, None, ctx);
     }
@@ -3473,6 +3501,19 @@ fn resolve_actor_identity(name: &str, ctx: &Ctx) -> ActorIdentity {
     let tys = ctx.tys;
     use crate::actors::{Identity, prelude_actor};
     if let Some(decl) = ctx.test_actors.get(name) {
+        // #2019: a refinement (`actor Admin = User where …`) narrows its base by
+        // a claim and inherits the base's identity: the Worker's Bearer seam
+        // follows the refinement to its base and mints the base identity
+        // (`bearer_seam_for`). A refinement whose base is missing or is itself a
+        // refinement is malformed (`bynk.actor.refinement_base_unsupported`),
+        // so it resolves to no identity at all rather than passing as `Unit`.
+        let decl = match &decl.refinement {
+            Some(r) => match ctx.test_actors.get(&r.base.name) {
+                Some(base) if base.refinement.is_none() => base,
+                _ => return ActorIdentity::Unknown,
+            },
+            None => decl,
+        };
         return match &decl.identity {
             Some(t) => match resolve_type_ref(t, &ctx.input.types, tys) {
                 Some(ty) => ActorIdentity::Typed(ty),
@@ -3552,6 +3593,13 @@ fn resolve_test_address<'a>(
             .handlers
             .iter()
             .find(|h| matches!(&h.kind, HandlerKind::Message));
+    }
+    // #2052: the `on event` handler of a `from Events(E)` service.
+    if method == "event" {
+        return sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Event));
     }
     None
 }
@@ -3688,6 +3736,13 @@ pub(crate) fn check_effect_let_principal(
         return;
     }
 
+    // #2020: a sum (`by who: User | Visitor`) runs as whichever member
+    // resolves, so the case may act as any member, each with its own identity.
+    if let Some(by) = handler.by_clause.as_ref().filter(|by| by.is_sum()) {
+        check_sum_principal(by, principal, value.span, ctx);
+        return;
+    }
+
     let required = handler_actor_name(&handler, sig.protocol.as_deref())
         .map(|actor| resolve_actor_identity(&actor, ctx));
 
@@ -3795,6 +3850,85 @@ pub(crate) fn check_effect_let_principal(
     }
 }
 
+/// #2020: check a call-site principal against a handler whose `by` clause is
+/// an actor sum (`by who: User | Visitor`, or an `on call` sum such as
+/// `Caller | Legacy`). The handler reads the resolved member as `deps.who`, so
+/// the case must name a member, with exactly the identity that member
+/// carries: `by User("ada")` or `by Visitor`. A non-member, or no `by` at all,
+/// would leave `deps.who` unbuilt.
+fn check_sum_principal(
+    by: &bynk_syntax::ast::ByClause,
+    principal: Option<&bynk_syntax::ast::CallSiteActor>,
+    value_span: Span,
+    ctx: &mut Ctx,
+) {
+    let members = format!(
+        "`{}`",
+        by.actors
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+    let Some(p) = principal else {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.principal_required",
+                value_span,
+                format!(
+                    "this handler runs as one of the actors {members}; the case must act as one with `by <Actor>`"
+                ),
+            )
+            .with_note(format!(
+                "append a call-site actor naming a member, e.g. `... by {}`",
+                sum_member_example(&by.actors[0].name, ctx)
+            )),
+        );
+        return;
+    };
+    let name = &p.actor.name;
+    if !by.actors.iter().any(|a| &a.name == name) {
+        if matches!(resolve_actor_identity(name, ctx), ActorIdentity::Unknown) {
+            report_principal_actor(p, ctx);
+            return;
+        }
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.principal_identity_mismatch",
+                p.span,
+                format!(
+                    "this handler runs as one of the actors {members}, but `by {name}` names none of them"
+                ),
+            )
+            .with_note("act as a member of the handler's `by` sum"),
+        );
+        if let Some(idv) = &p.identity {
+            let _ = type_of(idv, None, ctx);
+        }
+        return;
+    }
+    match resolve_actor_identity(name, ctx) {
+        // The sum's `Caller` arm carries the calling context's name
+        // (`{ tag: "Caller", identity: string }`), so it must be named.
+        ActorIdentity::CallerString if p.identity.is_none() => ctx.errors.push(CompileError::new(
+            "bynk.test.actor_identity_required",
+            p.span,
+            format!(
+                "the `{name}` arm carries the calling context's name, so write `by {name}(\"...\")`"
+            ),
+        )),
+        _ => report_principal_actor(p, ctx),
+    }
+}
+
+/// An example call-site principal for a sum member, for a note.
+fn sum_member_example(name: &str, ctx: &Ctx) -> String {
+    match resolve_actor_identity(name, ctx) {
+        ActorIdentity::Typed(_) | ActorIdentity::CallerString => format!("{name}(...)"),
+        ActorIdentity::Unit | ActorIdentity::Unknown => name.to_string(),
+    }
+}
+
 /// #1978: whether an `on call` handler binds the prelude `Caller`'s identity
 /// (`by c: Caller`), so its emitted `deps` requires `identity`. This mirrors
 /// `bynk_lower::lower_actor_seam_ir`, which resolves a sum `by` clause
@@ -3822,6 +3956,15 @@ fn report_principal_actor(p: &bynk_syntax::ast::CallSiteActor, ctx: &mut Ctx) {
     let tys = ctx.tys;
     let name = &p.actor.name;
     match resolve_actor_identity(name, ctx) {
+        // A declared actor that resolves to nothing is a malformed refinement,
+        // already reported at its declaration
+        // (`bynk.actor.refinement_base_unsupported`). It is still an actor of
+        // the target, so `unknown_actor` would mislead.
+        ActorIdentity::Unknown if ctx.test_actors.contains_key(name) => {
+            if let Some(id) = &p.identity {
+                let _ = type_of(id, None, ctx);
+            }
+        }
         ActorIdentity::Unknown => {
             ctx.errors.push(
                 CompileError::new(
@@ -3938,6 +4081,137 @@ fn check_address_args(
                 ),
             ));
         }
+    }
+}
+
+/// #2052: arity and argument types of `svc.event(payload)` /
+/// `svc.event(payload, envelope)`. The payload is typed against the handler's
+/// first parameter, which `bynk.event.handler_param_type_mismatch` holds to the
+/// header's event type `E`; the envelope against `EventEnvelope`, whether or
+/// not the handler declares one (a `via schema(N)` guard reads it either way).
+fn check_event_address(
+    sig: &TestServiceSig,
+    id: &Ident,
+    handler: &TestHandler,
+    args: &[Expr],
+    err_span: Span,
+    ctx: &mut Ctx,
+) {
+    let tys = ctx.tys;
+    let svc = &id.name;
+    if args.is_empty() || args.len() > 2 {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.service_call_arity",
+                err_span,
+                format!(
+                    "`{svc}.event` takes the event and, optionally, an `EventEnvelope`, but {} argument(s) were given",
+                    args.len()
+                ),
+            )
+            .with_note("deliver an event with `svc.event(e)`, or `svc.event(e, env)` to choose its envelope"),
+        );
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return;
+    }
+    // #2052 review: a default envelope names the event's publisher, which must
+    // resolve to one context, as the service's header resolves `E`.
+    if args.len() == 1
+        && let Some(Err(candidates)) = &sig.event_publisher
+    {
+        let found = if candidates.is_empty() {
+            "no context the target declares or consumes declares it".to_string()
+        } else {
+            format!(
+                "it is declared by {}",
+                candidates
+                    .iter()
+                    .map(|c| format!("`{c}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.event_publisher_ambiguous",
+                err_span,
+                format!("`{svc}.event(e)` has no single publisher to name in its default envelope: {found}"),
+            )
+            .with_note("pass the envelope yourself: `svc.event(e, env)`"),
+        );
+    }
+    let payload = &args[0];
+    let expected = handler
+        .params
+        .first()
+        .and_then(|p| resolve_type_ref(&p.type_ref, &ctx.input.types, tys));
+    let arg_ty = type_of(payload, expected, ctx);
+    if let (Some(a), Some(p)) = (arg_ty, expected)
+        && !compatible(a, p, tys)
+    {
+        let other_event = match &*tys.get(a) {
+            Ty::Named { name, .. } if sig.known_events.contains(name) => Some(name.clone()),
+            _ => None,
+        };
+        let err = match other_event {
+            Some(other) => CompileError::new(
+                "bynk.test.event_not_subscribed",
+                payload.span,
+                format!(
+                    "`{svc}` subscribes to `{}`, not `{other}`",
+                    p.display(tys)
+                ),
+            )
+            .with_note(
+                "an event address delivers only the event the service's `from Events(E)` header names",
+            ),
+            None => CompileError::new(
+                "bynk.types.argument_mismatch",
+                payload.span,
+                format!(
+                    "argument 1 has type `{}`, but `{svc}.event` expects the event it subscribes to, `{}`",
+                    a.display(tys),
+                    p.display(tys)
+                ),
+            ),
+        };
+        ctx.errors.push(err);
+    }
+    let Some(envelope) = args.get(1) else {
+        return;
+    };
+    let envelope_ref = TypeRef::Named(Ident {
+        name: "EventEnvelope".to_string(),
+        span: envelope.span,
+    });
+    let expected = resolve_type_ref(&envelope_ref, &ctx.input.types, tys);
+    let env_ty = type_of(envelope, expected, ctx);
+    let Some(a) = env_ty else {
+        return;
+    };
+    // `EventEnvelope` is `bynk`'s; a suite names it only when its target
+    // consumes `bynk`, and no other value is one.
+    let mismatch = match expected {
+        Some(p) => !compatible(a, p, tys),
+        None => true,
+    };
+    if mismatch {
+        let mut err = CompileError::new(
+            "bynk.types.argument_mismatch",
+            envelope.span,
+            format!(
+                "argument 2 has type `{}`, but `{svc}.event` expects an `EventEnvelope`",
+                a.display(tys)
+            ),
+        );
+        if expected.is_none() {
+            err = err.with_note(
+                "`EventEnvelope` comes from `bynk`; the suite's target must `consumes bynk` to build one",
+            );
+        }
+        ctx.errors.push(err);
     }
 }
 
@@ -4174,11 +4448,14 @@ fn check_cross_context_capability_call(
         let param_ty = resolve_type_ref_in(ptype_ref, &consumed_types, &vars, tys)
             .unwrap_or(tys.intern(Ty::Unit));
         let param_ty = substitute(param_ty, &subst, tys);
-        let Some(arg_ty) = type_of(arg, None, ctx) else {
+        // #2025: against the parameter's type; see `type_cross_context_arg`.
+        let (arg_ty, crosses) =
+            type_cross_context_arg(arg, param_ty, &caller_types, &consumed_types, consumed, ctx);
+        let Some(arg_ty) = arg_ty else {
             all_ok = false;
             continue;
         };
-        if !structurally_compatible(arg_ty, param_ty, &caller_types, &consumed_types, tys) {
+        if !crosses {
             let mut err = CompileError::new(
                 "bynk.boundary.structural_mismatch",
                 arg.span,
@@ -4250,6 +4527,226 @@ fn rebranded_return_mismatch(
         "a returned value takes the receiving context's type of the same name, so the two \
          must be structurally compatible; rename one of them",
     )
+}
+
+/// #2025, #2039, #2072: type one cross-context argument against its
+/// parameter's type, returning the type and whether the argument crosses the
+/// boundary.
+///
+/// A literal at a refined position in the parameter's type is admitted
+/// against that type's own declaration, from the consumed context's table.
+/// This covers a literal passed directly (`t.pay.charge(250)`) and one
+/// nested in an `Option`/`Result` payload, a list element, or a field of a
+/// record literal, a generic one included (`t.pay.maybe(Some(250))`,
+/// `Page { items: [250] }`). It is checked against the callee's predicate,
+/// whether or not the caller `uses` the declaring commons and whatever the
+/// caller binds under that name. Such a literal is the callee's type by
+/// construction, so it needs no structural check; neither does a `None` or
+/// an empty list, which take the parameter's type as their hint.
+///
+/// Every other part of the argument is a *leaf*, typed in the caller's own
+/// scope with its position's type as the hint, and the structural check
+/// decides whether each leaf crosses. A shorthand record field (`{ cents }`)
+/// is a leaf too, checked by its binding's type. An argument with no literal
+/// or empty constructor in it is a single leaf, so it is checked whole, as
+/// before; a leaf `type_of` did not record falls back to the whole argument
+/// too.
+fn type_cross_context_arg(
+    arg: &Expr,
+    param_ty: TyId,
+    caller_types: &HashMap<String, Arc<TypeDecl>>,
+    consumed_types: &HashMap<String, Arc<TypeDecl>>,
+    consumed: &str,
+    ctx: &mut Ctx,
+) -> (Option<TyId>, bool) {
+    let tys = ctx.tys;
+    let mut found = CrossingPositions::default();
+    collect_crossing_positions(arg, param_ty, caller_types, consumed_types, tys, &mut found);
+    let CrossingPositions {
+        literals,
+        mut leaves,
+        bindings,
+    } = found;
+    for (lit, pos) in literals {
+        let before = ctx.errors.len();
+        match admit_refined_literal_in(lit, Some(pos), consumed_types, ctx) {
+            Some(ty) => {
+                for err in &mut ctx.errors[before..] {
+                    err.notes.push(format!(
+                        "`{}` is the type at this position of the parameter, as `{consumed}` declares it",
+                        ty.display(tys)
+                    ));
+                }
+                ctx.admitted_literals.insert(lit.id, ty);
+            }
+            // Not a literal of the refined type's base: an ordinary leaf.
+            None => leaves.push((lit, pos)),
+        }
+    }
+    let arg_ty = type_of(arg, Some(param_ty), ctx);
+    let Some(ty) = arg_ty else {
+        return (None, false);
+    };
+    let whole = || structurally_compatible(ty, param_ty, caller_types, consumed_types, tys);
+    let leaves_cross = leaves.iter().all(|(leaf, pos)| {
+        // A leaf `type_of` did not record is checked through the whole
+        // argument instead.
+        match ctx.expr_types.get(&leaf.id) {
+            Some(t) => structurally_compatible(t.ty, *pos, caller_types, consumed_types, tys),
+            None => whole(),
+        }
+    });
+    let bindings_cross = bindings.iter().all(|(name, pos)| match ctx.lookup(name) {
+        Some(t) => structurally_compatible(t, *pos, caller_types, consumed_types, tys),
+        None => whole(),
+    });
+    (arg_ty, leaves_cross && bindings_cross)
+}
+
+/// #2039: what [`collect_crossing_positions`] finds in a cross-context
+/// argument, each paired with the type at its position, named in the
+/// consumed context's table.
+#[derive(Default)]
+struct CrossingPositions<'e> {
+    /// Literals at refined positions, admitted against the callee.
+    literals: Vec<(&'e Expr, TyId)>,
+    /// Parts the structural check still has to decide.
+    leaves: Vec<(&'e Expr, TyId)>,
+    /// #2072: shorthand record fields, by the binding each one reads.
+    bindings: Vec<(&'e str, TyId)>,
+}
+
+/// #2039: walk a cross-context argument alongside its parameter's type,
+/// collecting the literals at refined positions and the leaves the
+/// structural check still has to decide.
+///
+/// The walk follows `Some`/`Ok`/`Err` payloads, list elements, and the
+/// fields of a record literal whose type is the very declaration the
+/// callee's parameter names (the same commons type). #2072: for a generic
+/// record, its type arguments are substituted into the field types, and a
+/// shorthand field is collected by its binding. Anything else is a leaf.
+fn collect_crossing_positions<'e>(
+    e: &'e Expr,
+    pos: TyId,
+    caller_types: &HashMap<String, Arc<TypeDecl>>,
+    consumed_types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
+    found: &mut CrossingPositions<'e>,
+) {
+    let node = tys.get(pos);
+    let walk = |inner: &'e Expr, at: TyId, found: &mut CrossingPositions<'e>| {
+        collect_crossing_positions(inner, at, caller_types, consumed_types, tys, found)
+    };
+    // A compile-time literal, negated ones (`-3`) included.
+    if const_literal(e).is_some()
+        && matches!(
+            &*node,
+            Ty::Named {
+                kind: NamedKind::Refined(_),
+                ..
+            }
+        )
+    {
+        return found.literals.push((e, pos));
+    }
+    match (&e.kind, &*node) {
+        (ExprKind::Paren(inner), _) => walk(inner, pos, found),
+        // Typed from the hint: the parameter's own type at this position.
+        (ExprKind::None, Ty::Option(_)) => {}
+        (ExprKind::ListLit(items), Ty::List(_)) if items.is_empty() => {}
+        // #2043: `List.empty()` / `Map.empty()`, likewise.
+        (
+            ExprKind::MethodCall {
+                receiver,
+                method,
+                type_args,
+                args,
+            },
+            Ty::List(_) | Ty::Map(..),
+        ) if method.name == "empty"
+            && type_args.is_empty()
+            && args.is_empty()
+            && matches!(
+                &receiver.kind,
+                ExprKind::Ident(id)
+                    if id.name == if matches!(&*node, Ty::List(_)) { "List" } else { "Map" }
+            ) => {}
+        (ExprKind::Some(inner), Ty::Option(t)) => walk(inner, *t, found),
+        (ExprKind::Ok(inner), Ty::Result(t, _)) => walk(inner, *t, found),
+        (ExprKind::Err(inner), Ty::Result(_, t)) => walk(inner, *t, found),
+        (ExprKind::ListLit(items), Ty::List(t)) => {
+            for item in items {
+                walk(item, *t, found);
+            }
+        }
+        (
+            ExprKind::RecordConstruction { type_name, fields },
+            Ty::Named {
+                name,
+                kind: NamedKind::Record,
+                args,
+            },
+        ) if type_name.name == *name => {
+            let Some(field_positions) =
+                record_field_positions(name, args, fields, caller_types, consumed_types, tys)
+            else {
+                return found.leaves.push((e, pos));
+            };
+            for (f, field_ty) in field_positions {
+                match &f.value {
+                    Some(value) => walk(value, field_ty, found),
+                    // #2072: a shorthand field reads the same-named binding.
+                    None => found.bindings.push((f.name.name.as_str(), field_ty)),
+                }
+            }
+        }
+        _ => found.leaves.push((e, pos)),
+    }
+}
+
+/// #2039, #2072: the type of each field a record literal sets, in the
+/// consumed context's table, when the literal's type is the very
+/// declaration the callee names (the same commons type). A generic record's
+/// type arguments are substituted into its field types. `None` when the
+/// record is not the callee's declaration, or a field is not one it
+/// declares: the record is then checked whole.
+fn record_field_positions<'f>(
+    name: &str,
+    args: &[TyId],
+    fields: &'f [FieldInit],
+    caller_types: &HashMap<String, Arc<TypeDecl>>,
+    consumed_types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
+) -> Option<Vec<(&'f FieldInit, TyId)>> {
+    let decl = consumed_types.get(name)?;
+    if !caller_types.get(name).is_some_and(|c| Arc::ptr_eq(c, decl)) {
+        return None;
+    }
+    let TypeBody::Record(record) = &decl.body else {
+        return None;
+    };
+    if decl.type_params.len() != args.len() {
+        return None;
+    }
+    let vars: HashSet<String> = decl
+        .type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .collect();
+    let subst: HashMap<String, TyId> = decl
+        .type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .zip(args.iter().copied())
+        .collect();
+    fields
+        .iter()
+        .map(|f| {
+            let declared = record.fields.iter().find(|d| d.name.name == f.name.name)?;
+            let ty = resolve_type_ref_in(&declared.type_ref, consumed_types, &vars, tys)?;
+            Some((f, substitute(ty, &subst, tys)))
+        })
+        .collect()
 }
 
 fn check_cross_context_call(
@@ -4366,13 +4863,15 @@ fn check_cross_context_call(
         record_param_hint(ctx.hints, pname, arg);
         let param_ty =
             resolve_type_ref(ptype_ref, &consumed_types, tys).unwrap_or(tys.intern(Ty::Unit));
-        // Type-check the argument in the caller's context.
-        let arg_ty = type_of(arg, None, ctx);
+        // Type-check the argument in the caller's context (#2025: against
+        // the parameter's type; see `type_cross_context_arg`).
+        let (arg_ty, crosses) =
+            type_cross_context_arg(arg, param_ty, &caller_types, &consumed_types, consumed, ctx);
         let Some(arg_ty) = arg_ty else {
             all_ok = false;
             continue;
         };
-        if !structurally_compatible(arg_ty, param_ty, &caller_types, &consumed_types, tys) {
+        if !crosses {
             let mut err = CompileError::new(
                     "bynk.boundary.structural_mismatch",
                     arg.span,

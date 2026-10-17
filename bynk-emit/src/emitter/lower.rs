@@ -73,7 +73,7 @@ pub fn lower_test_case_body(
     cross_context: &bynk_check::resolver::CrossContextInfo,
     test_services: HashSet<String>,
     test_service_handlers: HashMap<String, Vec<bynk_ir::IrHandlerKind>>,
-    call_sum_services: HashSet<String>,
+    sum_handlers: HashSet<(String, String)>,
     test_agents: HashSet<String>,
     settle_sends: bool,
     // #2024: the names the runner scaffold binds in the body's scope.
@@ -100,7 +100,7 @@ pub fn lower_test_case_body(
                 observation_trace: Some("__obs".to_string()),
                 test_services,
                 test_service_handlers,
-                call_sum_services,
+                sum_handlers,
                 settle_sends,
             },
         )
@@ -140,6 +140,7 @@ pub fn lower_integration_case_body(
     system_http_routes: std::collections::HashSet<(String, String, String)>,
     system_http_route_body: HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>,
     system_http_type_ns: String,
+    system_http_claims: crate::emitter::SystemHttpClaims,
     // #2024: the names the case scaffold binds in the body's scope.
     harness_bound: HashSet<String>,
     source: &str,
@@ -165,6 +166,7 @@ pub fn lower_integration_case_body(
                 system_http_routes,
                 system_http_route_body,
                 system_http_type_ns,
+                system_http_claims,
             },
         )
         .with_source_map(Some(&smb));
@@ -1061,7 +1063,13 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
         if cx.in_test_scaffold() {
             return Lowered::bare(unchecked_construct_test(name, &raw, false));
         }
-        return Lowered::bare(unchecked_construct(name, &raw, false));
+        // #2058: a consumed context's refined type is named under its
+        // namespace; the module imports no bare name for it.
+        return Lowered::bare(unchecked_construct(
+            &cx.consumed_type_name(name),
+            &raw,
+            false,
+        ));
     }
     let mut pre = Pre::new();
     let expr = match &e.kind {
@@ -2495,6 +2503,17 @@ fn lower_method_call(
             .collect();
         let mut all = rest;
         all.push(sub);
+        // #2019: a refinement-guarded route's signing drivers take the claims
+        // the acting actor presents; the no-auth drivers sign nothing.
+        if !cx.call_site_no_credential
+            && let Some(claims) = cx.system_http_claims_arg(&(
+                id.name.clone(),
+                verb.as_str().to_string(),
+                path.clone(),
+            ))
+        {
+            all.push(claims);
+        }
         return pre.finish(format!(
             "{}_{}_{}({})",
             driver,
@@ -2525,10 +2544,23 @@ fn lower_method_call(
         // `bynk-check`'s actor declarations, not plumbed here today (unlike the
         // `ty: &TypeRef` available a few lines up for the sibling brand cast). A
         // guessed type risks a `tsc --strict` mismatch; left as `any`, named here.
-        // I3 (#1971): a `call` sum reads the principal as the resolved actor,
-        // `deps.who`: `by Caller("shop.front")` or `by Legacy`.
+        // I3 (#1971), #2020: a sum handler (`on call` or http) reads the
+        // principal as the resolved actor, `deps.who` (the emitted handler's
+        // deps key for every sum, whatever its binder is named):
+        // `by Caller("shop.front")`, `by User("ada")` or `by Visitor`.
+        let sum_key = match (IrHttpMethod::from_ident(&method.name), args.first()) {
+            (Some(verb), Some(first)) => match &first.kind {
+                ExprKind::StrLit(path) => {
+                    Some(crate::emitter::http_handler_method_name_ir(verb, path))
+                }
+                _ => None,
+            },
+            _ if method.name == "call" => Some("call".to_string()),
+            _ => None,
+        };
+        let is_sum = sum_key.is_some_and(|k| cx.is_sum_handler(&id.name, &k));
         let deps_expr = match (cx.call_site_actor.clone(), cx.call_site_identity.clone()) {
-            (Some(actor), identity) if cx.is_call_sum_service(&id.name) => match identity {
+            (Some(actor), identity) if is_sum => match identity {
                 Some(identity) => {
                     format!("{{ ...deps, who: {{ tag: {actor:?}, identity: {identity} }} }}")
                 }
@@ -2587,6 +2619,31 @@ fn lower_method_call(
                 let mut all = args_lowered;
                 all.push(deps_expr);
                 return pre.finish(settle(format!("{}.{}({})", id.name, key, all.join(", "))));
+            }
+            // #2052: an event address delivers through the module's
+            // `__bynkEvent_<svc>` helper (`tests_emit::event_delivery_helper`),
+            // which supplies the default envelope and calls the service's
+            // generated `event` method, whose prologue runs the pattern filter
+            // and the `via schema(N)` guard as every real delivery does. An
+            // omitted envelope is passed as `undefined`.
+            if method.name == "event"
+                && handlers
+                    .iter()
+                    .any(|h| matches!(h, bynk_ir::IrHandlerKind::Event))
+            {
+                cx.runtime_use().note_test_event_service(&id.name);
+                let payload = args
+                    .first()
+                    .map(|a| pre.lower(a, cx))
+                    .unwrap_or_else(|| "undefined".to_string());
+                let envelope = args
+                    .get(1)
+                    .map(|a| pre.lower(a, cx))
+                    .unwrap_or_else(|| "undefined".to_string());
+                return pre.finish(settle(format!(
+                    "__bynkEvent_{}({payload}, {envelope}, {deps_expr})",
+                    id.name
+                )));
             }
         }
         // `svc.call(args)` and other (non-http) forms: pass args through with deps.
@@ -3022,12 +3079,18 @@ fn lower_cross_context_service_call(
                         .enumerate()
                         .map(|(i, a)| {
                             let lowered = pre.lower(a, cx);
-                            bundle_param_cast(
+                            // #2042: every argument at a generic parameter
+                            // that names a user type is cast, not only one
+                            // holding a callee-typed part (#2039): a value the
+                            // caller typed itself (`byKey: Map[String, Line]`)
+                            // carries the caller's brand against the callee's.
+                            param_cast(
                                 &consumed,
                                 cx.cross_context(),
                                 method,
                                 i,
                                 lowered,
+                                true,
                                 cx.in_test_scaffold(),
                             )
                         })
@@ -4955,6 +5018,9 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
         && let TypeBody::Sum(s) = &decl.body
         && s.variants.iter().any(|v| v.name.name == id.name)
     {
+        if let Some(lit) = consumed_variant_literal(e, type_name, &id.name, &[], cx) {
+            return lit;
+        }
         return format!("{}.{}", type_name, id.name);
     }
     // v0.52: the multi-actor sum binder is not a runtime local — the resolved
@@ -4970,6 +5036,45 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // (now-shadowed) `ts_ident` name.
     cx.resolved_local_name(&id.name)
         .unwrap_or_else(|| ts_ident(&id.name))
+}
+
+/// #2045: on `workers`, a variant of a consumed context's sum built inline —
+/// `({ tag: "Held", reason: x } as Status)` — rather than through the callee's
+/// companion (`Status.Held(x)`), which would make the callee's module a value
+/// import of this Worker (#661). The companion's constructors are pure data,
+/// so the literal is the same value; the cast keeps the tag narrow, through
+/// the type-only import of `Status`. `None` for any other sum.
+fn consumed_variant_literal(
+    e: &Expr,
+    sum: &str,
+    tag: &str,
+    args: &[String],
+    cx: &LowerCtx,
+) -> Option<String> {
+    if !cx.is_consumed_context_type(sum) {
+        return None;
+    }
+    let decl = cx.commons().types.get(sum)?;
+    let TypeBody::Sum(s) = &decl.body else {
+        return None;
+    };
+    let variant = s.variants.iter().find(|v| v.name.name == tag)?;
+    if variant.payload.len() != args.len() {
+        return None;
+    }
+    let ty = cx.commons().expr_types.get(&e.id)?.ty;
+    let ts_ty = bynk_ts::print_type(&crate::emitter::ts_ty_to_ts_type(
+        ty,
+        &cx.commons().ty_intern,
+    ));
+    let mut fields = vec![format!("tag: \"{tag}\"")];
+    for (p, a) in variant.payload.iter().zip(args) {
+        fields.push(format!(
+            "{}: {a}",
+            crate::emitter::payload_prop(&p.name.name)
+        ));
+    }
+    Some(format!("({{ {} }} as {ts_ty})", fields.join(", ")))
 }
 
 fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lowered {
@@ -5034,6 +5139,9 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
     // type (the same re-derivation this whole `Callee` precedent, P6.0,
     // exists to close).
     if let Some(Callee::Ctor { sum, tag }) = cx.commons().callee(e.id) {
+        if let Some(lit) = consumed_variant_literal(e, &sum.name.name, tag, &args_lowered, cx) {
+            return pre.finish(lit);
+        }
         return pre.finish(format!(
             "{}.{}({})",
             sum.name.name,

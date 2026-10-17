@@ -82,6 +82,12 @@ pub(crate) fn process_tests(
     // #1975: each user adapter's binding module, as an extensionless path
     // from the output root, for a test that builds the binding for real.
     binding_modules: &HashMap<String, String>,
+    // #2052: each event's effective schema version, keyed `<unit>.<Event>`
+    // (`emit_project`'s `schema_effective_versions`), for the default envelope
+    // of a `svc.event(e)` address.
+    schema_versions: &HashMap<String, i64>,
+    // #2050: each unit's resolved callees, for [`target_uses_emit`].
+    unit_callees: &HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     tys: &Arc<Types>,
@@ -145,6 +151,14 @@ pub(crate) fn process_tests(
                 asset_files,
             ),
             binding_modules,
+            schema_versions,
+            target_uses_emit(
+                target_name,
+                target_kind,
+                unit_tables,
+                unit_flattened,
+                unit_callees,
+            ),
             tys,
         );
         if let Some((path, program, source_map, runnable)) = emit_out {
@@ -712,6 +726,7 @@ fn emit_integration_module(
             http_support.declared_routes.clone(),
             http_support.route_body.clone(),
             http_support.type_ns.clone(),
+            http_support.claims.clone(),
             harness_bound,
             input.source,
             &input.rel_path,
@@ -879,6 +894,9 @@ struct SystemHttpSupport {
     /// The target's type namespace (`<target>.`), `route_body`'s types
     /// resolve `serialise_*` calls through.
     type_ns: String,
+    /// #2019: the refinement-guarded routes and each refinement actor's
+    /// witness claims, so a call acting as a refinement signs its claims.
+    claims: emitter::SystemHttpClaims,
 }
 
 fn emit_system_http_support(
@@ -897,6 +915,7 @@ fn emit_system_http_support(
             declared_routes: declared,
             route_body,
             type_ns: String::new(),
+            claims: emitter::SystemHttpClaims::default(),
         };
     };
     let ns = test_ns(target);
@@ -905,6 +924,21 @@ fn emit_system_http_support(
 
     let mut routes: Vec<TsStmt> = Vec::new();
     let mut secrets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // #2019: each refinement actor's witness claims, signed when a case acts
+    // as it on a refinement-guarded route.
+    let mut claims = emitter::SystemHttpClaims {
+        routes: std::collections::HashSet::new(),
+        actors: table
+            .actors
+            .iter()
+            .filter_map(|(name, decl)| {
+                let pred =
+                    bynk_check::actors::parse_claim_predicate(&decl.refinement.as_ref()?.predicate)
+                        .ok()?;
+                Some((name.clone(), bynk_check::actors::claim_witness_js(&pred)?))
+            })
+            .collect(),
+    };
 
     let mut svc_names: Vec<&String> = table.services.keys().collect();
     svc_names.sort();
@@ -968,12 +1002,26 @@ fn emit_system_http_support(
                 s
             };
             // The signed Authorization header, if the handler's `by` is Bearer.
+            // #2019: a refinement-guarded route's signing drivers take the
+            // claims the acting actor presents, signed next to `sub`.
+            let mut signs_claims = false;
             let (auth_header, _secret_name) = match bynk_check::actors::bearer_seam_for(
                 h,
                 &table.actors,
             ) {
                 Some(seam) => {
                     secrets.insert(seam.secret.clone());
+                    signs_claims = seam.authorization.is_some();
+                    let claims_spread = if signs_claims {
+                        claims.routes.insert((
+                            sname.clone(),
+                            method.as_str().to_string(),
+                            path.clone(),
+                        ));
+                        "...__claims, "
+                    } else {
+                        ""
+                    };
                     // P7.2: `Record<string, string>`, not `emitter/workers.rs`'s own
                     // `Record<string, unknown>` marker — this expression feeds
                     // `__bynkSignHs256` directly with no `typeof` narrowing step in
@@ -986,7 +1034,7 @@ fn emit_system_http_support(
                     );
                     (
                         format!(
-                            "\"authorization\": `Bearer ${{await __bynkSignHs256({{ sub: __sub, exp: __bynkNow() + 3600 }}, {secret_read})}}`, "
+                            "\"authorization\": `Bearer ${{await __bynkSignHs256({{ {claims_spread}sub: __sub, exp: __bynkNow() + 3600 }}, {secret_read})}}`, "
                         ),
                         Some(seam.secret),
                     )
@@ -1089,6 +1137,7 @@ fn emit_system_http_support(
                 &binding,
                 "__responseToHttpResult",
                 &payload_deser,
+                signs_claims,
             ));
             // Slice C: the raw driver for a `Wire(…)`-carrying call. Every slot is
             // a raw `string` (the wire form the boundary receives *unvalidated*):
@@ -1119,6 +1168,7 @@ fn emit_system_http_support(
                     &binding,
                     "__responseToHttpOutcome",
                     &payload_deser,
+                    signs_claims,
                 ));
             }
             // #706: the no-auth driver for a `by Nobody` call — the same request
@@ -1144,6 +1194,7 @@ fn emit_system_http_support(
                     &binding,
                     "__responseToUnauthOutcome",
                     &payload_deser,
+                    false,
                 ));
             }
             // #821: the raw *and* no-auth driver combined, for a call mixing
@@ -1176,6 +1227,7 @@ fn emit_system_http_support(
                     &binding,
                     "__responseToUnauthOutcome",
                     &payload_deser,
+                    false,
                 ));
             }
         }
@@ -1281,6 +1333,7 @@ fn emit_system_http_support(
             declared_routes: declared,
             route_body,
             type_ns: String::new(),
+            claims: emitter::SystemHttpClaims::default(),
         };
     }
 
@@ -1350,6 +1403,7 @@ fn emit_system_http_support(
         declared_routes: declared,
         route_body,
         type_ns,
+        claims,
     }
 }
 
@@ -1816,23 +1870,36 @@ fn target_service_handler_kinds(
         .collect()
 }
 
-/// I3 (#1971): the target's services whose `on call` handler binds an actor
-/// sum (`by who: Caller | Legacy`), whose `deps.who` a call-site principal
-/// builds.
-fn target_call_sum_services(table: Option<&UnitTable>) -> HashSet<String> {
+/// I3 (#1971), #2020: the target's handlers that bind an actor sum, whose
+/// `deps.who` a call-site principal builds: an `on call` sum (`by who: Caller
+/// | Legacy`), keyed `(service, "call")`, and an http sum (`by who: User |
+/// Visitor`), keyed `(service, <emitted method name>)`. Mirrors the order
+/// `bynk_lower::lower_actor_seam_ir` resolves a handler's seam in.
+fn target_sum_handlers(table: Option<&UnitTable>) -> HashSet<(String, String)> {
     let Some(t) = table else {
         return HashSet::new();
     };
-    t.services
-        .iter()
-        .filter(|(_, decl)| {
-            decl.handlers.iter().any(|h| {
-                bynk_check::actors::call_admission_for(h, &t.actors)
-                    .is_some_and(|a| a.sum.is_some())
-            })
-        })
-        .map(|(name, _)| name.clone())
-        .collect()
+    let mut out = HashSet::new();
+    for (name, decl) in &t.services {
+        for h in &decl.handlers {
+            let key = match bynk_lower::lower_handler_kind_ir(&h.kind) {
+                bynk_ir::IrHandlerKind::Call
+                    if bynk_check::actors::call_admission_for(h, &t.actors)
+                        .is_some_and(|a| a.sum.is_some()) =>
+                {
+                    "call".to_string()
+                }
+                bynk_ir::IrHandlerKind::Http { method, path }
+                    if bynk_check::actors::sum_members_for(h, &t.actors).is_some() =>
+                {
+                    crate::emitter::http_handler_method_name_ir(method, &path)
+                }
+                _ => continue,
+            };
+            out.insert((name.clone(), key));
+        }
+    }
+    out
 }
 
 /// v0.119: `Some((run_var, agent_name))` when `prop` is a history property — its
@@ -1956,21 +2023,27 @@ fn attackable_contracts(
 }
 
 /// #917: the type-only namespace qualifier every named type reachable from
-/// `target_name` (or one of its `uses`) renders through inside the test module
-/// that targets it — a test module imports the target/`uses` commons only as
-/// a namespace (`import * as orders from …`), never inlining their
-/// declarations the way a `uses`r module's own production emission does, so
-/// *every* name here is foreign and needs one. The target's own name wins a
-/// collision against a `uses`d one, matching `synthetic_typed_commons_for_target`'s
-/// merge precedence.
+/// `target_name` renders through inside the test module that targets it. A
+/// test module imports the target, the contexts it consumes and its `uses`
+/// commons only as namespaces (`import * as orders from …`), never inlining
+/// their declarations the way a `uses`r module's own production emission does,
+/// so *every* name here is foreign and needs one.
+///
+/// #2075: the precedence is `synthetic_typed_commons_for_target`'s, so a name
+/// qualifies through the declaration the case was checked against: the
+/// target's own type, then a consumed unit's (#2062: a consumed *context*'s
+/// too, whose codecs a `Json.decode[Order]` in a case now generates), then a
+/// `uses`d commons'. A consumed type that collides with a `uses`d one never
+/// reaches here: the checker refuses that unit (`bynk.consumes.name_conflict`).
 fn json_codec_qual_for_target(
     target_name: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
 ) -> HashMap<String, String> {
     let mut qual = HashMap::new();
-    if let Some(used) = unit_uses.get(target_name) {
-        for u in used {
+    let mut qualify = |units: Option<&Vec<String>>| {
+        for u in units.into_iter().flatten() {
             let ns = test_ns(u);
             if let Some(table) = unit_tables.get(u) {
                 for n in table.types.keys() {
@@ -1978,13 +2051,11 @@ fn json_codec_qual_for_target(
                 }
             }
         }
-    }
-    let target_ns = test_ns(target_name);
-    if let Some(table) = unit_tables.get(target_name) {
-        for n in table.types.keys() {
-            qual.insert(n.clone(), format!("{target_ns}."));
-        }
-    }
+    };
+    // Highest precedence first; `or_insert` keeps the first claim.
+    qualify(Some(&vec![target_name.to_string()]));
+    qualify(unit_consumes.get(target_name));
+    qualify(unit_uses.get(target_name));
     qual
 }
 
@@ -2007,6 +2078,9 @@ fn emit_test_module(
     // #1883, slice 3: `asset_harness`'s text, when the target ships assets.
     asset_harness: Option<String>,
     binding_modules: &HashMap<String, String>,
+    schema_versions: &HashMap<String, i64>,
+    // #2050: whether the target's handlers emit ([`target_uses_emit`]).
+    uses_emit: bool,
     tys: &Arc<Types>,
 ) -> Option<(PathBuf, TsProgram, Option<String>, RunnableTest)> {
     // #914: the test-scaffold module's runtime import list is emitted below as a
@@ -2019,6 +2093,7 @@ fn emit_test_module(
         target_name,
         unit_tables,
         unit_uses,
+        unit_consumes,
     ));
     let _ = exports_visibility;
     let ext = import_ext.as_str();
@@ -2105,6 +2180,7 @@ fn emit_test_module(
         unit_flattened,
         (target_kind == UnitKind::Adapter).then_some(binding_modules),
         "__makeTestDeps",
+        uses_emit,
     );
     let has_integration_case = indices.iter().any(|&i| {
         parsed[i].test().is_some_and(|t| {
@@ -2124,6 +2200,7 @@ fn emit_test_module(
             unit_flattened,
             Some(binding_modules),
             name,
+            uses_emit,
         )
     };
     let integration_deps = (target_kind == UnitKind::Context
@@ -2655,6 +2732,23 @@ fn emit_test_module(
         }
     }
 
+    // #2052: a delivery helper per events service some body addressed with
+    // `svc.event(e)`. Appended after every body has lowered, like the codec
+    // closure above; a plain `function` declaration hoists.
+    let event_services = runtime_use.test_event_services();
+    if !event_services.is_empty() {
+        stmts.push(TsStmt::raw(
+            event_delivery_helpers(
+                target_name,
+                &event_services,
+                unit_tables,
+                unit_consumes,
+                schema_versions,
+            ),
+            None,
+        ));
+    }
+
     // Module-level runner. v0.127: `only` filters to a single case/property by
     // name (the per-case run lens); undefined runs every one.
     let mut dispatch_stmts: Vec<TsStmt> = Vec::new();
@@ -3066,6 +3160,102 @@ fn expectation_runtime_helpers() -> String {
     include_str!("../emitter/test_runtime/expectation.ts").to_string()
 }
 
+/// #2052: the `__bynkEvent_<svc>` helper behind each `svc.event(payload[,
+/// envelope])` address in a test module. It delivers as the Worker's
+/// `/_bynk/event/` route and the Bundle fan-out do: through the service's
+/// generated `event` method, whose prologue runs the subscription's pattern
+/// filter and `via schema(N)` guard, so the helper re-implements neither. The
+/// method takes the envelope only when the handler declares `env` or the
+/// service has a `via schema(N)` guard (`emit_event_wrapper`'s condition), so
+/// the helper forwards it only then.
+///
+/// An omitted envelope (`undefined`) is supplied as an emission would mint it:
+/// a fresh `eventId` per call (`test-event-<n>`, counted across the module), the
+/// publishing context as `publisherId`, the test clock's reading (`0`, the
+/// epoch) as `emittedAt`, and the event's current schema version.
+fn event_delivery_helpers(
+    target_name: &str,
+    services: &[String],
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    schema_versions: &HashMap<String, i64>,
+) -> String {
+    use bynk_syntax::ast::ServiceProtocol;
+    let ns = test_ns(target_name);
+    let mut out = String::new();
+    let mut counts = false;
+    for svc in services {
+        let Some(decl) = unit_tables
+            .get(target_name)
+            .and_then(|t| t.services.get(svc))
+        else {
+            continue;
+        };
+        let ServiceProtocol::Events {
+            event_type,
+            schema_dispatch,
+            ..
+        } = &decl.protocol
+        else {
+            continue;
+        };
+        let event = match event_type {
+            TypeRef::Named(id) => id.name.clone(),
+            _ => continue,
+        };
+        let takes_envelope = schema_dispatch.is_some()
+            || decl.handlers.iter().any(|h| {
+                matches!(h.kind, bynk_syntax::ast::HandlerKind::Event) && h.params.len() == 2
+            });
+        // #2052 review: the publisher resolves as the service's header
+        // resolves `E` (the target's own event, else the one consumed context
+        // declaring it). With no unique one the checker refuses a default
+        // envelope (`bynk.test.event_publisher_ambiguous`), so the helper then
+        // only forwards a case's own.
+        let consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
+        let defaults =
+            bynk_check::test_suites::event_publisher(target_name, &event, unit_tables, &consumed)
+                .ok()
+                .map(|owner| {
+                    let version = schema_versions
+                        .get(&format!("{owner}.{event}"))
+                        .copied()
+                        .or_else(|| {
+                            unit_tables
+                                .get(&owner)
+                                .and_then(|t| t.events.get(&event))
+                                .map(|d| d.schema_version())
+                        })
+                        .unwrap_or(1);
+                    (owner, version)
+                });
+        if takes_envelope {
+            let env = match &defaults {
+                Some((owner, version)) => {
+                    counts = true;
+                    format!(
+                        "envelope ?? {{ eventId: `test-event-${{++__bynkEventSeq}}`, publisherId: \"{}\", emittedAt: 0, schemaVersion: {version} }}",
+                        crate::emitter::escape_ts_string(owner)
+                    )
+                }
+                None => "envelope".to_string(),
+            };
+            out.push_str(&format!(
+                "function __bynkEvent_{svc}(payload: unknown, envelope: unknown, deps: unknown) {{\n  const env = {env};\n  return {ns}.{svc}.event(payload as never, env as never, deps as never);\n}}\n"
+            ));
+        } else {
+            // The handler cannot observe an envelope, so a case's own is dropped.
+            out.push_str(&format!(
+                "function __bynkEvent_{svc}(payload: unknown, _envelope: unknown, deps: unknown) {{\n  return {ns}.{svc}.event(payload as never, deps as never);\n}}\n"
+            ));
+        }
+    }
+    if counts {
+        out.insert_str(0, "let __bynkEventSeq = 0;\n");
+    }
+    out
+}
+
 /// #1994: the test double for the Worker's `ExecutionContext` — a `waitUntil`
 /// that collects the promises a `~>` send hands it — and `__bynkSettle`, which
 /// awaits them after an addressed handler call, so a case's expectations see
@@ -3090,6 +3280,27 @@ fn target_uses_send(
                     .any(|h| crate::emitter::block_uses_send(&h.body))
             })
         })
+}
+
+/// #2050: whether a context target has a handler — a service's or an agent's
+/// — that emits through the first-party `Events`, so the `deps` its handlers
+/// run on require `__eventsDispatch`: the same gate (`unit_table_uses_emit`)
+/// the composition root builds its own dispatch closure on.
+fn target_uses_emit(
+    target_name: &str,
+    target_kind: UnitKind,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+    unit_callees: &HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>>,
+) -> bool {
+    target_kind == UnitKind::Context
+        && unit_flattened
+            .get(target_name)
+            .and_then(|f| f.get("Events"))
+            .is_some_and(|owner| owner == bynk_check::firstparty::BYNK_UNIT)
+        && unit_tables
+            .get(target_name)
+            .is_some_and(|t| unit_table_uses_emit(t, unit_callees.get(target_name)))
 }
 
 /// #1485: the test-only HS256 JWT signer `emit_system_http_support`'s own
@@ -3586,10 +3797,12 @@ fn synthetic_typed_commons_for_target(
         .iter()
         .map(|(n, c)| (n.clone(), c.clone()))
         .collect();
+    // #2062: a consumed *context*'s types too. The scope setup destructures
+    // them (`emit_test_scope_setup`), and the lowering qualifies a bare
+    // nullary variant (`Domestic` → `Region.Domestic`) only when its sum is
+    // here, as a handler body's lowering does from the context's own view.
     for unit in unit_consumes.get(target_name).into_iter().flatten() {
-        if let Some(t) = unit_tables.get(unit)
-            && t.kind == Some(UnitKind::Adapter)
-        {
+        if let Some(t) = unit_tables.get(unit) {
             for (n, d) in &t.types {
                 types.entry(n.clone()).or_insert_with(|| d.clone());
             }
@@ -3885,6 +4098,9 @@ fn emit_test_deps(
     bindings: Option<&HashMap<String, String>>,
     // The factory's name: `__makeTestDeps`, or `__makeIntegrationDeps`.
     name: &str,
+    // #2050: whether the target's handlers emit, so their `deps` require
+    // `__eventsDispatch` ([`target_uses_emit`]).
+    uses_emit: bool,
 ) -> TestDeps {
     let mut units: BTreeSet<String> = BTreeSet::new();
     let mut doubles: Vec<(String, String, String)> = Vec::new();
@@ -4106,6 +4322,39 @@ fn emit_test_deps(
     if target_uses_send(target_name, target_kind, unit_tables) {
         entries.push(("__exec".to_string(), call(ident("__bynkExec"), Vec::new())));
     }
+    let mut entries: Vec<TsObjectEntry> = entries
+        .into_iter()
+        .map(|(k, v)| TsObjectEntry::Prop(k, v))
+        .collect();
+    // #2050: the release-at-commit flush of an emitting handler — a service's,
+    // or an agent's, which runs on its caller's `deps` — calls
+    // `deps.__eventsDispatch`. In a test it hands each event to the `Events`
+    // double, which records the call and delivers nothing, so `expect
+    // Events.emit called …` observes what the handler released. A method
+    // reading `this.Events` rather than a captured value: the recording
+    // wrapper lands on the deps object after this factory runs.
+    if uses_emit {
+        entries.push(TsObjectEntry::Method {
+            name: "__eventsDispatch".to_string(),
+            is_async: true,
+            generics: Vec::new(),
+            params: vec![TsParam {
+                name: "events".to_string(),
+                ty: Some(TsType::named_with_args(
+                    "globalThis.Array",
+                    vec![TsType::named(crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE)],
+                )),
+                optional: false,
+            }],
+            return_type: None,
+            doc: None,
+            inline: true,
+            body: vec![TsStmt::raw(
+                "for (const ev of events) await this.Events.emit(ev.payload);",
+                None,
+            )],
+        });
+    }
     // The same `"{  }"` double-space quirk `workers.rs`/`project.rs`/
     // `emit.rs`/`gen_ts_for_ty` (this file, Arc C slice 31) already carry as
     // opaque text: the pre-conversion `format!("  return {{ {} }};\n",
@@ -4120,7 +4369,7 @@ fn emit_test_deps(
     let return_value = if entries.is_empty() {
         ident("{  }")
     } else {
-        TsExpr::object(entries)
+        TsExpr::object_entries(entries)
     };
     body.push(TsStmt::return_stmt(Some(return_value), None));
     doubles.extend(given_doubles.into_inner());
@@ -4813,7 +5062,7 @@ fn emit_test_case_function(
         &cross,
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
-        target_call_sum_services(unit_tables.get(target_name)),
+        target_sum_handlers(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
         harness_bound,
@@ -6052,7 +6301,7 @@ fn emit_test_property_function(
         &cross,
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
-        target_call_sum_services(unit_tables.get(target_name)),
+        target_sum_handlers(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
         harness_bound,
@@ -6277,7 +6526,7 @@ fn emit_test_history_property_function(
         &cross,
         test_services,
         target_service_handler_kinds(unit_tables.get(target_name)),
-        target_call_sum_services(unit_tables.get(target_name)),
+        target_sum_handlers(unit_tables.get(target_name)),
         test_agents,
         target_uses_send(target_name, target_kind, unit_tables),
         harness_bound,
@@ -6645,12 +6894,25 @@ fn sysdrive_driver(
     binding: &str,
     decode_fn: &str,
     payload: &str,
+    signs_claims: bool,
 ) -> TsStmt {
     params.push(TsParam {
         name: "__sub".to_string(),
         ty: Some(TsType::named("string")),
         optional: false,
     });
+    // #2019: a refinement-guarded route signs the claims the acting actor
+    // presents (`{}` for a non-refinement actor) next to `sub`.
+    if signs_claims {
+        params.push(TsParam {
+            name: "__claims".to_string(),
+            ty: Some(TsType::named_with_args(
+                "globalThis.Record",
+                vec![TsType::named("string"), TsType::named("unknown")],
+            )),
+            optional: false,
+        });
+    }
     let mut body = Vec::new();
     if let Some(stmt) = body_stmt {
         body.push(stmt);

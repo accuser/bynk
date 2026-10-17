@@ -48,6 +48,24 @@ A sum is checked for reachability — decidably, at the scheme level:
   [authorisation invariants](/book/guides/actors/authorisation/)).
 - The body `match` must be **exhaustive** over the members.
 
+## Testing each arm
+
+A test drives each arm by naming that member, with the identity it carries:
+
+```bynk,fragment
+case "a visitor sees the public view" {
+  let r <- api.GET("/notes/:id", "n1") by Visitor
+  expect r is Ok(_)
+}
+
+case "a user sees their own view" {
+  let r <- api.GET("/notes/:id", "n1") by User("ada")
+  expect r is Ok(_)
+}
+```
+
+See [acting as an actor](/book/reference/testing/#call-site-by).
+
 ## Mixing a header and a body member
 
 Members can verify different ways — a header (`Bearer`) and a body

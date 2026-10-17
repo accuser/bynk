@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "provides": {
+    "listed": "f7febdbbf05f2a13",
+    "paged": "6d6bab196cfd5655"
+  },
+  "expects": {
+    "t.pay": {
+      "paged": "b47553082c55c98f"
+    }
+  }
+}

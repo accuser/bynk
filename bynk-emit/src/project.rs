@@ -263,8 +263,8 @@ pub struct ProjectOutput {
     pub discovered: Vec<DiscoveredSuite>,
     /// #1078: the reconciled `bynk.schema.lock` content, `Some` whenever
     /// `CompileOptions::schema_registry` was `SchemaLock::On` for this build
-    /// — `bynk-emit` computes it but never writes it; the caller (today,
-    /// `bynk-driver`'s two wiring points) persists it atomically, exactly
+    /// — `bynk-emit` computes it but never writes it; a building caller
+    /// (`bynkc compile`, `bynk dev`/`deploy`) persists it atomically, exactly
     /// the discipline `schema_registry.rs` used to implement itself. `None`
     /// when the registry was off, regardless of whether the content would
     /// have changed — the unchanged-content no-op lives in the writer, not
@@ -381,10 +381,13 @@ pub struct CompileOptions {
     pub sources: Option<HashMap<PathBuf, String>>,
     /// Events track, slice 3c (#980): reconcile against `bynk.schema.lock`.
     /// **Off by default** — `bynkc compile`'s directory branch and `bynk`'s
-    /// deploy/dev build turn it on; every library/test caller (in-memory
-    /// builds, `bynkc/tests/e2e.rs`'s in-place fixture compiles, `bynk-emit`'s
-    /// own `sources`-driven tests, the LSP) leaves it off, so a compile never
-    /// mutates a project tree it wasn't asked to.
+    /// deploy/dev build turn it on and write the reconciled lock back;
+    /// `check`'s and `test`'s directory paths (#2078) turn it on read-only,
+    /// so a non-additive change fails them too, and never write it. Every
+    /// library/test caller (in-memory builds, `bynkc/tests/e2e.rs`'s
+    /// in-place fixture compiles, `bynk-emit`'s own `sources`-driven tests,
+    /// the LSP) leaves it off, so a compile never mutates a project tree it
+    /// wasn't asked to.
     ///
     /// #1078: this carries the lock's pre-read content, not just an on/off
     /// switch — `bynk-emit` reads and writes no disk for this file (the same
@@ -680,10 +683,12 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
         discovered,
         options.contracts,
         options.tests,
-        // `bynk check` never reconciles the schema registry, regardless of
-        // `options.schema_registry` — pre-existing behaviour (finding #64's
-        // own era), preserved as-is by #1078, not introduced by it.
-        &SchemaLock::Off,
+        // #2078: `bynk check` reconciles against the committed
+        // `bynk.schema.lock` whenever the caller pre-read it
+        // (`SchemaLock::On`), so a non-additive event change fails the check
+        // the way it fails a build. Read-only by construction: a
+        // `ProjectCheck` carries no reconciled content for anyone to write.
+        &options.schema_registry,
         options.roots.project_root(),
         options.asset_files.as_ref(),
         tys,
@@ -1408,6 +1413,19 @@ fn emit_unit(
             .iter()
             .filter(|t| unit_info.get(*t).map(|i| i.kind) == Some(UnitKind::Adapter))
             .cloned()
+            .collect(),
+        consumed_types_with_methods: info
+            .consumes
+            .iter()
+            .filter_map(|t| unit_info.get(t))
+            .filter(|i| i.kind == UnitKind::Context)
+            .flat_map(|i| {
+                i.table
+                    .methods
+                    .iter()
+                    .filter(|(_, m)| !m.instance.is_empty() || !m.statics.is_empty())
+                    .map(|(n, _)| n.clone())
+            })
             .collect(),
         import_ext,
         contracts,
@@ -2428,6 +2446,8 @@ fn run_checks(
         &mut emitted_barrels,
         &test_asset_files,
         &test_binding_modules,
+        &schema_effective_versions,
+        &unit_callees,
         &mut test_errors,
         &mut refs,
         tys,
@@ -4284,6 +4304,11 @@ pub(crate) struct EmitProjectCtx {
     /// so in workers mode its capability types are imported from its root module
     /// (`<adapter>.ts`), not from a per-Worker `handlers.ts`.
     pub consumed_adapters: HashSet<String>,
+    /// #2045: the types of consumed *contexts* (adapters aside) that carry
+    /// attached methods. A call to one (`b.big()` lowers to `Batch.big(b)`) runs
+    /// the callee's own code from its companion object, so that name is a real
+    /// value import; every other consumed context type imports type-only.
+    pub consumed_types_with_methods: HashSet<String>,
     /// Slice 2: the extension emitted import specifiers use (`.js` default; `.ts`
     /// for the `bynkc test --inspect` debug build). Consulted by `runtime_import_for`
     /// and the sibling/cross-commons specifier helpers.
@@ -4327,6 +4352,23 @@ pub(crate) struct EmitProjectCtx {
 }
 
 impl EmitProjectCtx {
+    /// #2045: on `workers`, the types this unit imports from a consumed
+    /// *context* (not an adapter): each is another Worker's, so this module
+    /// names it in type position only and builds its sum variants inline.
+    pub(crate) fn consumed_context_types(&self) -> HashSet<String> {
+        if self.target != BuildTarget::Workers || self.unit_kind != UnitKind::Context {
+            return HashSet::new();
+        }
+        self.imported_from
+            .iter()
+            .filter(|(n, owner)| {
+                self.imported_from_kind.get(n.as_str()) == Some(&UnitKind::Context)
+                    && !self.consumed_adapters.contains(owner.as_str())
+            })
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
+
     pub fn commons_path(name: &str) -> PathBuf {
         commons_dir_for(name)
     }

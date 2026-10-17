@@ -1,0 +1,11 @@
+-- #2052: a subscriber the suite addresses with `svc.event(e)`.
+context shop.ledger
+
+consumes shop.order
+consumes shop.archive
+
+service OnPlaced from Events(Placed) {
+  on event(e: Placed) -> Effect[()] {
+    ()
+  }
+}

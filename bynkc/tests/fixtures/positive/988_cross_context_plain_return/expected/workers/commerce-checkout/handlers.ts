@@ -3,9 +3,11 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
-import { Receipt } from "../commerce-payment/handlers.js";
+import { type Receipt } from "../commerce-payment/handlers.js";
 
 import type * as commerce_payment from "../commerce-payment/handlers.js";
+
+export { type Receipt };
 
 export const pay = {
   async call(id: string, deps: { env: { COMMERCE_PAYMENT: __ServiceBinding } }): globalThis.Promise<Receipt> {

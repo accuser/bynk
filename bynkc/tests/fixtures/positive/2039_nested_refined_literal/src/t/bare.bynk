@@ -1,0 +1,40 @@
+context t.bare
+
+uses t.orders
+consumes t.pay
+
+-- #2039: a caller with no `uses t.values` passes nested literals at
+-- `Cents` positions; each is admitted against `t.pay`'s declaration.
+service optional {
+	on call() -> Effect[Int] by c: Caller { t.pay.maybe(Some(250)) }
+}
+
+service listed {
+	on call() -> Effect[Int] by c: Caller { t.pay.total([1, 2, 3]) }
+}
+
+service settled {
+	on call() -> Effect[Int] by c: Caller { t.pay.settle(Ok(7)) }
+}
+
+-- #2043: empty constructors as positional arguments take their parameter's
+-- type as the hint.
+service empties {
+	on call() -> Effect[Int] by c: Caller { t.pay.many([], None, Map.empty()) }
+}
+
+service shifted {
+	on call() -> Effect[Int] by c: Caller { t.pay.shift(Some(-3)) }
+}
+
+service refunded {
+	on call() -> Effect[Int] by c: Caller { t.pay.refund(Err(5)) }
+}
+
+service parenthesised {
+	on call() -> Effect[Int] by c: Caller { t.pay.maybe(Some((12))) }
+}
+
+service placed {
+	on call() -> Effect[Int] by c: Caller { t.pay.place(Order { cents: 40, note: "n" }) }
+}

@@ -1,0 +1,7 @@
+context shop.order
+
+exports transparent { Placed, Region }
+
+type Region = enum { Domestic, International }
+
+event Placed = { id: String, region: Region }

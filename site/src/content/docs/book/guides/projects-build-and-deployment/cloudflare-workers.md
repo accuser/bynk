@@ -63,13 +63,21 @@ WebSocket upgrade answers a `500 Internal Server Error`. The client never sees t
 
 ```text
 shop.api GET /shout/:word faulted Error: provider exploded for boom
+    at Object.shout (index.js:412:11)
+    …
 ```
 
 The line names the context and the dispatch that faulted: the route's
 *pattern*, `call <service>` for a service call, `event <service>` for an event
 delivery, or `ws <service>` for a WebSocket upgrade. It never names the
 request, so no key or value from the URL reaches the log. A queue consumer
-logs `queue <name> threw` and retries the message. A refused cross-context
+logs `queue <name> threw` and retries the message.
+
+Both log the error's stack, not only its message. Deploy with
+`wrangler deploy --upload-source-maps` and the frames in `wrangler tail` map
+back through the bundle's source map to your `.bynk` lines. The fault is
+caught and answered, so Cloudflare records the request as `ok` with no
+exception: the log line is where it shows. A refused cross-context
 call is also logged by name on both sides: see
 [Contract skew](/book/guides/projects-build-and-deployment/contract-skew/).
 

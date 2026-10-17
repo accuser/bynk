@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
-import { Batch } from "../ev-store/handlers.js";
+import { type Batch } from "../ev-store/handlers.js";
 import { Line as __CommonsLine, Page as __CommonsPage, Qty as __CommonsQty, Tag as __CommonsTag, someTag } from "../../ev/values.js";
 
 import type * as ev_store from "../ev-store/handlers.js";
@@ -20,6 +20,8 @@ export const Tag = {
   of(value: string): Result<Tag, ValidationError> { return __CommonsTag.of(value); },
   unsafe(value: string): Tag { return __CommonsTag.unsafe(value); },
 };
+
+export { type Batch };
 
 export const take = {
   async call(ls: readonly Line[], first: Option<Line>, byKey: ReadonlyMap<string, Line>, qtys: readonly Qty[], page: Page<Line>, deps: {}): globalThis.Promise<number> {

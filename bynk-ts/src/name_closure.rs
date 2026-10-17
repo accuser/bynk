@@ -32,7 +32,7 @@
 //! `bynk-emit` still renders to text. That part of a module stays `tsc`'s
 //! job (#1823 lived there).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::program::{
     TsArrowBody, TsBindingName, TsDecl, TsExpr, TsObjectEntry, TsParam, TsProgram, TsStmt,
@@ -192,11 +192,175 @@ pub fn unbound_names(program: &TsProgram) -> Vec<String> {
     all.into_iter().collect()
 }
 
+/// #2045: each `(specifier, name)` a structured named import brings in as a
+/// value: every entry of an `import { … }` but its `type X` ones, none of an
+/// `import type { … }`. Namespace and opaque-text imports are not reported.
+pub fn value_imports(program: &TsProgram) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for stmt in &program.stmts {
+        if let TsStmtKind::Decl(TsDecl::Import {
+            type_only: false,
+            names,
+            from,
+        }) = &stmt.kind
+        {
+            out.extend(
+                names
+                    .iter()
+                    .map(|n| n.trim())
+                    .filter(|n| !n.starts_with("type "))
+                    .map(|n| (from.clone(), n.to_string())),
+            );
+        }
+    }
+    out
+}
+
+/// #2045: every name `program` uses as a value that only a type-only import
+/// binds (`import { type Status }` then `Status.Active`): a `TS1361` (`cannot
+/// be used as a value because it was imported using 'import type'`). Opaque
+/// text is not searched for uses, as in [`unbound_names`].
+pub fn type_only_value_uses(program: &TsProgram) -> Vec<String> {
+    let mut w = Walk::default();
+    for s in &program.stmts {
+        w.stmt(s);
+    }
+    w.used_values
+        .iter()
+        .filter(|n| w.type_only.contains(*n) && !w.value_bound.contains(*n))
+        .cloned()
+        .collect()
+}
+
+/// #2036: a member a module names through one of its namespace imports:
+/// `handlers.Batch` in type position, `handlers.__deserialise_Batch(…)` in
+/// value position.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NamespaceMemberUse {
+    /// The namespace import's specifier (`./handlers.js`).
+    pub from: String,
+    /// The member named (`Batch`).
+    pub member: String,
+}
+
+/// #2036: every member `program` names through a namespace import
+/// (`import * as ns`, `import type * as ns`), sorted and deduplicated. A
+/// member the target module does not export is a `TS2694`/`TS2339` that
+/// `tsc` would report (`Namespace 'handlers' has no exported member`), which
+/// [`unbound_names`] cannot see: the namespace itself is bound. Checking it
+/// needs the target module too, so a caller pairs this with
+/// [`module_exports`]. Opaque text is not searched for uses.
+pub fn namespace_member_uses(program: &TsProgram) -> Vec<NamespaceMemberUse> {
+    let mut w = Walk::default();
+    for s in &program.stmts {
+        w.stmt(s);
+    }
+    let uses: BTreeSet<NamespaceMemberUse> = w
+        .qualified
+        .iter()
+        .filter_map(|(head, member)| {
+            w.namespaces.get(head).map(|from| NamespaceMemberUse {
+                from: from.clone(),
+                member: member.clone(),
+            })
+        })
+        .collect();
+    uses.into_iter().collect()
+}
+
+/// #2036: what a module exports, for [`namespace_member_uses`]' members.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ModuleExports {
+    /// Every name exported directly or re-exported by name.
+    pub names: BTreeSet<String>,
+    /// The specifier of each `export * from "…"`, whose module's exports are
+    /// this one's too (a split context's `handlers.ts`, #1820).
+    pub star_from: Vec<String>,
+}
+
+/// #2036: the names `program` exports. Structured exports are read with
+/// [`TsStmt::exported_names`]; opaque text line by line, as [`unbound_names`]
+/// reads its declarations: a line starting `export` and then a declaration
+/// keyword or a `{ … }` list. Over-reporting an export can only hide a
+/// defect.
+pub fn module_exports(program: &TsProgram) -> ModuleExports {
+    let mut out = ModuleExports::default();
+    for stmt in &program.stmts {
+        match &stmt.kind {
+            TsStmtKind::Decl(TsDecl::ReExportAll { from }) => out.star_from.push(from.clone()),
+            TsStmtKind::Decl(_) => {
+                out.names
+                    .extend(stmt.exported_names().iter().map(|e| e.name.to_string()));
+            }
+            TsStmtKind::Raw(text) | TsStmtKind::Verbatim { text, .. } => {
+                opaque_exports(text, &mut out.names)
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The names opaque text exports, line by line (see [`module_exports`]).
+fn opaque_exports(text: &str, out: &mut BTreeSet<String>) {
+    for line in text.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("export ") else {
+            continue;
+        };
+        let mut rest = rest.trim_start();
+        for prefix in ["declare ", "async "] {
+            rest = rest.strip_prefix(prefix).unwrap_or(rest).trim_start();
+        }
+        // `export type { A, B }` lists types, as `export { A, B }` lists names.
+        let list = rest
+            .strip_prefix("type ")
+            .map(str::trim_start)
+            .unwrap_or(rest)
+            .strip_prefix('{');
+        if let Some(list) = list {
+            let inner = list.split('}').next().unwrap_or("");
+            for spec in inner.split(',') {
+                let spec = spec.trim();
+                let spec = spec.strip_prefix("type ").unwrap_or(spec).trim();
+                if let Some(name) = leading_ident(spec.rsplit(" as ").next().unwrap_or(spec)) {
+                    out.insert(name.to_string());
+                }
+            }
+            continue;
+        }
+        for keyword in [
+            "function ",
+            "const ",
+            "let ",
+            "var ",
+            "class ",
+            "interface ",
+            "type ",
+            "enum ",
+        ] {
+            if let Some(after) = rest.strip_prefix(keyword)
+                && let Some(name) = leading_ident(after)
+            {
+                out.insert(name.to_string());
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 struct Walk {
     bound: BTreeSet<String>,
     used_types: BTreeSet<String>,
     used_values: BTreeSet<String>,
+    /// #2036: each namespace import's alias and specifier.
+    namespaces: BTreeMap<String, String>,
+    /// #2036: every `head.member` named in type or value position.
+    qualified: BTreeSet<(String, String)>,
+    /// #2045: names bound only by a type-only import (`import { type X }`,
+    /// `import type { X }`, `import type * as ns`), and the names bound any
+    /// other way. A value use of the first and not the second is `TS1361`.
+    type_only: BTreeSet<String>,
+    value_bound: BTreeSet<String>,
 }
 
 /// The identifier a piece of text starts with: `value` of `value.name`,
@@ -225,10 +389,20 @@ impl Walk {
             for word in name.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$')) {
                 if let Some(ident) = leading_ident(word) {
                     self.bound.insert(ident.to_string());
+                    self.value_bound.insert(ident.to_string());
                 }
             }
         } else if let Some(ident) = leading_ident(name) {
             self.bound.insert(ident.to_string());
+            self.value_bound.insert(ident.to_string());
+        }
+    }
+
+    /// #2045: bind a name a type-only import brings in.
+    fn bind_type_only(&mut self, name: &str) {
+        if let Some(ident) = leading_ident(name) {
+            self.bound.insert(ident.to_string());
+            self.type_only.insert(ident.to_string());
         }
     }
 
@@ -262,11 +436,19 @@ impl Walk {
 
     /// An import specifier: `X`, `type X`, `X as Y` or `type X as Y` binds
     /// the local name.
-    fn bind_specifier(&mut self, spec: &str) {
+    fn bind_specifier(&mut self, spec: &str, decl_type_only: bool) {
         let spec = spec.trim();
-        let spec = spec.strip_prefix("type ").unwrap_or(spec).trim();
+        let (spec, type_only) = match spec.strip_prefix("type ") {
+            Some(rest) => (rest.trim(), true),
+            None => (spec, decl_type_only),
+        };
         let local = spec.rsplit(" as ").next().unwrap_or(spec).trim();
-        if !local.is_empty() {
+        if local.is_empty() {
+            return;
+        }
+        if type_only {
+            self.bind_type_only(local);
+        } else {
             self.bind(local);
         }
     }
@@ -289,7 +471,7 @@ impl Walk {
                     .and_then(|open| head[open..].find('}').map(|close| (open, open + close)));
                 if let Some((open, close)) = braces {
                     for spec in head[open + 1..close].split(',') {
-                        self.bind_specifier(spec);
+                        self.bind_specifier(spec, false);
                     }
                 } else if let Some(alias) = head.trim().strip_prefix("* as ") {
                     self.bind(alias.trim());
@@ -382,7 +564,13 @@ impl Walk {
     fn ty(&mut self, t: &TsType) {
         match t {
             TsType::Named { name, type_args } => {
-                let head = name.split('.').next().unwrap_or(name).trim();
+                let mut segments = name.splitn(2, '.');
+                let head = segments.next().unwrap_or(name).trim();
+                // A name may carry its arguments as text (`ns.T<number>`).
+                if let Some(member) = segments.next().and_then(leading_ident) {
+                    self.qualified
+                        .insert((head.to_string(), member.to_string()));
+                }
                 if head
                     .chars()
                     .next()
@@ -556,20 +744,41 @@ impl Walk {
 
     fn decl(&mut self, decl: &TsDecl) {
         match decl {
-            TsDecl::Import { names, .. } => {
+            TsDecl::Import {
+                names, type_only, ..
+            } => {
                 for n in names {
-                    self.bind_specifier(n);
+                    self.bind_specifier(n, *type_only);
                 }
             }
-            TsDecl::ImportNamespace { alias, .. } | TsDecl::ImportDefault { alias, .. } => {
-                self.bind(alias)
+            TsDecl::ImportNamespace {
+                alias,
+                from,
+                type_only,
+            } => {
+                self.namespaces.insert(alias.clone(), from.clone());
+                if *type_only {
+                    self.bind_type_only(alias)
+                } else {
+                    self.bind(alias)
+                }
             }
+            TsDecl::ImportDefault { alias, .. } => self.bind(alias),
             TsDecl::ReExport { .. } | TsDecl::ReExportAll { .. } => {}
             // `export { a, b };` exports names this module binds (#1852),
             // so each is a use: one never imported or declared is unbound.
+            // A `type X` entry (#2036) uses `X`, and `X as Y` uses `X`.
             TsDecl::ExportNames { names } => {
                 for n in names {
-                    self.use_value(n);
+                    let n = n.trim();
+                    match n.strip_prefix("type ") {
+                        Some(t) => {
+                            if let Some(ident) = leading_ident(t) {
+                                self.used_types.insert(ident.to_string());
+                            }
+                        }
+                        None => self.use_value(n),
+                    }
                 }
             }
             TsDecl::Export(inner) => self.decl(inner),
@@ -643,7 +852,10 @@ impl Walk {
             TsExpr::Ident(name) => self.use_value(name),
             TsExpr::Lit(_) => {}
             TsExpr::VerbatimExpr(text, _) => self.opaque(text),
-            TsExpr::Member { object, .. } | TsExpr::OptionalMember { object, .. } => {
+            TsExpr::Member { object, property } | TsExpr::OptionalMember { object, property } => {
+                if let TsExpr::Ident(head) = object.as_ref() {
+                    self.qualified.insert((head.clone(), property.clone()));
+                }
                 self.expr(object)
             }
             TsExpr::Index { object, index } | TsExpr::OptionalIndex { object, index } => {
@@ -982,5 +1194,155 @@ mod tests {
     fn a_name_used_only_inside_opaque_text_is_not_checked() {
         let p = program(vec![TsStmt::raw("return __serialise_Missing(x);", None)]);
         assert!(unbound_names(&p).is_empty());
+    }
+
+    #[test]
+    fn a_type_only_export_entry_uses_its_name() {
+        // #2036: `export { type Batch };` of an imported consumed type.
+        let export = |name: &str| {
+            TsStmt::decl(
+                TsDecl::ExportNames {
+                    names: vec![format!("type {name}")],
+                },
+                None,
+            )
+        };
+        let p = program(vec![import(&["Batch"]), export("Batch"), export("Missing")]);
+        assert_eq!(unbound_names(&p), ["Missing"]);
+    }
+
+    #[test]
+    fn namespace_members_are_reported_with_their_specifier() {
+        // #2036: `handlers.Batch` in type position and
+        // `handlers.__deserialise_Batch(…)` in value position; a qualified
+        // name whose head is no namespace import is not a member use.
+        let p = program(vec![
+            TsStmt::decl(
+                TsDecl::ImportNamespace {
+                    type_only: false,
+                    alias: "handlers".to_string(),
+                    from: "./handlers.js".to_string(),
+                },
+                None,
+            ),
+            TsStmt::let_stmt(
+                TsBindingName::Ident("b".to_string()),
+                Some(TsType::named("handlers.Batch<number>")),
+                Some(TsExpr::Call {
+                    callee: Box::new(TsExpr::Member {
+                        object: Box::new(TsExpr::Ident("handlers".to_string())),
+                        property: "__deserialise_Batch".to_string(),
+                    }),
+                    args: vec![],
+                }),
+                None,
+            ),
+            TsStmt::let_stmt(
+                TsBindingName::Ident("c".to_string()),
+                Some(TsType::named("globalThis.Response")),
+                None,
+                None,
+            ),
+        ]);
+        let uses: Vec<(String, String)> = namespace_member_uses(&p)
+            .into_iter()
+            .map(|u| (u.from, u.member))
+            .collect();
+        assert_eq!(
+            uses,
+            [
+                ("./handlers.js".to_string(), "Batch".to_string()),
+                (
+                    "./handlers.js".to_string(),
+                    "__deserialise_Batch".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn module_exports_reads_structured_and_opaque_exports_and_star_re_exports() {
+        let p = program(vec![
+            TsStmt::decl(
+                TsDecl::ExportNames {
+                    names: vec!["type Batch".to_string(), "a as b".to_string()],
+                },
+                None,
+            ),
+            codec("__serialise_Note", "Note", "__serialise_Name"),
+            TsStmt::raw(
+                "export async function run() {}\nexport { x, type Y };\nexport type { A, B as C };\nexport type D = number;\nconst hidden = 1;",
+                None,
+            ),
+            TsStmt::decl(
+                TsDecl::ReExportAll {
+                    from: "./handlers/a.js".to_string(),
+                },
+                None,
+            ),
+        ]);
+        let exports = module_exports(&p);
+        let names: Vec<&str> = exports.names.iter().map(String::as_str).collect();
+        assert_eq!(
+            names,
+            [
+                "A",
+                "Batch",
+                "C",
+                "D",
+                "Y",
+                "__serialise_Note",
+                "b",
+                "run",
+                "x"
+            ]
+        );
+        assert_eq!(exports.star_from, ["./handlers/a.js"]);
+    }
+
+    #[test]
+    fn a_type_only_import_used_as_a_value_is_reported() {
+        // #2045: `import { type Status }` then `Status.Active` is TS1361; a
+        // type position, or a name also bound as a value, is not.
+        let member = |object: &str| TsExpr::Member {
+            object: Box::new(TsExpr::Ident(object.to_string())),
+            property: "Active".to_string(),
+        };
+        let p = program(vec![
+            import(&["type Status", "type Batch", "Kept"]),
+            TsStmt::let_stmt(
+                TsBindingName::Ident("a".to_string()),
+                Some(TsType::named("Batch")),
+                Some(member("Status")),
+                None,
+            ),
+            TsStmt::let_stmt(
+                TsBindingName::Ident("b".to_string()),
+                None,
+                Some(member("Kept")),
+                None,
+            ),
+        ]);
+        assert_eq!(type_only_value_uses(&p), ["Status"]);
+        assert!(unbound_names(&p).is_empty());
+    }
+
+    #[test]
+    fn value_imports_skip_type_only_entries_and_declarations() {
+        let p = program(vec![
+            import(&["type Status", "Batch"]),
+            TsStmt::decl(
+                TsDecl::Import {
+                    type_only: true,
+                    names: vec!["Receipt".to_string()],
+                    from: "./r.js".to_string(),
+                },
+                None,
+            ),
+        ]);
+        assert_eq!(
+            value_imports(&p),
+            [("./m.js".to_string(), "Batch".to_string())]
+        );
     }
 }

@@ -501,8 +501,20 @@ mixed pair, is `bynk.types.no_numeric_coercion`.
 A **literal** written where a refined type is expected is admitted at compile
 time ([§6.4](/book/spec/type-system/#64-admission--construction)) in these positions:
 return (block tail), a `let` with a type annotation, an `Ok`/`Some`/`Err`
-payload, and a refined-typed call argument. The literal MUST satisfy the
-predicate, or it is rejected (`bynk.refine.literal_violates`); an admitted
+payload, and a refined-typed call argument — including a cross-context call's
+(`t.pay.charge(250)`, from a consuming context or a `system` case). A literal
+in a cross-context argument, passed directly or nested in a `Some`/`Ok`/`Err`
+payload, a list element, or a field of a record literal of the callee's own
+type, a generic one included with its type arguments substituted into the
+field types (`t.pay.maybe(Some(250))`, `Page { items: [250] }` for a
+`Page[Cents]` parameter), is checked against the declaration of the type at
+its position in the parameter's type, in the consumed context, so the caller
+need not `uses` its commons, and a type of the same name the caller declares
+plays no part. A `None`, `[]`, `List.empty()` or `Map.empty()` in such an
+argument takes its position's type the same way. A shorthand field
+(`Page { items, size }`) is a value, not a literal: it is checked by its
+binding's type, beside literal fields admitted as above. The
+literal MUST satisfy the predicate, or it is rejected (`bynk.refine.literal_violates`); an admitted
 literal MUST be a compile-time literal, not an expression or identifier. A refined
 type is thus constructed at run time through `.of` alone and has **no** unchecked
 `.unsafe` — the unchecked escape hatch is opaque-only (`Age.unsafe(x)` is rejected
@@ -1275,7 +1287,9 @@ every added field has a default and no field is removed, retyped, or loses a
 default, increments it by one; any other change is
 `bynk.event.non_additive_schema_change`. A declared `@schema(N)` MUST equal the
 version so computed (`bynk.event.schema_version_mismatch`). The computed version
-is the envelope's `schemaVersion`.
+is the envelope's `schemaVersion`. A check (`bynkc check`) and a test run
+(`bynkc test`) reconcile against the committed registry the same way and report
+the same diagnostics, but never write it; only a build records a new version.
 
 **Idempotent handling.** `Idempotency` is a first-party capability of the `bynk`
 adapter with two operations, `dedup[T](key: String) -> Effect[Option[T]]` and
@@ -1388,7 +1402,7 @@ argument of a service address in a `system`-tier `case`
 which only a `system` case runs.
 
 A service address in a `case` (`svc.call(…)`, `svc.<VERB>("/path", …)`,
-`svc.schedule("…")`, `svc.message(m)`) has the addressed handler's declared
+`svc.schedule("…")`, `svc.message(m)`, `svc.event(e)`) has the addressed handler's declared
 return type, an `Effect[T]` (#1934). An http address that carries a `Wire(...)`
 argument, is driven `by Nobody`, or names a method the path declares no handler
 for has type `Effect[HttpOutcome[T]]` instead, where the handler returns
@@ -1399,6 +1413,20 @@ Handled(HttpResult[T])`, and `BoundaryRejection` is the built-in sum
 StructuralMismatch(detail: String) | Unauthorized | MethodNotAllowed`. Neither
 type can be named in source. An asset fetch (`svc.GET(asset)`) has type
 `Effect[HttpResult[()]]`.
+
+An event address `svc.event(e)` or `svc.event(e, env)` (#2052) MUST name a
+`from Events(E)` service (`bynk.test.service_bad_address`) and pass one or two
+arguments (`bynk.test.service_call_arity`). `e` MUST have type `E`: another
+event the target declares or consumes is `bynk.test.event_not_subscribed`, any
+other type `bynk.types.argument_mismatch`. `env` MUST have type `EventEnvelope`
+(`bynk.types.argument_mismatch`). The address MUST NOT occur in a `system`-tier
+`case` (`bynk.test.event_needs_in_process`). Delivery evaluates the service's
+pattern filter and `via schema(N)` guard as a fan-out delivery does. An omitted
+`env` is a fresh envelope: a new `eventId` per call, `E`'s publisher as
+`publisherId`, `Instant.fromEpochMillis(0)` as `emittedAt`, and `E`'s current
+schema version. The publisher is the target if it declares `E`, else the one
+context it consumes that declares `E`. With no such unique context, `env` MUST
+be given (`bynk.test.event_publisher_ambiguous`).
 
 ### §5.9c Tiers (v0.118)
 
@@ -1462,6 +1490,11 @@ consumed seam of the unit under test (`consumes` declares, `given` requires,
 - **Scope and precedence.** A `stub` MAY appear at suite scope (applies to every
   case) and at case scope (overrides for one case); precedence is case `stub` >
   suite `stub` > the tier default.
+- **Tier (#2026).** A `stub` MUST NOT appear in a `system`-tier case, nor at the
+  scope of a suite that runs `system` cases (`suite … as system`, or one with a
+  `case … as system`) (`bynk.stub.at_system`): each participant runs as
+  the Worker it deploys as, whose composition builds its own capability providers,
+  so no seam is open to a double.
 - **Argument patterns (DECISION D3).** Each parameter takes a pattern from the one
   predicate surface — `_` (any) or a literal / pure value the recorded argument must
   equal, plus `is` narrowing. Multiple clauses for one method form an ordered match

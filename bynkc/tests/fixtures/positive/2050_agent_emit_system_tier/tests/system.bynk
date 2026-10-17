@@ -1,0 +1,8 @@
+-- #2050: at the system tier the participants run as Workers with the real
+-- fan-out, so the agent's emit is dispatched for real rather than recorded.
+suite app as system {
+  case "the agent emits across the wire" {
+    let r <- api.POST("/bump") by Visitor
+    expect r is Ok(_)
+  }
+}

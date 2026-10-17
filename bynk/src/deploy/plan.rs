@@ -201,6 +201,37 @@ pub(crate) fn conflicting_env_passthrough(wrangler_args: &[String]) -> Option<&s
         .map(String::as_str)
 }
 
+/// #2055: the refusal for a `--secrets-file` passed through after `--` when
+/// the run includes a first deploy. That deploy uploads the Worker's secrets
+/// with its own `wrangler deploy --secrets-file`, so the passthrough would be
+/// a second, contradictory one. Matched bare or `=`-joined, as
+/// [`conflicting_env_passthrough`] matches. `None` when there is no such
+/// argument or every Worker in `order` has been deployed in `environment`
+/// (a redeploy passes nothing of its own). Pure, so the wording is tested.
+pub(crate) fn secrets_file_passthrough_refusal(
+    wrangler_args: &[String],
+    order: &[String],
+    lock: &DeployLock,
+    environment: &str,
+) -> Option<String> {
+    let arg = wrangler_args
+        .iter()
+        .find(|arg| arg.as_str() == "--secrets-file" || arg.starts_with("--secrets-file="))?;
+    let first: Vec<String> = order
+        .iter()
+        .filter(|worker| !lock.is_deployed(environment, worker))
+        .map(|worker| format!("`{}`", deployed_worker_name(environment, worker)))
+        .collect();
+    if first.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "bynk: `{arg}` after `--` conflicts with the secrets file `bynk deploy` uploads with a new Worker's first version ({}).\n  \
+         Pass it to bynk instead, before `--`: `bynk deploy --secrets-file <file>`.\n",
+        first.join(", ")
+    ))
+}
+
 /// Run the slice-0 single-context deployment pipeline.
 pub fn run(
     tb: &dyn Toolbox,
@@ -299,16 +330,10 @@ pub fn run(
     {
         let absent = absent_dependencies(worker, &graph, &lock, &opts.environment);
         if !absent.is_empty() {
-            eprintln!(
-                "bynk: `{worker}` binds to {}, which {} never been deployed — a Service Binding to a Worker that does not exist fails at upload.",
-                absent
-                    .iter()
-                    .map(|a| format!("`{a}`"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                if absent.len() == 1 { "has" } else { "have" }
+            eprint!(
+                "{}",
+                absent_dependencies_refusal(&opts.environment, worker, &absent)
             );
-            eprintln!("  Deploy the whole project once (`bynk deploy`) to bring the topology up.");
             return ExitCode::FAILURE;
         }
 
@@ -316,8 +341,8 @@ pub fn run(
         // it still provide the contract this worker was compiled against?
         // Without this, the push succeeds and production discovers the skew by
         // 409ing. `--context` is precisely the flag that makes this reachable.
-        let expects = match read_contracts_manifest(&workers_dir.join(worker)) {
-            Ok(m) => m.expects,
+        let manifest = match read_contracts_manifest(&workers_dir.join(worker)) {
+            Ok(m) => m,
             Err(e) => {
                 eprintln!(
                     "bynk: could not read `{worker}`'s {}: {e}",
@@ -327,26 +352,52 @@ pub fn run(
             }
         };
         let skews = contract_skews(
-            &expects,
+            &manifest.expects,
             &lock,
             bynk_emit::project::worker_dir_name,
             &opts.environment,
         );
         if !skews.is_empty() {
-            eprintln!(
-                "bynk: `{worker}` was compiled against a contract its live dependencies no longer provide ({CONTRACT_SKEW}):"
+            eprint!(
+                "{}",
+                contract_skew_refusal(&opts.environment, worker, &skews)
             );
-            for s in &skews {
-                eprintln!(
-                    "  {}.{} — compiled against {}, live is {}",
-                    s.dependency, s.service, s.expected, s.live
+            return ExitCode::FAILURE;
+        }
+
+        // #2077: and the callee half. Does this build still provide what every
+        // *other* live Worker was compiled against? Without this, pushing a
+        // callee whose contract changed answers each live caller 409.
+        let callee_skews = callee_contract_skews(
+            worker,
+            &manifest.provides,
+            &lock,
+            bynk_emit::project::worker_dir_name,
+            &opts.environment,
+        );
+        if !callee_skews.is_empty() {
+            // A caller this build no longer has gets its own remedy: a
+            // whole-project deploy would not move it.
+            let (built, orphaned) = split_orphaned_callers(callee_skews, &graph);
+            if !built.is_empty() {
+                eprint!(
+                    "{}",
+                    callee_contract_skew_refusal(&opts.environment, worker, &built)
                 );
             }
-            eprintln!(
-                "  Deploying this would ship a caller its callee rejects (409 ContractMismatch) on every call."
-            );
-            eprintln!("  Deploy the whole project (`bynk deploy`) so both sides move together.");
+            if !orphaned.is_empty() {
+                eprint!(
+                    "{}",
+                    orphaned_caller_skew_refusal(&opts.environment, worker, &orphaned)
+                );
+            }
             return ExitCode::FAILURE;
+        }
+        for caller in unrecorded_callers(worker, &graph, &lock, &opts.environment) {
+            eprint!(
+                "{}",
+                unrecorded_caller_warning(&opts.environment, worker, &caller)
+            );
         }
     }
 
@@ -435,8 +486,18 @@ pub fn run(
     // instance's joins two names with the separator Worker names already use,
     // so two can coincide. Refused before the plan, `--dry-run` included,
     // rather than met as wrangler's own error partway through a deploy.
-    if let Some(message) = kv_title_collision(&resources, &opts.environment) {
+    if let Some(message) = kv_title_collision(&resources, &lock, &opts.environment) {
         eprintln!("bynk: {message}");
+        return ExitCode::FAILURE;
+    }
+    // #2055: a first deploy hands `wrangler deploy` Bynk's own
+    // `--secrets-file`, so a passthrough one would be a second, with
+    // wrangler deciding which wins. Refused before the plan, as `--env`'s
+    // clash is.
+    if let Some(refusal) =
+        secrets_file_passthrough_refusal(&opts.wrangler_args, &order, &lock, &opts.environment)
+    {
+        eprint!("{refusal}");
         return ExitCode::FAILURE;
     }
 
@@ -531,7 +592,8 @@ pub fn run(
     // `--context` run does not deploy. Asked before the KV ids are
     // materialised and any `[env.<name>]` table is synthesised: wrangler loads
     // that config (a placeholder id included) and addresses the same Worker
-    // either way, since the synthesised table sets no `name`.
+    // either way, since the `name` the synthesised table sets (#2028) is the
+    // one Wrangler's `--env` default gives a table without one.
     let in_run: BTreeSet<&str> = order.iter().map(String::as_str).collect();
     let edges: Vec<Edge> = project_edges(&resources)
         .into_iter()
@@ -571,9 +633,9 @@ pub fn run(
             // #2004 review: name the Workers whose answer could not be read,
             // since the decision counts them as holding the key.
             if p == Presence::Unknown {
-                eprintln!(
-                    "bynk: could not ask Cloudflare whether `{worker}` holds {key}; assuming it does. If it does not, the edge {} refuses every call — `bynk deploy --force` sets a fresh key on every edge.",
-                    edge.describe()
+                eprint!(
+                    "{}",
+                    unknown_edge_key_notice(&opts.environment, worker, &key, edge)
                 );
             }
             p
@@ -587,6 +649,7 @@ pub fn run(
             both_in_run,
             opts.force,
             &mut mint_edge_key,
+            &opts.environment,
         ) {
             Ok(decision) => {
                 edge_keys.insert(edge.clone(), decision);
@@ -617,9 +680,9 @@ pub fn run(
                     foreign_keys.insert((worker.clone(), caller.binding.clone()), decision);
                 }
                 Err(e) => {
-                    eprintln!(
-                        "bynk: `{}` (the foreign caller `{}` of `{worker}`): {e}",
-                        caller.binding, caller.actor
+                    eprint!(
+                        "{}",
+                        foreign_binding_refusal(&opts.environment, worker, caller, &e)
                     );
                     return ExitCode::FAILURE;
                 }
@@ -629,9 +692,20 @@ pub fn run(
     // Shared across the loop so two contexts wanting the same secret prompt
     // once. Dropped with the run — nothing here is ever written (ADR 0195 D1).
     let mut resolved_secrets = BTreeMap::new();
+    // #2055: a first deploy's secrets file that a SIGKILLed run left behind
+    // goes before this run might write one of its own.
+    let stale_removed = sweep_stale_upload_dirs(&std::env::temp_dir());
+    if stale_removed > 0 {
+        eprintln!(
+            "bynk: removed {stale_removed} secrets file(s) an interrupted deploy left in the temp directory"
+        );
+    }
     for (i, worker) in order.iter().enumerate() {
         if order.len() > 1 {
-            eprintln!("bynk: deploying `{worker}` ({}/{})…", i + 1, order.len());
+            eprint!(
+                "{}",
+                deploying_notice(&opts.environment, worker, i + 1, order.len())
+            );
         }
         match deploy_one(
             &probe.provenance,
@@ -639,6 +713,7 @@ pub fn run(
             &workers_dir,
             worker,
             &resources[worker],
+            &resources,
             &mut lock,
             &lock_path,
             &mut attempted_queues,
@@ -650,6 +725,7 @@ pub fn run(
                 foreign_secrets: &foreign_secrets,
                 listed: &listed,
                 resolved: &mut resolved_secrets,
+                with_upload: secrets_file_supported(&probe),
             },
             &opts.wrangler_args,
             &opts.environment,
@@ -666,6 +742,12 @@ pub fn run(
                     .map(|m| Some(m.provides))
                     .unwrap_or(None);
                 lock.record_deployed(&opts.environment, worker, provided);
+                // #2077: and what it was compiled against, so a later
+                // `--context` push of one of its callees can be refused
+                // before it ships a callee this Worker would 409 against.
+                if let Ok(m) = read_contracts_manifest(&workers_dir.join(worker)) {
+                    lock.record_expects(&opts.environment, worker, m.expects);
+                }
                 // I4 (#1970): and what its declared foreign callers may call
                 // it at, so the ledger knows the consumers no manifest of
                 // their own records.
@@ -684,7 +766,10 @@ pub fn run(
                         minted: true,
                     }) = foreign_keys.get(&(worker.clone(), caller.binding.clone()))
                     {
-                        eprint!("{}", foreign_hand_off(worker, caller, value));
+                        eprint!(
+                            "{}",
+                            foreign_hand_off(&opts.environment, worker, caller, value)
+                        );
                     }
                 }
                 // #1883, slice 1b: and the static files it now serves.
@@ -694,9 +779,14 @@ pub fn run(
                     served_assets(&workers_dir.join(worker)),
                 );
                 if let Err(e) = write_lock(&lock_path, &lock) {
-                    eprintln!(
-                        "bynk: deployed `{worker}` but could not record it in {}: {e}",
-                        lock_path.display()
+                    eprint!(
+                        "{}",
+                        unrecorded_deploy_failure(
+                            &opts.environment,
+                            worker,
+                            &lock_path.display().to_string(),
+                            &e.to_string()
+                        )
                     );
                     return ExitCode::FAILURE;
                 }
@@ -715,12 +805,14 @@ pub fn run(
                 // is excluded — the line above already named it as the failure,
                 // and listing it here again as "not deployed" would double-count
                 // it against the number.
-                eprint!("{}", stopped_report(&order[i + 1..]));
+                eprint!("{}", stopped_report(&opts.environment, &order[i + 1..]));
                 // #2004 review: a run that re-keyed an edge and stopped between
                 // its two ends leaves them refusing each other. The next plain
                 // run sees a key on each end and keeps both, so say how to
                 // repair it.
-                if let Some(hint) = interrupted_rotation_hint(&edge_keys, &order[..i]) {
+                if let Some(hint) =
+                    interrupted_rotation_hint(&opts.environment, &edge_keys, &order[..i])
+                {
                     eprint!("{hint}");
                 }
                 // I3 (#1971): a secret minted for this context's foreign
@@ -732,11 +824,14 @@ pub fn run(
                         minted: true,
                     }) = foreign_keys.get(&(worker.clone(), caller.binding.clone()))
                     {
-                        eprintln!(
-                            "bynk: `{worker}` may already hold the {} minted for its foreign caller `{}`. If `wrangler secret list` shows it, hand this off; if not, the next deploy mints another.",
-                            caller.binding, caller.actor
+                        eprint!(
+                            "{}",
+                            foreign_binding_maybe_set_notice(&opts.environment, worker, caller)
                         );
-                        eprint!("{}", foreign_hand_off(worker, caller, value));
+                        eprint!(
+                            "{}",
+                            foreign_hand_off(&opts.environment, worker, caller, value)
+                        );
                     }
                 }
                 // Wrangler's own code, not a flat 1 (slice 0's contract).
@@ -814,6 +909,7 @@ pub(crate) fn foreign_worker_warnings(
 /// can: each end may hold a different key, and a plain rerun keeps both.
 /// `None` when no such edge was left incomplete.
 pub(crate) fn interrupted_rotation_hint(
+    environment: &str,
     edge_keys: &BTreeMap<Edge, EdgeKey>,
     completed: &[String],
 ) -> Option<String> {
@@ -824,16 +920,118 @@ pub(crate) fn interrupted_rotation_hint(
             matches!(key, EdgeKey::Set { rotating: true, .. })
                 && !(done(&edge.caller) && done(&edge.callee))
         })
-        .map(|(edge, _)| edge.describe())
+        .map(|(edge, _)| edge.describe(environment))
         .collect();
     if split.is_empty() {
         return None;
     }
     Some(format!(
         "bynk: this run was setting new keys on {} and stopped before both ends of each were deployed, so each end may hold a different key and calls along it are refused.\n  \
-         Rerun `bynk deploy --force` (the whole project) to set one key on both ends; a plain rerun would keep both.\n",
-        split.join(", ")
+         Rerun `{} --force` (the whole project) to set one key on both ends; a plain rerun would keep both.\n",
+        split.join(", "),
+        deploy_command(environment)
     ))
+}
+
+/// v0.177 (#643): the `--context` refusal for a Worker compiled against a
+/// contract its live dependencies no longer provide. The Worker by its
+/// [`deployed_worker_name`], the remedy repeating the run's `--env` (#2047).
+/// Each skew names a contract (`<context>.<service>`), not a Worker.
+pub(crate) fn contract_skew_refusal(
+    environment: &str,
+    worker: &str,
+    skews: &[ContractSkew],
+) -> String {
+    let mut out = format!(
+        "bynk: `{}` was compiled against a contract its live dependencies no longer provide ({CONTRACT_SKEW}):\n",
+        deployed_worker_name(environment, worker)
+    );
+    for s in skews {
+        out.push_str(&format!(
+            "  {}.{} — compiled against {}, live is {}\n",
+            s.dependency, s.service, s.expected, s.live
+        ));
+    }
+    out.push_str(
+        "  Deploying this would ship a caller its callee rejects (409 ContractMismatch) on every call.\n",
+    );
+    out.push_str(&format!(
+        "  Deploy the whole project (`{}`) so both sides move together.\n",
+        deploy_command(environment)
+    ));
+    out
+}
+
+/// #2004 review: an end of `edge` whose secrets could not be listed, counted
+/// as holding `key`. The Worker and the edge by their deployed names, the
+/// remedy repeating the run's `--env` (#2047).
+pub(crate) fn unknown_edge_key_notice(
+    environment: &str,
+    worker: &str,
+    key: &str,
+    edge: &Edge,
+) -> String {
+    format!(
+        "bynk: could not ask Cloudflare whether `{}` holds {key}; assuming it does. If it does not, the edge {} refuses every call — `{} --force` sets a fresh key on every edge.\n",
+        deployed_worker_name(environment, worker),
+        edge.describe(environment),
+        deploy_command(environment)
+    )
+}
+
+/// The progress line of a multi-context run: `n` of `total`, the Worker by
+/// its [`deployed_worker_name`] (#2047).
+pub(crate) fn deploying_notice(environment: &str, worker: &str, n: usize, total: usize) -> String {
+    format!(
+        "bynk: deploying `{}` ({n}/{total})…\n",
+        deployed_worker_name(environment, worker)
+    )
+}
+
+/// A push that landed but could not be written to the ledger at `lock_path`.
+/// The Worker by its [`deployed_worker_name`] (#2047).
+pub(crate) fn unrecorded_deploy_failure(
+    environment: &str,
+    worker: &str,
+    lock_path: &str,
+    error: &str,
+) -> String {
+    format!(
+        "bynk: deployed `{}` but could not record it in {lock_path}: {error}\n",
+        deployed_worker_name(environment, worker)
+    )
+}
+
+/// I3 (#1971): the run could not decide `caller`'s binding on `worker`
+/// (`reason`, from `decide_foreign_key`). The Worker by its
+/// [`deployed_worker_name`] (#2047).
+pub(crate) fn foreign_binding_refusal(
+    environment: &str,
+    worker: &str,
+    caller: &ForeignCaller,
+    reason: &str,
+) -> String {
+    format!(
+        "bynk: `{}` (the foreign caller `{}` of `{}`): {reason}\n",
+        caller.binding,
+        caller.actor,
+        deployed_worker_name(environment, worker)
+    )
+}
+
+/// I3 (#1971): a failed push may have set a secret minted for `caller`. The
+/// Worker by its [`deployed_worker_name`], which the suggested `wrangler
+/// secret list` names too, so it asks about the right Worker (#2047).
+pub(crate) fn foreign_binding_maybe_set_notice(
+    environment: &str,
+    worker: &str,
+    caller: &ForeignCaller,
+) -> String {
+    let worker = deployed_worker_name(environment, worker);
+    format!(
+        "bynk: `{worker}` may already hold the {} minted for its foreign caller `{}`. If `wrangler secret list --name {worker}` shows it, hand this off; if not, the next deploy mints another.\n",
+        caller.binding, caller.actor
+    )
 }
 
 /// #1796: the refusal a deploy gets when a context it pushes declares a
@@ -875,24 +1073,154 @@ pub fn preflight_failure_message(report: &Report) -> String {
     )
 }
 
+/// The D4 refusal: `--context` selected `worker`, which binds to `absent`
+/// Workers the ledger has never recorded as deployed in `environment`.
+///
+/// Every Worker is named by its [`deployed_worker_name`], as the plan names it
+/// (#2038): under `--env staging` the missing target is `payment-staging`, not
+/// the logical `payment`. Pure, so the wording is goldened rather than
+/// described.
+pub(crate) fn absent_dependencies_refusal(
+    environment: &str,
+    worker: &str,
+    absent: &[String],
+) -> String {
+    format!(
+        "bynk: `{}` binds to {}, which {} never been deployed — a Service Binding to a Worker that does not exist fails at upload.\n  Deploy the whole project once (`{}`) to bring the topology up.\n",
+        deployed_worker_name(environment, worker),
+        absent
+            .iter()
+            .map(|a| format!("`{}`", deployed_worker_name(environment, a)))
+            .collect::<Vec<_>>()
+            .join(", "),
+        if absent.len() == 1 { "has" } else { "have" },
+        deploy_command(environment)
+    )
+}
+
+/// #2077: the `--context` refusal for a callee whose new build no longer
+/// provides the contract its live callers were compiled against — the callee
+/// half of [`contract_skew_refusal`], under the same code. Each live caller and
+/// the callee by their [`deployed_worker_name`]; each finding names the
+/// contract (`<context>.<service>`) and both hashes; the remedy repeats the
+/// run's `--env` ([`deploy_command`]). Pure, so the wording is goldened.
+pub(crate) fn callee_contract_skew_refusal(
+    environment: &str,
+    worker: &str,
+    skews: &[CalleeSkew],
+) -> String {
+    let mut out = format!(
+        "bynk: `{}` no longer provides the contract its live callers were compiled against ({CONTRACT_SKEW}):\n",
+        deployed_worker_name(environment, worker)
+    );
+    for s in skews {
+        out.push_str(&format!(
+            "  `{}` calls {}.{} — compiled against {}, this build provides {}\n",
+            deployed_worker_name(environment, &s.caller),
+            s.dependency,
+            s.service,
+            s.expected,
+            s.provided
+        ));
+    }
+    out.push_str(
+        "  Deploying this would ship a callee that rejects its live callers (409 ContractMismatch) on every call.\n",
+    );
+    out.push_str(&format!(
+        "  Deploy the whole project (`{}`) so both sides move together.\n",
+        deploy_command(environment)
+    ));
+    out
+}
+
+/// #2077 review: the refusal for a callee whose new build breaks a live caller
+/// this project no longer builds — a Worker of a removed context, still
+/// recorded in the ledger (the plan's `orphan worker`). A whole-project deploy
+/// neither redeploys nor checks it, and `--prune` never deletes a Worker or its
+/// record, so the remedy is to retire it (delete the Worker, then drop its
+/// ledger entry, without which this gate keeps refusing) or to restore its
+/// context and deploy the whole project ([`deploy_command`]). Pure, so the
+/// wording is goldened.
+pub(crate) fn orphaned_caller_skew_refusal(
+    environment: &str,
+    worker: &str,
+    skews: &[CalleeSkew],
+) -> String {
+    let mut out = format!(
+        "bynk: `{}` no longer provides the contract a live Worker this project no longer builds was compiled against ({CONTRACT_SKEW}):\n",
+        deployed_worker_name(environment, worker)
+    );
+    for s in skews {
+        out.push_str(&format!(
+            "  `{}` (orphaned) calls {}.{} — compiled against {}, this build provides {}\n",
+            deployed_worker_name(environment, &s.caller),
+            s.dependency,
+            s.service,
+            s.expected,
+            s.provided
+        ));
+    }
+    out.push_str(
+        "  Deploying this would ship a callee that rejects it (409 ContractMismatch) on every call, and a whole-project deploy would not move it: that reports an orphaned Worker but never redeploys or deletes it, and `--prune` never deletes a Worker either.\n",
+    );
+    let mut callers: Vec<&str> = skews.iter().map(|s| s.caller.as_str()).collect();
+    callers.dedup();
+    out.push_str(&format!(
+        "  If it is unused, delete it ({}) and remove its entry ({}) from {LOCK_FILE}. If it is still needed, restore its context and deploy the whole project (`{}`).\n",
+        callers
+            .iter()
+            .map(|c| format!(
+                "`npx wrangler delete --name {}`",
+                deployed_worker_name(environment, c)
+            ))
+            .collect::<Vec<_>>()
+            .join(", "),
+        callers
+            .iter()
+            .map(|c| format!("`[environments.{environment}.workers.{c}]`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        deploy_command(environment)
+    ));
+    out
+}
+
+/// #2077: the warning for a live caller of the pushed `worker` whose ledger
+/// record predates recorded `expects`, so the callee gate cannot check it.
+/// Never a refusal: silence is not a match.
+pub(crate) fn unrecorded_caller_warning(environment: &str, worker: &str, caller: &str) -> String {
+    format!(
+        "bynk: warning: could not check that `{}` still provides what the live `{}` was compiled against — its deploy record predates recorded expectations ({CONTRACT_SKEW}). A whole-project deploy (`{}`) records them.\n",
+        deployed_worker_name(environment, worker),
+        deployed_worker_name(environment, caller),
+        deploy_command(environment)
+    )
+}
+
 /// What the run did **not** get to, once a context failed. `rest` is the order
 /// *beyond* the failure, so the last context failing reports nothing — there was
 /// nothing left to withhold, and the failure itself has already been named.
+/// Each context is named by its [`deployed_worker_name`] in `environment`, as
+/// the plan's `order` line names it (#2038).
 ///
 /// Pure, so the wording — and the count's agreement with the list — is goldened
 /// rather than described.
-pub(crate) fn stopped_report(rest: &[String]) -> String {
+pub(crate) fn stopped_report(environment: &str, rest: &[String]) -> String {
     if rest.is_empty() {
         return String::new();
     }
     format!(
-        "bynk: stopping — {} not deployed: {}. Re-run `bynk deploy` to resume; what already landed is kept.\n",
+        "bynk: stopping — {} not deployed: {}. Re-run `{}` to resume; what already landed is kept.\n",
         if rest.len() == 1 {
             "1 more context was".to_string()
         } else {
             format!("{} further contexts were", rest.len())
         },
-        rest.join(", ")
+        rest.iter()
+            .map(|worker| deployed_worker_name(environment, worker))
+            .collect::<Vec<_>>()
+            .join(", "),
+        deploy_command(environment)
     )
 }
 
@@ -1127,14 +1455,35 @@ pub(crate) fn derive_plan<'a>(
     }
 }
 
-/// Two of the project's KV namespaces that would share one account-facing
-/// title under `environment` ([`kv_title`]), described for the user: Worker
-/// `shop` with `capability CartSessions` and Worker `shop-cart` with
-/// `capability Sessions` both give `shop-cart-sessions`. `None` when every
-/// title is distinct. Checked across the whole project, not just `--context`'s
-/// selection, since titles are account-wide.
+/// Two KV namespaces that would share one account-facing title
+/// ([`kv_title`]), described for the user. `None` when there is no clash.
+///
+/// Cloudflare refuses a namespace whose title the account already holds, in
+/// any environment ("Returns `400` if the account already owns a namespace
+/// with that title"), so there are two checks:
+///
+/// - **Within `environment`**, every namespace the project declares: Worker
+///   `shop` with `capability CartSessions` and Worker `shop-cart` with
+///   `capability Sessions` both give `shop-cart-sessions`.
+/// - **Across environments** (#2048), each namespace this deploy would create
+///   (declared, with no id recorded for `environment`) against every other
+///   environment the ledger knows: the titles of the namespaces it records,
+///   and the titles its next deploy of this source would create. Worker
+///   `shop`'s bare namespace under `--env staging` and its `capability
+///   Staging` in the default environment are both `shop-staging`. A namespace
+///   already recorded here is not created, so it cannot fail; that clash is
+///   refused by the other environment's deploy instead. A recorded namespace
+///   whose id has gone from the account is created again, and that is only
+///   known once the deploy fetches the live ids, so `deploy_one` runs
+///   [`cross_environment_title_clash`] again at that point (#2059).
+///
+/// Checked across the whole project, not just `--context`'s selection, since
+/// titles are account-wide. The ledger records ids, not titles, so a recorded
+/// namespace counts under the title Bynk would give it now; one made under
+/// `--env` before #2037 is really titled with the bare Worker name.
 pub(crate) fn kv_title_collision(
     resources: &BTreeMap<String, Resources>,
+    lock: &DeployLock,
     environment: &str,
 ) -> Option<String> {
     let mut seen: BTreeMap<String, (&str, &str)> = BTreeMap::new();
@@ -1152,7 +1501,107 @@ pub(crate) fn kv_title_collision(
             }
         }
     }
+
+    // What this deploy creates: each declared namespace with no recorded id.
+    let creates: Vec<(&str, &str)> = resources
+        .iter()
+        .flat_map(|(worker, declared)| {
+            kv_bindings(declared).map(move |binding| (worker.as_str(), binding))
+        })
+        .filter(|(worker, binding)| {
+            recorded_kv_binding(lock, worker, binding, environment).is_none()
+        })
+        .collect();
+    cross_environment_title_clash(resources, lock, environment, &creates, None)
+}
+
+/// The cross-environment half of [`kv_title_collision`]: does any of
+/// `creates`, the `(worker, binding)` namespaces about to be created under
+/// `environment`, take a title another environment the ledger knows holds or
+/// would create? The message names both namespaces and both environments.
+///
+/// Also run by `deploy_one` at the moment it decides to create (#2059), since
+/// that is the only point that knows a recorded id has gone from the account
+/// and its namespace is about to be created again. There `live_kv_ids` is the
+/// account's live ids, when fetched: another environment's recorded namespace
+/// whose id is not among them no longer holds its title (though one this
+/// source declares there still counts, since that deploy would create it).
+/// `None` counts every recorded namespace, which is always the case at plan
+/// time: [`kv_title_collision`] runs before the live ids are fetched, so the
+/// relaxation applies only to the deploy-time re-check.
+pub(crate) fn cross_environment_title_clash(
+    resources: &BTreeMap<String, Resources>,
+    lock: &DeployLock,
+    environment: &str,
+    creates: &[(&str, &str)],
+    live_kv_ids: Option<&BTreeSet<String>>,
+) -> Option<String> {
+    if creates.is_empty() {
+        return None;
+    }
+    let is_live = |id: &str| live_kv_ids.is_none_or(|live| live.contains(id));
+    let declared = || {
+        resources.iter().flat_map(|(worker, declared)| {
+            kv_bindings(declared).map(move |binding| (worker.as_str(), binding))
+        })
+    };
+    for (other, recorded) in &lock.environments {
+        if other == environment {
+            continue;
+        }
+        // Each title `other` holds or would create, and whose it is: what its
+        // ledger records first, then what this source declares.
+        let held = recorded
+            .kv
+            .iter()
+            .filter(|(_, kv)| is_live(&kv.id))
+            .map(|(worker, _)| {
+                (
+                    worker.as_str(),
+                    bynk_emit::emitter::wrangler::KV_BINDING_NAME,
+                )
+            })
+            .chain(
+                recorded
+                    .kv_instances
+                    .iter()
+                    .flat_map(|(worker, instances)| {
+                        instances
+                            .iter()
+                            .filter(|(_, kv)| is_live(&kv.id))
+                            .map(move |(binding, _)| (worker.as_str(), binding.as_str()))
+                    }),
+            );
+        let mut taken: BTreeMap<String, (&str, &str)> = BTreeMap::new();
+        for (worker, binding) in held.chain(declared()) {
+            taken
+                .entry(kv_title(worker, binding, other))
+                .or_insert((worker, binding));
+        }
+        for &(worker, binding) in creates {
+            let title = kv_title(worker, binding, environment);
+            if let Some(&(other_worker, other_binding)) = taken.get(&title) {
+                return Some(format!(
+                    "{} in {} and {} in {} would both be titled `{title}` on the account, which holds one namespace per title; rename a capability or context so they differ",
+                    kv_namespace_noun(worker, binding),
+                    environment_label(environment),
+                    kv_namespace_noun(other_worker, other_binding),
+                    environment_label(other),
+                ));
+            }
+        }
+    }
     None
+}
+
+/// How a message names an environment: `the default environment`, or
+/// `` `--env staging` ``.
+fn environment_label(environment: &str) -> String {
+    if environment == "default" {
+        "the default environment".to_string()
+    } else {
+        format!("`--env {environment}`")
+    }
 }
 
 /// The first KV namespace in `order` with no recorded id, as `(worker,
@@ -1419,6 +1868,53 @@ pub(crate) mod tests {
             .contexts[0]
                 .queues
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_passthrough_secrets_file_is_refused_only_when_the_run_has_a_first_deploy() {
+        // #2055: a first deploy passes its own `--secrets-file`.
+        let order = names(&["api", "web"]);
+        let mut lock = DeployLock::default();
+        lock.record_deployed("staging", "api", None);
+        let args = |a: &[&str]| names(a);
+        assert_eq!(
+            secrets_file_passthrough_refusal(
+                &args(&["--secrets-file", "s.env"]),
+                &order,
+                &lock,
+                "staging"
+            )
+            .as_deref(),
+            Some(
+                "bynk: `--secrets-file` after `--` conflicts with the secrets file `bynk deploy` uploads with a new Worker's first version (`web-staging`).\n  \
+                 Pass it to bynk instead, before `--`: `bynk deploy --secrets-file <file>`.\n"
+            )
+        );
+        assert!(
+            secrets_file_passthrough_refusal(
+                &args(&["--secrets-file=s.env"]),
+                &order,
+                &lock,
+                "staging"
+            )
+            .is_some_and(|r| r.contains("`--secrets-file=s.env`")),
+            "the `=`-joined spelling is the same flag"
+        );
+        lock.record_deployed("staging", "web", None);
+        assert_eq!(
+            secrets_file_passthrough_refusal(
+                &args(&["--secrets-file", "s.env"]),
+                &order,
+                &lock,
+                "staging"
+            ),
+            None,
+            "a redeploy passes no secrets file of its own"
+        );
+        assert_eq!(
+            secrets_file_passthrough_refusal(&args(&["--minify"]), &order, &lock, "default"),
+            None
         );
     }
 
@@ -1737,7 +2233,8 @@ queue = "jobs"
                 Resources::default().kv_instances(&["KV_SESSIONS"]),
             ),
         ]);
-        let message = kv_title_collision(&colliding, "default").expect("a collision");
+        let message =
+            kv_title_collision(&colliding, &DeployLock::default(), "default").expect("a collision");
         assert!(
             message.contains("`shop-cart-sessions`")
                 && message.contains("`KV_CART_SESSIONS` for `shop`")
@@ -1749,14 +2246,120 @@ queue = "jobs"
             ("shop", Resources::default().kv_instances(&["KV_CART"])),
             ("shop-cart", Resources::default().needs_kv()),
         ]);
-        assert!(kv_title_collision(&bare, "default").is_some());
+        assert!(kv_title_collision(&bare, &DeployLock::default(), "default").is_some());
         let distinct = project(vec![(
             "shop-cart",
             Resources::default()
                 .needs_kv()
                 .kv_instances(&["KV_PRICE_CACHE", "KV_SESSIONS"]),
         )]);
-        assert_eq!(kv_title_collision(&distinct, "staging"), None);
+        assert_eq!(
+            kv_title_collision(&distinct, &DeployLock::default(), "staging"),
+            None
+        );
+    }
+
+    /// #2048: Worker `shop` with the bare `Kv` and `capability Staging`. Its
+    /// bare namespace under `--env staging` and its instance in the default
+    /// environment are both titled `shop-staging`.
+    fn shop_with_staging_instance() -> BTreeMap<String, Resources> {
+        project(vec![(
+            "shop",
+            Resources::default()
+                .needs_kv()
+                .kv_instances(&["KV_STAGING"]),
+        )])
+    }
+
+    /// #2048: a first staging deploy whose bare title the default
+    /// environment's instance already holds is refused, naming both sides
+    /// and both environments.
+    #[test]
+    fn a_title_another_environment_holds_is_refused() {
+        let resources = shop_with_staging_instance();
+        let mut lock = DeployLock::default();
+        lock.record_kv("default", "shop", "KV", "bare-id");
+        lock.record_kv("default", "shop", "KV_STAGING", "instance-id");
+        let message = kv_title_collision(&resources, &lock, "staging").expect("a collision");
+        assert_eq!(
+            message,
+            "KV namespace for `shop` in `--env staging` and KV namespace `KV_STAGING` for `shop` \
+             in the default environment would both be titled `shop-staging` on the account, \
+             which holds one namespace per title; rename a capability or context so they differ"
+        );
+    }
+
+    /// #2048: the reverse order. A default deploy that would create a title
+    /// a known staging environment would create is refused too, before
+    /// either fails at `kv namespace create`.
+    #[test]
+    fn a_title_another_environment_would_create_is_refused() {
+        let resources = shop_with_staging_instance();
+        let mut lock = DeployLock::default();
+        // Staging is known to the ledger, but has not provisioned KV yet.
+        lock.record_deployed("staging", "other", Some(Default::default()));
+        let message = kv_title_collision(&resources, &lock, "default").expect("a collision");
+        assert!(
+            message.contains("KV namespace `KV_STAGING` for `shop` in the default environment")
+                && message.contains("KV namespace for `shop` in `--env staging`")
+                && message.contains("`shop-staging`"),
+            "{message}"
+        );
+    }
+
+    /// #2048: a recorded namespace in another environment holds its title
+    /// even when the source no longer declares it (an orphan not yet
+    /// pruned).
+    #[test]
+    fn an_orphan_in_another_environment_still_holds_its_title() {
+        let resources = project(vec![(
+            "shop",
+            Resources::default().kv_instances(&["KV_STAGING"]),
+        )]);
+        let mut lock = DeployLock::default();
+        lock.record_kv("staging", "shop", "KV", "orphaned-id");
+        let message = kv_title_collision(&resources, &lock, "default").expect("a collision");
+        assert!(
+            message.contains("KV namespace for `shop` in `--env staging`"),
+            "{message}"
+        );
+    }
+
+    /// #2048: only namespaces this deploy creates are checked. One already
+    /// recorded here exists, so it cannot fail; the other environment's deploy
+    /// is where the clash is refused.
+    #[test]
+    fn a_namespace_already_recorded_here_is_not_refused() {
+        let resources = shop_with_staging_instance();
+        let mut lock = DeployLock::default();
+        lock.record_kv("default", "shop", "KV", "bare-id");
+        lock.record_kv("default", "shop", "KV_STAGING", "instance-id");
+        lock.record_deployed("staging", "other", Some(Default::default()));
+        assert_eq!(kv_title_collision(&resources, &lock, "default"), None);
+        // ...and the staging deploy is the one refused.
+        assert!(kv_title_collision(&resources, &lock, "staging").is_some());
+    }
+
+    /// #2048: an environment the ledger does not know is not compared, and
+    /// distinct titles across known environments pass.
+    #[test]
+    fn unknown_environments_and_distinct_titles_pass() {
+        let resources = shop_with_staging_instance();
+        assert_eq!(
+            kv_title_collision(&resources, &DeployLock::default(), "staging"),
+            None
+        );
+        let plain = project(vec![(
+            "shop-cart",
+            Resources::default()
+                .needs_kv()
+                .kv_instances(&["KV_SESSIONS"]),
+        )]);
+        let mut lock = DeployLock::default();
+        lock.record_kv("default", "shop-cart", "KV", "bare-id");
+        lock.record_kv("default", "shop-cart", "KV_SESSIONS", "sessions-id");
+        lock.record_kv("production", "shop-cart", "KV", "prod-id");
+        assert_eq!(kv_title_collision(&plain, &lock, "staging"), None);
     }
 
     /// S4b (#1967): CI refuses any unrecorded namespace, including an
@@ -1814,7 +2417,7 @@ queue = "jobs"
         .into_iter()
         .collect();
         // `commerce-payment` finished; `commerce-orders` did not.
-        let hint = interrupted_rotation_hint(&keys, &names(&["commerce-payment"]))
+        let hint = interrupted_rotation_hint("default", &keys, &names(&["commerce-payment"]))
             .expect("a rotation was interrupted");
         assert!(
             hint.contains("`commerce-orders` → `commerce-payment`"),
@@ -1828,7 +2431,11 @@ queue = "jobs"
         assert!(!hint.contains("minted-value"), "never the value: {hint}");
         // Both ends finished, so nothing was split.
         assert_eq!(
-            interrupted_rotation_hint(&keys, &names(&["commerce-payment", "commerce-orders"])),
+            interrupted_rotation_hint(
+                "default",
+                &keys,
+                &names(&["commerce-payment", "commerce-orders"])
+            ),
             None
         );
     }
@@ -1929,6 +2536,221 @@ queue = "jobs"
             &DeployLock::default(),
             |c| c.replace('.', "-"),
             "default",
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    // ---- #2077: the callee half of the contract-skew gate ----
+
+    /// Chapter 14 of the shop, live: payment provides `authorise` at
+    /// `febd15c2757b72e1`, and orders was compiled against it.
+    fn live_shop(orders_expects: Option<&str>) -> DeployLock {
+        let mut lock = lock_with("shop-payment", &[("authorise", "febd15c2757b72e1")]);
+        lock.record_expects("default", "shop-payment", BTreeMap::new());
+        lock.record_deployed("default", "shop-orders", Some(BTreeMap::new()));
+        if let Some(hash) = orders_expects {
+            lock.record_expects(
+                "default",
+                "shop-orders",
+                expects("shop.payment", "authorise", hash),
+            );
+        }
+        lock
+    }
+
+    fn provides(svc: &str, hash: &str) -> BTreeMap<String, String> {
+        BTreeMap::from([(svc.to_string(), hash.to_string())])
+    }
+
+    fn worker_of(c: &str) -> String {
+        c.replace('.', "-")
+    }
+
+    #[test]
+    fn a_callee_whose_contract_changed_under_a_live_caller_is_refused() {
+        // The issue's reproduction: `authorise`'s parameter renamed, so the
+        // new build provides `da0d725f3a004040` while live orders stamps the
+        // old hash.
+        let lock = live_shop(Some("febd15c2757b72e1"));
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "default",
+        );
+        assert_eq!(
+            found,
+            [CalleeSkew {
+                caller: "shop-orders".into(),
+                dependency: "shop.payment".into(),
+                service: "authorise".into(),
+                expected: "febd15c2757b72e1".into(),
+                provided: "da0d725f3a004040".into(),
+            }]
+        );
+        let refusal = callee_contract_skew_refusal("default", "shop-payment", &found);
+        assert!(refusal.contains("`shop-orders` calls shop.payment.authorise"));
+        assert!(refusal.contains(CONTRACT_SKEW));
+    }
+
+    /// #2077 review: a caller this build still has is advised to deploy the
+    /// whole project, which moves it with the callee.
+    #[test]
+    fn a_built_caller_is_refused_with_the_whole_project_remedy() {
+        let lock = live_shop(Some("febd15c2757b72e1"));
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "default",
+        );
+        let bindings = graph(&[("shop-orders", &["shop-payment"]), ("shop-payment", &[])]);
+        let (built, orphaned) = split_orphaned_callers(found, &bindings);
+        assert_eq!(built.len(), 1);
+        assert!(orphaned.is_empty(), "{orphaned:?}");
+        let refusal = callee_contract_skew_refusal("default", "shop-payment", &built);
+        assert!(refusal.contains("Deploy the whole project (`bynk deploy`)"));
+    }
+
+    /// #2077 review: a caller of a context removed from the project is still
+    /// live in the ledger, and still refused — but a whole-project deploy
+    /// would neither move nor check it, so its refusal says to retire it (or
+    /// restore its context), never just to deploy the whole project.
+    #[test]
+    fn an_orphaned_caller_is_refused_with_the_orphan_remedy() {
+        let mut lock = live_shop(Some("febd15c2757b72e1"));
+        lock.record_deployed("staging", "shop-payment", Some(BTreeMap::new()));
+        lock.record_deployed("staging", "shop-legacy", Some(BTreeMap::new()));
+        lock.record_expects(
+            "staging",
+            "shop-legacy",
+            expects("shop.payment", "authorise", "febd15c2757b72e1"),
+        );
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "staging",
+        );
+        // This build has orders and payment; `shop-legacy` is gone.
+        let bindings = graph(&[("shop-orders", &["shop-payment"]), ("shop-payment", &[])]);
+        let (built, orphaned) = split_orphaned_callers(found, &bindings);
+        assert!(built.is_empty(), "{built:?}");
+        assert_eq!(orphaned.len(), 1);
+        assert_eq!(orphaned[0].caller, "shop-legacy");
+        let refusal = orphaned_caller_skew_refusal("staging", "shop-payment", &orphaned);
+        assert!(refusal.contains(CONTRACT_SKEW), "{refusal}");
+        assert!(
+            refusal.contains("`shop-legacy-staging` (orphaned) calls shop.payment.authorise"),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("`npx wrangler delete --name shop-legacy-staging`")
+                && refusal.contains("`[environments.staging.workers.shop-legacy]`")
+                && refusal.contains("`bynk deploy --env staging`"),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn a_callee_that_still_provides_the_live_hash_passes() {
+        let lock = live_shop(Some("febd15c2757b72e1"));
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "febd15c2757b72e1"),
+            &lock,
+            worker_of,
+            "default",
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_service_a_live_caller_still_calls_but_the_callee_removed_is_refused() {
+        let lock = live_shop(Some("febd15c2757b72e1"));
+        let found = callee_contract_skews(
+            "shop-payment",
+            &BTreeMap::new(),
+            &lock,
+            worker_of,
+            "default",
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].provided, "<absent>");
+    }
+
+    #[test]
+    fn a_pushed_worker_is_never_held_to_its_own_stale_record() {
+        // The gate is a `--context` gate, as D4 is: `run` reaches it only for
+        // a single selected context, so a whole-project run (which redeploys
+        // the callers beside the callee) is never refused by it — the
+        // binary-driven `deploy_env` test pins that. Here: a pushed caller's
+        // own recorded `expects` is being replaced, so it is no finding even
+        // when the pushed Worker's contract changed.
+        let mut lock = live_shop(Some("febd15c2757b72e1"));
+        lock.record_expects(
+            "default",
+            "shop-orders",
+            expects("shop.orders", "place", "0000000000000000"),
+        );
+        let found =
+            callee_contract_skews("shop-orders", &BTreeMap::new(), &lock, worker_of, "default");
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_caller_recorded_before_expects_is_not_refused_but_is_named_for_a_warning() {
+        // An old lock: orders is deployed, but the ledger never recorded what
+        // it expects. Silence is not a match, so no refusal; orders binds to
+        // payment in this build, so it is named for the warning.
+        let lock = live_shop(None);
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "default",
+        );
+        assert!(found.is_empty(), "{found:?}");
+        let bindings = graph(&[("shop-orders", &["shop-payment"]), ("shop-payment", &[])]);
+        assert_eq!(
+            unrecorded_callers("shop-payment", &bindings, &lock, "default"),
+            names(&["shop-orders"])
+        );
+        // A Worker that does not bind to payment is no caller of it.
+        let unrelated = graph(&[("shop-orders", &[]), ("shop-payment", &[])]);
+        assert!(unrecorded_callers("shop-payment", &unrelated, &lock, "default").is_empty());
+        // And once orders' expectations are recorded, there is nothing to warn of.
+        let recorded = live_shop(Some("febd15c2757b72e1"));
+        assert!(unrecorded_callers("shop-payment", &bindings, &recorded, "default").is_empty());
+    }
+
+    #[test]
+    fn a_caller_that_expects_nothing_of_the_callee_is_not_a_finding() {
+        let mut lock = live_shop(None);
+        lock.record_expects("default", "shop-orders", BTreeMap::new());
+        let found = callee_contract_skews(
+            "shop-payment",
+            &BTreeMap::new(),
+            &lock,
+            worker_of,
+            "default",
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_caller_live_in_another_environment_is_not_this_environments_caller() {
+        let lock = live_shop(Some("febd15c2757b72e1"));
+        let found = callee_contract_skews(
+            "shop-payment",
+            &provides("authorise", "da0d725f3a004040"),
+            &lock,
+            worker_of,
+            "staging",
         );
         assert!(found.is_empty(), "{found:?}");
     }

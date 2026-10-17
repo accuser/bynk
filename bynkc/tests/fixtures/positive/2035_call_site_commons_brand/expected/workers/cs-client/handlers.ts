@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type __JsonValue, type __BoundaryError, type __ServiceBinding, __callService, __boundaryError } from "../../runtime.js";
 
-import { Batch, Holder } from "../cs-store/handlers.js";
+import { type Batch, type Holder } from "../cs-store/handlers.js";
 import { Line as __CommonsLine, Page as __CommonsPage, Pair as __CommonsPair, Qty as __CommonsQty } from "../../cs/values.js";
 
 import type * as cs_store from "../cs-store/handlers.js";
@@ -17,6 +17,8 @@ export type Qty = __CommonsQty & { readonly __ctxBrand?: "cs.client" };
 export const Qty = {
   of(value: number): Result<Qty, ValidationError> { return __CommonsQty.of(value); },
 };
+
+export { type Batch, type Holder };
 
 export const go = {
   async call(deps: { env: { CS_STORE: __ServiceBinding } }): globalThis.Promise<number> {

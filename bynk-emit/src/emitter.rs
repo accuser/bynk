@@ -329,6 +329,7 @@ fn single_file_ctx() -> EmitProjectCtx {
         actors: HashMap::new(),
         event_schema_versions: HashMap::new(),
         consumed_adapters: HashSet::new(),
+        consumed_types_with_methods: HashSet::new(),
         history_target_agents: HashSet::new(),
         asset_served: Default::default(),
         imported_methods: HashMap::new(),
@@ -632,7 +633,7 @@ pub(crate) fn emit_project(
     }
     references.settle_implied(&body);
     let mut project_imports = emit_project_imports(commons, ctx, &references);
-    let mut cross_context_imports = emit_cross_context_namespace_imports(commons, ctx);
+    let mut cross_context_imports = emit_cross_context_namespace_imports(commons, ctx, &body);
     // #1486: the boundary between `emit_project_imports`'s own last
     // statement and `emit_cross_context_namespace_imports`'s own first
     // (when non-empty) must reproduce the pre-#1486 code's own unconditional
@@ -678,6 +679,7 @@ pub(crate) fn emit_project(
     // rebranded type nominally distinct (v0.4 §6.2).
     if ctx.unit_kind == UnitKind::Context {
         stmts.extend(emit_context_rebrands(&references, commons, ctx));
+        stmts.extend(emit_consumed_type_reexports(&references, ctx));
     }
     stmts.append(&mut body);
     // #1476: `ctx.runtime_use` is fully populated now — every producer above has
@@ -1474,8 +1476,41 @@ fn emit_boundary_helpers(
                 emitted_names.extend(names.iter().cloned());
             }
             let mut emitted_insts: HashSet<String> = insts.iter().map(|i| i.ts_name()).collect();
+            // #2036: a consumed context's type on this context's *own* boundary
+            // (`on call(b: Batch)`) needs its codecs here even when no call to
+            // that context reaches it: the entry decodes the argument through
+            // `handlers.__deserialise_Batch`. Neither path above emits it (it is
+            // not declared here, and no commons owns it), so it roots the
+            // consumed context's codec closure alongside the called services.
+            let mut own_roots: HashMap<String, Vec<TypeRef>> = HashMap::new();
+            for n in &boundary_types_all {
+                if locally_declared.contains(n)
+                    || ctx.imported_from_kind.get(n) != Some(&UnitKind::Context)
+                {
+                    continue;
+                }
+                let Some(owner) = ctx.imported_from.get(n) else {
+                    continue;
+                };
+                if ctx.consumed_adapters.contains(owner) {
+                    continue;
+                }
+                own_roots
+                    .entry(owner.clone())
+                    .or_default()
+                    .push(TypeRef::Named(Ident {
+                        name: n.clone(),
+                        span: Default::default(),
+                    }));
+            }
             let (consumed_stmts, consumed_names, consumed_insts, foreign_names) =
-                emit_consumed_context_helpers(program, ctx, &mut emitted_names, &mut emitted_insts);
+                emit_consumed_context_helpers(
+                    program,
+                    ctx,
+                    &own_roots,
+                    &mut emitted_names,
+                    &mut emitted_insts,
+                );
             stmts.extend(consumed_stmts);
             // #1823: codecs of commons types a call to another context needs,
             // beyond those this context's own boundary already imports.
@@ -1713,6 +1748,7 @@ fn unbranded_commons_qual(commons: &TypedCommons, ctx: &EmitProjectCtx) -> HashM
 fn emit_consumed_context_helpers(
     program: &CheckedProgram,
     ctx: &EmitProjectCtx,
+    own_roots: &HashMap<String, Vec<bynk_syntax::ast::TypeRef>>,
     emitted_names: &mut HashSet<String>,
     emitted_insts: &mut HashSet<String>,
 ) -> (Vec<bynk_ts::TsStmt>, Vec<String>, Vec<String>, Vec<String>) {
@@ -1807,16 +1843,16 @@ fn emit_consumed_context_helpers(
 
     let mut consumed_keys: HashSet<&String> = info.consumed_services.keys().collect();
     consumed_keys.extend(consumed_event_roots.keys());
+    consumed_keys.extend(own_roots.keys());
     let mut consumed_keys: Vec<&String> = consumed_keys.into_iter().collect();
     consumed_keys.sort();
     for c in consumed_keys {
         let svcs = info.consumed_services.get(c).unwrap_or(&empty_svcs);
         let event_roots = consumed_event_roots.get(c).unwrap_or(&empty_event_roots);
-        if svcs.is_empty() && event_roots.is_empty() {
-            continue;
-        }
+        // #2036: `c`'s types on this context's own boundary.
+        let own = own_roots.get(c).unwrap_or(&empty_event_roots);
         let called_here = called.get(c).unwrap_or(&empty_called);
-        if called_here.is_empty() && event_roots.is_empty() {
+        if (svcs.is_empty() || called_here.is_empty()) && event_roots.is_empty() && own.is_empty() {
             continue;
         }
         let Some(types_table) = info.consumed_types.get(c) else {
@@ -1854,6 +1890,7 @@ fn emit_consumed_context_helpers(
             svcs.keys().filter(|s| called_here.contains(*s)).collect();
         svc_names.sort();
         let mut roots: Vec<bynk_syntax::ast::TypeRef> = event_roots.clone();
+        roots.extend(own.iter().cloned());
         for sn in svc_names {
             let svc = &svcs[sn];
             for (_, t) in &svc.params {
@@ -2125,6 +2162,42 @@ fn called_consumed_services(
 /// #1478: real-node-internally already — returns its real declarations
 /// (a rebrand type alias, and — for a refined/opaque base — a forwarding
 /// const, per name) instead of writing into `out: &mut String`.
+/// #2036: on `workers`, re-export as types the names this `handlers.ts`
+/// imports from a consumed context. `compose.ts` names every type in a
+/// wrapper's signature as `handlers.<Name>` (it imports no type names of its
+/// own), so a consumed `Batch` in a handler's parameters must be a member of
+/// `handlers` too, the way a `uses`d commons type is through its rebrand
+/// alias. Type-only (`export { type Batch }`): `compose.ts` uses the name in
+/// type position only, a consumed refined alias has no value to re-export
+/// (TS1205 under `isolatedModules`), and a value re-export would deepen the
+/// caller's dependency on the callee's module. Only names the module imports
+/// are re-exported, so each is bound here.
+fn emit_consumed_type_reexports(
+    refs: &ExternalReferences,
+    ctx: &EmitProjectCtx,
+) -> Vec<bynk_ts::TsStmt> {
+    if ctx.target != BuildTarget::Workers {
+        return Vec::new();
+    }
+    let mut names: Vec<String> = refs
+        .by_commons
+        .iter()
+        .filter(|(unit, _)| !ctx.consumed_adapters.contains(unit.as_str()))
+        .flat_map(|(_, set)| set.iter())
+        .filter(|n| ctx.imported_from_kind.get(n.as_str()) == Some(&UnitKind::Context))
+        .map(|n| format!("type {}", ts_ident(n)))
+        .collect();
+    if names.is_empty() {
+        return Vec::new();
+    }
+    names.sort();
+    names.dedup();
+    vec![bynk_ts::TsStmt::decl(
+        bynk_ts::TsDecl::ExportNames { names },
+        None,
+    )]
+}
+
 fn emit_context_rebrands(
     refs: &ExternalReferences,
     commons: &TypedCommons,
@@ -3053,6 +3126,7 @@ fn record_name_ref(
 fn emit_cross_context_namespace_imports(
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
+    body: &[bynk_ts::TsStmt],
 ) -> Vec<bynk_ts::TsStmt> {
     let info = &ctx.cross_context;
     // Consumed contexts that expose services (v0.6) plus, v0.15, those whose
@@ -3093,6 +3167,36 @@ fn emit_cross_context_namespace_imports(
                 .iter()
                 .filter(|(_, names)| names.iter().any(|n| subscribed.contains(n)))
                 .map(|(c, _)| c.clone()),
+        );
+    }
+    // #2058: a consumed context the body names a type of through its alias
+    // (`(1 as ev_store.Code)`, a literal admitted to its refined type), even
+    // one with no service this context calls.
+    // Only a refined type an expression here is checked as can be cast to,
+    // and only one the body then spells through the alias is imported.
+    let type_ns = crate::emitter::emit::consumed_type_ns(ctx);
+    let named: HashSet<String> = commons
+        .expr_types
+        .values()
+        .filter_map(|te| match &*commons.tys().get(te.ty) {
+            Ty::Named {
+                name,
+                kind: NamedKind::Refined(_),
+                ..
+            } => type_ns.get(name).cloned(),
+            _ => None,
+        })
+        .collect();
+    if !named.is_empty() {
+        let spelled = body_words(body);
+        needed.extend(
+            info.consumed_contexts
+                .iter()
+                .filter(|c| {
+                    let ns = qualified_to_ns(c);
+                    named.contains(&ns) && spelled.contains(&ns)
+                })
+                .cloned(),
         );
     }
     if needed.is_empty() {
@@ -3266,6 +3370,17 @@ fn emit_project_imports(
             for n in &name_list {
                 let is_subscribed_event_type = ctx.target == BuildTarget::Workers
                     && subscribed_event_type_names.contains(n.as_str());
+                // #2045: under Workers, a consumed *context*'s type is named in
+                // type position only — its codecs are the caller's own
+                // (`emit_consumed_context_helpers`) — so it imports type-only and
+                // the callee's module never enters the caller's Worker bundle
+                // (#661). A consumed *adapter* is linked into each Worker, and
+                // its values (`Method.Get`) are real imports.
+                let is_consumed_context_type = ctx.target == BuildTarget::Workers
+                    && ctx.unit_kind == UnitKind::Context
+                    && !ctx.consumed_adapters.contains(unit_name.as_str())
+                    && ctx.imported_from_kind.get(n.as_str()) == Some(&UnitKind::Context)
+                    && !ctx.consumed_types_with_methods.contains(n.as_str());
                 // R4.10/R8.2: the same shared `is_uses_commons_type` predicate
                 // `emit_context_rebrands` below reads — this import-aliasing
                 // site is that function's own step 1 ("Done in imports", its
@@ -3287,7 +3402,7 @@ fn emit_project_imports(
                     )
                 {
                     parts.push(format!("{n} as __Commons{n}"));
-                } else if is_subscribed_event_type {
+                } else if is_subscribed_event_type || is_consumed_context_type {
                     // Events track, slice 0 (spine #936): under Workers, a
                     // context deploys as its own separate Worker script —
                     // there is no shared module graph to import a peer
@@ -3927,6 +4042,10 @@ pub(crate) struct ModuleCtx<'a> {
     /// 1`, exactly every event's behaviour before this map existed, not a
     /// hard failure the way a missing `runtime_use` would be.
     event_schema_versions: HashMap<String, i64>,
+    /// #2058: the namespace each consumed context's type is named under in
+    /// this module (mirrors [`crate::emitter::emit::consumed_type_ns`]).
+    /// Default-empty: a miss names the type bare, as before.
+    consumed_type_ns: HashMap<String, String>,
     /// #934: true when the unit being emitted is the reserved first-party
     /// `bynk` adapter itself. `bynk` is a reserved namespace, so a capability
     /// literally named `Idempotency` declared *in this unit* is unambiguously
@@ -3937,6 +4056,10 @@ pub(crate) struct ModuleCtx<'a> {
     in_bynk_unit: bool,
     /// #1961: [`crate::project::EmitProjectCtx::agent_called_contexts`].
     agent_called_contexts: Vec<String>,
+    /// #2045: [`crate::project::EmitProjectCtx::consumed_context_types`]. A
+    /// variant of one of these sums is built inline, not through the callee's
+    /// companion object, so the callee's module is never a value import.
+    consumed_context_types: HashSet<String>,
 }
 
 impl<'a> ModuleCtx<'a> {
@@ -3952,8 +4075,10 @@ impl<'a> ModuleCtx<'a> {
             target: BuildTarget::Bundle,
             agent_method_givens: HashMap::new(),
             event_schema_versions: HashMap::new(),
+            consumed_type_ns: HashMap::new(),
             in_bynk_unit: false,
             agent_called_contexts: Vec::new(),
+            consumed_context_types: HashSet::new(),
         }
     }
 }
@@ -4186,9 +4311,11 @@ pub(crate) enum BodyMode {
         /// (P6.24a's own pure, unconditional mirror), not the raw AST
         /// `HandlerKind` this field used to store.
         test_service_handlers: HashMap<String, Vec<bynk_ir::IrHandlerKind>>,
-        /// I3 (#1971): the test services whose `on call` handler binds an
-        /// actor sum, whose `deps.who` a call-site principal builds.
-        call_sum_services: HashSet<String>,
+        /// I3 (#1971), #2020: the `(service, key)` handlers that bind an actor
+        /// sum, whose `deps.who` a call-site principal builds. `key` is
+        /// `"call"` for an `on call` handler and the emitted method name
+        /// (`http_handler_method_name_ir`) for an http route.
+        sum_handlers: HashSet<(String, String)>,
         /// #1994: the target has a handler that sends with `~>`, so `deps`
         /// carries the `__exec` double and each addressed service call is
         /// wrapped in `__bynkSettle(deps, …)`.
@@ -4225,7 +4352,26 @@ pub(crate) enum BodyMode {
         /// the raw driver. Mirrors the `type_ns` `emit_system_http_support`
         /// computes from the same suite target.
         system_http_type_ns: String,
+        /// #2019: the refinement-guarded routes and the claims each
+        /// refinement actor signs, for a call acting as a refinement.
+        system_http_claims: SystemHttpClaims,
     },
+}
+
+/// #2019: what a `system`-tier call needs to sign the claims a refinement
+/// actor's predicate checks (`actor Admin = User where hasClaim("admin")`).
+/// A route guarded by a refinement has drivers that take a trailing claims
+/// object, signed into the JWT next to `sub`; a call acting as a refinement
+/// actor passes that actor's witness claims, and any other call passes `{}`,
+/// so the Worker's seam answers `403` exactly as it would a real token
+/// lacking the claim.
+#[derive(Debug, Clone, Default)]
+pub struct SystemHttpClaims {
+    /// The `(service, method, path)` routes whose `by` actor is a refinement.
+    pub routes: HashSet<(String, String, String)>,
+    /// Each refinement actor's witness claims, as a JavaScript object literal
+    /// (`bynk_check::actors::claim_witness_js`).
+    pub actors: HashMap<String, String>,
 }
 
 /// Per-body lowering context: what module we are emitting into ([`ModuleCtx`]),
@@ -4430,6 +4576,11 @@ impl<'a> LowerCtx<'a> {
     /// v0.8 build target.
     pub(crate) fn target(&self) -> BuildTarget {
         self.module.target
+    }
+
+    /// #2045: whether `name` is a consumed context's type on `workers`.
+    pub(crate) fn is_consumed_context_type(&self, name: &str) -> bool {
+        self.module.consumed_context_types.contains(name)
     }
 
     /// #934: true when the unit being emitted is the first-party `bynk` adapter.
@@ -4729,13 +4880,14 @@ impl<'a> LowerCtx<'a> {
         }
     }
 
-    /// I3 (#1971): whether the test service `name`'s `on call` handler binds
-    /// an actor sum.
-    pub(crate) fn is_call_sum_service(&self, name: &str) -> bool {
+    /// I3 (#1971), #2020: whether the test service `service`'s handler at
+    /// `key` (`"call"`, or an http handler's emitted method name) binds an
+    /// actor sum, so a call-site principal builds its `deps.who`.
+    pub(crate) fn is_sum_handler(&self, service: &str, key: &str) -> bool {
         match &self.mode {
-            BodyMode::TestCase {
-                call_sum_services, ..
-            } => call_sum_services.contains(name),
+            BodyMode::TestCase { sum_handlers, .. } => {
+                sum_handlers.contains(&(service.to_string(), key.to_string()))
+            }
             _ => false,
         }
     }
@@ -4816,6 +4968,27 @@ impl<'a> LowerCtx<'a> {
         }
     }
 
+    /// #2019: the claims argument a `system`-tier call on `route` passes, if
+    /// the route is refinement-guarded: the acting refinement's witness
+    /// claims, or `{}` for any other actor.
+    pub(crate) fn system_http_claims_arg(
+        &self,
+        route: &(String, String, String),
+    ) -> Option<String> {
+        match &self.mode {
+            BodyMode::IntegrationCase {
+                system_http_claims, ..
+            } if system_http_claims.routes.contains(route) => Some(
+                self.call_site_actor
+                    .as_ref()
+                    .and_then(|a| system_http_claims.actors.get(a))
+                    .cloned()
+                    .unwrap_or_else(|| "{}".to_string()),
+            ),
+            _ => None,
+        }
+    }
+
     /// Events track, slice 0 (spine #936): true when a bare `Events`
     /// receiver in this unit is genuinely the first-party `bynk.Events`
     /// capability — declared here because this unit *is* `bynk`, or
@@ -4835,6 +5008,15 @@ impl<'a> LowerCtx<'a> {
                 .get("Events")
                 .map(String::as_str)
                 == Some("bynk")
+    }
+
+    /// #2058: `name` as this module spells it in a type position: qualified
+    /// under its context's namespace when a consumed context declares it.
+    pub(crate) fn consumed_type_name(&self, name: &str) -> String {
+        match self.module.consumed_type_ns.get(name) {
+            Some(ns) => [ns.as_str(), ".", name].concat(),
+            None => name.to_string(),
+        }
     }
 
     /// Events slice 3b (#978): the declared `@schema(N)` version of the

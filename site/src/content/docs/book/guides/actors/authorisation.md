@@ -58,5 +58,21 @@ so you use an `Admin` anywhere a `User` fits.
   (use it as the whole contract, or narrow inside a
   [resolved arm](/book/guides/actors/multiple-callers/)).
 
+## Testing it
+
+A test acts as the refinement with its base's identity:
+
+```bynk,fragment
+case "an admin is answered" {
+  let r <- api.GET("/admin") by Admin("root")
+  expect r == Ok("root")
+}
+```
+
+Below the `system` tier the claim is given, not checked. In a `system` suite
+the signed token carries claims that satisfy the predicate, so the Worker
+admits `by Admin("root")` and answers `by User("root")` with `403`. See
+[acting as an actor](/book/reference/testing/#call-site-by).
+
 **See also:** [Reference — Actors](/book/reference/actors/),
 [Diagnostic index (`bynk.actor.refinement_*`)](/book/reference/diagnostics/).

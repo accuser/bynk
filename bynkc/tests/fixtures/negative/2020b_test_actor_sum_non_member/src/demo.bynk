@@ -1,0 +1,16 @@
+context demo
+
+type UserId = String where NonEmpty
+
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+
+actor Admin = User where hasClaim("admin")
+
+service api from http {
+  on GET("/") () -> Effect[HttpResult[String]] by who: User | Visitor {
+    match who {
+      User(u) => Ok(u),
+      Visitor => Ok("anyone"),
+    }
+  }
+}

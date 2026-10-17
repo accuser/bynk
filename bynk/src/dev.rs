@@ -1285,6 +1285,11 @@ mod tests {
     #[test]
     fn a_sigterm_to_the_driver_stops_every_context_and_its_children() {
         use std::process::{Command, Stdio};
+        // #2055: the deploy tests that change signal dispositions must not
+        // restore the default while this one signals the process.
+        let _lock = crate::stop::TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let root = std::env::temp_dir().join(format!("bynk-dev-sigterm-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let mut children = Vec::new();

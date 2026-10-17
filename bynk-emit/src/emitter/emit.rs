@@ -2545,6 +2545,8 @@ pub(crate) fn emit_provider(
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
+        module.consumed_type_ns = consumed_type_ns(ctx);
+        module.consumed_context_types = ctx.consumed_context_types();
         module.target = ctx.target;
         module.in_bynk_unit = ctx.commons_name == "bynk";
         let body_smb = RefCell::new(SourceMapBuilder::new());
@@ -2862,6 +2864,8 @@ pub(crate) fn emit_service(
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
+        module.consumed_type_ns = consumed_type_ns(ctx);
+        module.consumed_context_types = ctx.consumed_context_types();
         module.target = ctx.target;
         let mut cx = LowerCtx::new(
             module,
@@ -3570,6 +3574,21 @@ fn surface_ty(cross_context: &bynk_check::resolver::CrossContextInfo) -> bynk_ts
     )
 }
 
+/// #2058: each type name this unit reaches from a consumed *context*, mapped
+/// to the namespace the module names that context's types under
+/// (`ev_store`). A literal admitted to such a refined type is cast to
+/// `ev_store.Code`, not a bare `Code` nothing imports.
+pub(crate) fn consumed_type_ns(ctx: &EmitProjectCtx) -> HashMap<String, String> {
+    ctx.imported_from_kind
+        .iter()
+        .filter(|(_, kind)| **kind == UnitKind::Context)
+        .filter_map(|(name, _)| {
+            let owner = ctx.imported_from.get(name)?;
+            Some((name.clone(), qualified_to_ns(owner)))
+        })
+        .collect()
+}
+
 /// Turn a qualified context name (e.g. `commerce.payment`) into the JS
 /// namespace ident used in `import * as <ns>` (`commerce_payment`).
 pub(crate) fn qualified_to_ns(q: &str) -> String {
@@ -3924,6 +3943,73 @@ pub(crate) fn emit_make_surface(
     stmts
 }
 
+/// #2039: whether `t` names any type in `renames`, at any depth.
+fn type_ref_names_any(t: &TypeRef, renames: &HashMap<String, String>) -> bool {
+    match t {
+        TypeRef::Named(id) => renames.contains_key(&id.name),
+        TypeRef::Option(inner, _) | TypeRef::List(inner, _) | TypeRef::Effect(inner, _) => {
+            type_ref_names_any(inner, renames)
+        }
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            type_ref_names_any(a, renames) || type_ref_names_any(b, renames)
+        }
+        // #2072: a generic record (`Page[Cents]`), its head and arguments.
+        TypeRef::App { name, args, .. } => {
+            renames.contains_key(&name.name) || args.iter().any(|a| type_ref_names_any(a, renames))
+        }
+        _ => false,
+    }
+}
+
+/// #2039, #2043: whether a cross-context argument holds a part the checker
+/// typed as the callee's type rather than the caller's: a literal it may
+/// have admitted to the callee's refined type, or a `List.empty()` /
+/// `Map.empty()` typed from the parameter. Either sits at the argument
+/// itself or in a `Some`/`Ok`/`Err` payload, list element or record field.
+pub(crate) fn holds_callee_typed(e: &Expr, cx: &LowerCtx) -> bool {
+    // A compile-time literal, a negated number (`-3`) included, as the
+    // checker's `const_literal` reads one.
+    let literal = match &e.kind {
+        ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } | ExprKind::StrLit(_) => true,
+        ExprKind::UnaryOp(bynk_syntax::ast::UnaryOp::Neg, inner) => {
+            matches!(
+                inner.kind,
+                ExprKind::IntLit { .. } | ExprKind::FloatLit { .. }
+            )
+        }
+        _ => false,
+    };
+    match &e.kind {
+        _ if literal => matches!(
+            cx.commons().expr_ty(e.id).as_deref(),
+            Some(Ty::Named {
+                kind: NamedKind::Refined(_),
+                ..
+            })
+        ),
+        ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } => {
+            method.name == "empty"
+                && args.is_empty()
+                && matches!(&receiver.kind, ExprKind::Ident(id) if id.name == "List" || id.name == "Map")
+        }
+        ExprKind::Paren(inner)
+        | ExprKind::Some(inner)
+        | ExprKind::Ok(inner)
+        | ExprKind::Err(inner) => holds_callee_typed(inner, cx),
+        ExprKind::ListLit(items) => items.iter().any(|i| holds_callee_typed(i, cx)),
+        ExprKind::RecordConstruction { fields, .. } => fields
+            .iter()
+            .filter_map(|f| f.value.as_ref())
+            .any(|v| holds_callee_typed(v, cx)),
+        _ => false,
+    }
+}
+
 /// Lower a cross-context call in workers mode to a `callService(...)`
 /// invocation. The argument types are looked up in the consumed context's
 /// service signature so we know which serialise/deserialise helpers to
@@ -4010,24 +4096,53 @@ pub(crate) fn lower_workers_cross_context_call(
     };
     let mut args_serialised: Vec<bynk_ts::TsExpr> = Vec::new();
     for (i, a) in args.iter().enumerate() {
-        // #2035: a value the caller builds for a named parameter type carries
-        // the caller's brand on its commons parts (`Map.empty()` lowers to
-        // `new globalThis.Map<string, Line>()` with this context's `Line`),
-        // while the codec takes the callee's type (`cs_store.Batch`, holding
-        // the callee's `Line`), so tsc rejected it (TS2345). Cast through
-        // `unknown` to the callee's type, as the bundle path does
-        // ([`param_cast`]); the checker has already matched the shapes.
-        let lowered = param_cast(
-            consumed,
-            info,
-            method,
-            i,
-            pre.lower(a, cx),
-            cx.in_test_scaffold(),
-        );
+        let mut lowered = pre.lower(a, cx);
         let (_, param_ty) = &svc.params[i];
+        let wire_ty = renamed(param_ty);
+        // #2025, #2039: a literal in a cross-context argument (directly, or
+        // nested in a payload, list or record field) is admitted to the
+        // callee's type, but lowers with the brand of the caller's name for
+        // it. Where the caller doesn't name the callee's type (it was renamed
+        // above), cast the argument to what the codec takes.
+        if renames.is_some_and(|r| type_ref_names_any(param_ty, r)) && holds_callee_typed(a, cx) {
+            let codec = bynk_ts::print_expr(&crate::emitter::serialisation::serialise_ref_via(
+                &wire_ty,
+                &ns,
+                cx.runtime_use(),
+            ));
+            let codec_param = ["globalThis.Parameters<typeof ", codec.as_str(), ">[0]"].concat();
+            lowered = bynk_ts::print_expr(&bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::As {
+                expr: Box::new(bynk_ts::TsExpr::As {
+                    expr: Box::new(bynk_ts::TsExpr::Ident(lowered)),
+                    ty: bynk_ts::TsType::named("unknown"),
+                }),
+                ty: bynk_ts::TsType::named(codec_param),
+            })));
+        } else {
+            // #2035: a value the caller builds for a named parameter type
+            // carries the caller's brand on its commons parts (`Map.empty()`
+            // lowers to `new globalThis.Map<string, Line>()` with this
+            // context's `Line`), while the codec takes the callee's type
+            // (`cs_store.Batch`, holding the callee's `Line`), so tsc rejected
+            // it (TS2345). Cast through `unknown` to the callee's type, as the
+            // bundle path does ([`param_cast`]); the checker has already
+            // matched the shapes. An admitted literal (above) already has its
+            // one cast, to what the codec takes, so it gets no second. Only a
+            // named parameter type is cast here (`cast_generic: false`): a
+            // generic argument goes to this context's own instantiation codec,
+            // whose commons types are unbranded (#2027).
+            lowered = param_cast(
+                consumed,
+                info,
+                method,
+                i,
+                lowered,
+                false,
+                cx.in_test_scaffold(),
+            );
+        }
         args_serialised.push(serialise_expr_via(
-            &renamed(param_ty),
+            &wire_ty,
             &lowered,
             &ns,
             cx.runtime_use(),
@@ -4191,6 +4306,10 @@ pub(crate) fn param_cast(
     method: &Ident,
     idx: usize,
     arg: String,
+    // Whether an argument at a generic parameter that names a user type is
+    // cast too (the bundle path, #2039, #2042); the workers path casts only a
+    // named parameter type, since its instantiation codecs are unbranded.
+    cast_generic: bool,
     in_test_scaffold: bool,
 ) -> String {
     let Some(svcs) = info.consumed_services.get(consumed) else {
@@ -4231,82 +4350,54 @@ pub(crate) fn param_cast(
             ),
         )));
     }
+    // #2039, #2042: a composite argument whose parameter names a user type
+    // carries the caller's brand on it: a literal the checker admitted to the
+    // callee's refined type (`Some(250)` for `Option[Cents]`), or a value the
+    // caller typed itself (`byKey: Map[String, Line]`). Cast the argument to
+    // the consumed context's type, every name qualified under its namespace.
+    if cast_generic {
+        let mut names = HashSet::new();
+        type_ref_names(ptype_ref, &mut names);
+        if !names.is_empty() {
+            let ns = if in_test_scaffold {
+                test_scaffold_ns(consumed)
+            } else {
+                qualified_to_ns(consumed)
+            };
+            let ty = crate::emitter::ts_type_ref_qualified_ts_type(ptype_ref, &names, &ns);
+            return bynk_ts::print_expr(&bynk_ts::TsExpr::Paren(Box::new(bynk_ts::TsExpr::As {
+                expr: Box::new(bynk_ts::TsExpr::As {
+                    expr: Box::new(bynk_ts::TsExpr::Ident(arg)),
+                    ty: bynk_ts::TsType::named("unknown"),
+                }),
+                ty,
+            })));
+        }
+    }
     arg
 }
 
-/// #2042: the bundle path's cast for an argument crossing a context boundary.
-/// A named parameter type takes [`param_cast`]. So does a generic one that
-/// names a user type anywhere (`List[Line]`, `Option[Line]`,
-/// `Map[String, Line]`, `Page[Line]`): the caller's `readonly Line[]` carries
-/// the caller's brand and the callee's parameter the callee's, so it is cast
-/// through `unknown` to the parameter type with every named type qualified by
-/// the callee's namespace (`readonly cs_store.Line[]`). A parameter that names
-/// no user type (`List[Int]`) needs no cast.
-///
-/// The workers path keeps [`param_cast`] alone: a generic argument there goes
-/// to the caller's own instantiation codec, whose commons types are unbranded
-/// (#2027), so it already accepts the caller's value.
-pub(crate) fn bundle_param_cast(
-    consumed: &str,
-    info: &bynk_check::resolver::CrossContextInfo,
-    method: &Ident,
-    idx: usize,
-    arg: String,
-    in_test_scaffold: bool,
-) -> String {
-    let ptype_ref = info
-        .consumed_services
-        .get(consumed)
-        .and_then(|svcs| svcs.get(&method.name))
-        .and_then(|service| service.params.get(idx))
-        .map(|(_, t)| t);
-    let Some(ptype_ref) =
-        ptype_ref.filter(|t| type_ref_named_root(t).is_none() && type_ref_names_a_user_type(t))
-    else {
-        return param_cast(consumed, info, method, idx, arg, in_test_scaffold);
-    };
-    let ns = if in_test_scaffold {
-        test_scaffold_ns(consumed)
-    } else {
-        qualified_to_ns(consumed)
-    };
-    let ty = bynk_ts::print_type(&ts_type_ref_to_ts_type(
-        ptype_ref,
-        Some(&|_| Some(ns.clone())),
-    ));
-    // One opaque leaf for the same reason as [`param_cast`]'s.
-    bynk_ts::print_expr(&bynk_ts::TsExpr::Paren(Box::new(
-        bynk_ts::TsExpr::VerbatimExpr(
-            format!("{arg} as unknown as {ty}"),
-            bynk_ts::VerbatimOrigin::Emit,
-        ),
-    )))
-}
-
-/// Whether `t` names a user type (a `Named` or a generic `App`) anywhere.
-fn type_ref_names_a_user_type(t: &TypeRef) -> bool {
-    match t {
-        TypeRef::Named(_) | TypeRef::App { .. } => true,
+/// #2039: the user type names `r` mentions, at any depth.
+fn type_ref_names(r: &TypeRef, out: &mut HashSet<String>) {
+    match r {
+        TypeRef::Named(id) => {
+            out.insert(id.name.clone());
+        }
+        TypeRef::Option(inner, _) | TypeRef::List(inner, _) | TypeRef::Effect(inner, _) => {
+            type_ref_names(inner, out)
+        }
         TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
-            type_ref_names_a_user_type(a) || type_ref_names_a_user_type(b)
+            type_ref_names(a, out);
+            type_ref_names(b, out);
         }
-        TypeRef::Option(a, _)
-        | TypeRef::Effect(a, _)
-        | TypeRef::Query(a, _)
-        | TypeRef::Stream(a, _)
-        | TypeRef::History(a, _)
-        | TypeRef::HttpResult(a, _)
-        | TypeRef::Connection(a, _)
-        | TypeRef::List(a, _) => type_ref_names_a_user_type(a),
-        TypeRef::Fn(params, ret, _) => {
-            params.iter().any(type_ref_names_a_user_type) || type_ref_names_a_user_type(ret)
+        // #2072: a generic record (`Page[Cents]`), its head and arguments.
+        TypeRef::App { name, args, .. } => {
+            out.insert(name.name.clone());
+            for a in args {
+                type_ref_names(a, out);
+            }
         }
-        TypeRef::Base(..)
-        | TypeRef::JsonError(_)
-        | TypeRef::QueueResult(_)
-        | TypeRef::Asset(_)
-        | TypeRef::ValidationError(_)
-        | TypeRef::Unit(_) => false,
+        _ => {}
     }
 }
 
@@ -5278,6 +5369,8 @@ pub(crate) fn emit_agent(
             module.agent_method_givens = ctx.agent_method_givens.clone();
             module.agent_called_contexts = ctx.agent_called_contexts.clone();
             module.event_schema_versions = ctx.event_schema_versions.clone();
+            module.consumed_type_ns = consumed_type_ns(ctx);
+            module.consumed_context_types = ctx.consumed_context_types();
             let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
             icx.local_agents = ctx.local_agents.clone();
             let expr = pre.lower(init, &mut icx);
@@ -6141,6 +6234,8 @@ pub(crate) fn emit_agent(
         module.agent_method_givens = ctx.agent_method_givens.clone();
         module.agent_called_contexts = ctx.agent_called_contexts.clone();
         module.event_schema_versions = ctx.event_schema_versions.clone();
+        module.consumed_type_ns = consumed_type_ns(ctx);
+        module.consumed_context_types = ctx.consumed_context_types();
         let mut cx = LowerCtx::new(
             module,
             BodyMode::AgentHandler {
@@ -7158,6 +7253,8 @@ fn emit_ws_do_method(
     module.agent_method_givens = ctx.agent_method_givens.clone();
     module.agent_called_contexts = ctx.agent_called_contexts.clone();
     module.event_schema_versions = ctx.event_schema_versions.clone();
+    module.consumed_type_ns = consumed_type_ns(ctx);
+    module.consumed_context_types = ctx.consumed_context_types();
     module.target = ctx.target;
     let mut cx = LowerCtx::new(
         module,

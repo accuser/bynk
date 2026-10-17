@@ -1,0 +1,23 @@
+context r
+
+type UserId = String where NonEmpty
+
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+
+service api from http {
+	on GET("/") () -> Effect[HttpResult[String]] by who: User | Visitor {
+		match who {
+			User(u) => Ok(u),
+			Visitor => Ok("anyone"),
+		}
+	}
+
+	on GET("/plain") () -> Effect[HttpResult[String]] by u: User { Ok(u.identity) }
+
+	on GET("/greet") () -> Effect[HttpResult[String]] by caller: User | Visitor {
+		match caller {
+			User(u) => Ok(u),
+			Visitor => Ok("hello"),
+		}
+	}
+}

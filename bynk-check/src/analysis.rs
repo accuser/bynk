@@ -33,12 +33,10 @@
 //! 1. ~~Schema-registry reconciliation~~ — **closed at P5.3**.
 //!    [`crate::schema_registry::reconcile`] is now called from
 //!    [`analyse_project`], right after [`crate::project_model::phase_validate_providers`]
-//!    (the same relative point `run_checks` calls it). Still unreachable on
-//!    this path — it only ever fires under `SchemaLock::On`, and this entry
-//!    point has no on-disk lock concept at all, so it always reconciles
-//!    against an empty registry, which every event baselines against
-//!    silently — so relocating it changed nothing observable; it now simply
-//!    originates in `bynk-check`, per R3.5.
+//!    (the same relative point `run_checks` calls it). Unreachable on this
+//!    path until #2081, which gave [`analyse_project`] a `schema_lock`
+//!    argument: the LSP pre-reads `bynk.schema.lock` and passes it in, so a
+//!    non-additive change now reaches the editor as it reaches `bynk check`.
 //! 2. ~~`messages` bundle validation~~ — **closed at P5.0**, see above.
 //! 3. ~~Locale bundle ambiguity~~ — **closed at P5.0**, see above.
 //! 4. ~~Event-subscription validation~~ — **closed at P5.1**, see above.
@@ -107,8 +105,8 @@
 //!
 //! - `bynk.project.schema_registry_corrupt` — a malformed on-disk
 //!   `bynk.schema.lock`. [`crate::schema_registry::parse_or_diagnose`] now
-//!   constructs it. Unreachable from this entry point, same reason as
-//!   category 1: no on-disk lock concept exists here.
+//!   constructs it. Reachable from this entry point since #2081, under the
+//!   caller's `SchemaLock::On`, same as category 1.
 //! - `bynk.secrets.computed_name` — see
 //!   [`crate::project_model::phase_secrets_computed_name`]'s own doc. Unlike
 //!   the seven categories (scoped and confirmed live gaps or confirmed
@@ -136,7 +134,7 @@ use crate::project_model::{
 };
 use crate::requirements::{FileRequirements, RequirementSink};
 use crate::symbols::{assemble_index, build_cross_context_info, combined_types_for};
-use bynk_project::{AttributedError, Roots, UnitKind};
+use bynk_project::{AttributedError, Roots, SchemaLock, UnitKind};
 use bynk_syntax::ast::{AgentDecl, ServiceDecl, TypeDecl};
 
 /// #846: the per-unit slice of resolution the sequence-diagram classifier
@@ -262,16 +260,27 @@ fn bailed(
 /// accounting against `bynk-emit`'s now-deleted (#1541) `analyse_project_with`.
 /// Mirrored its call shape exactly where the two overlapped:
 /// `BuildTarget::Bundle`-equivalent (this entry point has no build target at
-/// all — it never emits), `Platform::default()`, no schema-registry lock.
+/// all — it never emits), `Platform::default()`.
+///
+/// `schema_lock` (#2081) is `bynk.schema.lock`'s content, pre-read by the
+/// caller exactly as `bynk check` pre-reads it (this crate reads no lock from
+/// disk). Under [`SchemaLock::On`] every event is reconciled against it and a
+/// non-additive change, a corrupt lock or a mismatched `@schema(N)` is
+/// reported as the build reports it; under [`SchemaLock::Off`] reconciliation
+/// is skipped. Nothing is written either way.
 ///
 /// Identity is project-relative (ADR 0198): a file's `source_path` here is
 /// unique across `include` roots, same as `analyse_project_with` used to be.
-pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> ProjectAnalysis {
+pub fn analyse_project(
+    roots: &Roots,
+    overlay: &HashMap<PathBuf, String>,
+    schema_lock: &SchemaLock,
+) -> ProjectAnalysis {
     // S3 (#1963): the project's `[unstable]` opt-in, read the way the build
     // reads it, so the editor and `bynkc` agree about every file.
     let policy =
         crate::stability::StabilityPolicy::for_project(Some(roots.project_root()), overlay);
-    analyse_project_with_policy(roots, overlay, policy)
+    analyse_project_with_policy(roots, overlay, policy, schema_lock)
 }
 
 /// [`analyse_project`] under a given [`crate::stability::StabilityPolicy`] —
@@ -280,6 +289,7 @@ pub fn analyse_project_with_policy(
     roots: &Roots,
     overlay: &HashMap<PathBuf, String>,
     policy: crate::stability::StabilityPolicy,
+    schema_lock: &SchemaLock,
 ) -> ProjectAnalysis {
     let tys = &Arc::new(Types::new());
     let trees = roots.trees();
@@ -485,33 +495,30 @@ pub fn analyse_project_with_policy(
         tys,
     );
 
-    // -- 6d. Events track, slice 3c (#980): schema-registry reconciliation.
-    //        P5.3: closes category 1 of this module's own residual-gap
-    //        accounting — `crate::schema_registry::reconcile` now runs here
-    //        too, at the same point `run_checks` calls it. This entry point
-    //        carries no on-disk schema lock (inherited from the now-deleted
-    //        `analyse_project_with`'s own hardcoded `SchemaLock::Off`), so
-    //        every event baselines
-    //        silently against an empty registry — no diagnostic is reachable
-    //        through this call, same as before the relocation.
-    //
-    //        Cost (review #1133): this is a full sweep over every event in
-    //        every unit on every analysis — `snapshot` clones each field name
-    //        and runs `canon_type` per field, plus a sort and two `HashMap`
-    //        inserts per event — for a diagnostic that can provably never
-    //        fire on this path. R3.5 wants the check to *originate* in
-    //        `bynk-check`; it does not require paying for it on the editor's
-    //        hot path. Not measured against a large project before this
-    //        landed — worth profiling (or skipping the call under a
-    //        `unit_tables`-is-empty-of-events fast path) if LSP latency on a
-    //        big project ever traces back here. --
-    let mut schema_errors: Vec<bynk_syntax::error::CompileError> = Vec::new();
-    crate::schema_registry::reconcile(
-        &bynk_project::schema_registry::SchemaRegistry::new(),
-        &unit_tables,
-        &mut schema_errors,
-    );
-    errors.extend_for(None, schema_errors);
+    // -- 6d. Events track, slice 3c (#980): schema-registry reconciliation,
+    //        at the same point `run_checks` calls it and with the same two
+    //        arms. #2081: the caller (the LSP) now pre-reads
+    //        `bynk.schema.lock` and hands it in, so a non-additive change, a
+    //        corrupt lock or a mismatched `@schema(N)` reaches the editor as
+    //        it reaches `bynk check`. `Off` (no lock, or a caller with none)
+    //        skips the sweep entirely rather than reconciling against an
+    //        empty registry, which can report nothing — closing review
+    //        #1133's cost note about paying for it on every keystroke. The
+    //        reconciled registry is discarded: analysis never writes. --
+    if let SchemaLock::On { existing } = schema_lock {
+        match crate::schema_registry::parse_or_diagnose(existing.as_deref(), roots.project_root()) {
+            Ok(existing_reg) => {
+                let mut schema_errors: Vec<bynk_syntax::error::CompileError> = Vec::new();
+                let _ = crate::schema_registry::reconcile(
+                    &existing_reg,
+                    &unit_tables,
+                    &mut schema_errors,
+                );
+                errors.extend_for(None, schema_errors);
+            }
+            Err(err) => errors.push_for(None, err),
+        }
+    }
 
     // No bail gate: this entry point never bails after discovery (mirrors
     // `Mode::Analyse` — independent unit groups resolve/check past another

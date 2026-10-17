@@ -1,0 +1,11 @@
+context t.pay
+
+uses t.values
+
+service charge {
+	on call(cents: Cents) -> Effect[Int] by c: Caller { cents }
+}
+
+service api from http {
+	on GET("/") () -> Effect[HttpResult[String]] by Visitor { Ok("ok") }
+}

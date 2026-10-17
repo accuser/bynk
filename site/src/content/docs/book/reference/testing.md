@@ -28,6 +28,7 @@ the declared handler and checked for arity and argument types:
 | `from http` | `svc.GET("/path")`, `svc.POST("/path", body)` — the path is the route **pattern**, then the handler's params (path params, then body) |
 | `from cron` | `svc.schedule("<expr>")` — matched to the handler with that schedule |
 | `from queue` | `svc.message(msg)` |
+| `from Events(E)` | `svc.event(e)`, `svc.event(e, env)` — [one delivered event](#event-address) |
 
 A route/schedule the service does not declare is `bynk.test.service_unknown_route`;
 `svc.call(...)` on a service with no `on call` handler is
@@ -61,6 +62,49 @@ A call that reaches past the handler's types yields an
 [`HttpOutcome`](#httpoutcome) instead. Such calls drive a raw `Wire(…)`
 argument, drive `by Nobody`, or use a method the path declares no handler for.
 A [static asset](#assets) fetch yields an `HttpResult[()]`.
+
+### Delivering an event — `svc.event(e)` {#event-address}
+
+A case delivers one event to a `from Events(E)` service with `svc.event(e)`, or
+`svc.event(e, env)` to choose its [envelope](/book/guides/events/understand-events/#the-envelope-and-idempotent-handling).
+The event goes through the service's generated handler, the same path the
+fan-out uses, so the subscription's pattern filter and `via schema(N)` guard
+apply. An event they reject reaches no handler code.
+
+```bynk,fragment
+suite shop.ledger {
+  case "an event delivered twice is counted once" {
+    let e = OrderPlaced { id: "o1" }
+    let env = EventEnvelope { eventId: "evt-1", publisherId: "shop.orders", emittedAt: Instant.fromEpochMillis(0), schemaVersion: 1 }
+    let _ <- OnPlaced.event(e, env)
+    let _ <- OnPlaced.event(e, env)
+    let t <- Books("main").totals()
+    expect t.orders == 1
+  }
+}
+```
+
+With no envelope, the case supplies one as an emission would mint it:
+
+| field | default |
+|---|---|
+| `eventId` | fresh on every call (`"test-event-1"`, `"test-event-2"`, …), so two deliveries are two emissions |
+| `publisherId` | the context that publishes `E` to the target: the target itself, or the one context it consumes that declares `E` |
+| `emittedAt` | the test clock's reading, `Instant.fromEpochMillis(0)`; the clock is not called |
+| `schemaVersion` | the event's current version, the one an emission embeds |
+
+The payload must be the event the service subscribes to. Another event is
+`bynk.test.event_not_subscribed`, and any other wrong payload or envelope is
+`bynk.types.argument_mismatch`. `EventEnvelope` comes from `bynk`, so a suite can
+build one only when its target `consumes bynk`. `svc.event` on a service of
+another protocol is `bynk.test.service_bad_address`. When two consumed contexts
+both declare `E`, a default envelope has no single publisher, so the case must
+pass its own (`bynk.test.event_publisher_ambiguous`).
+
+The address works at `unit` and `integration`. A `system` case can't use it
+(`bynk.test.event_needs_in_process`). There, an event reaches a subscriber only
+through its publisher's fan-out, so a `system` case calls the handler that
+emits it.
 
 ### Fetching a static asset — `svc.GET(asset)` {#assets}
 
@@ -109,6 +153,19 @@ case "each owner's list is private" {
 - `by Visitor` — a unit-identity actor takes **no** argument
   (`bynk.test.actor_no_identity` if one is given; `bynk.test.actor_identity_required`
   if an identity-carrying actor is written bare).
+- `by Admin("root")` — a [refinement actor](/book/guides/actors/authorisation/)
+  carries its base actor's identity, so it takes the base's identity value (a
+  bare `by Admin` is `bynk.test.actor_identity_required`). At the `unit` and
+  `integration` tiers its claim is given, not checked. At the `system` tier the
+  signed token carries claims that satisfy the refinement's predicate, so the
+  Worker admits it, and a case acting as the base (`by User("root")`) gets the
+  `403` a real token lacking the claim would.
+- `by Visitor` or `by User("ada")` on a handler guarded by an
+  [actor sum](/book/guides/actors/multiple-callers/) (`by who: User | Visitor`)
+  — the case names any member, with the identity that member carries, and the
+  handler runs with its binder bound to that member's arm. A non-member is
+  `bynk.test.principal_identity_mismatch`; a case with no `by` is
+  `bynk.test.principal_required`.
 - `by Caller("orders")` — an `on call` handler that binds its caller
   (`by c: Caller`) reads the calling context's name, and a case has no calling
   context, so it must name one; without it the call is
@@ -412,6 +469,9 @@ production `provides`).
   operation the capability does not declare is `bynk.stub.unknown_op`; a
   `returns` value whose type disagrees with the operation's result type is
   `bynk.stub.rhs_type`.
+- **`stub` is in-process only.** A `stub` overrides a seam at `unit` and
+  `integration`. At `system` each context runs as the Worker it deploys as and
+  builds its own providers, so a `stub` there is `bynk.stub.at_system`.
 - **Precedence:** case `stub` > suite `stub` > the tier default, **per
   operation**. A case-scoped clause applies to its own case only. An operation
   no clause covers (for this case) reaches the tier default, so stubbing
@@ -807,8 +867,10 @@ suite checkout as system {
 - The inferred set must span **at least two contexts** (the target and a consumed
   one); otherwise `bynk.tier.system_needs_wire`. The closure under `consumes` is
   derived automatically, so a consumed context can never be left unwired.
-- A `stub` clause is legal at every tier, `system` included (it overrides one
-  seam); what a tier controls is the *default* provision.
+- A `stub` is not legal at `system`, suite- or case-scoped
+  (`bynk.stub.at_system`). Each participant runs as the Worker it deploys as, and
+  that Worker builds its own capability providers, so there is no seam to put a
+  double in. A case that needs a stubbed seam stays at `unit` or `integration`.
 
 Cross-context capabilities (`given B.Cap`) are wired as in production: the
 provider is instantiated locally in the consumer Worker (v0.15 model A1).
