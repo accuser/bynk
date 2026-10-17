@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "provides": {
+    "hold": "25ce1fa9bb0e1a70",
+    "many": "f2ae38d7318c126c",
+    "put": "f495c84de97204fe"
+  },
+  "expects": {}
+}

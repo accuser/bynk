@@ -4010,7 +4010,21 @@ pub(crate) fn lower_workers_cross_context_call(
     };
     let mut args_serialised: Vec<bynk_ts::TsExpr> = Vec::new();
     for (i, a) in args.iter().enumerate() {
-        let lowered = pre.lower(a, cx);
+        // #2035: a value the caller builds for a named parameter type carries
+        // the caller's brand on its commons parts (`Map.empty()` lowers to
+        // `new globalThis.Map<string, Line>()` with this context's `Line`),
+        // while the codec takes the callee's type (`cs_store.Batch`, holding
+        // the callee's `Line`), so tsc rejected it (TS2345). Cast through
+        // `unknown` to the callee's type, as the bundle path does
+        // ([`param_cast`]); the checker has already matched the shapes.
+        let lowered = param_cast(
+            consumed,
+            info,
+            method,
+            i,
+            pre.lower(a, cx),
+            cx.in_test_scaffold(),
+        );
         let (_, param_ty) = &svc.params[i];
         args_serialised.push(serialise_expr_via(
             &renamed(param_ty),
