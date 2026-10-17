@@ -306,9 +306,14 @@ impl Edge {
         Ok([(&self.callee, from), (&self.caller, to)])
     }
 
-    /// `caller → callee`, for a message.
-    pub(crate) fn describe(&self) -> String {
-        format!("`{}` → `{}`", self.caller, self.callee)
+    /// `caller → callee`, for a message: each end by its
+    /// [`deployed_worker_name`] in `environment` (#2047).
+    pub(crate) fn describe(&self, environment: &str) -> String {
+        format!(
+            "`{}` → `{}`",
+            deployed_worker_name(environment, &self.caller),
+            deployed_worker_name(environment, &self.callee)
+        )
     }
 }
 
@@ -381,6 +386,7 @@ pub(crate) fn decide_edge_key(
     both_in_run: bool,
     force: bool,
     mint: &mut dyn FnMut() -> Result<String, String>,
+    environment: &str,
 ) -> Result<EdgeKey, String> {
     let held = caller != Presence::Absent && callee != Presence::Absent;
     if held && (!force || !both_in_run) {
@@ -389,8 +395,9 @@ pub(crate) fn decide_edge_key(
     if !both_in_run {
         return Err(format!(
             "the edge {} needs a new key on both Workers, but Cloudflare never returns a key's value, so a `--context` run cannot copy it to the Worker it does not deploy.\n  \
-             Deploy the whole project (`bynk deploy`) to mint a key for every edge.",
-            edge.describe()
+             Deploy the whole project (`{}`) to mint a key for every edge.",
+            edge.describe(environment),
+            deploy_command(environment)
         ));
     }
     Ok(EdgeKey::Set {
@@ -460,8 +467,14 @@ pub(crate) fn decide_foreign_key(
 /// Worker's operator (§11 Q4: `deploy` never writes to a Worker it does not
 /// own). The one place a minted value is ever shown. The foreign Worker holds
 /// it under the name a Bynk caller would (`BYNK_CALL_TO_<CALLEE>`), and the
-/// command names that Worker when the declaration did.
-pub(crate) fn foreign_hand_off(worker: &str, caller: &ForeignCaller, value: &str) -> String {
+/// command names that Worker when the declaration did. Its remedy repeats the
+/// run's `--env` ([`deploy_command`], #2047).
+pub(crate) fn foreign_hand_off(
+    environment: &str,
+    worker: &str,
+    caller: &ForeignCaller,
+    value: &str,
+) -> String {
     let context = context_of(worker);
     let key = bynk_emit::edge_key_to(&context).unwrap_or_else(|| "BYNK_CALL_KEY".to_string());
     let name = caller
@@ -472,9 +485,10 @@ pub(crate) fn foreign_hand_off(worker: &str, caller: &ForeignCaller, value: &str
         "bynk: minted {binding} for `{actor}`, a foreign caller of `{context}`. Its operator sets it on their Worker:\n\n  \
          printf '%s' '{value}' | npx wrangler secret put {key} --name {name}\n\n  \
          It signs its calls to `{context}` as `{actor}` (X-Bynk-Caller), under that key; see the wire format reference.\n  \
-         This is the only time the value is shown: `bynk deploy --force` mints a new one.\n",
+         This is the only time the value is shown: `{deploy} --force` mints a new one.\n",
         binding = caller.binding,
         actor = caller.actor,
+        deploy = deploy_command(environment),
     )
 }
 
@@ -535,9 +549,7 @@ pub(crate) fn prepare_secrets(
     // below for the whole story would be wrong, and this is the only place that
     // can tell them (ADR 0196 D2).
     if !declared.reads_complete {
-        eprintln!(
-            "bynk: `{worker}` reads at least one secret whose name the compiler cannot see (a computed `Secrets.get` name, or an adapter binding given `Secrets`), so the list below is not everything it reads."
-        );
+        eprint!("{}", unseen_reads_notice(environment, worker));
     }
     // Asked live, never recorded: presence is the only observable Cloudflare
     // offers (it does not return values), and a recorded answer could only ever
@@ -573,43 +585,81 @@ pub(crate) fn prepare_secrets(
     for want in &wanted {
         match secret_action(&want.name, present.as_ref(), secrets.force) {
             SecretAction::SkipPresent => {
-                eprintln!(
-                    "bynk: secret `{}` is already set on `{worker}`, skipping — use --force to overwrite",
-                    want.name
-                );
+                eprint!("{}", secret_kept_notice(environment, worker, &want.name));
                 continue;
             }
             SecretAction::Set | SecretAction::Overwrite => {}
         }
-        match resolve_secret_value(&want.name, want.origin, worker, secrets) {
+        match resolve_secret_value(&want.name, want.origin, worker, secrets, environment) {
             Ok(value) => prepared.push((want.name.clone(), value)),
             // Advisory by type (ADR 0196 D3): `Secrets.get` returns `Option`, so
             // a read with no value is a `None` the program may be entirely happy
             // about. Say what will happen and carry on — failing here would
             // refuse to deploy a legal program over a secret it never needed.
             Err(_) if !want.origin.required() => {
-                eprintln!(
-                    "bynk: `{worker}` reads the secret `{}`, but no value was supplied — it will see None.",
-                    want.name
-                );
-                eprintln!(
-                    "  Supply it with --secrets-file or --secret {}, if it is meant to be set.",
-                    want.name
+                eprint!(
+                    "{}",
+                    unsupplied_read_notice(environment, worker, &want.name)
                 );
             }
             Err(_) if tolerate_unresolvable(present.as_ref(), first_deploy) => {
-                eprintln!(
-                    "bynk: could not ask Cloudflare which secrets `{worker}` has, and no value for `{}` was supplied — leaving it as it is.",
-                    want.name
-                );
-                eprintln!(
-                    "  If it is not set, `{worker}` will answer 401. Check with `wrangler secret list`, or supply a value to set it."
+                eprint!(
+                    "{}",
+                    unknown_presence_notice(environment, worker, &want.name)
                 );
             }
             Err(e) => return Err(e),
         }
     }
     Ok(prepared)
+}
+
+// #2047: the notices `prepare_secrets` and `apply_secrets` print, each naming
+// the Worker by its `deployed_worker_name` in the run's environment, the
+// Worker the secret is (or is not) set on. Pure, so they are goldened.
+
+/// The Worker reads secrets the compiler cannot name (ADR 0196 D2).
+pub(crate) fn unseen_reads_notice(environment: &str, worker: &str) -> String {
+    format!(
+        "bynk: `{}` reads at least one secret whose name the compiler cannot see (a computed `Secrets.get` name, or an adapter binding given `Secrets`), so the list below is not everything it reads.\n",
+        deployed_worker_name(environment, worker)
+    )
+}
+
+/// A secret already set, kept because `--force` is off.
+pub(crate) fn secret_kept_notice(environment: &str, worker: &str, name: &str) -> String {
+    format!(
+        "bynk: secret `{name}` is already set on `{}`, skipping — use --force to overwrite\n",
+        deployed_worker_name(environment, worker)
+    )
+}
+
+/// An optional read with no value supplied (ADR 0196 D3).
+pub(crate) fn unsupplied_read_notice(environment: &str, worker: &str, name: &str) -> String {
+    format!(
+        "bynk: `{}` reads the secret `{name}`, but no value was supplied — it will see None.\n  \
+         Supply it with --secrets-file or --secret {name}, if it is meant to be set.\n",
+        deployed_worker_name(environment, worker)
+    )
+}
+
+/// A required secret with no value, on a Worker whose secrets could not be
+/// listed: left as it is. The check it suggests names the deployed Worker,
+/// so it asks about the right one whatever directory it is run from.
+pub(crate) fn unknown_presence_notice(environment: &str, worker: &str, name: &str) -> String {
+    let worker = deployed_worker_name(environment, worker);
+    format!(
+        "bynk: could not ask Cloudflare which secrets `{worker}` has, and no value for `{name}` was supplied — leaving it as it is.\n  \
+         If it is not set, `{worker}` will answer 401. Check with `wrangler secret list --name {worker}`, or supply a value to set it.\n"
+    )
+}
+
+/// `wrangler secret put` failed.
+pub(crate) fn secret_set_failure(environment: &str, worker: &str, name: &str, e: &str) -> String {
+    format!(
+        "could not set the secret `{name}` on `{}`: {e}",
+        deployed_worker_name(environment, worker)
+    )
 }
 
 /// Put each prepared secret. The mutating half, and deliberately the whole of
@@ -624,9 +674,7 @@ pub(crate) fn apply_secrets(
 ) -> Result<(), DeployFailure> {
     for (name, value) in prepared {
         set_secret(provenance, worker_dir, name, value, environment).map_err(|e| {
-            DeployFailure::driver(format!(
-                "could not set the secret `{name}` on `{worker}`: {e}"
-            ))
+            DeployFailure::driver(secret_set_failure(environment, worker, name, &e))
         })?;
     }
     Ok(())
@@ -644,6 +692,7 @@ fn resolve_secret_value(
     origin: Origin,
     worker: &str,
     secrets: &mut Secrets<'_>,
+    environment: &str,
 ) -> Result<String, DeployFailure> {
     if let Some(cached) = secrets.resolved.get(name) {
         return Ok(cached.clone());
@@ -651,8 +700,9 @@ fn resolve_secret_value(
     let from_env = std::env::var(name).ok();
     let value = match value_from(name, secrets.source, from_env) {
         Some(value) => value,
-        None => prompt_for_secret(name)
-            .ok_or_else(|| DeployFailure::driver(missing_secret_message(name, origin, worker)))?,
+        None => prompt_for_secret(name).ok_or_else(|| {
+            DeployFailure::driver(missing_secret_message(environment, name, origin, worker))
+        })?,
     };
     secrets.resolved.insert(name.to_string(), value.clone());
     Ok(value)
@@ -680,8 +730,14 @@ fn prompt_for_secret(name: &str) -> Option<String> {
 
 /// Why a secret could not be resolved, in the vocabulary of where its name came
 /// from — the two origins are missing for different reasons and want different
-/// remedies.
-fn missing_secret_message(name: &str, origin: Origin, worker: &str) -> String {
+/// remedies. The Worker by its [`deployed_worker_name`] (#2047).
+pub(crate) fn missing_secret_message(
+    environment: &str,
+    name: &str,
+    origin: Origin,
+    worker: &str,
+) -> String {
+    let worker = deployed_worker_name(environment, worker);
     match origin {
         Origin::Declared => format!(
             "`{worker}` declares the secret `{name}` (an actor's `auth` secret) but no value was supplied — \
@@ -898,14 +954,15 @@ WITH_EQUALS=a=b
     fn a_missing_secret_names_itself_and_says_what_it_costs() {
         // The error is the whole mitigation for the silent-blank risk, so it
         // must name the secret and the remedy rather than saying "failed".
-        let declared = missing_secret_message("AUTH_JWT_SECRET", Origin::Declared, "api");
+        let declared =
+            missing_secret_message("default", "AUTH_JWT_SECRET", Origin::Declared, "api");
         assert!(declared.contains("AUTH_JWT_SECRET"), "{declared}");
         assert!(declared.contains("api"), "{declared}");
         assert!(
             declared.contains("401"),
             "a declared secret's absence is fail-closed — say so: {declared}"
         );
-        let supplied = missing_secret_message("STRIPE_KEY", Origin::Supplied, "api");
+        let supplied = missing_secret_message("default", "STRIPE_KEY", Origin::Supplied, "api");
         assert!(supplied.contains("STRIPE_KEY"), "{supplied}");
         assert!(
             !supplied.contains("401"),
@@ -1031,6 +1088,7 @@ WITH_EQUALS=a=b
             both_in_run,
             force,
             &mut mint,
+            "default",
         )
     }
 
@@ -1252,7 +1310,7 @@ WITH_EQUALS=a=b
             binding: "LEDGER_CALL_KEY".into(),
             worker: Some("ledger-svc".into()),
         };
-        let text = foreign_hand_off("shop-orders", &caller, "abc123");
+        let text = foreign_hand_off("default", "shop-orders", &caller, "abc123");
         assert!(
             text.contains(
                 "printf '%s' 'abc123' | npx wrangler secret put BYNK_CALL_TO_SHOP__ORDERS --name ledger-svc"
@@ -1268,7 +1326,8 @@ WITH_EQUALS=a=b
             ..caller
         };
         assert!(
-            foreign_hand_off("shop-orders", &unnamed, "abc123").contains("--name <foreign-worker>"),
+            foreign_hand_off("default", "shop-orders", &unnamed, "abc123")
+                .contains("--name <foreign-worker>"),
             "an undeclared worker is a placeholder to fill in"
         );
     }

@@ -34,8 +34,10 @@ impl DeployFailure {
 }
 
 /// Map a finished `wrangler deploy` to an outcome. Pure, so the propagation
-/// rule is tested without spawning wrangler.
-fn wrangler_outcome(
+/// rule is tested without spawning wrangler. A failure names the Worker the
+/// push was creating, its [`deployed_worker_name`] (#2047).
+pub(crate) fn wrangler_outcome(
+    environment: &str,
     worker: &str,
     status: &std::process::ExitStatus,
 ) -> Result<Pushed, DeployFailure> {
@@ -49,7 +51,10 @@ fn wrangler_outcome(
     match exit_status_byte(status) {
         0 => Ok(Pushed::Interrupted),
         code => Err(DeployFailure {
-            message: format!("wrangler deploy failed for `{worker}` (exit {code})"),
+            message: format!(
+                "wrangler deploy failed for `{}` (exit {code})",
+                deployed_worker_name(environment, worker)
+            ),
             code,
         }),
     }
@@ -249,9 +254,10 @@ fn push(
         command.arg("--env").arg(environment);
     }
     match command.status() {
-        Ok(status) => wrangler_outcome(worker, &status),
+        Ok(status) => wrangler_outcome(environment, worker, &status),
         Err(e) => Err(DeployFailure::driver(format!(
-            "could not run wrangler deploy for `{worker}`: {e}"
+            "could not run wrangler deploy for `{}`: {e}",
+            deployed_worker_name(environment, worker)
         ))),
     }
 }
@@ -744,7 +750,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_clean_push_is_ok() {
-        assert_eq!(wrangler_outcome("api", &status(0)), Ok(Pushed::Ok));
+        assert_eq!(
+            wrangler_outcome("default", "api", &status(0)),
+            Ok(Pushed::Ok)
+        );
     }
 
     #[cfg(unix)]
@@ -753,7 +762,7 @@ mod tests {
         // Slice 0 exited with `exit_status_byte(&status)`; the multi-context
         // loop must not lose that. A CI job reads the code, so a wrangler exit
         // 2 must not surface as a generic 1.
-        let Err(failure) = wrangler_outcome("api", &status(2 << 8)) else {
+        let Err(failure) = wrangler_outcome("default", "api", &status(2 << 8)) else {
             panic!("a non-zero wrangler exit is a failure");
         };
         assert_eq!(failure.code, 2, "wrangler's own code reaches the caller");
@@ -771,7 +780,10 @@ mod tests {
         // `exit_status_byte` maps it to 0. Reporting it as a failure would print
         // "wrangler deploy failed … (exit 0)" — an error whose own code says
         // success — and slice 0 exited 0 here.
-        assert_eq!(wrangler_outcome("api", &status(2)), Ok(Pushed::Interrupted));
+        assert_eq!(
+            wrangler_outcome("default", "api", &status(2)),
+            Ok(Pushed::Interrupted)
+        );
     }
 
     #[cfg(unix)]
@@ -779,11 +791,11 @@ mod tests {
     fn a_real_signal_death_is_a_failure_at_128_plus_the_signal() {
         // Not every signal is a clean stop: a SIGSEGV or the OOM killer's
         // SIGKILL is a genuine failure, and `exit_status_byte` says `128 + sig`.
-        let Err(segv) = wrangler_outcome("api", &status(11)) else {
+        let Err(segv) = wrangler_outcome("default", "api", &status(11)) else {
             panic!("a SIGSEGV is a failure, not a clean stop");
         };
         assert_eq!(segv.code, 139);
-        let Err(kill) = wrangler_outcome("api", &status(9)) else {
+        let Err(kill) = wrangler_outcome("default", "api", &status(9)) else {
             panic!("a SIGKILL is a failure, not a clean stop");
         };
         assert_eq!(kill.code, 137);
